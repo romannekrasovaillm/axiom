@@ -92,4 +92,8 @@ RL-среда и харнесс. Оценка значимости миграц�
 - jaxlib (PyPI): «JAX itself is a pure Python package» — Python-фронтенд официально один.
 - EnzymeAD/Reactant.jl (Julia→MLIR→XLA), FOSDEM 2026 доклад; openxla.org PJRT C API; пример
   исполнения StableHLO из C без Python (epicure-hpc, 2026-08-05). Проверено 26.09.2026.
+- Прецедент гибрида у лидеров: xAI (разбор стека Grok, rajatpandit.com, 2026) — JAX для тренинга
+  (fusion, детерминизм через explicit keys), Rust для data loading и оркестрации кластера;
+  Rust-ML-фреймворки (Burn/Candle) тренингом не используются ни одной фронтир-лабой.
+  Проверено 26.09.2026 — подтверждает выбранную здесь модель «JAX-мозг + Rust-нервная система».
 - ARCHITECTURE-SPINE.md (AD-1…AD-8); `net/tests/` — парити-гейты, привязанные к стеку.

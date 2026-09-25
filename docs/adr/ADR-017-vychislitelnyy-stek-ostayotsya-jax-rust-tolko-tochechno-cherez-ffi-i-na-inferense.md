@@ -50,6 +50,8 @@ RL-среда и харнесс. Оценка значимости миграц�
 | **Остаться на JAX** (принят) | Сохраняем парити-тесты, MaxText-форк, Pallas-кернелы, RL-стек, сроки; миграционный риск = 0 | Остаются Python-ограничения (GIL в харнессе, скорость интерпретатора в инструментах) |
 | Полный перенос на Rust (Burn/Candle) | Один язык, потенциальная скорость инференса, компиляция в натив | Переписка скелета+среды+харнесса (месяцы), потеря MaxText/Pallas/Tunix, незрелые CUDA-бэкенды, отставание претрейна; модель не приближается ни на день |
 | `jax-rs` (крейт) | Формально «JAX на Rust» | Без CUDA, без XLA, масштаб веб-игрушки; не удержит L3 ни в каком режиме |
+| **Julia + Reactant.jl** (EnzymeML → MLIR → XLA) | Настоящий «JAX-опыт» вне Python: jit/vmap-подобный трейсинг, autodiff через EnzymeMLIR, CPU/GPU/TPU | Экспериментальный проект с меняющимся API; экосистема LLM-тренинга (Flax/Equinox/MaxText/Tunix/Orbax/Levanter) живёт в Python — всё нужное пришлось бы писать самому; multi-GPU/нода ещё в работе |
+| **C/C++ напрямую через PJRT C API** | Исполнение StableHLO без Python (проверено: пример epicure-hpc, 08.2026) | Это рантайм-исполнитель, а не JAX: нет трейсинга/autodiff/vmap/jax.numpy; фронтенд пришлось бы писать самому — проект-летне, не кейс |
 
 ## Consequences
 
@@ -87,4 +89,7 @@ RL-среда и харнесс. Оценка значимости миграц�
 - ADR-008 (стек JAX/MaxText, supersede ADR-007) — решение, границу которого этот ADR подтверждает.
 - jax-ml/jax discussion #24187 «Extending JAX with Rust»; `rust-jax-ffi` (FFI-пример).
 - docs.rs `jax-rs` 0.5.1 (2026-09-08); crates.io `xla` — 404. Проверено 25.09.2026.
+- jaxlib (PyPI): «JAX itself is a pure Python package» — Python-фронтенд официально один.
+- EnzymeAD/Reactant.jl (Julia→MLIR→XLA), FOSDEM 2026 доклад; openxla.org PJRT C API; пример
+  исполнения StableHLO из C без Python (epicure-hpc, 2026-08-05). Проверено 26.09.2026.
 - ARCHITECTURE-SPINE.md (AD-1…AD-8); `net/tests/` — парити-гейты, привязанные к стеку.

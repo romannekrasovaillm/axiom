@@ -1,0 +1,149 @@
+{
+  "package_id": "axiom-a3-v41-flash-2026-09-12",
+  "case": "кейсы/axiom",
+  "gate": "A3",
+  "route": "critical",
+  "significance_score": 5,
+  "triggers_fired": [
+    "new_component",
+    "data_contract_change",
+    "consistency_model_change",
+    "significant_nfr",
+    "financial_impact"
+  ],
+  "subject": "Импорт KV/длинноконтекстной дисциплины DeepSeek V4.1-Flash в скелет L3 (ADR-009)",
+  "primary_source": {
+    "file": "~/Документы/КОД/gigachat/РАЗБОРЫ/recipes_taxonomy/11_Техотчёты_лабораторий_LLM/2026/DeepSeek/2026-09-10_DeepSeek-V4.1-Flash-KV-Cache-Compression.pdf",
+    "verified": "pdfinfo: 51 стр., pdfTeX, 2026-09-10 08:49 MSK; pdftotext -layout → 2881 строка",
+    "license": "MIT",
+    "checkpoints": "huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash",
+    "extract": "docs/research/v41-flash-report-extract.md"
+  },
+  "problem_measured": {
+    "criterion_6": "net/tests/test_06_nope_extrapolation.py — критерий приёмки №6 не проходит: recall на тренировочном гэпе 0.99–1.00, на экстраполированном обваливается; ассерт xfail(strict=True) (:12–16, :54)",
+    "compute_wall": "6 Gated MLA слоёв из 24 (паттерн [KDA,KDA,KDA,MLA]×6, net/model.py:5) считают плотный причинный softmax по всему префиксу (net/mla.py, _causal_mask) → O(N²) на слой; на куррикулуме L1 (256K→1M) это связывающее ограничение, а NFR-005 сегодня формулирует критерий как память",
+    "memory": "не является связывающим: 6 слоёв × 512 каналов латента ≈ 6 ГБ bf16 на 1M, 3 ГБ FP8, 1.5 ГБ FP4"
+  },
+  "choice": {
+    "recommended_scope": "ADR-009 D1+D2+D3",
+    "d1_swa_branch": "SWA-ветка n_win=128 в каждом слое: на MLA — собственными проекциями, на KDA — переиспользуя уже вычисленные q/k/v линейного слоя (наше решение)",
+    "d2_sparse_selection": "CSA2-lite: лёгкий indexer (1–2 головы, дом 128) → top_k (цель 512; на скелете — параметр конфига) в 6 MLA-слоях; компрессия последовательности (m>1) и кросс-слойные режимы Full/Reindex/Reuse НЕ импортируются",
+    "d3_fp4_latent_kv": "MXFP4 QAT латентного KV-кэша (E2M1 + один E4M3 scale на 16 каналов, без global scale); SWA KV остаётся FP8; RoPE в скелете нет (NoPE) — оговорка «квантовать после RoPE» вырождается",
+    "d4_oracle_flag": "плотный путь внимания остаётся оракулом за флагом конфига до снятия A4; A/B при одном чекпойнте/среде/бюджете",
+    "d5_train_aware": "sparse-выбор и усечение окна симулируются на всех стадиях, включая пост-тренинг",
+    "scope_out": "CED, Engram, DSpark, mHC, кросс-слойное переиспользование KV — см. deferred / rejected_options"
+  },
+  "rationale": [
+    "провал критерия №6 уже измерен, а не предполагается; fallback из ADR-003 (увеличить долю Gated MLA) стоит новый претрейн $44k вместо проверки за $200 сейчас",
+    "V4.1-Flash бьёт ровно по нашему классу нагрузки (input-heavy агентные, растущий контекст) и даёт три независимо применимых механизма",
+    "геометрия совпадает буквально: латент 512 каналов — как в отчёте, поэтому аргумент динамического диапазона MXFP4 (L2 ≤ √512 ≈ 22.6, max ≈10 ≪ 2688) переносится без эмпирического подбора формата",
+    "параметрическая цена внутри бюджета: indexer ≈0.26M на MLA-слой (≈1.6M всего), SWA на KDA — 0 новых параметров при шаринге проекций; худший случай с выделенными проекциями +~28M ⇒ 1.008B при коридоре 0.9–1.2B",
+    "смета скелета ($200, ADR-004) не меняется: sparse снижает стоимость MLA-слоёв, окно добавляет O(N·W), на 8K/64K эффекты малы — проверяется калибровкой на smoke-стадии",
+    "обход AD-5 исключён: добавка оформлена отклонением с ценой и планом замера, база K3 остаётся пиннутой"
+  ],
+  "constraints": [
+    "база K3 пиннута (spine AD-5, ADR-003/ADR-008): любое отклонение — только через ADR с оценкой стоимости проверки",
+    "бюджет параметров 0.9–1.2B (test_01_param_count) и согласованное определение active_params_per_token (net/config.json) обязаны остаться валидными",
+    "равенство условий сравнения (spine AD-3): флаг A/B, top_k, n_win, seed indexer'а пиннятся в манифесте прогона",
+    "пиннинг снапшотов (spine AD-4): прогон без пиннинга не считается доказательством",
+    "лимит стоимости (spine AD-8): отсутствие сметы — блокирующее условие запуска",
+    "заявления о достижении 1M на скелете запрещены (куррикулум скелета 8K→64K; 1M — критерий L1)"
+  ],
+  "rejected_options": [
+    {
+      "option": "статус-кво: не менять скелет, ждать L1",
+      "reason": "критерий №6 остаётся проваленным; цена fallback — новый претрейн $44k против проверки за $200"
+    },
+    {
+      "option": "увеличить долю Gated MLA (3:1 → 2:2 или softmax-only), fallback ADR-003",
+      "reason": "усиливает квадратичную стену на 1M и KV-бюджет; уводит от пропорции 69:24, помеченной в FIDELITY как точная; локальную точность не даёт дешевле O(N·W)"
+    },
+    {
+      "option": "CED (causal Encoder–Decoder, §2.2)",
+      "reason": "несовместим с нашей геометрией: CED проецирует global KV декодера из hidden энкодера, а у 18 из 24 слоёв KV нет вовсе (KDA — рекуррентное состояние); это другая модель, а не дельта (нарушение AD-5)"
+    },
+    {
+      "option": "кросс-слойное переиспользование KV (CSA2 Full/Reindex/Reuse, §2.3.1)",
+      "reason": "MLA-слои разрежены каждым четвёртым: группа «1 Full + 5 Reuse» означала бы переиспользование KV через 12 слоёв — семантика расходится с источником; storage не является связывающим ограничением"
+    },
+    {
+      "option": "mHC Single-Pass (§2.4.1)",
+      "reason": "эффект класса megakernel (трафик активаций на 552B и pipeline-стадиях); на 1B/8 GPU не измеряется, у нас своя схема AttnRes"
+    }
+  ],
+  "deferred": [
+    {
+      "id": "D-ENGRAM",
+      "item": "Engram-минимум (условная память, n-gram, offload на host/SSD)",
+      "condition_to_return": "D1 поднял локальный recall, но экстраполяционный остался ниже RECALL_MIN ⇒ нужна именно память, а не окно",
+      "cost_note": "в источнике 196B из 763B (25.8%) при 45T токенов; требует offload-контура и Sinkhorn-балансировки"
+    },
+    {
+      "id": "D-DSPARK",
+      "item": "DSpark вместо MTP (спекулятивный драфтер отдельной стадией, бэкбон заморожен)",
+      "condition_to_return": "в манифестах прогонов RL доля времени decode на rollout'ах становится доминирующей",
+      "cost_note": "MTP в K3 пиннится как точная деталь рецепта и работает вспомогательным сигналом"
+    },
+    {
+      "id": "D-SINKHORN",
+      "item": "Sinkhorn-balanced update для tied embed/prediction-head (K=11, τ=1e-3, γ=0.18)",
+      "condition_to_return": "наблюдаемый дрейф масштаба эмбеддингов/логитов в смоук-прогонах",
+      "cost_note": "у нас embed tied (вход=выход), поэтому эффект ожидаемо меньше, чем в источнике"
+    }
+  ],
+  "open_questions": [
+    {
+      "id": "Q-V41-1",
+      "question": "ратифицируется ли объём D1+D2+D3 как дельта скелета, или скелет берёт только D1 (минимальная гипотеза), а FP4 латента уходит на L1",
+      "owner": "человек (владелец)",
+      "blocking": true,
+      "status": "resolved 2026-09-12",
+      "answer": "ратифицирован вариант A — полная дельта D1+D2+D3 (SWA-ветка + CSA2-lite sparse-выбор + MXFP4 на латентном KV); варианты B (только D1) и C (статус-кво до L1) отклонены",
+      "evidence": "docs/adr/ADR-009-import-kv-dlinnokontekstnoy-discipliny-deepseek-v4-1-flash-v-skelet-l3-swa-vetka-v-kazhdom-sloe-sparse-vybor-v-mla-sloyah-fp4-na-latentnom-keshe.md (Status: Accepted)"
+    },
+    {
+      "id": "Q-V41-2",
+      "question": "остаётся ли top_k=512 целевым значением на скелете или масштабируется пропорционально (512 — значение источника для 1M и 64 Q-голов против наших 12)",
+      "owner": "архитектор + замер",
+      "blocking": false,
+      "status": "open"
+    },
+    {
+      "id": "Q-V41-3",
+      "question": "допускается ли короткая плотная фаза перед sparse (источник учит sparse с нуля без dense-warmup на 45T токенов; переносимость на 20B не доказана)",
+      "owner": "архитектор + замер",
+      "blocking": false,
+      "status": "open"
+    }
+  ],
+  "findings_outside_network": [
+    {
+      "id": "F-ENV-HARDENING",
+      "finding": "§5.3.1: анти-hacking контур оценки — отключение интернета, срез git-истории, пурж кэшей (go/mod, node_modules, .jar, pycache); в кибер-оценке наблюдался exploit-seeking",
+      "action": "усилить docs/specs/ENVIRONMENT-V1.md: перечисленные меры — обязательный precondition прогона среды (поддерживает spine AD-2 «вердикт механический»)"
+    },
+    {
+      "id": "F-EFFORT-LADDER",
+      "finding": "§5.3.3: фронт-лоадный прирост усилия — 60–80 даёт почти максимум при <½ бюджета, шаг к 100 удлиняет траектории в 1.6–1.8× за маргинальный прирост",
+      "action": "использовать как якорь лесенки усилия в ENVIRONMENT-V1 (2 уровня усилия в скелете) при равном бюджете (spine AD-3)"
+    },
+    {
+      "id": "F-MULTIAGENT-DISCREPANCY",
+      "finding": "дайджест AINews (в скилле deepseek-v41-flash-architecture) утверждает деградацию multi-agent («slop»), тогда как §5.3.5 отчёта показывает Agent Team выше single на всех дедлайнах (ProgramBench 30.04% против 20.39%; FrontierSWE v2 32.90% против 28.20%) при reward с вычетом derived-latency",
+      "action": "для CMP-006 сравнивать solo vs team только при одинаковом wall-clock дедлайне и с учётом derived-latency; не переносить утверждение дайджеста как факт"
+    }
+  ],
+  "guard_activation": {
+    "C-034": "внесено в CONSTRAINTS.yaml 2026-09-12 (решение оформлено до реализации); fitness PASS, 34 правила",
+    "C-035": "декларативность механики в net/config.json — активируется вместе с дельтой при ратификации; до реализации не внесена намеренно: даёт красный гейт (шум, а не сигнал)"
+  },
+  "expiry": "2026-09-20",
+  "on_expiry": "решение не принято — скелет L3 остаётся в текущей конфигурации: критерий №6 остаётся проваленным (xfail strict), дельта в реализацию не уходит, 1M остаётся неподтверждённым на всех классах",
+  "evidence": [
+    "docs/adr/ADR-009-import-kv-dlinnokontekstnoy-discipliny-deepseek-v4-1-flash-v-skelet-l3-swa-vetka-v-kazhdom-sloe-sparse-vybor-v-mla-sloyah-fp4-na-latentnom-keshe.md",
+    "docs/research/v41-flash-report-extract.md",
+    "ARCHITECTURE-SPINE.md (AD-9, Proposed)",
+    "net/tests/test_06_nope_extrapolation.py (измеренный провал критерия 6)",
+    "net/mla.py, net/config.json, model/NFR-004, model/NFR-005"
+  ]
+}

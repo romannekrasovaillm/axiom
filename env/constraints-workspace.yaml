@@ -1,0 +1,58 @@
+# CONSTRAINTS-workspace.yaml — правила, применимые к СНАПШОТУ ЗАДАЧИ (workspace)
+# Основание: ADR-016 (скоуп гейтов). Эти правила исполняет среда (env/verifier.py)
+# внутри копии дерева решения; правила скоупа `case` (смета, манифест A4, стенд,
+# пакет handoff, мета-валидатор) здесь не применяются — их артефактов в снапшоте нет.
+# Источник: подмножество CONSTRAINTS.yaml кейса (scope: workspace); правки — только там.
+constraints:
+- id: C-007
+  name: Артефакты без заглушек (TODO/TBD в архитектурном пакете недопустимы)
+  type: must_not_contain
+  glob: '**/*.md'
+  pattern: \bTODO\b|\bTBD\b|\bFIXME\b
+  severity: high
+  scope: workspace
+  kind: documentary
+  evidence: '**/*.md → отсутствие TODO/TBD/FIXME'
+- id: C-011
+  name: 'Приватность: в артефактах нет подключений к внешним LLM/данным с ключами
+    в открытом виде'
+  type: must_not_contain
+  glob: '**/*.{md,json,yaml,yml,toml}'
+  pattern: (?i)(api[_-]?key|secret|token)\s*[:=]\s*["']?[A-Za-z0-9_\-]{20,}
+  severity: critical
+  scope: workspace
+  kind: documentary
+  evidence: '**/*.{md,json,yaml,yml,toml} → отсутствие пар «ключ/секрет» длиной ≥20
+    символов'
+- id: C-014
+  name: Паспорт кейса существует (точка входа для исполнителя)
+  type: file_exists
+  path: README.md
+  severity: high
+  scope: workspace
+  kind: structural
+  evidence: README.md → файл паспорта кейса существует
+- id: C-032
+  name: 'Веса моделей канонически на сетевом диске ~/gb10-shared: в рабочих каталогах
+    — только симлинки, копий нет (решение владельца 2026-09-12)'
+  type: command_succeeds
+  command: test -z "$(find . -type f \( -name "*.safetensors" -o -name "*.gguf" -o
+    -name "*.pt" -o -name "*.pth" -o -name "*.ckpt" \) -print -quit)"
+  timeout_secs: 60
+  severity: high
+  scope: workspace
+  kind: behavioural
+  evidence: 'find . -type f по расширениям *.safetensors, *.gguf, *.pt, *.pth, *.ckpt
+    → пусто: веса только симлинками на ~/gb10-shared'
+- id: C-033
+  name: 'Датасеты (SFT/RL/претрейн) канонически на ~/gb10-shared: крупные файлы-копии
+    в рабочих каталогах запрещены — симлинки (решение владельца 2026-09-12)'
+  type: command_succeeds
+  command: test -z "$(find . -type f -size +500M -not -path "./.git/*" -not -path
+    "./.git" -print -quit)"
+  timeout_secs: 60
+  severity: high
+  scope: workspace
+  kind: behavioural
+  evidence: 'find . -type f -size +500M -not -path ''./.git/*'' → пусто: датасеты
+    только симлинками на ~/gb10-shared'

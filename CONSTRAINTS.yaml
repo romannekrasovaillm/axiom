@@ -1,0 +1,429 @@
+# CONSTRAINTS.yaml — fitness functions кейса «axiom»
+# Проверка: arch-be control check . (дефолтный поиск берёт рабочий ruleset из
+# корня; пакетный .arch-handoff/CONSTRAINTS.yaml — только fallback с предупреждением)
+# Правила механические: дрейф архитектурных артефактов ловится без LLM.
+# Связь со spine: verified_by в model/AD-*.md.
+# Классификация стражей (ADR-011, AD-10): kind ∈ behavioural|structural|documentary,
+# evidence — путь/команда/поле артефакта, по которому проверяется выполнение.
+# Вывод kind: content-правила (must_contain/must_not_contain/each_file_must_contain) —
+# documentary; file_exists и command_succeeds о наличии артефакта — structural;
+# command_succeeds, проверяющий систему/файловую систему, — behavioural.
+# Мета-валидатор контура: C-036 (tools/check_constraints_meta.py);
+# канал пакета: C-037 (tools/check_handoff_ruleset.py).
+# Мета-валидатор контура: C-036 (tools/check_constraints_meta.py).
+# Поведенческий страж AD-2 «вердикт механический, не модельный»: C-039
+# (tools/check_reward_isolation.py) — проверяет по коду пакет среды env/:
+# судья, LLM-клиенты и внешние API в пути награды не встречаются.
+
+constraints:
+  - id: C-001
+    name: "ADR: обязательные секции (Alternatives) — решение без альтернатив не решение"
+    type: each_file_must_contain
+    glob: "docs/adr/*.md"
+    pattern: "## Alternatives Considered"
+    severity: critical
+    scope: case
+    kind: documentary
+    evidence: "docs/adr/*.md → секция «## Alternatives Considered»"
+
+  - id: C-002
+    name: "ADR: отрицательные последствия описаны (иначе решение продано, а не проверено)"
+    type: each_file_must_contain
+    glob: "docs/adr/*.md"
+    pattern: "### Negative"
+    severity: critical
+    scope: case
+    kind: documentary
+    evidence: "docs/adr/*.md → секция «### Negative»"
+
+  - id: C-003
+    name: "ADR: обратимость указана явно (reversible | costly | irreversible)"
+    type: each_file_must_contain
+    glob: "docs/adr/*.md"
+    pattern: "## Reversibility"
+    severity: critical
+    scope: case
+    kind: documentary
+    evidence: "docs/adr/*.md → секция «## Reversibility»"
+
+  - id: C-004
+    name: "Спинальные инварианты: каждый AD имеет проверяемое Rule"
+    type: each_file_must_contain
+    glob: "model/AD-*.md"
+    pattern: "\\*\\*Rule\\*\\*"
+    severity: critical
+    scope: case
+    kind: documentary
+    evidence: "model/AD-*.md → поле «**Rule**»"
+
+  - id: C-005
+    name: "Спинальные инварианты: каждый AD привязан к fitness-правилу"
+    type: each_file_must_contain
+    glob: "model/AD-*.md"
+    pattern: "verified_by:\\s*\\[C-0"
+    severity: critical
+    scope: case
+    kind: documentary
+    evidence: "model/AD-*.md → frontmatter verified_by: [C-0NN]"
+
+  - id: C-006
+    name: "Spine: у каждого инварианта заполнены Binds и Prevents"
+    type: must_contain
+    glob: "ARCHITECTURE-SPINE.md"
+    pattern: "\\*\\*Binds\\*\\*.*\\n.*\\*\\*Prevents\\*\\*"
+    severity: critical
+    scope: case
+    kind: documentary
+    evidence: "ARCHITECTURE-SPINE.md → пары «**Binds**»/«**Prevents**» в блоках AD-n"
+
+  - id: C-007
+    name: "Артефакты без заглушек (TODO/TBD в архитектурном пакете недопустимы)"
+    type: must_not_contain
+    glob: "**/*.md"
+    pattern: "\\bTODO\\b|\\bTBD\\b|\\bFIXME\\b"
+    severity: high
+    scope: workspace
+    kind: documentary
+    evidence: "**/*.md → отсутствие TODO/TBD/FIXME"
+
+  - id: C-008
+    name: "Пакет решения A3 имеет срок годности (expiry) и поведение по истечении"
+    type: must_contain
+    glob: "docs/DECISION-PACKAGE.json"
+    pattern: "\"expiry\"|\"on_expiry\""
+    severity: critical
+    scope: case
+    kind: documentary
+    evidence: "docs/DECISION-PACKAGE.json → поля expiry/on_expiry"
+
+  - id: C-009
+    name: "Смета: NFR стоимости имеет измеримую цель и способ верификации"
+    type: each_file_must_contain
+    glob: "model/NFR-*.md"
+    pattern: "verification:"
+    severity: high
+    scope: case
+    kind: documentary
+    evidence: "model/NFR-*.md → поле verification:"
+
+  - id: C-010
+    name: "Незакреплённые снапшоты запрещены: NFR и AD ссылаются на модель-сущности, а не на прозу"
+    type: each_file_must_contain
+    glob: "model/AD-*.md"
+    pattern: "affects:"
+    severity: high
+    scope: case
+    kind: documentary
+    evidence: "model/AD-*.md → поле affects:"
+
+  - id: C-011
+    name: "Приватность: в артефактах нет подключений к внешним LLM/данным с ключами в открытом виде"
+    type: must_not_contain
+    glob: "**/*.{md,json,yaml,yml,toml}"
+    pattern: "(?i)(api[_-]?key|secret|token)\\s*[:=]\\s*[\"']?[A-Za-z0-9_\\-]{20,}"
+    severity: critical
+    scope: workspace
+    kind: documentary
+    evidence: "**/*.{md,json,yaml,yml,toml} → отсутствие пар «ключ/секрет» длиной ≥20 символов"
+
+  - id: C-012
+    name: "Ресурсный инвариант Spark зафиксирован в spine и модели"
+    type: must_contain
+    glob: "ARCHITECTURE-SPINE.md"
+    pattern: "AD-7|одна нагрузка за раз"
+    severity: high
+    scope: case
+    kind: documentary
+    evidence: "ARCHITECTURE-SPINE.md → блок AD-7 со строкой «одна нагрузка за раз»"
+
+  - id: C-013
+    name: "Ось победы объявлена в пакете решения (без оси нет предмета доказывания)"
+    type: must_contain
+    glob: "docs/DECISION-PACKAGE.json"
+    pattern: "\"victory_axis\""
+    severity: critical
+    scope: case
+    kind: documentary
+    evidence: "docs/DECISION-PACKAGE.json → поле victory_axis"
+
+  - id: C-014
+    name: "Паспорт кейса существует (точка входа для исполнителя)"
+    type: file_exists
+    path: "README.md"
+    severity: high
+    scope: workspace
+    kind: structural
+    evidence: "README.md → файл паспорта кейса существует"
+
+  - id: C-015
+    name: "Сравнение с K3 опирается на первичный источник, а не на пересказ"
+    type: must_contain
+    glob: "docs/adr/ADR-001-masshtabnyy-klass-i-os-pobedy-modeli-s-nulya.md"
+    pattern: "104B|k3_tech_report\\.pdf"
+    severity: high
+    scope: case
+    kind: documentary
+    evidence: "docs/adr/ADR-001-*.md → ссылка на 104B или k3_tech_report.pdf"
+
+  - id: C-016
+    name: "Арена: вердикт определён как детерминированный (иначе reward-hacking)"
+    type: must_contain
+    glob: "docs/adr/ADR-002-arena-sravneniya-determinirovannyy-kontrakt-zadacha-reshenie-verdikt-kak-pervyy-srez.md"
+    pattern: "детерминирован"
+    severity: critical
+    scope: case
+    kind: documentary
+    evidence: "docs/adr/ADR-002-*.md → признак детерминированного вердикта"
+
+  - id: C-017
+    name: "Пост-тренировка: награда привязана к механическому сигналу среды"
+    type: must_contain
+    glob: "docs/adr/ADR-005-post-trenirovka-sft-grpo-i-agentnyy-kontur.md"
+    pattern: "фитнес-гейт|fitness"
+    severity: critical
+    scope: case
+    kind: documentary
+    evidence: "docs/adr/ADR-005-*.md → привязка награды к фитнес-гейту"
+
+  - id: C-018
+    name: "Сравнение: условия прогона фиксируются манифестом (равный бюджет рассуждений)"
+    type: must_contain
+    glob: "docs/adr/ADR-002-arena-sravneniya-determinirovannyy-kontrakt-zadacha-reshenie-verdikt-kak-pervyy-srez.md"
+    pattern: "run manifest|манифест"
+    severity: critical
+    scope: case
+    kind: documentary
+    evidence: "docs/adr/ADR-002-*.md → манифест прогона (run manifest)"
+
+  - id: C-019
+    name: "Пиннинг снапшотов: прогон ссылается на хеш весов и датасета"
+    # документарная гигиена ADR-004, не страж инварианта (AD-4 снят на C-038)
+    type: must_contain
+    glob: "docs/adr/ADR-004-konveyer-pretreyna-dannye-arenda-gpu-i-stadiynost.md"
+    pattern: "хеш|hash"
+    severity: critical
+    scope: case
+    kind: documentary
+    evidence: "docs/adr/ADR-004-*.md → упоминание хеша весов/датасета"
+
+  - id: C-020
+    name: "Архитектурная база запиннена на первичный техотчёт K3"
+    type: must_contain
+    glob: "docs/adr/ADR-003-arhitektura-modeli-i-ispolnenie-na-dgx-spark.md"
+    pattern: "k3_tech_report\\.pdf"
+    severity: high
+    scope: case
+    kind: documentary
+    evidence: "docs/adr/ADR-003-*.md → ссылка на k3_tech_report.pdf"
+
+  - id: C-021
+    name: "Приватный корпус не покидает контур (запрет вывоза на аренду и во внешние API)"
+    type: must_contain
+    glob: "docs/adr/ADR-004-konveyer-pretreyna-dannye-arenda-gpu-i-stadiynost.md"
+    pattern: "приватн"
+    severity: critical
+    scope: case
+    kind: documentary
+    evidence: "docs/adr/ADR-004-*.md → запрет вывоза приватного корпуса"
+
+  - id: C-022
+    name: "Лимит стоимости: смета в H800-часах до запуска прогона"
+    # документарная гигиена ADR-004, не страж инварианта (AD-8 снят на C-041):
+    # must_contain проверяет слово «смета» в прозе, а не существование сметы.
+    type: must_contain
+    glob: "docs/adr/ADR-004-konveyer-pretreyna-dannye-arenda-gpu-i-stadiynost.md"
+    pattern: "H800-час|смет"
+    severity: critical
+    scope: case
+    kind: documentary
+    evidence: "docs/adr/ADR-004-*.md → смета в H800-часах"
+
+  - id: C-023
+    name: "Мультимодальность v1 зафиксирована в решении (принято владельцем 2026-09-11)"
+    type: must_contain
+    glob: "docs/adr/ADR-003-arhitektura-modeli-i-ispolnenie-na-dgx-spark.md"
+    pattern: "мультимодальн"
+    severity: critical
+    scope: case
+    kind: documentary
+    evidence: "docs/adr/ADR-003-*.md → мультимодальность v1"
+
+  - id: C-024
+    name: "Пост-тренировка: консолидация экспертов (MOPD) зафиксирована в решении"
+    type: must_contain
+    glob: "docs/adr/ADR-005-post-trenirovka-sft-grpo-i-agentnyy-kontur.md"
+    pattern: "MOPD"
+    severity: critical
+    scope: case
+    kind: documentary
+    evidence: "docs/adr/ADR-005-*.md → консолидация экспертов MOPD"
+
+  - id: C-025
+    name: "Арена: runner изолирован microVM, а не контейнером (обоснование вендора)"
+    type: must_contain
+    glob: "docs/adr/ADR-002-arena-sravneniya-determinirovannyy-kontrakt-zadacha-reshenie-verdikt-kak-pervyy-srez.md"
+    pattern: "microVM"
+    severity: critical
+    scope: case
+    kind: documentary
+    evidence: "docs/adr/ADR-002-*.md → изоляция runner через microVM"
+
+  - id: C-026
+    name: "Разграничение: RL-алгоритм базы не назван в отчёте K3 (запрет атрибуции GRPO вендору)"
+    type: must_contain
+    glob: "docs/adr/ADR-005-post-trenirovka-sft-grpo-i-agentnyy-kontur.md"
+    pattern: "не тождествен"
+    severity: critical
+    scope: case
+    kind: documentary
+    evidence: "docs/adr/ADR-005-*.md → оговорка «не тождествен» о RL-алгоритме базы"
+
+  - id: C-027
+    name: "RL воспроизводит схему базы (K2.5/K1.5), а не сторонний алгоритм"
+    type: must_contain
+    glob: "docs/adr/ADR-005-post-trenirovka-sft-grpo-i-agentnyy-kontur.md"
+    pattern: "mirror descent|log-ratio"
+    severity: critical
+    scope: case
+    kind: documentary
+    evidence: "docs/adr/ADR-005-*.md → схема mirror descent / log-ratio"
+
+  - id: C-028
+    name: "Матрица верности существует и честно фиксирует неполноту источника"
+    type: must_contain
+    glob: "docs/FIDELITY-TO-K3.md"
+    pattern: "буквальн\\w* копи\\w* невозможн"
+    severity: critical
+    scope: case
+    kind: documentary
+    evidence: "docs/FIDELITY-TO-K3.md → признание буквальной копии невозможной"
+
+  - id: C-029
+    name: "Скелет L3 размечен по рецепту базы (что входит, что вне)"
+    type: must_contain
+    glob: "docs/FIDELITY-TO-K3.md"
+    pattern: "входит в скелет"
+    severity: high
+    scope: case
+    kind: documentary
+    evidence: "docs/FIDELITY-TO-K3.md → разметка «входит в скелет»"
+
+  - id: C-030
+    name: "Среда RL содержит механики базы: скрытые верификаторы и изоляция агента"
+    type: must_contain
+    glob: "docs/adr/ADR-002-arena-sravneniya-determinirovannyy-kontrakt-zadacha-reshenie-verdikt-kak-pervyy-srez.md"
+    pattern: "скрыт|hidden"
+    severity: critical
+    scope: case
+    kind: documentary
+    evidence: "docs/adr/ADR-002-*.md → скрытые верификаторы и изоляция агента"
+
+  - id: C-031
+    name: "Сравнительный стенд отделён от стадий рецепта (не блокирует скелет)"
+    type: must_contain
+    glob: "docs/adr/ADR-002-arena-sravneniya-determinirovannyy-kontrakt-zadacha-reshenie-verdikt-kak-pervyy-srez.md"
+    pattern: "инструмент отчётности"
+    severity: critical
+    scope: case
+    kind: documentary
+    evidence: "docs/adr/ADR-002-*.md → стенд как инструмент отчётности"
+
+  - id: C-032
+    name: "Веса моделей канонически на сетевом диске ~/gb10-shared: в рабочих каталогах — только симлинки, копий нет (решение владельца 2026-09-12)"
+    type: command_succeeds
+    command: 'test -z "$(find . -type f \( -name "*.safetensors" -o -name "*.gguf" -o -name "*.pt" -o -name "*.pth" -o -name "*.ckpt" \) -print -quit)"'
+    timeout_secs: 60
+    severity: high
+    scope: workspace
+    kind: behavioural
+    evidence: "find . -type f по расширениям *.safetensors, *.gguf, *.pt, *.pth, *.ckpt → пусто: веса только симлинками на ~/gb10-shared"
+
+  - id: C-033
+    name: "Датасеты (SFT/RL/претрейн) канонически на ~/gb10-shared: крупные файлы-копии в рабочих каталогах запрещены — симлинки (решение владельца 2026-09-12)"
+    type: command_succeeds
+    command: 'test -z "$(find . -type f -size +500M -not -path "./.git/*" -not -path "./.git" -print -quit)"'
+    timeout_secs: 60
+    severity: high
+    scope: workspace
+    kind: behavioural
+    evidence: "find . -type f -size +500M -not -path './.git/*' → пусто: датасеты только симлинками на ~/gb10-shared"
+
+  - id: C-034
+    name: "Длинноконтекстная дельта скелета оформлена решением до реализации (ADR-009), а не правками кода по месту"
+    type: command_succeeds
+    command: 'test -n "$(ls docs/adr/ADR-009-*.md 2>/dev/null | head -1)"'
+    timeout_secs: 30
+    severity: high
+    scope: case
+    kind: structural
+    evidence: "ls docs/adr/ADR-009-*.md → файл решения существует (структура пакета)"
+    adr: ADR-009
+    owner: архитектор
+
+  - id: C-036
+    name: "Мета-валидатор контура: стражи предметны — поведение, а не проза (ADR-011, AD-10)"
+    type: command_succeeds
+    command: 'python3 tools/check_constraints_meta.py'
+    timeout_secs: 60
+    severity: critical
+    scope: case
+    kind: behavioural
+    evidence: "tools/check_constraints_meta.py + model/AD-*.md + ARCHITECTURE-SPINE.md"
+
+  - id: C-037
+    name: "Канал гейта: пакет несёт рабочий ruleset кейса, а не заготовку (ADR-011, п. 5)"
+    type: command_succeeds
+    command: 'python3 tools/check_handoff_ruleset.py'
+    timeout_secs: 60
+    severity: high
+    scope: case
+    kind: behavioural
+    evidence: "CONSTRAINTS.yaml + .arch-handoff/CONSTRAINTS.yaml — число правил и sha256; отсутствие пакета — NOT-VERIFIED (не PASS)"
+  - id: C-038
+    name: "AD-4: манифест прогона A4 существует, валиден (схема v2) и покрывает конвейер полностью (behavioural-страж пиннинга снапшотов)"
+    type: command_succeeds
+    command: 'python3 tools/a4_manifest.py --verify'
+    timeout_secs: 60
+    severity: critical
+    scope: case
+    kind: behavioural
+    evidence: "evidence/a4-skeleton-run-manifest.json"
+  - id: C-039
+    name: "AD-2: LLM-судья, LLM-клиенты и внешние API вне контура награды RL (проверка кода среды, не прозы)"
+    type: command_succeeds
+    command: 'python3 tools/check_reward_isolation.py'
+    timeout_secs: 60
+    severity: critical
+    scope: case
+    kind: behavioural
+    evidence: "tools/check_reward_isolation.py → контур награды: env/ (reward.py, verifier.py, run.py — пакет среды); отсутствие импортов/вызовов судейских модулей, LLM-клиентов и внешних API в пути награды"
+  - id: C-040
+    name: "Ресурсный инвариант GB10: одна модельная нагрузка за раз (AD-7, поведенческий страж)"
+    type: command_succeeds
+    command: 'python3 tools/check_gb10_single_load.py'
+    timeout_secs: 60
+    severity: high
+    scope: case
+    kind: behavioural
+    evidence: "tools/check_gb10_single_load.py → nvidia-smi (compute-процессы с памятью >= 1 ГиБ) + реестр локов ~/gb10-shared/.locks; три исхода OK/FAIL/НЕ ПРОВЕРЕНО"
+  - id: C-041
+    name: "AD-8: смета прогона существует до запуска и не превышает лимит (behavioural-страж лимита стоимости)"
+    type: command_succeeds
+    command: 'python3 tools/check_budget_gate.py --verify'
+    timeout_secs: 60
+    severity: critical
+    scope: case
+    kind: behavioural
+    evidence: "evidence/budget/ + tools/check_budget_gate.py"
+
+  - id: C-042
+    name: "ADR-010+ADR-013: бэкенд, политика точности матмулов и режим детерминизма операций запиннены в приёмочных тестах сети — страж проверяет runtime-конфигурацию JAX, а не строку в conftest"
+    type: command_succeeds
+    command: 'python3 tools/check_precision_pinning.py --profile gate'
+    timeout_secs: 600
+    severity: high
+    scope: case
+    kind: behavioural
+    evidence: "tools/check_precision_pinning.py + net/tests/conftest.py: применяет пиннинг и читает обратно jax_default_matmul_precision, jax.devices() и фактическое наличие --xla_gpu_deterministic_ops в XLA_FLAGS процесса; PASS только при политике highest, CUDA-устройстве и флаге детерминизма в гейтовом профиле (ADR-013: без флага A5-манифест не воспроизводится побитово)"
+    adr: ADR-010, ADR-013
+    owner: архитектор

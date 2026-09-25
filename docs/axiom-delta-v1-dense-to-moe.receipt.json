@@ -1,0 +1,153 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "command": "compare",
+  "type": "architecture",
+  "comparatorVersion": 1,
+  "canonicalVersion": 1,
+  "completeness": "complete",
+  "proofLevel": "authored",
+  "base": {
+    "title": "axiom — конвейер модели с нуля против Kimi K3 (L3 → L1 → L1+)",
+    "rawSha256": "d91e6775278206ede2593be5fe7caee0862bc7f13a2a189862b874351997413b",
+    "semanticSha256": "cced3bea5a4d59c49d0c24f9caed58ec6938f871762e4f823a347316b1359983",
+    "bytes": 9062
+  },
+  "head": {
+    "title": "axiom — конвейер модели с нуля против Kimi K3 (L3 → L1 → L1+)",
+    "rawSha256": "ef1a3c2d9a25987123e9bdaf29cabb6161d8153473e6944f46f950b7100ea4d9",
+    "semanticSha256": "7a11a9aad1985bf603a5e909fca67d74458a0116bd36666075f0f08ec97fd118",
+    "bytes": 10614
+  },
+  "summary": {
+    "components": {
+      "added": 2,
+      "changed": 2,
+      "evidenceChanged": 0,
+      "removed": 0,
+      "moved": 0
+    },
+    "connections": {
+      "added": 2,
+      "changed": 0,
+      "removed": 0,
+      "rerouted": 0
+    },
+    "boundaries": {
+      "added": 1,
+      "changed": 0,
+      "removed": 0,
+      "geometryChanged": 0
+    },
+    "presentationChanged": true,
+    "provenanceChanged": false
+  },
+  "changes": {
+    "components": [
+      {
+        "id": "arena",
+        "baseLabel": "RL-среда + верификаторы",
+        "headLabel": "RL-среда + верификаторы",
+        "status": "changed",
+        "classifications": [
+          "semantic"
+        ],
+        "changedFields": [
+          "/sublabel"
+        ]
+      },
+      {
+        "id": "gb10",
+        "headLabel": "Хранилище gb10-shared",
+        "status": "added",
+        "classifications": [
+          "semantic"
+        ],
+        "changedFields": []
+      },
+      {
+        "id": "net",
+        "headLabel": "Сеть с нуля (net/)",
+        "status": "added",
+        "classifications": [
+          "semantic"
+        ],
+        "changedFields": []
+      },
+      {
+        "id": "pretrain",
+        "baseLabel": "Претрейн стадийный",
+        "headLabel": "Претрейн стадийный",
+        "status": "changed",
+        "classifications": [
+          "semantic"
+        ],
+        "changedFields": [
+          "/sublabel"
+        ]
+      }
+    ],
+    "connections": [
+      {
+        "id": "gb10-to-net",
+        "head": {
+          "from": "gb10",
+          "to": "net",
+          "label": ""
+        },
+        "status": "added",
+        "classifications": [
+          "topology"
+        ],
+        "changedFields": []
+      },
+      {
+        "id": "net-to-pretrain",
+        "head": {
+          "from": "net",
+          "to": "pretrain",
+          "label": "обучается: 20B токенов"
+        },
+        "status": "added",
+        "classifications": [
+          "topology"
+        ],
+        "changedFields": []
+      }
+    ],
+    "boundaries": [
+      {
+        "key": "security-group:Хранилище в контуре (C-032/C-033)",
+        "kind": "security-group",
+        "label": "Хранилище в контуре (C-032/C-033)",
+        "status": "added",
+        "classifications": [
+          "scope"
+        ],
+        "changedFields": []
+      }
+    ]
+  },
+  "identity": {
+    "components": "components[].id",
+    "connections": "connections[].id (required)",
+    "boundaries": "boundaries[].kind + boundaries[].label (derived)"
+  },
+  "view": {
+    "visualPreset": "classic"
+  },
+  "limitations": [
+    "Authored Architecture IR only; no runtime impact, causality, risk, or mergeability is inferred.",
+    "Boundary identity is conservatively derived from kind + label."
+  ],
+  "artifact": {
+    "sha256": "06075ec883b98a3586fbc8800a5f2011827de4ed20a7af7dedef65359a1ba503",
+    "bytes": 2068168
+  },
+  "validation": {
+    "checksPassed": 28,
+    "checkCount": 28,
+    "baseComposition": "pass",
+    "headComposition": "pass"
+  }
+}

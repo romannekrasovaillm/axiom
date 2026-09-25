@@ -1,0 +1,344 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "axiom — конвейер модели с нуля против Kimi K3 (L3 → L1 → L1+)",
+    "output": "axiom-architecture.html",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "pipeline",
+        "label": "Конвейер",
+        "focus": [
+          "data",
+          "pretrain",
+          "ckpt",
+          "posttrain",
+          "inference",
+          "harness",
+          "arena"
+        ],
+        "note": "Данные → претрейн на аренде → реестр чекпойнтов → пост-тренировка → инференс на Spark → харнесс → арена (ADR-004)."
+      },
+      {
+        "id": "trust",
+        "label": "Границы и доверие",
+        "focus": [
+          "data",
+          "rental",
+          "pretrain",
+          "k3",
+          "harness",
+          "arena"
+        ],
+        "note": "Приватный корпус — в личном контуре, на аренду идёт обезличенный датасет (AD-6); baseline K3 — тот же контракт (AD-3)."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "owner",
+      "type": "external",
+      "label": "Владелец / A3",
+      "sublabel": "класс · бюджет · ось победы",
+      "tag": "ADR-001",
+      "pos": [
+        80,
+        60
+      ],
+      "size": [
+        190,
+        64
+      ]
+    },
+    {
+      "id": "rental",
+      "type": "external",
+      "label": "Аренда GPU",
+      "sublabel": "submit/resume · лимит H800-ч",
+      "tag": "INT-001",
+      "pos": [
+        460,
+        60
+      ],
+      "size": [
+        210,
+        64
+      ]
+    },
+    {
+      "id": "data",
+      "type": "database",
+      "label": "Данные и токенизация",
+      "sublabel": "дедуп · шарды · карточка",
+      "tag": "AD-6",
+      "pos": [
+        80,
+        280
+      ],
+      "size": [
+        190,
+        64
+      ]
+    },
+    {
+      "id": "pretrain",
+      "type": "cloud",
+      "label": "Претрейн стадийный",
+      "sublabel": "L3 8 GPU · мультимодально с начала · 8K→64K",
+      "tag": "AD-8",
+      "pos": [
+        460,
+        280
+      ],
+      "size": [
+        210,
+        66
+      ]
+    },
+    {
+      "id": "ckpt",
+      "type": "database",
+      "label": "Реестр чекпойнтов",
+      "sublabel": "веса + хеши · вне хоста",
+      "tag": "AD-4",
+      "pos": [
+        840,
+        280
+      ],
+      "size": [
+        200,
+        66
+      ]
+    },
+    {
+      "id": "posttrain",
+      "type": "backend",
+      "label": "Пост-тренировка: SFT→RL→MOPD",
+      "sublabel": "схема базы: групп. advantage + log-ratio",
+      "tag": "AD-2",
+      "pos": [
+        840,
+        500
+      ],
+      "size": [
+        210,
+        66
+      ]
+    },
+    {
+      "id": "inference",
+      "type": "backend",
+      "label": "Инференс на Spark",
+      "sublabel": "128 ГБ · 4-бит · vision + 1M контекст",
+      "tag": "AD-7",
+      "pos": [
+        460,
+        500
+      ],
+      "size": [
+        210,
+        66
+      ]
+    },
+    {
+      "id": "k3",
+      "type": "external",
+      "label": "Kimi K3 (baseline)",
+      "sublabel": "2,8T / 104B активных · веса открыты",
+      "tag": "ADR-001",
+      "pos": [
+        80,
+        720
+      ],
+      "size": [
+        200,
+        66
+      ]
+    },
+    {
+      "id": "harness",
+      "type": "backend",
+      "label": "Агентный харнесс",
+      "sublabel": "модули по рецепту базы; общий для сравнения",
+      "tag": "AD-3",
+      "pos": [
+        460,
+        720
+      ],
+      "size": [
+        210,
+        66
+      ]
+    },
+    {
+      "id": "arena",
+      "type": "backend",
+      "label": "RL-среда + верификаторы",
+      "sublabel": "финальное состояние · public + hidden",
+      "tag": "AD-1/AD-3",
+      "pos": [
+        840,
+        720
+      ],
+      "size": [
+        210,
+        66
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "security-group",
+      "label": "Приватный корпус: не покидает контур (AD-6)",
+      "wraps": [
+        "data"
+      ]
+    },
+    {
+      "kind": "security-group",
+      "label": "Внешняя инфраструктура: обезличенный датасет (AD-6)",
+      "wraps": [
+        "rental",
+        "pretrain"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "owner-to-pretrain",
+      "from": "owner",
+      "to": "pretrain",
+      "label": "смета и класс (AD-8)",
+      "variant": "emphasis",
+      "fromSide": "right",
+      "toSide": "left"
+    },
+    {
+      "id": "data-to-pretrain",
+      "from": "data",
+      "to": "pretrain",
+      "label": "датасет + sha256",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelAt": [
+        365,
+        360
+      ]
+    },
+    {
+      "id": "rental-to-pretrain",
+      "from": "rental",
+      "to": "pretrain",
+      "label": "GPU · лимит H800-ч",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        565,
+        202
+      ]
+    },
+    {
+      "id": "pretrain-to-ckpt",
+      "from": "pretrain",
+      "to": "ckpt",
+      "label": "чекпойнты",
+      "fromSide": "right",
+      "toSide": "left"
+    },
+    {
+      "id": "ckpt-to-posttrain",
+      "from": "ckpt",
+      "to": "posttrain",
+      "label": "base (хеш) ↔ веса",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        947,
+        423
+      ]
+    },
+    {
+      "id": "ckpt-to-inference",
+      "from": "ckpt",
+      "to": "inference",
+      "label": "4-бит квантизация",
+      "fromSide": "bottom",
+      "toSide": "right"
+    },
+    {
+      "id": "inference-to-harness",
+      "from": "inference",
+      "to": "harness",
+      "label": "траектории",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        565,
+        643
+      ]
+    },
+    {
+      "id": "k3-to-harness",
+      "from": "k3",
+      "to": "harness",
+      "label": "равный бюджет",
+      "fromSide": "right",
+      "toSide": "left"
+    },
+    {
+      "id": "harness-to-arena",
+      "from": "harness",
+      "to": "arena",
+      "label": "решения → verifier",
+      "fromSide": "right",
+      "toSide": "left"
+    },
+    {
+      "id": "arena-to-posttrain",
+      "from": "arena",
+      "to": "posttrain",
+      "label": "награда (фитнес-гейт)",
+      "fromSide": "top",
+      "toSide": "bottom"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Решения (ADR)",
+      "items": [
+        "ADR-001 → L1: MoE 30B / 3B активных; паритет с K3 вне рамок",
+        "ADR-002 → RL-среда и верификаторы; награда по состоянию среды, public+hidden",
+        "ADR-003 → база KDA/AttnRes/LatentMoE; мультимодальность в v1; 4-бит на Spark",
+        "ADR-004 → L3 → L1 → L1+; чекпойнты вне арендованного хоста",
+        "ADR-005 → SFT → RL (схема базы) → MOPD; награда от фитнес-гейта",
+        "Fidelity: docs/FIDELITY-TO-K3.md — буквальная копия невозможна (вендор не раскрыл вычисления и числа)",
+        "Сравнительный стенд против K3 — отчётность, не стадия рецепта: скелет его не ждёт"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Спайн-инварианты",
+      "items": [
+        "AD-1 → одна объявленная ось победы, иначе заявление ложно",
+        "AD-2 → вердикт и награда детерминированы; LLM-судья вне награды",
+        "AD-3 → единый контракт прогона для K3 и кандидата",
+        "AD-4 → пиннинг весов, датасета, среды v1",
+        "AD-6 → приватный корпус не покидает контур",
+        "AD-7 → на Spark одна модельная нагрузка за раз"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Цифры и рамки",
+      "items": [
+        "L3-скелет: 1B / 20B токенов ≈ 97 H800-ч ≈ $200",
+        "L1: 30B / 3B активных ≈ 22k H800-ч ≈ $44k",
+        "L1+: 100B / 6B активных ≈ 58k H800-ч ≈ $117k",
+        "Паритет с K3: 10–20M H800-ч, ~15 МВт — вне рамок",
+        "Калибровка: arXiv 2412.19437; K3 абсолютных вычислений не раскрывает"
+      ]
+    }
+  ]
+}

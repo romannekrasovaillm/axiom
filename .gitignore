@@ -6,3 +6,12 @@ venv/
 *.egg-info/
 dist/
 .DS_Store
+# Heavy-артефакты прогонов: workspace-снапшоты задач и чекпойнты стадий живут
+# вне git (восстанавливаются детерминированным прогоном по seed; чекпойнты —
+# симлинки на ~/gb10-shared, C-032/C-033). В git — только журналы и манифесты.
+evidence/a4-run-wire/**/env/
+evidence/a4-run-wire/**/checkpoints/
+evidence/a4-run-wire/**/checkpoint/
+evidence/a4-run-wire/**/dataset/
+evidence/a4-run-wire/**/inference/
+evidence/a4-run-wire/_violated-no-budget/

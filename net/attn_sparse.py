@@ -24,6 +24,29 @@ selection, no scoring), which is what makes the indexer's cost stop growing
 with the context length in every layer but the first.  The pool is a config
 parameter (``mla_pool_block`` / ``mla_pool_size`` / ``mla_layer_modes``); with
 ``mla_pool_size = 0`` the path is exactly ADR-009 D2.
+
+ADR-018 groups the history into blocks *before* the selection (Step-5-Preview
+model card, see ``mla_block_merge`` in ``net/config.json``).  Aggregation is
+mean pooling — the minimal honest choice: it is parameter-free, deterministic
+and permutation-invariant, so the delta adds no trainable machinery of its own
+and cannot learn its way around the gate.  One merged record per complete block
+carries both the main KV and the indexer keys, the block's score is the score of
+that merged record (the selection ranks exactly what attention will read), and
+attention reads merged records instead of raw ones — which is where the
+per-record indexer and top-k cost is given up.  A block is eligible only when
+all of its records precede the query (a partially causal block would pool the
+future), so the query's own partially filled block stays the window branch's
+job and the mechanism requires ``swa_window >= block`` (checked in
+``net.config.validate_config``).  The window copy of a position inside a
+selected block is masked out — the D2 duplicate rule lifted to blocks.  The
+mechanism is *declarative*: :func:`net.config.declared_block_merge` reads
+``mla_block_merge`` from ``net/config.json`` (spine AD-9, guard C-035) and
+:func:`sparse_union_attention` consumes it as the default of its ``block_merge``
+parameter — the flag is flipped in the config, never by editing this path; an
+explicit ``block_merge`` argument overrides the declaration for tests and A/B.
+The reader sits in the schema module (which imports no numerics) so the guard
+can compare declaration and code on a plain ``python3`` without jax.  With the
+flag off the unmerged path is bit-for-bit what it was.
 """
 
 from __future__ import annotations
@@ -34,6 +57,7 @@ import jax
 import jax.numpy as jnp
 
 from . import topk_exact
+from .config import declared_block_merge
 
 # Query-block size for the blocked scan.  Small enough that the largest
 # gathered activation (B, block, top_k + window, H, dq) stays well under a few
@@ -43,6 +67,91 @@ _QUERY_BLOCK = 128
 
 def _n_blocks(T: int, block: int) -> int:
     return max(1, -(-T // block))
+
+
+def mean_blocks(x: jnp.ndarray, block: int, n_blocks: int) -> jnp.ndarray:
+    """Mean of each complete block of ``block`` records along the time axis.
+
+    ``x`` is ``(B, T, ...)`` and the result is ``(B, n_blocks, ...)`` with
+    ``n_blocks = T // block``: the trailing partial block is dropped, because
+    its remaining records are the query's own partially filled block — causal
+    eligibility excludes it and the window branch covers it (ADR-018).  Mean
+    pooling is the aggregation the mechanism declares: no parameters, no learned
+    gate, exactly reproducible, and the score of a merged record is the mean of
+    the scores of the records it merges (so the selection ranks the same
+    representation attention reads).
+    """
+    if n_blocks < 1:
+        return x[:, :0]
+    cut = x[:, : n_blocks * block]
+    shape = (cut.shape[0], n_blocks, block) + cut.shape[2:]
+    return cut.reshape(shape).mean(axis=2)
+
+
+def merged_block_selection(
+    idx_q: jnp.ndarray,
+    idx_k_merged: jnp.ndarray,
+    pos: jnp.ndarray,
+    block: int,
+    top_k: int,
+    exact_topk: bool = True,
+) -> jnp.ndarray:
+    """Selected merged-block ids per query (ADR-018).
+
+    ``idx_q`` is ``(B, Q, Hi, Di)``, ``idx_k_merged`` the pooled indexer keys
+    ``(B, n_blocks, Hi, Di)`` and ``pos`` the ``(Q,)`` query positions.  Returns
+    ``(B, Q, min(top_k, n_blocks))`` block ids, ranked by the merged records'
+    own indexer affinity.
+
+    Eligibility is causal at block granularity: a block is a candidate for a
+    query at ``p`` only when every one of its records precedes it
+    (``(j + 1) * block <= p + 1``), since the merged representation is the mean
+    over the block and a partially causal block would mix future records into
+    it.  Ineligible blocks keep ``-inf`` and are ranked last; the caller masks
+    whatever the padding selects (``sparse_valid`` below).
+    """
+    n_blk = idx_k_merged.shape[1]
+    width = min(int(top_k), int(n_blk))
+    scores = jnp.einsum(
+        "bqhi,bjhi->bqj", idx_q.astype(jnp.float32), idx_k_merged.astype(jnp.float32)
+    ) / idx_q.shape[2]
+    ids = jnp.arange(n_blk)[None, :]
+    eligible = (ids + 1) * int(block) <= (pos + 1)[:, None]  # (Q, n_blocks)
+    scores = jnp.where(eligible[None, :, :], scores, jnp.finfo(jnp.float32).min)
+    if exact_topk:
+        return topk_exact.topk_indices(scores, width)
+    return jax.lax.top_k(scores, width)[1]
+
+
+def _block_duplicates(
+    block_idx: jnp.ndarray, start: jnp.ndarray, block: int, window: int
+) -> jnp.ndarray:
+    """``(B, Q, W)`` mask of window slots covered by a selected merged block.
+
+    Each merged block occupies ``block`` consecutive records, so its window
+    slots are ``block_idx * block - start + arange(block)``; a slot is marked
+    when that offset lands inside ``[0, W)`` — the merged record covers it, so
+    the window's raw copy is the duplicate.  ``start`` is the first window
+    position of each query, as in :func:`_window_duplicates`.
+
+    This is the D2 duplicate rule (ADR-009) lifted from records to blocks: the
+    surviving copy is the *main* one, only here the main copy is the merged
+    representation.  The scatter is ``O(Q * k_blocks * block)`` — with a block
+    of 16 and ``top_k`` blocks that stays far below the gathered KV tensors the
+    same step materialises.
+    """
+    off = (
+        block_idx[..., None] * int(block)
+        - start[None, :, None, None]
+        + jnp.arange(int(block))
+    )  # (B, Q, k_blocks, block) — the trailing axis is explicit, block = 1 included
+    inside = (off >= 0) & (off < int(window))
+    slot = jnp.clip(off, 0, int(window) - 1)
+    B, Q, _ = block_idx.shape
+    dup = jnp.zeros((B, Q, int(window)), dtype=jnp.bool_)
+    return dup.at[
+        jnp.arange(B)[:, None, None, None], jnp.arange(Q)[None, :, None, None], slot
+    ].max(inside)
 
 
 def _pos_grid(T: int, block: int, n_blocks: int):
@@ -248,6 +357,7 @@ def sparse_union_attention(
     want_selection: bool = False,
     fused: bool = True,
     exact_topk: bool = True,
+    block_merge: int | None = None,
 ) -> tuple[jnp.ndarray, CandidatePool | None]:
     """Sparse main-KV selection unioned with the SWA window (ADR-009 D2 + ADR-012).
 
@@ -283,12 +393,28 @@ def sparse_union_attention(
             (tiled exact merge) instead of ``jax.lax.top_k``.  The two select the
             same records (ties broken arbitrarily in both); the flag exists to
             A/B the selection *algorithm*, not the selection.
+        block_merge: records per merged block (ADR-018), or ``None`` for "read
+            the declared value from ``net/config.json``" (see
+            :func:`net.config.declared_block_merge`).  ``<= 0``, a sequence shorter than one
+            block, an absent window branch or an indexer-less layer (mode
+            ``reuse``) all keep the unmerged path: the merged path needs a block
+            to merge, the window to cover the query's own partially filled block
+            and indexer scores to rank blocks with.  With ``block_merge = 1`` the
+            mechanism degenerates to the unmerged path exactly (T-m1).
 
     Returns:
         ``(out, pool_out)``: (B, T, H, D) attention output over the *union* of
         the selected records and the window (duplicate positions keep the
         main-KV copy, the window copy is masked out), and the pool to hand to
         the next MLA layer (None unless this layer is the pool builder).
+
+    Block-wise merging (``block_merge > 0``) replaces the per-record selection
+    with a per-block one: the indexer scores one merged record per complete block
+    and attention reads the merged records, so the selected width is ``top_k``
+    *blocks* rather than ``top_k`` records.  The merged path is its own
+    full-prefix selection: it neither publishes nor consumes the ADR-012 pool
+    (that pool is a record-level mechanism — combining the two is a separate
+    decision, not this delta), so it returns ``pool_out = None``.
     """
     B, T, H, D = q.shape
     k_eff = min(int(top_k), T)
@@ -335,16 +461,53 @@ def sparse_union_attention(
         W = 0
         k_swa = v_swa = None
 
+    # --- block-wise token merging (ADR-018) --------------------------------
+    # ``None`` means "whatever the declaration says": the case config is the
+    # switch (spine AD-9, guard C-035), an explicit width is the test/A-B hook.
+    if block_merge is None:
+        block_merge = declared_block_merge()
+    merge_block = int(block_merge)
+    n_blk = T // merge_block if merge_block > 0 else 0
+    # The merged path needs something to merge (a complete block), the window to
+    # cover the query's own partially filled block (otherwise up to
+    # ``block - 1`` records before the window would go unattended) and indexer
+    # scores to rank blocks with — a ``reuse`` layer renders none, so it keeps
+    # the unmerged path.  ``k_eff >= T`` never reaches this point (the criterion
+    # 13 fast path above returns first): a selection covering the prefix is the
+    # dense oracle, block merging or not.
+    merge = (
+        merge_block > 0 and n_blk > 0 and W >= merge_block and idx_q is not None
+    )
+    if merge:
+        # The merged candidates are the complete blocks of the prefix; the
+        # selection scans them (not the records), which is the saving the
+        # mechanism buys, and it is its own full-prefix selection, so the
+        # ADR-012 pool is neither published nor consumed here.
+        k_merged = mean_blocks(k_main, merge_block, n_blk)
+        v_merged = mean_blocks(v_main, merge_block, n_blk)
+        idx_k_merged = mean_blocks(idx_k, merge_block, n_blk)
+        mode = "full"
+        pooling = False
+
     def step(_carry, i):
         s = i * block
         pos = s + _pos_grid(T, block, n)  # (Q,)
         pos_c = jnp.minimum(pos, T - 1)
         alive = pos < T  # padded tail queries
 
-        # --- selection: full prefix (and publish the pool) / in-pool ---------
+        # --- selection: merged blocks / full prefix / in-pool ---------------
         blocks_b = jnp.zeros((B, pos_c.shape[0], max(m_eff, 1)), jnp.int32)
         sel_b = jnp.zeros((B, pos_c.shape[0], sel_width), jnp.int32)
-        if mode == "reuse":
+        if merge:
+            qi = jnp.take(idx_q, pos_c, axis=1)  # (B, Q, Hi, Di)
+            top_idx = merged_block_selection(
+                qi, idx_k_merged, pos_c, merge_block, k_eff, exact_topk=exact_topk
+            )
+            # Causality at block granularity: a block whose records are all
+            # before the query.  The padding the top-k fills with is masked out
+            # of the softmax here (the same role ``sparse_valid`` plays below).
+            sparse_valid = ((top_idx + 1) * merge_block) <= (pos_c + 1)[None, :, None]
+        elif mode == "reuse":
             # No scoring at all: the pool builder's selection is reused verbatim.
             top_idx = jnp.take(pool.selection, pos_c, axis=1)  # (B, Q, k_eff)
         else:
@@ -370,7 +533,8 @@ def sparse_union_attention(
                     blocks_b = jax.lax.top_k(bs, m_eff)[1]
                     if want_selection:
                         sel_b = top_idx
-        sparse_valid = top_idx <= pos_c[:, None]  # (B, Q, k_sel)
+        if not merge:
+            sparse_valid = top_idx <= pos_c[:, None]  # (B, Q, k_sel)
 
         # --- window records, duplicates removed by mask --------------------
         if W > 0:
@@ -379,7 +543,11 @@ def sparse_union_attention(
             wvalid = (widx_raw >= 0) & (widx_raw <= pos_c[:, None]) & alive[:, None]
             widx = jnp.clip(widx_raw, 0, T - 1)
             # a position already selected by the indexer keeps its main-KV copy
-            if fused:
+            if merge:
+                # Block granularity: every window slot inside a selected merged
+                # block is that block's duplicate (the merged record survives).
+                dup = _block_duplicates(top_idx, pos_c - (W - 1), merge_block, W)
+            elif fused:
                 # Scatter the selected records into their window slots once,
                 # instead of comparing every window slot with every selected
                 # index: O(Q * k_eff) against O(Q * W * k_eff).
@@ -389,8 +557,8 @@ def sparse_union_attention(
             wvalid = wvalid[None, :, :] & ~dup
 
         k_sel = top_idx.shape[-1]
-        mkg = _gather_time(k_main, top_idx)  # (B, Q, k_sel, H, D)
-        mvg = _gather_time(v_main, top_idx)
+        mkg = _gather_time(k_merged if merge else k_main, top_idx)  # (B, Q, k_sel, H, D)
+        mvg = _gather_time(v_merged if merge else v_main, top_idx)
         qb = jnp.take(q, pos_c, axis=1)  # (B, Q, H, D)
         o_s = jnp.einsum("bqhd,bqkhd->bqhk", qb, mkg) * scale
         o_s = jnp.where(sparse_valid[..., None, :], o_s, neg)
@@ -437,6 +605,11 @@ def sparse_union_attention(
     _, (ys, pblocks, psel) = jax.lax.scan(step, None, jnp.arange(n))
     ys = jnp.transpose(ys, (1, 0, 2, 3, 4)).reshape(B, n * block, H, D)
     out = ys[:, :T].astype(dtype)
+    if merge:
+        # A merged layer publishes no pool: its selection is block-level, and a
+        # record-level consumer without a pool falls back to its own exact
+        # full-prefix selection (above), never to a stale one.
+        return out, None
     if not pooling:
         # A consumer layer hands the *same* pool on to the next MLA layer.
         return out, pool

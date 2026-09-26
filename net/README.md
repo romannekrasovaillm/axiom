@@ -11,7 +11,7 @@
 | `kda-formulas.md` | формулы из `k3_tech_report.pdf` §2.1.1/§2.2/§2.3 (§2.5) со ссылками на строки извлечения |
 | `kda.py` | Kimi Delta Attention: рекуррентная `lax.scan` + чанкированная (ассоциативный скан) формы; дельта v1.5: окно SWA на общих q/k/v (0 матричных параметров) со своей обучаемой долей смешивания |
 | `mla.py` | Gated MLA (NoPE, латент KV, полноразмерный gate) + reference-оракул; дельта v1.5: SWA-ветка со своими K/V, sparse-выбор (indexer из латента, top-k), FP4 латента за `qat_kv_enabled` |
-| `attn_sparse.py` | общие примитивы дельты: оконное внимание (D1), sparse-выбор ∪ окно с блочным сканом по запросам (D2), память O(top_k + n_win) на запрос, иерархический пул кандидатов (ADR-012: blockwise max → top-m блоков → выбор внутри пула) |
+| `attn_sparse.py` | общие примитивы дельты: оконное внимание (D1), sparse-выбор ∪ окно с блочным сканом по запросам (D2), память O(top_k + n_win) на запрос, иерархический пул кандидатов (ADR-012: blockwise max → top-m блоков → выбор внутри пула), block-wise token merging (ADR-018: mean-пулинг блоков → отбор top_k блоков → внимание по merged-записям) |
 | `mlp.py` | SiTU-GLU MLP (Eq. 12) — dense-слой 0 и MTP-блок |
 | `moe.py` | Stable LatentMoE (Eq. 11–14): 12 routed + 2 shared, top-2, latent-проекция, QB-балансировка |
 | `attnres.py` | Attention Residuals (full form, аддитивная интеграция) |
@@ -26,7 +26,7 @@
 | `checkpoint.py` | Orbax save/load + хеш-манифест |
 | `infer.py` | детерминированная инференс-петля `generate` (NTP-голова, greedy/temperature+top_p, seed-пиннинг; MTP-голова не используется) |
 | `gpu_smoke.py` | раннер GPU-смоука §6.10: замеры ток/с (tiny/полный), отчёт `gpu-smoke-report.json` |
-| `tests/` | 12 критериев приёмки §6 спеки + test_13 — end-to-end стыковка с env; критерии дельты v1.5: test_13_sparse_dense_equivalence (13), test_14_kv_fp4 (15), test_15_cost_8k_64k (16), test_16_indexer_determinism (17) |
+| `tests/` | 12 критериев приёмки §6 спеки + test_13 — end-to-end стыковка с env; критерии дельты v1.5: test_13_sparse_dense_equivalence (13), test_14_kv_fp4 (15), test_15_cost_8k_64k (16), test_16_indexer_determinism (17); дельта ADR-018: test_23_block_merge (T-m1…T-m4, страж T-m5 — `tools/check_declarative_context.py`) |
 
 Дельта v1.5 (ADR-009, gated A4) включается флагом `attn_dense_reference=false`
 (по умолчанию `true` — плотный оракул D4, поведение тестов 01–12 не меняется).
@@ -48,6 +48,25 @@
 `reindex` эквивалентен отбору по всему префиксу (тесты в
 `test_13_sparse_dense_equivalence.py`); «пул строится ровно один раз за
 forward» закреплено в `test_17_indexer_shortcut.py`.
+
+Block-wise token merging (ADR-018, заимствование модели-карты Step-5-Preview
+20.09.2026) декларируется там же: `mla_block_merge` (`{"enabled": false,
+"block": 16}`).  История агрегируется блоками по `block` записей **до**
+sparse-выбора: на каждый полный блок — одна merged-запись (mean-пулинг
+представлений и ключей индексатора: без параметров, детерминированно), отбор
+идёт по блокам (`top_k` блоков вместо `top_k` записей), и внимание читает
+merged-записи — там и высвобождается стоимость indexer+top-k.  Блок-кандидат
+обязан быть полностью причинным (`(j+1)*block <= p+1`), поэтому хвост
+собственного неполного блока запроса остаётся работой окна: `validate_config`
+требует `swa_window >= block` при включённом механизме.  Копия окна внутри
+выбранного блока маскируется — правило дублей D2, поднятое с записей на блоки.
+Флаг по умолчанию **off** до зелёного замера на гэпе 64K (ADR-018 п. 3,
+критерии 1–7 ADR-009); при off незамёрженный путь побитово прежний, а при
+`block = 1` механизм вырождается в него же (`tests/test_23_block_merge.py`,
+T-m1).  Объявление читает `net/config.py:declared_block_merge` (страж C-035,
+`tools/check_declarative_context.py`), потребляет
+`attn_sparse.sparse_union_attention(block_merge=…)`; пул ADR-012 и слияние в
+этой дельте не комбинируются — merged-слой пул не публикует.
 
 Инвариант конфига: `num_heads * head_dim == hidden` и
 `kda_dk == kda_dv == mla_head_dim == head_dim` (проверяется `validate_config`).

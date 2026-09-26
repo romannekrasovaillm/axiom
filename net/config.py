@@ -11,7 +11,35 @@ from __future__ import annotations
 import dataclasses
 import json
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
+
+#: Key of the declared block-wise token merging switch (ADR-018) in the config.
+BLOCK_MERGE_KEY = "mla_block_merge"
+
+#: The case's declarative config — the file the reader below reads.  It is the
+#: *switch* (spine AD-9: "конфиг первичен"): turning a declared mechanism on is
+#: an edit of this file, not of the code path that consumes it.
+CONFIG_PATH = Path(__file__).with_name("config.json")
+
+
+@dataclass(frozen=True)
+class BlockMergeConfig:
+    """Block-wise token merging of the MLA history (ADR-018, Step-5 borrowing).
+
+    ``enabled`` is the declarative switch and ``block`` the number of records
+    aggregated into one merged record (mean pooling, see
+    :func:`net.attn_sparse.mean_blocks`): the indexer scores one merged record
+    per block and attention reads the merged records instead of the raw ones.
+
+    Pinned **off** until the 64K gap measurement is green (ADR-018 p. 3: the
+    mechanism is accepted through criteria 1-7 of ADR-009 and only then does the
+    default flip).  Both fields are numbers, not code: ``net/attn_sparse.py``
+    reads them (guard C-035), so turning the mechanism on is a config edit.
+    """
+
+    enabled: bool = False
+    block: int = 16
 
 
 @dataclass(frozen=True)
@@ -58,6 +86,17 @@ class ModelConfig:
     mla_pool_block: int = 64           # records per pool block (V4.1-Flash 2.3.2)
     mla_pool_size: int = 0             # m: blocks kept in the pool (0 = pool off)
     mla_layer_modes: tuple[str, ...] = ()  # per MLA layer: full | reindex | reuse
+
+    # --- block-wise token merging (ADR-018: Step-5-Preview model card) --------
+    # The history is aggregated into blocks of ``block`` records before the
+    # sparse selection: the indexer scores one merged record per block and
+    # attention reads the merged records, so the selection stops paying per
+    # record.  Declared as ``mla_block_merge`` in ``net/config.json`` (spine
+    # AD-9, guard C-035) and read by ``net/attn_sparse.py`` — the *file* is the
+    # switch, so enabling it is not a code edit.  Pinned off until the 64K gap
+    # measurement is green (ADR-018 p. 3); with the flag off the unmerged path
+    # is bit-for-bit unchanged.
+    mla_block_merge: BlockMergeConfig = BlockMergeConfig()
 
     # --- sparse assembly (criterion 16 delta: fused gather + attention) ------
     # ``True`` assembles the union attention without materialising the gathered
@@ -179,6 +218,75 @@ def validate_config(cfg: ModelConfig) -> None:
             "reindex/reuse layers consume (ADR-012)"
         )
 
+    # Block-wise token merging (ADR-018): the block is a width, so it is a
+    # positive integer; and when the mechanism is on, the window branch must
+    # cover the query's own partially filled block — the eligible blocks are the
+    # complete ones *before* the query, so a window narrower than the block
+    # would leave up to ``block - 1`` records before it unattended.
+    merge = cfg.mla_block_merge
+    assert isinstance(merge, BlockMergeConfig), (
+        "mla_block_merge must be a BlockMergeConfig (enabled/block), got "
+        f"{type(merge).__name__}"
+    )
+    assert merge.block >= 1, "mla_block_merge.block must be >= 1 (records per block)"
+    if merge.enabled:
+        assert cfg.swa_window >= merge.block, (
+            f"mla_block_merge: swa_window={cfg.swa_window} must cover the block "
+            f"({merge.block}) — the intra-block tail is the window's job (ADR-018)"
+        )
+
+
+@lru_cache(maxsize=8)
+def _read_declared(path: str, mtime_ns: int, size: int) -> dict:
+    """Parse a declared config, cached by ``(path, mtime, size)``.
+
+    The cache key carries the file's stat, so any edit invalidates the entry: a
+    test, or the architect flipping the switch, is never served a stale value.
+    A broken or absent file reads as ``{}`` — the caller decides what that means.
+    """
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def declared_block_merge(path: str | Path | None = None) -> int:
+    """Records per merged block declared in the config (``0`` = mechanism off).
+
+    ADR-018 declares block-wise token merging as ``mla_block_merge:
+    {enabled, block}`` in ``net/config.json``; this reader is what makes the
+    *declaration* the switch (spine AD-9, guard C-035) instead of an edit of the
+    attention path.  ``net/attn_sparse.py`` consumes it as the default width of
+    its ``block_merge`` parameter, so the flag is flipped in the file — with the
+    flag off the unmerged path is bit-for-bit what it was.
+
+    The reader lives here, in the schema module, rather than next to the
+    attention primitives: this module imports no numerics, so the guard that
+    compares declaration and code can run on a plain ``python3`` (no jax), and
+    "the config is primary" has a single reader to point at.  It never guesses a
+    width: an absent file, an absent field, ``enabled: false``, a missing or
+    non-integer ``block``, or ``block < 1`` all read as ``0``.  A declaration
+    that *says* it is enabled but carries a broken width is reported as a broken
+    declaration by the guard, and ``validate_config`` asserts the same for a
+    config loaded through the schema.
+    """
+    candidate = Path(path) if path is not None else CONFIG_PATH
+    try:
+        stat = candidate.stat()
+    except OSError:
+        return 0
+    declared = _read_declared(str(candidate), stat.st_mtime_ns, stat.st_size).get(
+        BLOCK_MERGE_KEY
+    )
+    if not isinstance(declared, dict) or not bool(declared.get("enabled", False)):
+        return 0
+    block = declared.get("block")
+    if not isinstance(block, int) or isinstance(block, bool) or block < 1:
+        return 0
+    return block
+
 
 def load_config(path: str | Path = "config.json") -> ModelConfig:
     with open(path, "r", encoding="utf-8") as f:
@@ -190,6 +298,20 @@ def load_config(path: str | Path = "config.json") -> ModelConfig:
     for name in ("context_curriculum", "curriculum_split", "mla_layer_modes"):
         if name in filtered and isinstance(filtered[name], list):
             filtered[name] = tuple(filtered[name])
+    # JSON has no nested records either: ``mla_block_merge`` is declared as an
+    # object (ADR-018), and the reader (``net/attn_sparse.py``) reads the file,
+    # so both the schema object and the raw declaration must agree.  A malformed
+    # declaration raises instead of falling back to the default width: silently
+    # substituting a block size is exactly the guessing the flag exists to avoid.
+    declared_merge = filtered.get("mla_block_merge")
+    if isinstance(declared_merge, dict):
+        enabled = declared_merge.get("enabled", False)
+        block = declared_merge.get("block", BlockMergeConfig.block)
+        if not isinstance(enabled, bool):
+            raise ValueError(f"mla_block_merge.enabled must be true/false, got {enabled!r}")
+        if not isinstance(block, int) or isinstance(block, bool):
+            raise ValueError(f"mla_block_merge.block must be an integer, got {block!r}")
+        filtered["mla_block_merge"] = BlockMergeConfig(enabled=enabled, block=block)
     return ModelConfig(**filtered)
 
 

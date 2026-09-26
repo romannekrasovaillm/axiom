@@ -360,6 +360,18 @@ constraints:
     adr: ADR-009
     owner: архитектор
 
+  - id: C-035
+    name: "AD-9: механика длинного контекста декларативна — объявленное в net/config.json читается кодом net/, а не живёт в прозе (сверка config ↔ код)"
+    type: command_succeeds
+    command: 'python3 tools/check_declarative_context.py'
+    timeout_secs: 60
+    severity: high
+    scope: case
+    kind: behavioural
+    evidence: "tools/check_declarative_context.py → net/config.json (mla_block_merge: enabled/block + механики AD-9: swa_window, mla_top_k, swa_share_kda_projections, qat_kv_enabled, indexer_seed, mla_pool_block, mla_pool_size, mla_layer_modes) + net/config.py (поле схемы, читатель declared_block_merge) + net/attn_sparse.py (параметр block_merge у sparse_union_attention, вызов читателя) + проба читателя на живом модуле (enabled=true → ширина блока, выключено/отсутствует → 0) + строка deviations со ссылкой на ADR-018 и источник + swa_window >= block при enabled"
+    adr: ADR-018
+    owner: архитектор
+
   - id: C-036
     name: "Мета-валидатор контура: стражи предметны — поведение, а не проза (ADR-011, AD-10)"
     type: command_succeeds

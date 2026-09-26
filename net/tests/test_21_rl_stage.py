@@ -47,9 +47,31 @@ from typing import Iterator
 
 import pytest
 
+def _detect_repo_root(case_dir: Path) -> Path:
+    """Корень репозитория для путей журнала: git-корень кейса.
+
+    Пути стадии относительны от корня репозитория, а не от каталога кейса
+    (ADR-014 п. 8). В standalone-репозитории кейс и есть корень, поэтому
+    ``case_dir`` — честный фолбэк, когда git недоступен; спрашивать git
+    первым нужно потому, что в вложенном раскладе (``кейсы/axiom``)
+    корень лежит выше кейса, и угадать его по числу ``parent`` нельзя.
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=str(case_dir), capture_output=True, text=True, timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):  # pragma: no cover
+        return case_dir
+    root = (proc.stdout or "").strip()
+    if proc.returncode == 0 and root:
+        return Path(root).resolve()
+    return case_dir
+
+
 NET_DIR = Path(__file__).resolve().parent.parent
 CASE_DIR = NET_DIR.parent
-REPO_ROOT = CASE_DIR.parent.parent
+REPO_ROOT = _detect_repo_root(CASE_DIR)
 RUNNER = CASE_DIR / "tools" / "run_rl_smoke.py"
 
 #: Модельный vocab смоука: тот же, что посчитает стадия из канонического BPE.
@@ -252,7 +274,9 @@ def test_symlink_inside_shared_disk_accepted(repo_scratch):
     assert described["format"] == "orbax"
     assert resolved.is_dir()
     assert described["canonical"].startswith("~") or not described["canonical"].startswith("/")
-    assert described["path"].startswith("кейсы/axiom/net/tests/.rl-test-")
+    # точка монтирования — относительный путь ОТ КОРНЯ РЕПО (ADR-014 п. 8):
+    # скретч лежит внутри репо, значит префикс — путь до него внутри репо.
+    assert described["path"].startswith("net/tests/.rl-test-")
 
 
 # ---------------------------------------------------------------------------

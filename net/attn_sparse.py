@@ -38,7 +38,9 @@ all of its records precede the query (a partially causal block would pool the
 future), so the query's own partially filled block stays the window branch's
 job and the mechanism requires ``swa_window >= block`` (checked in
 ``net.config.validate_config``).  The window copy of a position inside a
-selected block is masked out — the D2 duplicate rule lifted to blocks.  The
+selected *eligible* block is masked out — the D2 duplicate rule lifted to
+blocks; an ineligible block the ranking padded itself with marks nothing, or the
+very tail the window is there to cover would be lost twice over.  The
 mechanism is *declarative*: :func:`net.config.declared_block_merge` reads
 ``mla_block_merge`` from ``net/config.json`` (spine AD-9, guard C-035) and
 :func:`sparse_union_attention` consumes it as the default of its ``block_merge``
@@ -124,7 +126,11 @@ def merged_block_selection(
 
 
 def _block_duplicates(
-    block_idx: jnp.ndarray, start: jnp.ndarray, block: int, window: int
+    block_idx: jnp.ndarray,
+    start: jnp.ndarray,
+    block: int,
+    window: int,
+    valid: jnp.ndarray | None = None,
 ) -> jnp.ndarray:
     """``(B, Q, W)`` mask of window slots covered by a selected merged block.
 
@@ -139,6 +145,17 @@ def _block_duplicates(
     representation.  The scatter is ``O(Q * k_blocks * block)`` — with a block
     of 16 and ``top_k`` blocks that stays far below the gathered KV tensors the
     same step materialises.
+
+    ``valid`` — the ``(B, Q, k_blocks)`` eligibility of each selected block (the
+    caller's ``sparse_valid``) — matters because a *selection* of ``top_k``
+    blocks is not always a selection of ``top_k`` *eligible* ones: when fewer
+    blocks are eligible than ``top_k`` (an early query), the ranking pads
+    itself with ineligible blocks, which the sparse branch then drops.  Such a
+    block must not take the window down with it: the padding block that sits
+    over the window is exactly the query's own partially filled block, and its
+    causal prefix is the window branch's job (ADR-018).  An ineligible block
+    therefore marks nothing; the default ``None`` treats every id as valid,
+    which is the pure geometric reading of the rule (the unit test's case).
     """
     off = (
         block_idx[..., None] * int(block)
@@ -146,6 +163,8 @@ def _block_duplicates(
         + jnp.arange(int(block))
     )  # (B, Q, k_blocks, block) — the trailing axis is explicit, block = 1 included
     inside = (off >= 0) & (off < int(window))
+    if valid is not None:
+        inside = inside & valid[..., None]
     slot = jnp.clip(off, 0, int(window) - 1)
     B, Q, _ = block_idx.shape
     dup = jnp.zeros((B, Q, int(window)), dtype=jnp.bool_)
@@ -546,7 +565,13 @@ def sparse_union_attention(
             if merge:
                 # Block granularity: every window slot inside a selected merged
                 # block is that block's duplicate (the merged record survives).
-                dup = _block_duplicates(top_idx, pos_c - (W - 1), merge_block, W)
+                # Only the *eligible* selected blocks count: a padding block the
+                # sparse branch drops must not mask its raw window copy either,
+                # or the query's own partially filled block would go unattended
+                # (early queries have fewer eligible blocks than ``top_k``).
+                dup = _block_duplicates(
+                    top_idx, pos_c - (W - 1), merge_block, W, valid=sparse_valid
+                )
             elif fused:
                 # Scatter the selected records into their window slots once,
                 # instead of comparing every window slot with every selected

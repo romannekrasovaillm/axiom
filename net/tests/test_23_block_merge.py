@@ -285,6 +285,38 @@ def test_t_m2_window_copy_of_a_selected_block_is_masked():
     assert float(jnp.max(jnp.abs(out[0, 7, 0] - _hand_reference(values, logits)))) <= TOL
 
 
+def test_t_m2_padding_block_does_not_mask_the_window_copy():
+    """An *ineligible* selected block must not take the window down with it.
+
+    ``top_k`` ranks blocks, and an early query has fewer eligible blocks than
+    ``top_k``: blocks 0 and 1 are eligible at ``p = 9`` (``(j + 1) * 4 <= 10``),
+    so the third pick pads itself with block 2 — the query's *own*, only
+    partially causal block ([8, 12) at ``p = 9``).  The sparse branch drops that
+    block (its mean would contain future records), so its window slots 8 and 9
+    must stay alive: they are the causal prefix of the query's own block, and
+    covering it is the window's job (ADR-018) — the whole reason
+    ``validate_config`` demands ``swa_window >= block``.  The expected value is
+    written out by hand: the merged records of blocks 0 and 1 (logits 1 and 0)
+    plus the two raw window records 8, 9 (logit 0) — block 1's span (slots 6, 7)
+    being masked, since that block *is* eligible and its merged record is the
+    surviving copy.
+    """
+    inputs = _hand_inputs(T=12, block=4, window=4, top_k=3)
+    out, _ = _run(inputs, block_merge=4)
+    scale = 1.0 / jnp.sqrt(jnp.asarray(2, jnp.float32))
+    logits = [scale * 1.0] + [scale * 0.0] * 3  # merged blocks 0, 1 + raw 8, 9
+    values = [[3.0, 0.0], [0.0, 5.0]] + [[0.0, 5.0]] * 2
+    reference = _hand_reference(values, logits)
+    assert float(jnp.max(jnp.abs(out[0, 9, 0] - reference))) <= TOL, (
+        "the padded block masked the window copy of the query's own causal prefix"
+    )
+    # Independent control: the padding block contributes nothing, so dropping it
+    # from the ranking (top_k = 2 — exactly the two eligible blocks) cannot
+    # change the output at p = 9.
+    narrower, _ = _run(_hand_inputs(T=12, block=4, window=4, top_k=2), block_merge=4)
+    assert float(jnp.max(jnp.abs(narrower[0, 9, 0] - out[0, 9, 0]))) <= TOL
+
+
 def test_t_m2_block_duplicate_mask_matches_the_pairwise_compare():
     """The scatter-based block mask is the pairwise slot ⊂ block test.
 
@@ -310,6 +342,14 @@ def test_t_m2_block_duplicate_mask_matches_the_pairwise_compare():
     assert scatter.shape == pairwise.shape == (1, Q, W)
     assert bool(jnp.all(scatter == pairwise))
     assert bool(jnp.any(scatter))  # the case is not vacuous
+
+    # The eligibility gate (``valid``): only the second pick counts here, so
+    # exactly the slots it covers may be marked — the picks that cover the
+    # window through *ineligible* blocks (queries 0 and 4) go unmarked.
+    second_only = jnp.zeros_like(idx, dtype=jnp.bool_).at[..., 1].set(True)
+    gated = attn_sparse._block_duplicates(idx, start, block, W, valid=second_only)
+    assert bool(jnp.all(gated == covered[..., 1, :]))
+    assert bool(jnp.any(pairwise & ~gated)), "the gate case is not vacuous"
 
 
 def test_t_m2_declared_flag_switches_the_live_layer(cfg, tmp_path, monkeypatch):

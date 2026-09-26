@@ -110,12 +110,6 @@ def _read_log(path: str) -> HarnessReport | None:
     return None
 
 
-@dataclass
-class MatchResult:
-    status: str | None
-    ambiguous: bool = False
-
-
 class HarnessIndex:
     """Индекс отчётов турникета: статусы + временные окна для привязки."""
 

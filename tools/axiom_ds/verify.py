@@ -144,19 +144,35 @@ def classify_with_evidence(
 ) -> tuple[str, str]:
     """Класс верификации эпизода и источник вердикта.
 
-    Приоритет — за завершающим контрактом сессии; harness-отчёт подключается,
-    только если контракта нет. Известный, но неполный статус контракта
-    (например ``partial``) harness-отчётом не перебивается: сессия сама
-    сказала, чем кончилась.
+    Правило разрешения противоречий — **fail-closed**: в SFT эпизод попадает,
+    только если ни один из источников не говорит «провал».
+
+    1. контракт сессии ``failed/blocked/conflicts`` → ``verified-failed``;
+    2. harness-отчёт ``failed/blocked/conflicts`` → ``verified-failed``
+       (в том числе когда контракт сессии объявил ``complete``: расхождение
+       источников трактуется против эпизода, а не в его пользу);
+    3. иначе ``complete`` от любого источника → ``verified-complete``;
+    4. иначе ``unverified`` — включая неполный статус контракта (``partial``):
+       harness-отчёт по времени может только подтвердить полный успех, но не
+       переписать «сессия сама сказала, что не закончила».
     """
     contract = extract_final_contract(episode)
-    if contract is not None:
-        cls = _status_class(contract.get("status"))
-        return (cls or UNVERIFIED), EVIDENCE_CONTRACT
+    contract_class = _status_class(contract.get("status")) if contract is not None else None
 
-    cls = _status_class(harness_status)
-    if cls is not None:
-        return cls, EVIDENCE_HARNESS
+    if contract_class == VERIFIED_FAILED:
+        return VERIFIED_FAILED, EVIDENCE_CONTRACT
+
+    harness_class = _status_class(harness_status)
+    if harness_class == VERIFIED_FAILED:
+        return VERIFIED_FAILED, EVIDENCE_HARNESS
+
+    if contract is not None:
+        if contract_class == VERIFIED_COMPLETE:
+            return VERIFIED_COMPLETE, EVIDENCE_CONTRACT
+        return UNVERIFIED, EVIDENCE_CONTRACT
+
+    if harness_class == VERIFIED_COMPLETE:
+        return VERIFIED_COMPLETE, EVIDENCE_HARNESS
     return UNVERIFIED, EVIDENCE_NONE
 
 

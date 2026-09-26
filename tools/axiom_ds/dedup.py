@@ -21,7 +21,7 @@ import json
 import re
 import zlib
 from array import array
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Iterable, Sequence
 
 SHINGLE_SIZE = 5
@@ -84,13 +84,21 @@ def shingle_hashes(text: str, size: int = SHINGLE_SIZE, max_shingles: int = MAX_
     return sorted(unique)
 
 
-def _signature_values(shingle_hash: int) -> list[int]:
-    """64 подписи одного шингла: crc32 с разными зёрнами."""
-    values = []
-    for seed in range(NUM_PERM):
-        mixed = zlib.crc32(shingle_hash.to_bytes(8, "big"), seed * 0x9E3779B1 & 0xFFFFFFFF)
-        values.append((mixed & _MASK64))
-    return values
+def _splitmix64(value: int) -> int:
+    """Детерминированный 64-битный микшер (Snowflake/splitmix64)."""
+    value = (value + 0x9E3779B97F4A7C15) & _MASK64
+    mixed = value
+    mixed = ((mixed ^ (mixed >> 30)) * 0xBF58476D1CE4E5B9) & _MASK64
+    mixed = ((mixed ^ (mixed >> 27)) * 0x94D049BB133111EB) & _MASK64
+    return mixed ^ (mixed >> 31)
+
+
+#: Семейство аффинных хешей h_i(x) = a_i*x + b_i (mod 2^64) — дешёвая замена
+#: независимых перестановок в MinHash. Константы детерминированы, поэтому
+#: подпись эпизода воспроизводима между прогонами.
+_AFFINE: tuple[tuple[int, int], ...] = tuple(
+    ((_splitmix64(2 * index + 1) | 1), _splitmix64(2 * index + 2)) for index in range(NUM_PERM)
+)
 
 
 def minhash_signature(
@@ -100,14 +108,11 @@ def minhash_signature(
     hashes = shingle_hashes(text, max_shingles=max_shingles)
     if not hashes:
         return array("Q", [_EMPTY_SIGNATURE] * num_perm)
-    signature = array("Q", [_EMPTY_SIGNATURE] * num_perm)
+    signature = [_EMPTY_SIGNATURE] * num_perm
     for shingle in hashes:
-        values = _signature_values(shingle)
-        for index in range(num_perm):
-            value = values[index]
-            if value < signature[index]:
-                signature[index] = value
-    return signature
+        values = [(a * shingle + b) & _MASK64 for a, b in _AFFINE]
+        signature = [current if current < value else value for current, value in zip(signature, values)]
+    return array("Q", signature)
 
 
 def jaccard_estimate(signature_a: Sequence[int], signature_b: Sequence[int]) -> float:
@@ -155,7 +160,9 @@ class Deduper:
     def __init__(self, threshold: float = JACCARD_THRESHOLD) -> None:
         self.threshold = float(threshold)
         self.stats = DedupStats()
-        self._by_fingerprint: dict[str, dict] = {}
+        # Хранятся только подписи и отпечатки: сами эпизоды не удерживаются
+        # в памяти (иначе полный прогон растёт на сотни МБ).
+        self._by_fingerprint: dict[str, str] = {}
         self._signatures: dict[str, array] = {}
         self._started_at: dict[str, str] = {}
         self._bands: dict[tuple[int, int], list[str]] = {}
@@ -170,10 +177,10 @@ class Deduper:
         text = episode_text(record)
 
         fingerprint = hashlib.sha256(normalize_text(text).encode("utf-8")).hexdigest()
-        if fingerprint in self._by_fingerprint:
-            kept = self._by_fingerprint[fingerprint]
+        kept_id = self._by_fingerprint.get(fingerprint)
+        if kept_id is not None:
             self.stats.exact += 1
-            self._note_older(started_at, self._started_at.get(str(kept.get("id", "")), ""))
+            self._note_older(started_at, self._started_at.get(kept_id, ""))
             return False
 
         signature = minhash_signature(text)
@@ -187,7 +194,7 @@ class Deduper:
                 self._note_older(started_at, self._started_at.get(candidate_id, ""))
                 return False
 
-        self._remember(episode_id, fingerprint, signature, started_at, record)
+        self._remember(episode_id, fingerprint, signature, started_at)
         self.stats.kept += 1
         return True
 
@@ -209,9 +216,8 @@ class Deduper:
         fingerprint: str,
         signature: array,
         started_at: str,
-        record: dict,
     ) -> None:
-        self._by_fingerprint[fingerprint] = record
+        self._by_fingerprint[fingerprint] = episode_id
         self._signatures[episode_id] = signature
         self._started_at[episode_id] = started_at
         for key in _band_keys(signature):

@@ -233,6 +233,35 @@ def test_ts1_scrub_text_is_idempotent():
     assert scrub_mod.scrub_text(once) == once
 
 
+def test_ts1_complete_private_key_block_leaves_no_markers():
+    cleaned = scrub_mod.scrub_text(PRIVATE_KEY_BLOCK)
+    assert "PRIVATE KEY" not in cleaned
+    assert cleaned.strip() == REDACTED
+
+
+def test_ts1_dangling_private_key_header_is_redacted():
+    """Обрезанное чтение .pem: заголовок и тело есть, футера нет.
+
+    Так выглядит вывод чтения с --limit и результат поиска по файлу: правило
+    «целого блока» такое не ловит, а ключевой материал утекает.
+    """
+    body = "MIIEvwIBADAQABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghij"
+    text = f'let pem = "-----BEGIN PRIVATE KEY-----\n{body}\n'
+    cleaned = scrub_mod.scrub_text(text)
+    assert body not in cleaned
+    assert "PRIVATE KEY" not in cleaned
+
+
+def test_ts1_orphan_private_key_markers_are_redacted():
+    """Осиротевшие маркеры ключа не должны переживать скраб."""
+    for marker in (
+        "-----BEGIN RSA PRIVATE KEY-----",
+        "-----END PRIVATE KEY-----",
+        "-----BEGIN OPENSSH PRIVATE KEY-----",
+    ):
+        assert "PRIVATE KEY" not in scrub_mod.scrub_text(f"see {marker} here")
+
+
 def test_ts1_scrub_session_walks_nested_blocks():
     session = {
         "type": "assistant",
@@ -325,13 +354,20 @@ def test_te1_episode_boundaries_follow_user_requests(tmp_path):
         ("assistant", "text"),
     ]
     assert first.turns[0].content == "Задача А: собери отчёт"
-    assert first.turns[2].content == "Bash"  # имя инструмента сохранено
+    # ход tool_call несёт и имя инструмента, и его аргументы (иначе агентная
+    # траектория теряет само действие)
+    call = json.loads(first.turns[2].content)
+    assert call["name"] == "Bash"
+    assert call["input"] == {"command": "ls"}
+    assert first.turns[3].content == "build.py\nepisodes.py"
     assert first.turns[-1].content == "Отчёт собран, готово"
     assert first.started_at == "2026-09-01T10:00:00.000Z"
     assert first.ended_at == "2026-09-01T10:05:00.000Z"
 
     assert second.turns[0].content == "Задача Б: прогони тесты"
-    assert [t.content for t in second.turns if t.kind == "tool_call"] == ["Bash"]
+    assert [json.loads(t.content)["input"]["command"] for t in second.turns if t.kind == "tool_call"] == [
+        "pytest -q"
+    ]
     assert second.started_at == "2026-09-01T10:06:00.000Z"
 
 
@@ -535,36 +571,65 @@ def test_tb1_limit_zero_writes_empty_but_valid_jsonl_and_report(tmp_path):
     assert report["status"] == "ok"
 
 
+def unique_tool_cycle_session(sid: str, salt: str, contract: str | None = None) -> list:
+    """Сессия с уникальным по содержанию телом — чтобы near-dup её не съел.
+
+    Синтетические сессии «под копирку» законно схлопываются дедупом, поэтому для
+    проверки классов нужны заведомо различные траектории.
+    """
+    body = " ".join(f"{salt}{i:03d}" for i in range(60))
+    ts = "2026-09-01T10:{:02d}:00.000Z"
+    events = [
+        ev_user_text(f"Задача {sid}: разбери {body}", ts.format(0), sid, "u1"),
+        ev_assistant(
+            [
+                ev_text_block(f"Смотрю {salt}"),
+                ev_tool_use("t1", "Bash", {"command": f"grep -rn {salt} {body[:40]}"}),
+            ],
+            ts.format(1),
+            sid,
+            "a1",
+        ),
+        ev_tool_result("t1", f"{salt}: найдено совпадений — {body[40:]}", ts.format(2), sid, "r1"),
+        ev_assistant([ev_text_block(f"Отчёт по {salt}: {body[80:]}")], ts.format(3), sid, "a2"),
+        ev_user_text(f"Вторая задача {sid}: проверь {body[::-1]}", ts.format(4), sid, "u2"),
+        ev_assistant(
+            [ev_tool_use("t2", "Bash", {"command": f"pytest -q -k {salt}"})],
+            ts.format(5),
+            sid,
+            "a3",
+        ),
+        ev_tool_result("t2", f"{salt}: проверки пройдены {body[:60]}", ts.format(6), sid, "r2"),
+    ]
+    if contract is not None:
+        events.append(
+            ev_assistant([ev_text_block(contract_text(contract))], ts.format(7), sid, "a4")
+        )
+    else:
+        events.append(
+            ev_assistant([ev_text_block(f"Итог {salt}: {body[20:100]}")], ts.format(7), sid, "a4")
+        )
+    return events
+
+
 def test_tb2_end_to_end_build_scrubs_and_classifies(tmp_path):
     source = tmp_path / "projects"
 
-    complete_events = two_tool_cycle_session(sid="sess-ok")
-    complete_events[-1] = ev_assistant(
-        [ev_text_block(contract_text("complete"))], "2026-09-01T10:09:00.000Z", "sess-ok", "a5"
-    )
-    write_jsonl(source / "p1" / "ok.jsonl", complete_events)
+    ok_events = unique_tool_cycle_session("sess-ok", "alpha", contract="complete")
+    write_jsonl(source / "p1" / "ok.jsonl", ok_events)
 
-    failed_events = two_tool_cycle_session(sid="sess-bad", out="упало")
-    failed_events[2] = ev_tool_result(
+    bad_events = unique_tool_cycle_session("sess-bad", "bravo", contract="blocked")
+    bad_events[2] = ev_tool_result(
         "t1", f"FAILED with {OPENAI_KEY}", "2026-09-01T10:02:00.000Z", "sess-bad", "r1"
     )
-    failed_events[-1] = ev_assistant(
-        [ev_text_block(contract_text("blocked"))], "2026-09-01T10:09:00.000Z", "sess-bad", "a5"
-    )
-    write_jsonl(source / "p2" / "bad.jsonl", failed_events)
+    write_jsonl(source / "p2" / "bad.jsonl", bad_events)
 
-    write_jsonl(source / "p3" / "meh.jsonl", two_tool_cycle_session(sid="sess-meh"))
+    write_jsonl(source / "p3" / "meh.jsonl", unique_tool_cycle_session("sess-meh", "charlie"))
 
-    # точный дубль первого эпизода sess-ok — должен быть снят дедупом
-    write_jsonl(
-        source / "p4" / "dup.jsonl",
-        [
-            ev_user_text("Задача А: собери отчёт", "2026-09-01T10:00:00.000Z", "sess-dup", "u1"),
-            ev_assistant(
-                [ev_text_block("Отчёт собран, готово")], "2026-09-01T10:00:05.000Z", "sess-dup", "a1"
-            ),
-        ],
-    )
+    # точный дубль первого эпизода sess-ok (события 0..3 — до второго запроса);
+    # должен быть снят дедупом
+    dup_events = [dict(event, sessionId="sess-dup") for event in ok_events[:4]]
+    write_jsonl(source / "p4" / "dup.jsonl", dup_events)
 
     out = tmp_path / "episodes-v1.jsonl"
     report_path = tmp_path / "report.json"
@@ -599,6 +664,12 @@ def test_tb2_end_to_end_build_scrubs_and_classifies(tmp_path):
     assert report["by_class"][verify_mod.VERIFIED_FAILED] >= 1
     assert report["dedup"]["exact"] + report["dedup"]["near"] >= 1
     assert report["redactions"]["total"] >= 1
+    # by_class — корпус до дедупа, by_class_written — состав датасета;
+    # sft_ready — размер SFT-ядра (только verified-complete)
+    assert report["episodes_written"] == sum(report["by_class_written"].values())
+    assert report["sft_ready"] == report["by_class_written"][verify_mod.VERIFIED_COMPLETE]
+    assert report["sft_ready"] >= 1
+    assert report["episodes_total"] == sum(report["by_class"].values())
     # отчёт числовой: ни одного значения-секрета в нём
     report_raw = report_path.read_text(encoding="utf-8")
     assert OPENAI_KEY not in report_raw

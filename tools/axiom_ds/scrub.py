@@ -94,12 +94,28 @@ _PATTERNS: tuple[tuple[str, str], ...] = (
         "private_key",
         r"-----BEGIN(?:[^-]{0,40})PRIVATE KEY-----[\s\S]{0,65536}?-----END(?:[^-]{0,40})PRIVATE KEY-----",
     ),
+    # Обрезанный блок: чтение с --limit или выдача поиска по файлу показывают
+    # заголовок и тело, но не футер. Правило целого блока такое пропускает, а
+    # ключевой материал утекает. Берём заголовок вместе со строками тела: строка
+    # обязана оканчиваться переводом строки, поэтому проза после «заголовка в
+    # тексте» не съедается, а тело реального ключа (≈4 КБ) — съедается целиком.
+    (
+        "private_key_dangling",
+        r"-----BEGIN(?:[^-]{0,40})PRIVATE KEY-----(?:[ \t]*[A-Za-z0-9+/=]*[ \t]*\r?\n){0,2000}",
+    ),
+    # Осиротевшие маркеры (после снятия тела) — чтобы «BEGIN … PRIVATE KEY» не
+    # переживал скраб ни в каком виде.
+    (
+        "private_key_marker",
+        r"-----BEGIN(?:[^-]{0,40})PRIVATE KEY-----|-----END(?:[^-]{0,40})PRIVATE KEY-----",
+    ),
     ("openai", r"\bsk-[A-Za-z0-9_\-]{16,}"),
     ("aws", r"\bAKIA[0-9A-Z]{16}\b"),
     ("github", r"\bgh[pousr]_[A-Za-z0-9]{20,}\b"),
     ("slack", r"\bxox[baprs]-[A-Za-z0-9\-]{10,}\b"),
     ("jwt", r"\beyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}"),
-    ("bearer", r"(?i)\bbearer\s+[A-Za-z0-9\-._~+/=]{16,}"),
+    # (?i:…) — локальный флаг: глобальный (?i) запрещён внутри сборной регулярки
+    ("bearer", r"(?i:\bbearer\s+[A-Za-z0-9\-._~+/=]{16,})"),
     # URL с паролем: ://user:pass@
     ("url_password", r"(?<=://)[^/\s:@]{1,64}:[^/\s:@]{1,64}(?=@)"),
     # hex/base64 длиной >=32 в контексте присваивания (env-контекст)
@@ -109,15 +125,21 @@ _PATTERNS: tuple[tuple[str, str], ...] = (
 #: Сборная регулярка для дешёвой разведки: какие правила вообще срабатывают.
 _COMBINED = re.compile("|".join(f"({pat})" for _, pat in _PATTERNS))
 
-#: Замена целиком.
-_SUB_REDACT = re.compile(REDACTED)
-
 _NAME_BY_INDEX = {i + 1: name for i, (name, _) in enumerate(_PATTERNS)}
 
 #: Присваивание «секретного» имени: ключ сохраняем, значение вычищаем.
+#:
+#: Ключ обязан быть похож на переменную окружения — UPPER_SNAKE
+#: (``OPENAI_API_KEY``) или lower_snake (``db_password``), и суффикс обязан
+#: *завершать* имя. Без этого правила ловится код: ``ExperimentalMaterial3Api``,
+#: ``Unauthorized``, ``_cached_key``, ``SPECIAL_KEYS`` — имена, а не секреты.
 _ENV_ASSIGN = re.compile(
-    r"(?P<head>(?i:\b[A-Z_][A-Z0-9_]{0,60}(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD"
-    r"|CREDENTIAL|CRED|AUTH|SALT|SIGNATURE|API)[A-Z0-9_]{0,20})\s*[=:]\s*[\"']?)"
+    r"(?P<head>(?:"
+    r"(?<![A-Za-z0-9_])[A-Z][A-Z0-9_]{0,60}"
+    r"(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|CREDS|AUTH|SALT|SIGNATURE|API)"
+    r"|(?<![A-Za-z0-9_])[a-z][a-z0-9_]*"
+    r"(?:key|token|secret|password|passwd|credential|creds|auth|salt|signature|api)"
+    r")\s*[=:]\s*[\"']?)"
     r"(?P<value>[^\s\"'`]{16,})"
 )
 _ENV_ASSIGN_NAME = "env_assignment"

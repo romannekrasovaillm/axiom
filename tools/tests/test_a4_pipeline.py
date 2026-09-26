@@ -35,9 +35,24 @@ n2); расхождения кода со спекой здесь не подг�
 * K12 — сквозная портируемость: прогон из НЕ-корневого cwd (tmp-каталог) с
   минимальными `--steps 1 --tasks 1` и относительным `--out` внутри
   репозитория -> код 0; в манифесте рекурсивно нет ни одной строки,
-  начинающейся с '/'; `run_ref` резолвится от корня репозитория, существует
-  и непуст. Каталог артефактов прогона (tools/tests/.a4-k12-out-*) удаляется
-  после модуля.
+  начинающейся с '/'. Каталог артефактов прогона (tools/tests/.a4-k12-out-*)
+  удаляется после модуля.
+
+  ⚠ Расхождение контрактов (не разрешено здесь, решение — за архитектором):
+  дельта C-041 требует, чтобы поле `run_ref` манифеста было ИМЕНЕМ прогона
+  (slug без «/», по нему страж стоимости ищет `evidence/budget/<run_ref>.json`),
+  а путь журнала теперь несёт поле `run_journal`. Ниже, в K3/K12, остались
+  утверждения прежнего контракта «`run_ref` — путь к журналу, резолвится от
+  корня репозитория как файл»; они противоречат C-041 и потому под A4_SLOW
+  краснеют. Прогонные сценарии по заданию не трогались — расхождение
+  вынесено архитектору (перечень — в отчёте исполнителя).
+
+* C-041 — идентификатор прогона: run_ref по умолчанию — slug из последней
+  компоненты `--out`, при невозможности `a4-run-<хеш>`; вызов генератора
+  передаёт его отдельным `--run-id`, поэтому в манифесте run_ref — имя, а путь
+  журнала виден полем `run_journal` (T-r1, T-r2);
+* §2 — статус `failed` из следа стадии эмитится как есть, в `absent` не
+  превращается (T4).
 
 Бюджет: прогонов оркестратора ровно три на всю сюиту — общий модульный
 фикстурный прогон (K3 + §5.2), один повторный для K8 и один прогон K12 из
@@ -54,9 +69,11 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import uuid
 from collections.abc import Iterator
 from pathlib import Path
@@ -555,7 +572,10 @@ def test_t2_missing_trace_gives_absent_with_prior_reason(pipeline, tmp_path: Pat
         ("sft", "{ это не JSON"),  # файл не парсится
         ("rl_base_scheme", {"schema": "rl-stage-journal/v1", "steps": 10}),  # нет status
         ("sft", {"status": ""}),  # status пуст
-        ("rl_base_scheme", {"status": "failed"}),  # статус вне словаря §2
+        # Статус вне словаря §2; регистр значим: FAILED ≠ failed (после дельты
+        # «статус failed» сам failed — легальный статус и эмитится как есть,
+        # см. T4, поэтому битым следом проверяется именно FAILED).
+        ("rl_base_scheme", {"status": "FAILED"}),
     ],
 )
 def test_t3_broken_trace_gives_absent_never_executed(
@@ -574,3 +594,109 @@ def test_t3_broken_trace_gives_absent_never_executed(
     assert stage["status"] == "absent", stage
     assert stage["evidence"] == [ABSENT_REASON[name]], stage["evidence"]
     assert pipeline.read_stage_trace(repo_root, name) is None
+
+
+# --- T4: статус failed из следа эмитится как есть (§2) ---------------------
+#
+# §2 (дельта «статус failed»): «след стадии stage-journal.json с status=failed
+# эмитится как есть — превращать failed в absent запрещено: искажает факт
+# исполнения». След `sft` со `status=failed` пишет tools/run_sft_smoke.py
+# (loss не упал / отказ чекпойнта) — оркестратор обязан перенести его в
+# манифест без подмены. GPU не нужен: след только читается.
+
+
+def test_t4_failed_trace_emitted_as_failed_not_absent(
+    pipeline, tmp_path: Path
+) -> None:
+    """T4 / §2: валидный след со `status=failed` -> стадия `failed` (НЕ absent
+    и не executed), evidence честный — путь следа и реально присутствующие
+    поля, без домысленных значений (фабрикация запрещена)."""
+    repo_root = tmp_path.resolve()
+    failed = _valid_trace("sft", steps=200)
+    failed["status"] = "failed"
+    failed["error"] = "лосс не упал на смоук-окне (loss_first <= loss_last)"
+    _write_trace(repo_root, "sft", failed)
+    _write_trace(repo_root, "rl_base_scheme", _valid_trace("rl_base_scheme", steps=10))
+
+    stages = _assemble(pipeline, repo_root)
+
+    sft = _stage(stages, "sft")
+    assert sft["status"] == "failed", sft
+    assert sft["evidence"] == [
+        f"stage_journal={TRACE_ROOT}/sft/stage-journal.json",
+        "steps=200",
+        f"tree_hash={TREE_HASH}",
+        f"checkpoint={TRACE_ROOT}/sft/checkpoint",
+    ], sft["evidence"]
+    assert pipeline.read_stage_trace(repo_root, "sft") is not None
+    # Соседняя стадия не заражена: статус берётся из её собственного следа.
+    assert _stage(stages, "rl_base_scheme")["status"] == "executed"
+
+
+# --- C-041: run_ref по умолчанию — slug, а не путь --------------------------
+#
+# Страж стоимости (tools/check_budget_gate.py, C-041) читает поле run_ref
+# манифеста и требует имени прогона (RUN_REF_RE: буквы/цифры/'.'/'_'/'-');
+# по нему ищется смета evidence/budget/<run_ref>.json. Прежнее поведение
+# оркестратора записывало в run_ref путь журнала
+# («evidence/a4-run-wire/run-journal.json/run-journal.json» — наблюдение
+# приёмки 26.09.2026), из-за чего прогон блокировался стражем.
+
+
+def test_r1_default_run_id_is_slug_for_nested_out(pipeline) -> None:
+    """T-r1 / C-041: run_ref по умолчанию — slug без «/», выведенный из
+    последней компоненты --out (в т.ч. при вложенном пути и «грязном» имени);
+    когда слага не вывести — детерминированный `a4-run-<хеш>` от
+    (seed, steps, tasks), а не пустое имя."""
+    nested = CASE_DIR / "tools" / "tests" / ".a4-wire-out-1234abcd"
+    run_id = pipeline.default_run_id(nested, seed=0, steps=1, tasks=2)
+    assert run_id and "/" not in run_id
+    assert pipeline.RUN_ID_RE.match(run_id)
+    assert run_id == "a4-wire-out-1234abcd"
+
+    # Наблюдённый дефект: --out указывал на «.../run-journal.json», и run_ref
+    # становился путём «.../run-journal.json/run-journal.json».
+    observed = CASE_DIR / "evidence" / "a4-run-wire" / "run-journal.json"
+    slug = pipeline.default_run_id(observed, seed=0, steps=1, tasks=2)
+    assert slug == "run-journal"
+    assert "/" not in slug
+
+    # Компонента без допустимых символов: слага не вывести -> fallback.
+    hopeless = Path("/tmp/---")
+    fallback = pipeline.default_run_id(hopeless, seed=0, steps=1, tasks=2)
+    assert fallback.startswith("a4-run-")
+    assert pipeline.RUN_ID_RE.match(fallback)
+    assert fallback == pipeline.default_run_id(hopeless, seed=0, steps=1, tasks=2)
+    assert fallback != pipeline.default_run_id(hopeless, seed=1, steps=1, tasks=2)
+
+
+def test_r2_generator_call_records_slug_run_ref(pipeline, tmp_path: Path) -> None:
+    """T-r2 / C-041 (сквозной, без GPU): вызов генератора оркестратором даёт
+    манифест, поле run_ref которого — slug (проходит RUN_REF_RE стража
+    стоимости), а путь журнала прогона виден полем run_journal: прогон находит
+    свою смету, манифест не теряет источник доказательства (§4 п. 5)."""
+    scratch = Path(tempfile.mkdtemp(prefix=".a4-r2-", dir=str(TESTS_DIR)))
+    try:
+        journal = scratch / "run-journal.json"
+        journal.write_text('{"schema": "a4-run-journal/v1"}\n', encoding="utf-8")
+        manifest_out = tmp_path / "manifest.json"
+        result = pipeline.call_generator(
+            weights_hash="a" * 64,
+            dataset_hash="b" * 64,
+            run_ref=journal,
+            stages=[],
+            manifest_out=manifest_out,
+            repo_root=REPO_ROOT,
+            run_id="a4-wire-out-1234abcd",
+        )
+        assert result["returncode"] == 0, result["stderr"]
+        manifest = json.loads(manifest_out.read_text(encoding="utf-8"))
+        assert manifest["run_ref"] == "a4-wire-out-1234abcd"
+        assert pipeline.RUN_ID_RE.match(manifest["run_ref"])
+        assert manifest["run_journal"] == (
+            journal.resolve().relative_to(REPO_ROOT).as_posix()
+        )
+        assert not manifest["run_journal"].startswith("/")
+        assert manifest["pipeline_complete"] is False
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)

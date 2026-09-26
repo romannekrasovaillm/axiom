@@ -3,7 +3,8 @@
 
 Контракт CLI (§5.2 дельты `docs/specs/A4-RUN.delta.md`):
 
-    python3 tools/run_a4_pipeline.py --seed 0 --steps 1 --tasks 10 --out <каталог> [--manifest-out PATH]
+    python3 tools/run_a4_pipeline.py --seed 0 --steps 1 --tasks 10 --out <каталог> \
+        [--manifest-out PATH] [--run-id ID]
 
 Оркестратор исполняет **доступные** стадии эталонного набора `stage_set v1`
 и честно помечает недоступные как `absent`/`skipped` с причиной. Никакой
@@ -49,6 +50,16 @@
 равно отклоняет — но оркестратор обязан сказать об этом понятно и заранее).
 Генератор вызывается подпроцессом с cwd = корень репозитория, поэтому
 относительные пути резолвятся от корня и на его стороне.
+
+Идентификатор прогона (`run_ref` манифеста, C-041) — имя, а не путь: страж
+стоимости (`tools/check_budget_gate.py`) ищет по нему смету
+`evidence/budget/<run_ref>.json`, поэтому «/» в поле недопустим. По умолчанию
+он выводится из последней компоненты `--out` без расширений и недопустимых
+символов (`--out evidence/a4-run-wire` → `a4-run-wire`), при невозможности —
+`a4-run-<короткий хеш от seed, steps, tasks>`; `--run-id` задаёт имя явно.
+Путь журнала прогона остаётся путём (`<--out>/run-journal.json`) и попадает в
+манифест полем `run_journal` — манифест не теряет ссылку на источник
+доказательства, а смета находит прогон по имени.
 
 Модель для wire-прогона — малый конфиг (`small_config`, vocab 512), тот же,
 что используют функциональные тесты `net/tests/` для CPU-прогонов: полный
@@ -101,11 +112,13 @@ STAGE_SET_V1 = (
 TRACE_ROOT = "evidence/a4-run-wire"
 STAGE_TRACE_SUBDIR = {"sft": "sft", "rl_base_scheme": "rl"}
 
-# Словарь статусов манифеста (A4-RUN.delta §2): след со статусом вне него
-# (например, `failed` из run_sft_smoke.py) статусом манифеста стать не может —
-# генератор §5.1 отвергнет недопустимый статус и манифест не запишется вовсе,
-# спрятав вердикт гейта. Такой след считается битым: эмитится `absent`.
-STAGE_TRACE_STATUSES = ("executed", "skipped", "absent")
+# Словарь статусов манифеста (A4-RUN.delta §2): статус следа вне него стать
+# статусом стадии не может — генератор §5.1 отвергнет недопустимый статус и
+# манифест не запишется вовсе, спрятав вердикт гейта. Такой след считается
+# битым: эмитится прежний `absent` с причиной. `failed` словарю принадлежит
+# (§2: след `stage-journal.json` со `status=failed` эмитится КАК ЕСТЬ —
+# превращать `failed` в `absent` запрещено, это искажает факт исполнения).
+STAGE_TRACE_STATUSES = ("executed", "skipped", "absent", "failed")
 
 # Прежние причины `absent` (прямая цитата прежнего поведения оркестратора):
 # следа нет или он бит — они сохраняются без изменений.
@@ -210,6 +223,36 @@ def repo_rel_or_abs(path: Path, repo_root: Path) -> str:
         return resolved.relative_to(repo_root).as_posix()
     except ValueError:
         return str(resolved)
+
+
+# Идентификатор прогона — поле `run_ref` манифеста (C-041): имя прогона, а не
+# путь. Формат тот же, что требует страж стоимости (tools/check_budget_gate.py,
+# RUN_REF_RE): по `run_ref` он ищет смету `evidence/budget/<run_ref>.json`,
+# поэтому «/» и пустое имя недопустимы.
+RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+RUN_ID_FALLBACK_PREFIX = "a4-run"
+
+
+def run_id_hash(seed: int, steps: int, tasks: int) -> str:
+    """Короткий детерминированный хеш параметров прогона (fallback-слаг)."""
+    return hashlib.sha256(f"{seed}:{steps}:{tasks}".encode("utf-8")).hexdigest()[:8]
+
+
+def default_run_id(out_dir: Path, seed: int, steps: int, tasks: int) -> str:
+    """`run_ref` по умолчанию — slug из последней компоненты `--out` (C-041).
+
+    Компонента берётся без расширений (`run-journal.json` → `run-journal`) и
+    без недопустимых символов (заменяются на `-`, ведущие `.`/`-`/`_`
+    срезаются). Если слага не вывести (компоненты нет или она состоит только
+    из недопустимых символов) — `a4-run` + короткий хеш от (seed, steps,
+    tasks): имя обязано быть непустым и без «/», иначе манифест будет
+    отвергнут стражем стоимости, а прогон — блокирован.
+    """
+    stem = Path(out_dir.name).stem  # последняя компонента без расширения
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "-", stem).lstrip(".-_").rstrip("-")
+    if slug and RUN_ID_RE.match(slug):
+        return slug
+    return f"{RUN_ID_FALLBACK_PREFIX}-{run_id_hash(seed, steps, tasks)}"
 
 
 def parse_environment_version() -> Optional[str]:
@@ -411,11 +454,11 @@ def read_stage_trace(repo_root: Path, name: str) -> Optional[dict[str, Any]]:
 
     None, если следа нет, он не читается, не является JSON-объектом, не несёт
     непустого строкового поля `status` или несёт статус вне словаря манифеста
-    (§2: `executed|skipped|absent`) — такой след не может стать статусом
+    (§2: `executed|skipped|absent|failed`) — такой след не может стать статусом
     стадии, генератор §5.1 его отвергнет и манифест не будет записан вовсе.
     Вызывающий обязан эмитить `absent`, а не `executed`: фабрикация статуса
-    запрещена. След только читается — оркестратор стадию не исполняет и не
-    переигрывает.
+    запрещена. `failed` — легальный статус следа и эмитится как есть (§2).
+    След только читается — оркестратор стадию не исполняет и не переигрывает.
     """
     path = stage_trace_path(repo_root, name)
     if path is None or not path.is_file():
@@ -456,8 +499,12 @@ def stage_from_trace(repo_root: Path, name: str) -> Optional[dict[str, Any]]:
 
     evidence собирается **только** из реально присутствующих полей следа:
     путь самого следа, `steps`, `checkpoint.tree_hash` (или верхнеуровневый
-    `tree_hash`), `checkpoint.path`. Ничего не домысливается. None — следа нет
-    или он бит (см. `read_stage_trace`).
+    `tree_hash`), `checkpoint.path`. Ничего не домысливается. Статус переносится
+    из следа как есть, включая `failed` (§2: превращать его в `absent`
+    запрещено); причина отказа при этом остаётся в самом следе — путь к нему
+    уже в evidence, а свободный текст ошибки в evidence не эмитится, чтобы не
+    протащить абсолютный путь или разделитель `;` (ADR-014 п. 8). None — следа
+    нет или он бит (см. `read_stage_trace`).
     """
     trace = read_stage_trace(repo_root, name)
     if trace is None:
@@ -505,6 +552,7 @@ def assemble_stages(
     Стадии `pretrain_checkpoint`/`spark_inference`/`rl_environment` считает сам
     оркестратор; `sft` и `rl_base_scheme` эмитятся из следов стадий
     (`stage_from_trace`), а при отсутствии/битом следе — `absent` с причиной.
+    Статус `failed` из валидного следа эмитится как есть (§2).
     """
     passed = sum(1 for v in env_verdicts if v["passed"])
     stages: list[dict[str, Any]] = [
@@ -557,6 +605,7 @@ def call_generator(
     stages: list[dict[str, Any]],
     manifest_out: Path,
     repo_root: Path,
+    run_id: str,
 ) -> dict[str, Any]:
     """Вызов генератора манифеста подпроцессом по контракту §5.1.
 
@@ -565,6 +614,10 @@ def call_generator(
     репозитория: генератор §5.1 резолвит и нормализует пути именно от него
     (§4 п. 6–7). Версия среды передаётся явно — из cwd корня репозитория
     файл спеки кейса генератору не виден.
+
+    `--run-id` — идентификатор прогона (slug, C-041): он, а не путь журнала,
+    становится полем `run_ref` манифеста, по которому страж стоимости ищет
+    смету; путь журнала генератор сохраняет полем `run_journal`.
     """
     cmd = [
         sys.executable,
@@ -572,6 +625,7 @@ def call_generator(
         "--weights-hash", weights_hash,
         "--dataset-hash", dataset_hash,
         "--run-ref", repo_rel(run_ref, repo_root),
+        "--run-id", run_id,
         "--output", repo_rel_or_abs(manifest_out, repo_root),
     ]
     environment_version = parse_environment_version()
@@ -613,6 +667,14 @@ def main(argv: Optional[list[str]] = None) -> int:
         "кейса); относительный считается от корня кейса; может лежать где "
         "угодно — в манифест этот путь не попадает",
     )
+    parser.add_argument(
+        "--run-id",
+        default=None,
+        help="идентификатор прогона (поле run_ref манифеста, C-041): буквы, "
+        "цифры, '.', '_', '-', без '/'. По умолчанию — slug из последней "
+        "компоненты --out (при невозможности a4-run-<хеш>); по нему страж "
+        "стоимости ищет смету evidence/budget/<run-id>.json",
+    )
     args = parser.parse_args(argv)
 
     repo_root = detect_repo_root()
@@ -643,6 +705,29 @@ def main(argv: Optional[list[str]] = None) -> int:
             file=sys.stderr,
         )
         return 2
+
+    # Идентификатор прогона (run_ref манифеста, C-041) разрешается ДО артефактов
+    # и стадий: невалидное имя — ранний отказ без следов (иначе прогон потратит
+    # минуты и упрётся в отказ генератора на записи манифеста).
+    if args.run_id is not None and not args.run_id.strip():
+        print(
+            "ошибка: --run-id пуст — идентификатор прогона (run_ref манифеста) "
+            "не может быть пустым (C-041). Прогон отменён.",
+            file=sys.stderr,
+        )
+        return 2
+    run_id = (args.run_id or "").strip() or default_run_id(
+        out_dir, args.seed, args.steps, args.tasks
+    )
+    if not RUN_ID_RE.match(run_id):
+        print(
+            f"ошибка: идентификатор прогона '{run_id}' недопустим "
+            f"(ожидается {RUN_ID_RE.pattern}: имя, а не путь; C-041). "
+            f"Прогон отменён.",
+            file=sys.stderr,
+        )
+        return 2
+
     out_dir.mkdir(parents=True, exist_ok=True)
 
     if args.manifest_out:
@@ -712,7 +797,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         env_verdicts, inference_journal, dataset_sha256, repo_root,
     )
 
-    run_ref = out_dir / "run-journal.json"
+    run_journal = out_dir / "run-journal.json"
     journal = {
         "schema": "a4-run-journal/v1",
         "seed": args.seed,
@@ -722,29 +807,33 @@ def main(argv: Optional[list[str]] = None) -> int:
         "backend": backend,
         "model_weights_sha256": weights_hash,
         "dataset_sha256": dataset_sha256,
-        "run_ref": repo_rel(run_ref, repo_root),
+        # run_ref — имя прогона (slug, C-041); путь самого журнала — рядом.
+        "run_ref": run_id,
+        "run_journal": repo_rel(run_journal, repo_root),
         "stages": stages,
         "pipeline_complete": False,
         "note": "Модель для wire-прогона — small_config (vocab 512), как в "
         "функциональных тестах net/tests/; полный конфиг 1B неисполним на CPU.",
     }
-    run_ref.write_text(
+    run_journal.write_text(
         json.dumps(journal, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
 
     # --- вызов генератора манифеста (подпроцесс, контракт §5.1) -------------
     gen_result = call_generator(
-        weights_hash, dataset_sha256, run_ref, stages, manifest_out, repo_root
+        weights_hash, dataset_sha256, run_journal, stages, manifest_out,
+        repo_root, run_id,
     )
     journal["manifest_generation"] = gen_result
     journal["manifest_out"] = repo_rel_or_abs(manifest_out, repo_root)
-    run_ref.write_text(
+    run_journal.write_text(
         json.dumps(journal, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
 
     pipeline_complete = False
     summary = {
-        "run_ref": repo_rel(run_ref, repo_root),
+        "run_ref": run_id,
+        "run_journal": repo_rel(run_journal, repo_root),
         "model_weights_sha256": weights_hash,
         "dataset_sha256": dataset_sha256,
         "stages": [

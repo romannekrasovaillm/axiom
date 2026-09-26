@@ -12,6 +12,20 @@ C-038 вызывает `python3 tools/a4_manifest.py --verify`.
 только при всех стадиях `executed` с непустым `evidence` и
 `pipeline_complete=true`.
 
+Словарь статусов стадии (§2 спеки): `executed` (исполнена, `evidence` непуст),
+`skipped` (сознательно пропущена, причина в `evidence`), `absent` (стадии нет
+в коде), `failed` (стадия запускалась и завершилась неуспехом, причина и след
+в `evidence`). `skipped`, `absent` и `failed` гейт НЕ закрывают; превращать
+`failed` в `absent` запрещено — это искажает факт исполнения (§2). Статус
+`failed` приходит в генератор из следа стадии (`stage-journal.json` со
+`status=failed`, его пишет `tools/run_sft_smoke.py`) — эмитится как есть.
+
+Идентификатор прогона (C-041, `tools/check_budget_gate.py`): поле `run_ref`
+манифеста — это **имя прогона** (slug: буквы, цифры, `.`, `_`, `-`; без «/»),
+по которому страж стоимости находит смету `evidence/budget/<run_ref>.json`.
+Путь журнала прогона (§4 п. 5) задаётся отдельно (`--run-ref`) и в манифесте
+сохраняется полем `run_journal`, когда он не совпадает с `run_ref`.
+
 Два режима:
 
 * генерация (по умолчанию) — собирает поля манифеста из реального прогона и
@@ -78,7 +92,10 @@ STAGE_SETS: dict[str, tuple[str, ...]] = {
     ),
 }
 DEFAULT_STAGE_SET_VERSION = "v1"
-STAGE_STATUSES = ("executed", "skipped", "absent")
+# Словарь статусов стадии (A4-RUN.delta §2): `failed` — стадия запускалась и
+# завершилась неуспехом (причина и след в evidence); гейт не закрывает,
+# в `absent` превращать запрещено.
+STAGE_STATUSES = ("executed", "skipped", "absent", "failed")
 
 # Поля, обязанные быть непустыми и в формате хеша (AD-4: пиннинг снапшотов).
 HASH_FIELDS = ("model_weights_sha256", "dataset_sha256")
@@ -98,6 +115,12 @@ BACKEND_FIELDS = ("platform", "device_kind", "jax_version", "matmul_precision")
 
 # Хеш: md5 (32) / sha1 (40) / sha256 (64) hex. «Формат хеша» — не пустая строка.
 HASH_RE = re.compile(r"^[0-9a-fA-F]{32,64}$")
+
+# Идентификатор прогона (поле `run_ref` манифеста) — тот же формат, что
+# требует страж стоимости C-041 (tools/check_budget_gate.py, RUN_REF_RE):
+# имя файла сметы `evidence/budget/<run_ref>.json`. Разделители пути и «..»
+# недопустимы: `run_ref` — имя прогона, а не путь.
+RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 class ManifestError(ValueError):
@@ -203,7 +226,10 @@ def verify_manifest_dict(manifest: Any) -> list[str]:
     полное покрытие стадий и `pipeline_complete=true`. Дополнительно (§4 п. 7)
     отклоняется любой абсолютный путь; ошибки путей собираются ВМЕСТЕ с
     вердиктом покрытия, а не вместо него — красный гейт читается как план
-    работ целиком. Пустой список = PASS."""
+    работ целиком. Непокрытые стадии перечисляются поимённо со статусом в
+    скобках (`sft (failed)`): статус отличает «стадия упала» от «стадии нет
+    в коде», отдельного сообщения об этом не требуется (§2). Пустой список =
+    PASS."""
     errs = validate_manifest_structure(manifest)
     if errs:
         return errs
@@ -249,6 +275,31 @@ def verify_manifest_file(path: Path) -> list[str]:
     except OSError as exc:
         return [f"не удалось прочитать манифест: {path}: {exc}"]
     return verify_manifest_dict(obj)
+
+
+def check_run_id(run_id: str) -> Optional[str]:
+    """Проверяет идентификатор прогона (поле `run_ref` манифеста).
+
+    Общий барьер против невалидного slug (C-041): пустой `run_id` или
+    содержащий «/» — отказ генерации; формат — `RUN_ID_RE` (буквы, цифры,
+    `.`, `_`, `-`, первый символ — буква или цифра). Возвращает текст ошибки
+    или None.
+    """
+    if not run_id.strip():
+        return "run_ref: идентификатор прогона пуст (C-041: имя прогона обязательно)"
+    if "/" in run_id:
+        return (
+            f"run_ref: идентификатор прогона '{run_id}' содержит '/' — "
+            f"run_ref это имя прогона (slug), а не путь; путь журнала "
+            f"передаётся --run-ref (C-041)"
+        )
+    if not RUN_ID_RE.match(run_id):
+        return (
+            f"run_ref: идентификатор прогона '{run_id}' недопустим "
+            f"(ожидается {RUN_ID_RE.pattern}: буквы, цифры, '.', '_', '-', "
+            f"первый символ — буква или цифра; C-041)"
+        )
+    return None
 
 
 def parse_stage_spec(spec: str) -> tuple[str, str, list[str]]:
@@ -600,6 +651,12 @@ def cmd_generate(args: argparse.Namespace) -> int:
                 f"в покрытие не засчитывается.",
                 file=sys.stderr,
             )
+        if status == "failed" and not evidence:
+            print(
+                f"предупреждение: стадия '{name}' failed без evidence — "
+                f"причина и след не зафиксированы (§2).",
+                file=sys.stderr,
+            )
         stages_by_name[name] = {"name": name, "status": status, "evidence": evidence}
     stages = [
         stages_by_name.get(
@@ -636,6 +693,24 @@ def cmd_generate(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
+
+    # Идентификатор прогона (поле `run_ref` манифеста, C-041): явный --run-id
+    # (или A4_RUN_ID) становится именем прогона, путь журнала сохраняется
+    # полем `run_journal`. Невалидный идентификатор — отказ ДО записи файла.
+    if args.run_id is not None and not args.run_id.strip():
+        print(
+            "ошибка: --run-id пуст (поле run_ref манифеста) — идентификатор "
+            "прогона не может быть пустым (C-041 требует имени прогона). "
+            "Манифест не записан.",
+            file=sys.stderr,
+        )
+        return 1
+    run_id = first_nonempty(args.run_id, os.environ.get("A4_RUN_ID"))
+    if run_id is not None:
+        run_id_error = check_run_id(run_id)
+        if run_id_error:
+            print(f"ошибка: {run_id_error}. Манифест не записан.", file=sys.stderr)
+            return 1
 
     # Портируемость пути (§4 п. 6–7): абсолютный run_ref внутри репозитория
     # нормализуется в относительный от корня, вне репозитория — отказ.
@@ -715,12 +790,16 @@ def cmd_generate(args: argparse.Namespace) -> int:
         "harness_version": harness_version,
         "git_commit": git_commit,
         "run_date": run_date,
-        "run_ref": run_ref,
+        # run_ref — имя прогона (slug, C-041); путь журнала (§4 п. 5) — рядом,
+        # чтобы манифест не терял ссылку на источник доказательства.
+        "run_ref": run_id if run_id is not None else run_ref,
         "backend": backend,
         "stages": stages,
         "pipeline_complete": compute_pipeline_complete(stages),
         "generated_by": "tools/a4_manifest.py",
     }
+    if run_id is not None and run_id != run_ref:
+        manifest["run_journal"] = run_ref
 
     # Самопроверка структуры и портируемости путей перед записью (полнота
     # гейтом проверяется отдельно: частичный прогон легален и фиксируется
@@ -794,7 +873,21 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help=(
             "путь к журналу прогона (обязателен, существующий и непустой; "
             "абсолютный путь внутри репозитория нормализуется в относительный "
-            "от его корня, вне репозитория — отказ, §4 п. 6–7)"
+            "от его корня, вне репозитория — отказ, §4 п. 6–7). Без --run-id "
+            "этот путь становится и полем run_ref манифеста (прежнее "
+            "поведение, K11–K12)"
+        ),
+    )
+    parser.add_argument(
+        "--run-id",
+        default=None,
+        help=(
+            "идентификатор прогона (имя, не путь): буквы, цифры, '.', '_', '-', "
+            "без '/'; становится полем run_ref манифеста, по которому страж "
+            "стоимости C-041 находит смету evidence/budget/<run_ref>.json "
+            "(пустой или со '/' — отказ генерации). Путь журнала при этом "
+            "сохраняется полем run_journal. Не задан — поле run_ref равно "
+            "нормализованному --run-ref"
         ),
     )
     parser.add_argument(
@@ -805,7 +898,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help=(
             "стадия конвейера (повторяемый): NAME из stage_set "
             f"{DEFAULT_STAGE_SET_VERSION} ({', '.join(STAGE_SETS[DEFAULT_STAGE_SET_VERSION])}); "
-            "STATUS = executed|skipped|absent; следы EVIDENCE через ';'. "
+            "STATUS = executed|skipped|absent|failed; следы EVIDENCE через ';'. "
             "Непереданные стадии получают статус absent. Абсолютные пути в "
             "EVIDENCE нормализуются/отклоняются по §4 п. 7."
         ),

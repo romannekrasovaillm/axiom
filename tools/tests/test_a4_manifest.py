@@ -39,6 +39,13 @@ K11) и ADR-014, а не реализация. Все сценарии — вы�
   stages[].evidence («абсолютный путь запрещён: …»); генерация с абсолютным
   --run-ref ВНЕ репозитория -> код 1, файл не создан; генерация с абсолютным
   --run-ref ВНУТРИ репозитория -> в записанном манифесте путь относительный.
+* статус `failed` (дельта §2): стадия failed -> манифест создан,
+  pipeline_complete=false, --verify код 1 с поимённым `sft (failed)`; статус
+  вне словаря (в т.ч. `FAILED` — регистр значим) -> код 1, файл не создан
+  (T-f1, T-f2);
+* идентификатор прогона `--run-id` (C-041): валидный slug становится полем
+  run_ref манифеста, путь журнала сохраняется полем run_journal; пустой
+  идентификатор или со «/» -> код 1, файл не создан (T-f3, T-f4).
 """
 
 from __future__ import annotations
@@ -517,3 +524,97 @@ def test_k11_generate_run_ref_absolute_inside_repo_normalized(
     assert run_ref == _repo_rel(journal)
     resolved = REPO_ROOT / run_ref
     assert resolved.is_file() and resolved.stat().st_size > 0
+
+
+# --- Дельта §2: статус failed в словаре статусов стадии ---------------------
+#
+# Словарь §2: executed|skipped|absent|failed. `failed` — стадия запускалась и
+# завершилась неуспехом, причина и след в evidence; гейт он НЕ закрывает, но и
+# в `absent` превращать его запрещено (искажает факт исполнения). Источник
+# статуса — след стадии (`stage-journal.json`), который пишет
+# tools/run_sft_smoke.py (`status=failed` там уже есть).
+
+
+def test_t_f1_failed_stage_writes_manifest_and_verify_names_it(
+    tmp_path: Path, repo_scratch: Path
+) -> None:
+    """T-f1 / §2+§4: стадия с `status=failed` -> манифест СОЗДАН (факт
+    фиксируется честно), `pipeline_complete=false`, `--verify` код 1 и
+    поимённый список непокрытых с пометкой `(failed)`. failed не подменяется
+    на absent: подмена исказила бы факт исполнения (§2)."""
+    output, args = _generation_args(tmp_path, repo_scratch)
+    args += [
+        "--stage", "pretrain_checkpoint=executed:checkpoint/tree_hash=ab12cd;steps=1",
+        "--stage", "rl_environment=executed:env-run-manifest.json;tasks=10",
+        "--stage", "spark_inference=skipped:стенд gb10 занят — операторская стадия",
+        "--stage",
+        "sft=failed:stage_journal=evidence/a4-run-wire/sft/stage-journal.json;"
+        "steps=200",
+    ]
+    result = _run(*args)
+    assert result.returncode == 0, result.stderr
+    manifest = json.loads(output.read_text(encoding="utf-8"))
+    stages = {stage["name"]: stage for stage in manifest["stages"]}
+    assert stages["sft"]["status"] == "failed"
+    assert stages["sft"]["evidence"], (
+        "failed без evidence: причина и след не зафиксированы (§2)"
+    )
+    assert manifest["pipeline_complete"] is False
+
+    verify = _run("--verify", "--manifest", str(output))
+    assert verify.returncode == 1
+    assert "покрытие частично:" in verify.stderr
+    assert "sft (failed)" in verify.stderr
+    assert "sft (absent)" not in verify.stderr
+
+
+@pytest.mark.parametrize("status", ["FAILED", "Failed", "broken"])
+def test_t_f2_status_outside_dictionary_rejected(
+    tmp_path: Path, repo_scratch: Path, status: str
+) -> None:
+    """T-f2 / §2+§5.1: статус вне словаря -> код 1, файл не создан. Регистр
+    значим: `FAILED` — не `failed`; произвольная строка не принимается.
+    Фабрикация статуса запрещена: словарь ровно executed|skipped|absent|failed."""
+    output, args = _generation_args(tmp_path, repo_scratch)
+    args += ["--stage", f"sft={status}:whatever"]
+    result = _run(*args)
+    assert result.returncode == 1
+    assert "sft" in result.stderr
+    assert not output.exists()
+
+
+# --- C-041: run_ref манифеста — имя прогона (slug), а не путь ---------------
+
+
+@pytest.mark.parametrize("run_id", ["evidence/a4-run-wire", "a/b", ""])
+def test_t_f3_run_id_with_slash_or_empty_rejected(
+    tmp_path: Path, repo_scratch: Path, run_id: str
+) -> None:
+    """T-f3 / C-041: поле `run_ref` манифеста — имя прогона, а не путь (по нему
+    страж стоимости ищет `evidence/budget/<run_ref>.json`). `--run-id` со «/»
+    или пустой -> код 1, манифест не создан: общий барьер генератора против
+    невалидного slug."""
+    output, args = _generation_args(tmp_path, repo_scratch)
+    args += ["--run-id", run_id]
+    result = _run(*args)
+    assert result.returncode == 1
+    assert "run_ref" in result.stderr
+    assert not output.exists()
+
+
+def test_t_f4_valid_run_id_becomes_manifest_run_ref(
+    tmp_path: Path, repo_scratch: Path
+) -> None:
+    """C-041 (позитивная половина): валидный `--run-id` становится полем
+    run_ref манифеста (без «/» — формат стража стоимости), а путь журнала
+    прогона (§4 п. 5) сохраняется полем run_journal: манифест не теряет ссылку
+    на источник доказательства."""
+    output, args = _generation_args(tmp_path, repo_scratch)
+    args += ["--run-id", "a4-skeleton"]
+    result = _run(*args)
+    assert result.returncode == 0, result.stderr
+    manifest = json.loads(output.read_text(encoding="utf-8"))
+    assert manifest["run_ref"] == "a4-skeleton"
+    assert "/" not in manifest["run_ref"]
+    assert manifest["run_journal"] == _repo_rel(repo_scratch / "run-journal.jsonl")
+    assert not manifest["run_journal"].startswith("/")

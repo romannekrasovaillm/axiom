@@ -1,0 +1,49 @@
+{
+  "run_id": "rl-after-corruption-l1-00",
+  "task_id": "corruption-l1-00",
+  "env_version": "environment-v1",
+  "gates_version": {
+    "arch_ml_build": "2e45ab0f8ffe55d1bbbd7878bb887072a774d40a19909087b4f7aca1e89322b9",
+    "constraints_sha256": "943add43cbd3bbb47a3c381e70d784c15c22257335dd9320ba2b5096a65d53db",
+    "hidden_constraints_sha256": "fa7a348278d67bfd6b4a77f113a043800346c10f7cbc286b8359d3192ea2d488"
+  },
+  "workspace_sha256": "cb61dd7086994418fe73980dada5f4806e9e854fb40946fb0546823a6714c1c9",
+  "model": {
+    "snapshot_sha256": "dbadb31ba246043bae8cb44de30bae5b527cd36bde896daa2ae203351ec3de6d",
+    "base": "net-l3-skeleton-rl-smoke",
+    "routing_seed": 0
+  },
+  "decoding": {
+    "temperature": 0.0,
+    "top_p": 0.95,
+    "seed": 13371100
+  },
+  "budget": {
+    "max_tokens": 131072,
+    "thinking_budget": 8192,
+    "attempts_allowed": 2,
+    "attempts_used": 1
+  },
+  "usage": {
+    "tokens_in": 252,
+    "tokens_out": 8,
+    "cost_usd": 0.0,
+    "host": "net-executor"
+  },
+  "timing": {
+    "started": "2026-09-26T00:00:00+00:00",
+    "finished": "2026-09-26T00:00:01+00:00",
+    "resume_count": 0
+  },
+  "verdict": {
+    "pass": false,
+    "reward": {
+      "pass_component": 0.0,
+      "soft": 0.0,
+      "new_violations": 0,
+      "effort_penalty": 0.0,
+      "total": 0.0
+    },
+    "issues_warn": []
+  }
+}

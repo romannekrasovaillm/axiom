@@ -5,9 +5,9 @@
   "dataset_sha256": "3298145700f4d199970a250d0e6964eb817cce742e6c905d6a2ebaa6738df45c",
   "environment_version": "v1.1",
   "harness_version": "0.3.1",
-  "git_commit": "608fa2ed5474c932bd1151ff86124aea511614c5",
+  "git_commit": "7719e0ff38fa87cb8689567446d212c2121af3ca",
   "run_date": "2026-09-26",
-  "run_ref": "evidence/a4-run-wire/run-journal.json/run-journal.json",
+  "run_ref": "a4-skeleton",
   "backend": {
     "platform": "gpu",
     "device_kind": "NVIDIA GeForce RTX 4080 SUPER",
@@ -19,7 +19,7 @@
       "name": "pretrain_checkpoint",
       "status": "executed",
       "evidence": [
-        "checkpoint=evidence/a4-run-wire/run-journal.json/checkpoints/pretrain",
+        "checkpoint=evidence/a4-run-wire/run-a4-skeleton/checkpoints/pretrain",
         "tree_hash=ecab10780283e0107148d9a5d18abfb01c1df534fa7d31d9d48c8b5f6752c920",
         "steps=1"
       ]
@@ -29,14 +29,14 @@
       "status": "skipped",
       "evidence": [
         "причина: инференс исполнен локально на CPU JAX, а не на стенде gb10/DGX Spark",
-        "подмена стенда запрещена (ADR-010). Локальный журнал: evidence/a4-run-wire/run-journal.json/inference/journal.json"
+        "подмена стенда запрещена (ADR-010). Локальный журнал: evidence/a4-run-wire/run-a4-skeleton/inference/journal.json"
       ]
     },
     {
       "name": "rl_environment",
       "status": "executed",
       "evidence": [
-        "run_manifest=evidence/a4-run-wire/run-journal.json/env/summary.json",
+        "run_manifest=evidence/a4-run-wire/run-a4-skeleton/env/summary.json",
         "tasks=10",
         "pass=0"
       ]
@@ -47,7 +47,7 @@
       "evidence": [
         "stage_journal=evidence/a4-run-wire/sft/stage-journal.json",
         "steps=200",
-        "tree_hash=39944aa24f26cf1104edc84ffcd34d0b203a7af84c50e2ab220682c7cf2607a0",
+        "tree_hash=cd84f43f688feead99d47c2fc5cf94d253131ebbbff89dbb5688ebc8f78ac710",
         "checkpoint=evidence/a4-run-wire/sft/checkpoint"
       ]
     },
@@ -57,11 +57,12 @@
       "evidence": [
         "stage_journal=evidence/a4-run-wire/rl/stage-journal.json",
         "steps=10",
-        "tree_hash=40c110a13e60d9df710650fe334b6bc272afa5dd034a1ef4e846149c5db55399",
+        "tree_hash=d5a085df962a896ff0e7b1d1ede81804e04d77089e00ef0a24b2f40224bfd2dc",
         "checkpoint=evidence/a4-run-wire/rl/checkpoint"
       ]
     }
   ],
   "pipeline_complete": false,
-  "generated_by": "tools/a4_manifest.py"
+  "generated_by": "tools/a4_manifest.py",
+  "run_journal": "evidence/a4-run-wire/run-a4-skeleton/run-journal.json"
 }

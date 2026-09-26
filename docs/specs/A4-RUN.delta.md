@@ -49,11 +49,11 @@ ADR-005 п. 7 → `stage_set v2`). Молча дорисовывать стад�
     "matmul_precision": "<политика точности>"
   },
   "stages": [
-    {"name": "pretrain_checkpoint", "status": "executed|skipped|absent", "evidence": ["<файл|команда|число>"]},
-    {"name": "spark_inference",     "status": "executed|skipped|absent", "evidence": []},
-    {"name": "rl_environment",      "status": "executed|skipped|absent", "evidence": []},
-    {"name": "sft",                 "status": "executed|skipped|absent", "evidence": []},
-    {"name": "rl_base_scheme",      "status": "executed|skipped|absent", "evidence": []}
+    {"name": "pretrain_checkpoint", "status": "executed|skipped|absent|failed", "evidence": ["<файл|команда|число>"]},
+    {"name": "spark_inference",     "status": "executed|skipped|absent|failed", "evidence": []},
+    {"name": "rl_environment",      "status": "executed|skipped|absent|failed", "evidence": []},
+    {"name": "sft",                 "status": "executed|skipped|absent|failed", "evidence": []},
+    {"name": "rl_base_scheme",      "status": "executed|skipped|absent|failed", "evidence": []}
   ],
   "pipeline_complete": false
 }
@@ -68,7 +68,9 @@ ADR-005 п. 7 → `stage_set v2`). Молча дорисовывать стад�
 
 **Семантика статусов:** `executed` — стадия исполнена, `evidence` непуст; `skipped` — исполнитель
 сознательно пропустил (например, стенд занят) с причиной в `evidence`; `absent` — стадия не реализована
-в коде. `skipped` и `absent` **не** закрывают гейт.
+в коде; `failed` — стадия запускалась и завершилась неуспехом, причина и след в `evidence` (след стадии
+`stage-journal.json` с `status=failed` эмитится как есть — превращать `failed` в `absent` запрещено:
+искажает факт исполнения). `skipped`, `absent` и `failed` **не** закрывают гейт.
 
 ## 4. Правила полноты и ретенции
 

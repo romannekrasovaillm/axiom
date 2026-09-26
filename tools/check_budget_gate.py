@@ -7,8 +7,11 @@ ADR-004, а артефактом: смета лежит в ``evidence/budget/<ru
 
   (a) смета найдена для каждого объявленного прогона;
   (b) обязательные поля заполнены и ``usd_estimate <= limit_usd``;
-  (c) смета датирована раньше старта прогона (``created_at`` строго раньше
-      ``run_date`` манифеста прогона, если манифест есть);
+  (c) смета датирована не позже дня прогона (``created_at <= run_date``;
+      обе стороны приводятся к дате ``parse_run_date``, гранулярность —
+      день). Смета, датированная ПОЗЖЕ дня прогона, — нарушение AD-8;
+      порядок внутри дня обеспечивается процессом (смета коммитится до
+      старта прогона), а не часовой меткой;
   (d) сметы нет — ненулевой код и «смета отсутствует: запуск блокирован».
 
 Режимы::
@@ -237,13 +240,20 @@ def verify_run(case_dir: Path, run_ref: str, dates: dict[str, date]) -> tuple[li
 
     errs = validate_estimate(estimate, run_ref)
 
+    # Гранулярность сравнения — день, а не час (C-041): обе стороны уже
+    # приведены к дате (parse_run_date), поэтому смета, составленная в день
+    # прогона, нарушением не считается — порядок внутри дня обеспечивается
+    # процессом (смета коммитится до старта прогона). Нарушение — только
+    # смета, датированная ПОЗЖЕ дня прогона: расчёт post factum.
     run_date = dates.get(run_ref)
     created = parse_run_date(estimate.get("created_at")) if isinstance(estimate, dict) else None
     if run_date is not None and created is not None:
-        if not created < run_date:
+        if created > run_date:
             errs.append(
-                f"created_at {created.isoformat()} не раньше даты прогона "
-                f"{run_date.isoformat()}: смета не предшествует запуску (AD-8)"
+                f"created_at {created.isoformat()} — смета датирована ПОЗЖЕ дня "
+                f"прогона {run_date.isoformat()}: смета не предшествует запуску "
+                "(AD-8); порядок внутри дня обеспечивается процессом — смета "
+                "коммитится до старта прогона"
             )
 
     if errs:
@@ -253,7 +263,10 @@ def verify_run(case_dir: Path, run_ref: str, dates: dict[str, date]) -> tuple[li
     limit = estimate["limit_usd"]
     detail = f"usd {usd:g} ≤ лимит {limit:g}"
     if run_date is not None and created is not None:
-        detail += f"; смета {created.isoformat()} раньше прогона {run_date.isoformat()}"
+        detail += (
+            f"; смета {created.isoformat()} не позже дня прогона "
+            f"{run_date.isoformat()}"
+        )
     return [], f"OK: {detail}"
 
 
@@ -287,7 +300,10 @@ def cmd_verify(case_dir: Path, explicit: Iterable[str] | None) -> int:
             "запуск блокирован (AD-8)"
         )
         return 1
-    print(f"\nИтог: PASS — сметы {len(refs)} прогонов валидны и предшествуют запуску")
+    print(
+        f"\nИтог: PASS — сметы {len(refs)} прогонов валидны и не датированы "
+        "позже дня прогона (C-041)"
+    )
     return 0
 
 
@@ -417,13 +433,14 @@ def cmd_estimate(case_dir: Path, args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
 
+    # Та же дневная гранулярность, что и в страже: смета дня прогона законна.
     known_run_date = run_dates(case_dir).get(estimate["run_ref"])
     created = parse_run_date(estimate["created_at"])
-    if known_run_date is not None and created is not None and not created < known_run_date:
+    if known_run_date is not None and created is not None and created > known_run_date:
         print(
-            f"предупреждение: смета датирована {created.isoformat()} не раньше "
+            f"предупреждение: смета датирована {created.isoformat()} позже дня "
             f"прогона {known_run_date.isoformat()} — страж C-041 заблокирует "
-            "запуск; смета обязана предшествовать прогону (AD-8)",
+            "запуск; смета обязана быть не позже дня прогона (AD-8)",
             file=sys.stderr,
         )
 

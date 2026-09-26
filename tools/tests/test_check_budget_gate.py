@@ -10,9 +10,19 @@
   (i)    нет сметы -> FAIL и «смета отсутствует: запуск блокирован»;
   (ii)   usd_estimate > limit_usd -> FAIL;
   (iii)  смета без stop_rule -> FAIL;
-  (iv)   смета, созданная ПОСЛЕ даты прогона -> FAIL;
+  (iv)   смета, созданная ПОЗЖЕ ДНЯ прогона -> FAIL (дневная гранулярность:
+         смета дня прогона законна — см. ниже), смета без `created_at` ->
+         FAIL, как и любое отсутствующее обязательное поле;
   (v)    корректная смета (фикстура в tmp) -> PASS;
   (vi)   генерация без входных данных -> ненулевой exit, файл не создан.
+
+Дневная гранулярность (C-041/AD-8). Порядок «смета до запуска» проверяется
+по датам: сравнение идёт между `created_at` сметы и `run_date` манифеста,
+обе стороны приводятся `parse_run_date` к дню. Смета, составленная в ДЕНЬ
+прогона, нарушением не является (порядок внутри дня обеспечивается
+процессом — смета коммитится до старта прогона), смета датой позже дня
+прогона — является. Дальше этого гейт не ослаблен: `created_at` остаётся
+обязательным полем (`REQUIRED_TEXT_FIELDS`).
 """
 
 from __future__ import annotations
@@ -276,11 +286,11 @@ def test_broken_json_fails(tmp_path: Path) -> None:
     assert "смета не читается" in out
 
 
-# --- (iv) датировка ---------------------------------------------------------
+# --- (iv) датировка (дневная гранулярность) ---------------------------------
 
 
 def test_created_after_run_date_fails(tmp_path: Path) -> None:
-    """(iv) Смета, написанная после прогона, — перерасход post factum."""
+    """(iv) Смета, написанная после дня прогона, — перерасход post factum."""
     _write_estimate(
         tmp_path,
         "a4-skeleton",
@@ -291,12 +301,19 @@ def test_created_after_run_date_fails(tmp_path: Path) -> None:
     code, out, _ = _verify(tmp_path)
 
     assert code != 0
-    assert "не раньше даты прогона 2026-09-13" in out
+    assert "смета датирована ПОЗЖЕ дня прогона 2026-09-13" in out
     assert "смета не предшествует запуску (AD-8)" in out
+    assert "порядок внутри дня обеспечивается процессом" in out
 
 
-def test_created_same_day_as_run_fails(tmp_path: Path) -> None:
-    """«Раньше» — строго раньше: та же дата прогона доказательством не является."""
+def test_t_d1_created_same_day_as_run_passes(tmp_path: Path) -> None:
+    """T-d1: смета, составленная В ДЕНЬ прогона, — законна.
+
+    Гранулярность проверки — день (C-041): порядок «смета до запуска» внутри
+    дня обеспечивается процессом (смета коммитится до старта прогона), а не
+    часовой меткой. Требовать строгого «раньше» значило бы блокировать
+    прогон сметой того же дня — так и было до дельты.
+    """
     _write_estimate(
         tmp_path,
         "a4-skeleton",
@@ -306,8 +323,44 @@ def test_created_same_day_as_run_fails(tmp_path: Path) -> None:
 
     code, out, _ = _verify(tmp_path)
 
+    assert code == 0, out
+    assert "[a4-skeleton] OK" in out
+    assert "смета 2026-09-13 не позже дня прогона 2026-09-13" in out
+
+
+def test_t_d2_created_next_day_fails(tmp_path: Path) -> None:
+    """T-d2: смета датой на день ПОЗЖЕ прогона — FAIL с сообщением о том, что
+    смета не предшествует запуску; ослабление ограничено днём прогона."""
+    _write_estimate(
+        tmp_path,
+        "a4-skeleton",
+        _estimate(created_at="2026-09-14T08:00:00+00:00"),
+    )
+    _write_manifest(tmp_path, "a4-skeleton", "2026-09-13")
+
+    code, out, _ = _verify(tmp_path)
+
     assert code != 0
-    assert "не раньше даты прогона" in out
+    assert "смета датирована ПОЗЖЕ дня прогона 2026-09-13" in out
+    assert "порядок внутри дня обеспечивается процессом — смета коммитится " \
+           "до старта прогона" in out
+    assert "[a4-skeleton] FAIL" in out
+
+
+def test_t_d3_missing_created_at_fails(tmp_path: Path) -> None:
+    """T-d3: `created_at` остаётся ОБЯЗАТЕЛЬНЫМ полем (REQUIRED_TEXT_FIELDS):
+    смета без даты не проверяема на «до запуска» и потому — FAIL, а не PASS
+    «по умолчанию»."""
+    assert "created_at" in gate.REQUIRED_TEXT_FIELDS, (
+        "created_at обязан оставаться обязательным полем сметы (C-041)"
+    )
+    _write_estimate(tmp_path, "a4-skeleton", _remove(_estimate(), "created_at"))
+    _write_manifest(tmp_path, "a4-skeleton", "2026-09-13")
+
+    code, out, _ = _verify(tmp_path)
+
+    assert code != 0
+    assert "created_at: поле отсутствует или пусто" in out
 
 
 def test_date_only_created_at_is_parsed(tmp_path: Path) -> None:
@@ -318,7 +371,7 @@ def test_date_only_created_at_is_parsed(tmp_path: Path) -> None:
     code, out, _ = _verify(tmp_path)
 
     assert code == 0
-    assert "смета 2026-09-12 раньше прогона 2026-09-13" in out
+    assert "смета 2026-09-12 не позже дня прогона 2026-09-13" in out
 
 
 # --- (v) корректная смета ---------------------------------------------------
@@ -464,7 +517,8 @@ def test_generate_happy_path_round_trip(tmp_path: Path) -> None:
 def test_generate_warns_when_estimate_is_late(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Генератор предупреждает, если дата сметы не предшествует известному прогону."""
+    """Генератор предупреждает, если смета датирована позже дня известного
+    прогона (дневная гранулярность — та же, что у стража)."""
     _write_manifest(tmp_path, "a4-skeleton", "2026-09-13")
 
     code = _run(
@@ -485,11 +539,11 @@ def test_generate_warns_when_estimate_is_late(
 
     assert code == 0
     assert (tmp_path / gate.BUDGET_DIR / "a4-skeleton.json").exists()
-    assert "не раньше" in capsys.readouterr().err
+    assert "позже дня прогона" in capsys.readouterr().err
     # страж ту же смету не пропустит — предупреждение не декоративно
     verify_code, out, _ = _verify(tmp_path)
     assert verify_code != 0
-    assert "не раньше даты прогона" in out
+    assert "смета датирована ПОЗЖЕ дня прогона" in out
 
 
 def test_generate_refuses_overwrite_without_force(tmp_path: Path) -> None:
@@ -542,27 +596,63 @@ def test_generate_force_replaces_estimate(tmp_path: Path) -> None:
 
 
 # --- рабочий набор кейса ----------------------------------------------------
+#
+# Сметы прогонов кейса — артефакты, а не заглушки: каждая проходит валидацию
+# полей AD-8 (калибровка, стоп-правило, утвердивший, лимит) и названа своим
+# прогоном (`run_ref` = имя файла). Прежняя форма регрессии — «смет в
+# evidence/budget/ быть не должно, пока прогоны не объявлены и не оценены» —
+# устарела вместе с объявлением прогонов и составлением смет (26.09.2026):
+# гейт кейса теперь зелёный по факту, и охрана смещается с пустоты каталога на
+# состоятельность артефактов. Красный гейт A4 по покрытию стадий
+# (tools/a4_manifest.py --verify, pipeline_complete=false) это не затрагивает:
+# C-041 — страж стоимости, другой гейт.
 
 
-def test_case_has_no_fabricated_estimates() -> None:
-    """В кейсе нет фиктивных смет: гейт красный по факту, а не по недосмотру.
-
-    Это регрессия против соблазна «позеленить» C-041 подсунутым артефактом:
-    пока реальные прогоны не объявлены и не оценены, смет в evidence/budget/
-    быть не должно.
-    """
+def test_case_estimates_are_not_stubs() -> None:
+    """Ни одну смету кейса нельзя подсунуть вместо доказательства: каждая
+    валидна по полям AD-8 и названа тем прогоном, чьим именем лежит."""
     case_dir = Path(__file__).resolve().parents[2]
     budget_dir = case_dir / gate.BUDGET_DIR
 
-    fabricated = sorted(path.name for path in budget_dir.glob("*.json")) if budget_dir.is_dir() else []
-    assert fabricated == [], f"в кейсе появились сметы без прогонов: {fabricated}"
+    artifacts = sorted(budget_dir.glob("*.json")) if budget_dir.is_dir() else []
+    for path in artifacts:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        assert data.get("run_ref") == path.stem, (
+            f"{path.name}: смета названа чужим прогоном "
+            f"'{data.get('run_ref')}' (имя файла — имя сметы, C-041)"
+        )
+        errs = gate.validate_estimate(data, path.stem)
+        assert errs == [], f"{path.name}: {errs}"
 
 
-def test_case_gate_is_red_until_estimates_exist() -> None:
-    """Ожидаемое состояние гейта кейса: C-041 красный (смет прогонов нет)."""
+def test_case_estimates_cover_declared_runs() -> None:
+    """Ни один прогон кейса не остался без сметы: объявленные прогоны
+    (DECLARED_RUN_REFS) и прогоны найденных манифестов закрыты, иначе запуск
+    блокирован по факту (AD-8)."""
+    case_dir = Path(__file__).resolve().parents[2]
+    budget_dir = case_dir / gate.BUDGET_DIR
+
+    refs = gate.required_runs(case_dir)
+    assert refs, "реестр прогонов кейса пуст — страху нечего проверять"
+    missing = sorted(
+        ref for ref in refs if not (budget_dir / f"{ref}.json").is_file()
+    )
+    assert missing == [], f"прогоны без сметы: {missing}"
+
+
+def test_case_gate_passes_on_committed_estimates() -> None:
+    """Состояние гейта кейса: C-041 зелёный по факту.
+
+    Сметы объявленных прогонов существуют и не датированы позже дня прогона
+    (дневная гранулярность: смета дня прогона законна — a4-skeleton
+    created_at=2026-09-26 при run_date=2026-09-26); страж называет каждый
+    прогон поимённо.
+    """
     case_dir = Path(__file__).resolve().parents[2]
 
     code, out, _ = _verify_all(case_dir)
 
-    assert code != 0
-    assert "смета отсутствует: запуск блокирован" in out
+    assert code == 0, out
+    assert "Итог: PASS" in out
+    for run_ref in gate.DECLARED_RUN_REFS:
+        assert f"[{run_ref}] OK" in out

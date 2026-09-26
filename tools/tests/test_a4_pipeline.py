@@ -22,11 +22,13 @@ n2); расхождения кода со спекой здесь не подг�
   попадает, ограничение на него не распространяется.
 
 * K3 — wire-прогон с частичным покрытием: в --out непустой журнал прогона
-  (run_ref), манифест создан, `pipeline_complete=false`, `--verify` даёт код 1
-  и поимённый список непокрытых стадий (список выводится из самого манифеста:
-  после дельты «статус из следа» `sft`/`rl_base_scheme` могут быть `executed`
-  — их следы исполнены на стенде и лежат в evidence/a4-run-wire/, — а
-  `spark_inference` непокрыта всегда: стенда gb10 у оркестратора нет);
+  (путь к нему виден полем `run_journal` манифеста), манифест создан,
+  `pipeline_complete=false`, `--verify` даёт код 1 и поимённый список
+  непокрытых стадий (список выводится из самого манифеста: после дельты
+  «статус из следа» `sft`/`rl_base_scheme` могут быть `executed` — их следы
+  исполнены на стенде и лежат в evidence/a4-run-wire/, — а `spark_inference`
+  непокрыта всегда: стенда gb10 у оркестратора нет). `run_ref` манифеста —
+  slug без «/» (C-041): имя прогона, по которому страж стоимости ищет смету;
 * K8 — детерминизм: два прогона с одним --seed дают одинаковые
   `model_weights_sha256` и вердикты среды;
 * §5.2 — stdout содержит JSON-сводку {run_ref, model_weights_sha256,
@@ -35,17 +37,13 @@ n2); расхождения кода со спекой здесь не подг�
 * K12 — сквозная портируемость: прогон из НЕ-корневого cwd (tmp-каталог) с
   минимальными `--steps 1 --tasks 1` и относительным `--out` внутри
   репозитория -> код 0; в манифесте рекурсивно нет ни одной строки,
-  начинающейся с '/'. Каталог артефактов прогона (tools/tests/.a4-k12-out-*)
-  удаляется после модуля.
+  начинающейся с '/', а `run_journal` резолвится от корня репозитория (не от
+  cwd запуска), существует и непуст; `run_ref` — slug без «/». Каталог
+  артефактов прогона (tools/tests/.a4-k12-out-*) удаляется после модуля.
 
-  ⚠ Расхождение контрактов (не разрешено здесь, решение — за архитектором):
-  дельта C-041 требует, чтобы поле `run_ref` манифеста было ИМЕНЕМ прогона
-  (slug без «/», по нему страж стоимости ищет `evidence/budget/<run_ref>.json`),
-  а путь журнала теперь несёт поле `run_journal`. Ниже, в K3/K12, остались
-  утверждения прежнего контракта «`run_ref` — путь к журналу, резолвится от
-  корня репозитория как файл»; они противоречат C-041 и потому под A4_SLOW
-  краснеют. Прогонные сценарии по заданию не трогались — расхождение
-  вынесено архитектору (перечень — в отчёте исполнителя).
+  Разрешение прежнего расхождения (дельта C-041, спека §4 п. 5): путь журнала
+  живёт в `run_journal`, `run_ref` — имя прогона; барьер существования журнала
+  сохранён, но проверяется по `run_journal`, а не по `run_ref`.
 
 * C-041 — идентификатор прогона: run_ref по умолчанию — slug из последней
   компоненты `--out`, при невозможности `a4-run-<хеш>`; вызов генератора
@@ -229,19 +227,38 @@ def _env_verdicts(out_dir: Path) -> list[dict]:
 
 @WIRE_RUN
 def test_k3_wire_run_leaves_nonempty_journal_and_manifest(wire_run: dict) -> None:
-    """K3: в --out есть непустой журнал прогона (run_ref из сводки §5.2 —
-    относительный от корня репозитория путь) и созданный манифест с
-    вычисленным pipeline_complete=false."""
-    run_ref = REPO_ROOT / wire_run["summary"]["run_ref"]
-    assert run_ref.is_file(), f"журнал прогона не создан: {run_ref}"
-    assert run_ref.stat().st_size > 0, f"журнал прогона пуст: {run_ref}"
+    """K3 / C-041: в --out есть непустой журнал прогона, а манифест несёт
+    `run_journal` — относительный от корня репозитория путь к нему (§4 п. 5,
+    барьер «манифест из ниоткуда»), и `run_ref` — slug без «/» (имя прогона,
+    по которому страж стоимости ищет `evidence/budget/<run_ref>.json`).
 
+    Прежнее утверждение «в run_ref лежит путь журнала» снято дельтой: путь
+    несёт `run_journal`, `run_ref` стал именем. Инвариант существования и
+    непустоты журнала сохранён — проверяется по `run_journal`."""
     manifest_path = wire_run["manifest_path"]
     assert manifest_path.is_file(), (
         "манифест не создан оркестратором; stderr генератора в журнале прогона"
     )
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["pipeline_complete"] is False
+
+    journal_rel = manifest["run_journal"]
+    assert not journal_rel.startswith("/"), (
+        f"run_journal манифеста обязан быть относительным путём: {journal_rel!r}"
+    )
+    journal = REPO_ROOT / journal_rel
+    assert journal.is_file(), f"журнал прогона не создан: {journal}"
+    assert journal.stat().st_size > 0, f"журнал прогона пуст: {journal}"
+    # журнал — артефакт самого прогона: он лежит в его каталоге --out
+    assert journal.resolve().is_relative_to(wire_run["out_dir"].resolve()), (
+        f"журнал {journal} вне каталога прогона {wire_run['out_dir']}"
+    )
+
+    run_ref = manifest["run_ref"]
+    assert run_ref == wire_run["summary"]["run_ref"]
+    assert run_ref and "/" not in run_ref, (
+        f"run_ref обязан быть именем прогона (slug без '/', C-041): {run_ref!r}"
+    )
 
 
 @WIRE_RUN
@@ -431,9 +448,10 @@ def test_k12_run_from_foreign_cwd_manifest_has_no_absolute_paths(
 
 @WIRE_RUN
 def test_k12_run_ref_resolves_from_repo_root(wire_run_foreign_cwd: dict) -> None:
-    """K12 (повторный вывод): `run_ref` из сводки stdout и из манифеста —
-    относительный путь, резолвится от КОРНЯ РЕПОЗИТОРИЯ (а не от cwd
-    запуска), существует и непуст."""
+    """K12 / C-041 (повторный вывод): `run_journal` манифеста — относительный
+    путь, резолвится от КОРНЯ РЕПОЗИТОРИЯ (а не от cwd запуска), существует и
+    непуст; `run_ref` — slug без «/», совпадающий со сводкой stdout: прогон
+    из чужого cwd находит свою смету и не теряет журнал."""
     proc = wire_run_foreign_cwd["proc"]
     assert proc.returncode == 0, proc.stderr[-2000:]
     summary = json.loads(proc.stdout)
@@ -442,12 +460,19 @@ def test_k12_run_ref_resolves_from_repo_root(wire_run_foreign_cwd: dict) -> None
     )
     assert manifest["run_ref"] == summary["run_ref"]
     run_ref = summary["run_ref"]
-    assert not run_ref.startswith("/")
-    resolved = REPO_ROOT / run_ref
-    assert resolved.is_file(), (
-        f"run_ref не резолвится от корня репозитория: {resolved}"
+    assert run_ref and "/" not in run_ref, (
+        f"run_ref обязан быть slug без '/': {run_ref!r}"
     )
-    assert resolved.stat().st_size > 0, f"run_ref пуст: {resolved}"
+
+    journal_rel = manifest["run_journal"]
+    assert not journal_rel.startswith("/"), (
+        f"run_journal манифеста обязан быть относительным путём: {journal_rel!r}"
+    )
+    resolved = REPO_ROOT / journal_rel
+    assert resolved.is_file(), (
+        f"run_journal не резолвится от корня репозитория: {resolved}"
+    )
+    assert resolved.stat().st_size > 0, f"run_journal пуст: {resolved}"
 
 
 # --- T1–T3: статус стадии sft/rl_base_scheme — из следа стадии --------------

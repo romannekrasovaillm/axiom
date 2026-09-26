@@ -26,6 +26,11 @@
    оптимизатор (``net/optimizer.py``: Per-Head Muon + AdamW, cosine + 1%
    warmup).  QAT: fake-quant MXFP4 весов включается со стадии SFT (ADR-005 п. 7,
    ``net/quant.py``) — по умолчанию в смоуке ``on``.
+   Конфиг — ``--model-preset``: ``small``/``tiny`` (численные смоук-конфиги
+   ``net/tests/conftest.py``, заморожены) либо ``l3-full`` — полный скелет,
+   прочитанный из декларативного ``net/config.json`` (AD-9/C-035: конфиг
+   первичен), с печатью и записью в журнал оценки параметров и памяти
+   состояния до старта обучения.
 5. **Чекпойнт.** Orbax (``net/checkpoint.py``) + ``tree_hash``; канонически —
    на ``~/gb10-shared`` (C-032), в рабочем каталоге симлинк; round-trip
    проверяется сразу (хеш после восстановления совпадает).
@@ -52,6 +57,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import hashlib
 import importlib.util
 import json
 import os
@@ -82,6 +88,27 @@ SHARED_ROOT_ENV = "GB10_SHARED"
 
 #: Каталог канонического хранения чекпойнтов стадии на сетевом диске.
 CHECKPOINT_SUBDIR = "checkpoints/sft-smoke"
+
+#: Численные пресеты смоук-конфигов приёмки сети (``net/tests/conftest.py``).
+#: Заморожены: их поля сверяются тестами дельты ``l3-full`` и не меняются.
+SMOKE_PRESETS = ("small", "tiny")
+
+#: Пресет полного конфига скелета L3: не уменьшенная копия, а сам скелет,
+#: прочитанный из декларативного ``net/config.json``.
+L3_FULL_PRESET = "l3-full"
+
+#: Декларативный конфиг скелета L3 — источник истины архитектуры сети
+#: (AD-9/C-035: конфиг первичен, меняется параметром файла, а не кодом).
+L3_CONFIG_PATH = CASE_DIR / "net" / "config.json"
+
+#: Оценка памяти состояния обучения на ОДИН параметр (шаг 3 дельты l3-full).
+#: Оценка, не замер: bf16-веса (2 Б) + fp32-мастер (4) + Muon-momentum/Adam m
+#: (4) + Adam v (4) + bf16-градиенты (2).  Замер потребовал бы аллокации —
+#: ровно той, чью влезаемость пресет и проверяет.
+STATE_BYTES_PER_PARAM = 16
+
+#: Гибибайт — единица оценок памяти в журнале.
+GIB = 1 << 30
 
 #: Лицензии блоков по ``source`` (ADR-004: лицензия каждого блока).
 #: Объявлены владельцем данных; источник сведений — ``~/gb10-shared/datasets/
@@ -499,16 +526,250 @@ def shuffle_pool(pool: list, seed: int) -> list:
 # ---------------------------------------------------------------------------
 
 
+# Конфиг стадии: численные смоук-пресеты приёмки (``net/tests/conftest.py``,
+# заморожены) и полный скелет L3 из декларативного ``net/config.json``
+# (пресет ``l3-full``, AD-9/C-035) вместе с оценкой ресурсов до старта
+# обучения (шаг 3 дельты).
+
+
+def load_l3_full_config():
+    """Пресет ``l3-full``: полный конфиг скелета L3 из ``net/config.json``.
+
+    Читается существующим загрузчиком ``net.config.load_config`` — числа
+    архитектуры (24 слоя 18 KDA : 6 MLA, hidden 1536, LatentMoE 12+2 top-2, MTP,
+    AttnRes) не дублируются в коде пресета, поэтому расхождение пресета с
+    декларативным конфигом невозможно по построению (AD-9/C-035: конфиг
+    первичен).  ``vocab_size`` и ``qat_enabled`` подставляет стадия — как и для
+    численных пресетов ``small``/``tiny``.
+    """
+    from net.config import load_config
+
+    return load_config(L3_CONFIG_PATH)
+
+
+def l3_config_report() -> dict[str, Any]:
+    """Отчёт о переносе декларативного конфига в смоук-конфиг (шаг 1 дельты).
+
+    ``unmapped`` — поля ``net/config.json``, у которых нет аналога в
+    dataclass'е конфига: метаданные прогона и бюджета (счётчики параметров,
+    состав слоёв, хеш токенизатора, ``deviations``), а не архитектура сети.
+    Они не выдумываются и не переносятся — список идёт в журнал стадии, чтобы
+    «неперенесённое» было видно явно, а не потеряно молча.
+    """
+    from net.config import ModelConfig
+
+    declared = json.loads(L3_CONFIG_PATH.read_text(encoding="utf-8"))
+    known = {fld.name for fld in dataclasses.fields(ModelConfig)}
+    return {
+        "path": repo_rel(L3_CONFIG_PATH, detect_repo_root()),
+        # Тот же канонический дайджест, что net.data.shard_hash (потоковый
+        # sha256), но без импорта jax ради чтения конфига.
+        "sha256": hashlib.sha256(L3_CONFIG_PATH.read_bytes()).hexdigest(),
+        "unmapped": sorted(key for key in declared if key not in known),
+        "declared_vocab_size": declared.get("vocab_size"),
+        "declared_param_count": declared.get("actual_param_count"),
+        "declared_active_params": declared.get("active_params_per_token"),
+    }
+
+
+def state_estimate_bytes(params_total: int) -> int:
+    """Оценка памяти состояния (веса + оптимизатор) для ``params_total``."""
+    return STATE_BYTES_PER_PARAM * int(params_total)
+
+
+def gib(value: Optional[int]) -> Optional[float]:
+    """Байты в ГиБ для журнала (``None`` проходит насквозь — «не посчитано»)."""
+    return None if value is None else round(int(value) / GIB, 3)
+
+
+def device_memory_free_bytes() -> tuple[Optional[int], str]:
+    """Свободная память GPU по данным JAX — без nvidia-smi/pynvml/новых env.
+
+    Единственный источник — ``jax.devices()[i].memory_stats()``: ``bytes_limit``
+    (пул аллокатора) минус ``peak_bytes_in_use`` (пик процесса) даёт оценку
+    доступного сверху.  Проверка не имитируется: нет GPU-устройства, нет
+    статистики или ключей — вернётся ``None`` и причина, а вердикт оценки станет
+    «не проверено» (честная фиксация вместо зелёного по умолчанию).
+    """
+    try:
+        import jax
+
+        gpus = [device for device in jax.devices() if device.platform == "gpu"]
+    except Exception as exc:  # noqa: BLE001 — сломанный плагин не роняет стадию
+        return None, f"jax.devices() недоступны: {type(exc).__name__}: {exc}"
+    if not gpus:
+        return None, "GPU-устройства нет (jax.devices(): cpu) — сверка невозможна"
+    device = gpus[0]
+    try:
+        stats = device.memory_stats()
+    except Exception as exc:  # noqa: BLE001 — статистика может быть недоступна
+        return None, f"memory_stats недоступны: {type(exc).__name__}: {exc}"
+    if not isinstance(stats, dict):
+        return None, "memory_stats вернули None (статистика недоступна)"
+    limit = stats.get("bytes_limit")
+    used = stats.get("peak_bytes_in_use")
+    if used is None:
+        used = stats.get("bytes_in_use")
+    if limit is None or used is None:
+        return None, f"memory_stats без bytes_limit/peak_bytes_in_use: {sorted(stats)}"
+    return max(int(limit) - int(used), 0), (
+        f"{device.device_kind}: jax memory_stats (bytes_limit - peak_bytes_in_use)"
+    )
+
+
+def assess_l3_resources(cfg, report: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    """Оценка ресурсов пресета ``l3-full`` до старта обучения (шаг 3 дельты).
+
+    Параметры считаются по формам (``net.model.param_count`` /
+    ``active_param_count`` — ``jax.eval_shape`` без аллокации), а не замером
+    памяти: замер потребовал бы аллокации, влезаемость которой и проверяется.
+    Состояние оценивается как ``STATE_BYTES_PER_PARAM`` байт на параметр.
+
+    ``*_declared`` — декларативные числа ``net/config.json``: они описывают
+    скелет с полным vocab 160K и больше построенных, потому что смоук
+    подставляет свой vocab (покрывающий id канонического токенизатора).
+    Сверка с железом идёт по консервативной (большей) из двух оценок — иначе
+    WARN мог бы оказаться ложно-зелёным именно на полном масштабе.
+
+    Функция не поднимает исключений: «не посчитано» — это вердикт
+    ``not_verified`` с причиной, а не падение стадии.
+    """
+    report = report or {}
+    try:
+        from net.model import active_param_count, param_count
+
+        params_total = int(param_count(cfg))
+        params_active = int(active_param_count(cfg))
+        counting = (
+            "net.model.param_count/active_param_count (jax.eval_shape, без аллокации)"
+        )
+    except Exception as exc:  # noqa: BLE001 — оценка не роняет стадию
+        params_total = params_active = None
+        counting = f"не посчитано: {type(exc).__name__}: {exc}"
+
+    declared_total = report.get("declared_param_count")
+    declared_active = report.get("declared_active_params")
+    built_bytes = (
+        state_estimate_bytes(params_total) if params_total is not None else None
+    )
+    declared_bytes = (
+        state_estimate_bytes(declared_total)
+        if isinstance(declared_total, int) and declared_total > 0
+        else None
+    )
+    free_bytes, source = device_memory_free_bytes()
+
+    if built_bytes is None:
+        verdict = "not_verified"
+        note = f"число параметров не посчитано ({counting}) — оценка состояния не сделана"
+    else:
+        worst = max(built_bytes, declared_bytes or 0)
+        if free_bytes is None:
+            verdict = "not_verified"
+            note = (
+                f"оценка состояния {gib(worst)} ГиБ не сверена с железом: {source} "
+                "(AD-7: одна нагрузка за раз — пре-флайт за владельцем)"
+            )
+        elif worst > free_bytes:
+            verdict = "warn"
+            note = (
+                f"оценка состояния {gib(worst)} ГиБ > свободной памяти "
+                f"{gib(free_bytes)} ГиБ ({source}) — прогону пресета l3-full "
+                "может не хватить памяти (AD-7)"
+            )
+        else:
+            verdict = "ok"
+            note = (
+                f"оценка состояния {gib(worst)} ГиБ <= свободной памяти "
+                f"{gib(free_bytes)} ГиБ ({source})"
+            )
+    return {
+        "preset": L3_FULL_PRESET,
+        "built_vocab_size": getattr(cfg, "vocab_size", None),
+        "params_total": params_total,
+        "params_active": params_active,
+        "params_total_declared": declared_total,
+        "params_active_declared": declared_active,
+        "bytes_per_param": STATE_BYTES_PER_PARAM,
+        "state_estimate_bytes": built_bytes,
+        "state_estimate_gb": gib(built_bytes),
+        "state_estimate_gb_declared": gib(declared_bytes),
+        "free_device_bytes": free_bytes,
+        "free_device_gb": gib(free_bytes),
+        "device_memory_source": source,
+        "param_counting": counting,
+        "verdict": verdict,
+        "note": note,
+    }
+
+
+def l3_full_notes(estimate: dict[str, Any], report: dict[str, Any]) -> list[str]:
+    """Строки ``notes`` журнала стадии для пресета ``l3-full`` (шаги 1 и 3).
+
+    Отдельная функция — чтобы контракт журнала (``preset=l3-full,
+    params_total=…, state_estimate_gb=…`` плюс список неперенесённых полей
+    конфига) проверялся тестом без прогона стадии.
+    """
+    total = estimate.get("params_total")
+    active = estimate.get("params_active")
+    state_gb = estimate.get("state_estimate_gb")
+    unmapped = report.get("unmapped") or []
+    declared_vocab = report.get("declared_vocab_size")
+    built_vocab = estimate.get("built_vocab_size")
+    verdict = estimate.get("verdict")
+    notes = [
+        f"preset={L3_FULL_PRESET}, "
+        f"params_total={total if total is not None else 'не посчитано'}, "
+        f"state_estimate_gb={state_gb if state_gb is not None else 'не посчитано'}",
+        (
+            f"{L3_FULL_PRESET}: конфиг — полный скелет L3 из декларативного "
+            f"{report.get('path', 'net/config.json')} (AD-9/C-035: конфиг первичен), "
+            f"sha256={str(report.get('sha256'))[:16]}…; "
+            f"vocab {declared_vocab} → {built_vocab} при построении (vocab смоука "
+            "покрывает испускаемые id канонического токенизатора)"
+        ),
+        (
+            f"{L3_FULL_PRESET}: поля net/config.json без аналога в конфиге стадии "
+            "не переносятся (метаданные прогона и бюджета, не архитектура): "
+            + (", ".join(unmapped) if unmapped else "нет")
+        ),
+        (
+            f"{L3_FULL_PRESET}: оценка ресурсов — params_active="
+            f"{active if active is not None else 'не посчитано'}, "
+            f"состояние ≈ {state_gb if state_gb is not None else 'не посчитано'} ГиБ "
+            f"({STATE_BYTES_PER_PARAM} Б/параметр: bf16-веса + fp32-мастер + m/v + "
+            f"градиенты; декларативно по net/config.json — "
+            f"{estimate.get('state_estimate_gb_declared')} ГиБ), "
+            f"свободно {estimate.get('free_device_gb')} ГиБ "
+            f"[{estimate.get('device_memory_source')}], вердикт={verdict}"
+        ),
+        (
+            f"{L3_FULL_PRESET}: "
+            + ("WARN — " if verdict == "warn" else "")
+            + str(estimate.get("note", ""))
+        ),
+    ]
+    return notes
+
+
 def build_model_config(vocab_size: int, preset: str, qat_weights: bool = True):
-    """Конфиг скелета L3 для смоука (по умолчанию — как в net/tests/conftest).
+    """Конфиг скелета L3 для смоука.
+
+    ``small``/``tiny`` — численные смоук-конфиги ``net/tests/conftest.py``
+    (заморожены: их поля стоят приёмочные тесты сети); ``l3-full`` — полный
+    конфиг скелета из декларативного ``net/config.json``, чтобы смоук-провод
+    шёл по той же архитектуре, что пиннута в конфиге, а не по её уменьшенной
+    копии.
 
     ``qat_enabled`` выставляется вместе с флагом прогона: QAT включается со
     стадии SFT (ADR-005 п. 7), поэтому конфиг стадии обязан нести включённый
     признак — иначе журнал и конфиг противоречили бы друг другу.
     """
-    conftest = _load_acceptance_conftest()
+    conftest = _load_acceptance_conftest()  # ADR-010: пиннинг до импорта net.*
     if preset == "tiny":
         base = conftest.tiny_config()
+    elif preset == L3_FULL_PRESET:
+        base = load_l3_full_config()
     else:
         base = conftest.small_config()
     return dataclasses.replace(
@@ -694,7 +955,11 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     parser.add_argument("--lr", type=float, default=1e-2, help="пиковый LR (cosine + warmup)")
     parser.add_argument("--warmup-ratio", type=float, default=0.01)
     parser.add_argument("--chunk-size", type=int, default=64)
-    parser.add_argument("--model-preset", choices=("small", "tiny"), default="small")
+    parser.add_argument("--model-preset", choices=SMOKE_PRESETS + (L3_FULL_PRESET,),
+                        default="small",
+                        help="small/tiny — смоук-конфиги приёмки сети "
+                             "(net/tests/conftest.py); l3-full — полный конфиг "
+                             "скелета L3 из net/config.json (AD-9/C-035)")
     parser.add_argument("--qat-weights", dest="qat_weights", action="store_true",
                         default=True, help="QAT fake-quant MXFP4 весов (ADR-005 п.7)")
     parser.add_argument("--no-qat-weights", dest="qat_weights", action="store_false")
@@ -866,6 +1131,49 @@ def run_stage(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
             "MTP, LatentMoE, AttnRes), в смоук-масштабе net/tests/conftest.py"
         ),
     }
+    # Пресет l3-full: полный конфиг из декларативного net/config.json + оценка
+    # ресурсов до старта обучения (шаги 1 и 3 дельты).  Численные пресеты
+    # small/tiny этой ветки не касаются — их поведение заморожено.
+    if args.model_preset == L3_FULL_PRESET:
+        report = l3_config_report()
+        estimate = assess_l3_resources(cfg, report)
+        journal["model_config"]["config_source"] = report["path"]
+        journal["model_config"]["config_sha256"] = report["sha256"]
+        journal["model_config"]["moe"] = {
+            "dense_layers": cfg.moe_dense_layers,
+            "num_routed": cfg.moe_num_routed,
+            "num_shared": cfg.moe_num_shared,
+            "top_k": cfg.moe_top_k,
+            "latent_dim": cfg.moe_latent_dim,
+        }
+        journal["model_config"]["mla_pool"] = {
+            "block": cfg.mla_pool_block,
+            "size": cfg.mla_pool_size,
+            "modes": list(cfg.mla_layer_modes),
+        }
+        journal["model_config"]["note"] = (
+            "полный конфиг скелета L3, прочитанный из декларативного "
+            "net/config.json (AD-9/C-035: конфиг первичен): 24 слоя (18 KDA + 6 "
+            "MLA), hidden 1536, LatentMoE 12+2 top-2, MTP, AttnRes — пресет не "
+            "переписывает архитектуру числами"
+        )
+        journal["resource_estimate"] = estimate
+        journal["notes"].extend(l3_full_notes(estimate, report))
+        print(
+            f"[sft] ресурсы ({L3_FULL_PRESET}): params_total={estimate['params_total']} "
+            f"(декларативно {estimate['params_total_declared']}), "
+            f"params_active={estimate['params_active']}, состояние ≈ "
+            f"{estimate['state_estimate_gb']} ГиБ "
+            f"({STATE_BYTES_PER_PARAM} Б/параметр — оценка, не замер), свободно "
+            f"{estimate['free_device_gb']} ГиБ [{estimate['device_memory_source']}] "
+            f"→ {estimate['verdict']}",
+            flush=True,
+        )
+        if estimate["verdict"] == "warn":
+            print(
+                f"[sft] WARN ({L3_FULL_PRESET}): {estimate['note']}",
+                file=sys.stderr, flush=True,
+            )
     journal["optimizer"] = {
         "name": "per-head-muon+adamw",
         "lr": args.lr,

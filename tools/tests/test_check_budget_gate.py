@@ -411,6 +411,40 @@ def test_manifest_of_undeclared_run_is_required(tmp_path: Path) -> None:
     assert "смета отсутствует: запуск блокирован" in out
 
 
+# --- T-registry: реестр объявленных прогонов --------------------------------
+
+
+def test_t_registry_covers_stage_runs(tmp_path: Path) -> None:
+    """T-registry: стадии, исполненные отдельными инструментами
+    (sft-smoke/rl-smoke), объявлены в реестре прогонов и потому под стражем
+    C-041 — смета требуется даже без манифеста A4 (AD-8: каждому прогону
+    смета; реестр без стадий оставлял бы их лимиты непроверенными).
+    """
+    declared = set(gate.DECLARED_RUN_REFS)
+
+    assert {"sft-smoke", "rl-smoke"} <= declared, (
+        f"реестр объявленных прогонов не покрывает стадии: {sorted(declared)}"
+    )
+
+    # Манифестов стадий нет — прогон обязан попасть в реестр из объявления.
+    refs = gate.required_runs(tmp_path)
+
+    assert gate.required_runs(tmp_path, ["sft-smoke"]) == ["sft-smoke"]
+    assert {"sft-smoke", "rl-smoke"} <= set(refs)
+    assert refs == list(gate.DECLARED_RUN_REFS), (
+        "пустой кейс: реестр — ровно объявленные прогоны, без дублей"
+    )
+
+
+def test_t_registry_stage_without_estimate_blocks_run(tmp_path: Path) -> None:
+    """Стадия реестра без сметы блокирует запуск поимённо (не «прочие»)."""
+    code, out, _ = _verify(tmp_path, run_ref="rl-smoke")
+
+    assert code != 0
+    assert "[rl-smoke] FAIL" in out
+    assert "смета отсутствует: запуск блокирован" in out
+
+
 # --- (vi) генератор ---------------------------------------------------------
 
 

@@ -19,12 +19,18 @@
   на ≥`--tasks` задачах, собираются механические вердикты и Run Manifest
   среды.
 
+Стадии `sft` и `rl_base_scheme` исполняет не оркестратор, а их собственные
+скрипты (`tools/run_sft_smoke.py`, `tools/run_rl_smoke.py`) на стенде; канон
+статуса — **след стадии** (`evidence/a4-run-wire/<sft|rl>/stage-journal.json`),
+а не копия статуса в оркестраторе (SFT-STAGE.delta §4 п. 4, RL-STAGE.delta).
+Оркестратор только читает след и эмитит статус из него; следа нет или он бит —
+прежний `absent` с причиной (ADR-005 п. 1/2). Фабрикация `executed` без следа
+запрещена.
+
 Недоступные стадии помечаются честно:
 
 * `spark_inference` — `skipped`: инференс исполняется локально (CPU JAX),
   что не является стендом gb10/DGX Spark (подмена стенда запрещена, ADR-010).
-* `sft` — `absent`: кода SFT нет (ADR-005 п. 1 не реализован).
-* `rl_base_scheme` — `absent`: кода RL по схеме базы нет (ADR-005 п. 2).
 
 Манифест A4 собирает генератор `tools/a4_manifest.py` (владеет узел n1);
 оркестратор вызывает его **подпроцессом** по контракту §5.1 с
@@ -87,6 +93,26 @@ STAGE_SET_V1 = (
     "sft",
     "rl_base_scheme",
 )
+
+# Стадии, исполняемые вне оркестратора: статус берётся из следа стадии
+# (`stage-journal.json`), который пишут tools/run_sft_smoke.py и
+# tools/run_rl_smoke.py. Путь следа — относительный от корня репозитория
+# (ADR-014 п. 8); имя каталога следа не обязано совпадать со именем стадии.
+TRACE_ROOT = "evidence/a4-run-wire"
+STAGE_TRACE_SUBDIR = {"sft": "sft", "rl_base_scheme": "rl"}
+
+# Словарь статусов манифеста (A4-RUN.delta §2): след со статусом вне него
+# (например, `failed` из run_sft_smoke.py) статусом манифеста стать не может —
+# генератор §5.1 отвергнет недопустимый статус и манифест не запишется вовсе,
+# спрятав вердикт гейта. Такой след считается битым: эмитится `absent`.
+STAGE_TRACE_STATUSES = ("executed", "skipped", "absent")
+
+# Прежние причины `absent` (прямая цитата прежнего поведения оркестратора):
+# следа нет или он бит — они сохраняются без изменений.
+STAGE_ABSENT_REASON = {
+    "sft": "причина: кода SFT нет (ADR-005 п. 1 не реализован)",
+    "rl_base_scheme": "причина: кода RL по схеме базы нет (ADR-005 п. 2 не реализован)",
+}
 
 # Малый конфиг для wire-прогона на CPU (зеркало net/tests/conftest.py
 # ``small_config``, vocab 512 — функциональные тесты кейса).
@@ -370,6 +396,97 @@ def run_rl_environment(
     return verdicts, summary
 
 
+def stage_trace_path(repo_root: Path, name: str) -> Optional[Path]:
+    """Путь следа стадии (`<repo_root>/evidence/a4-run-wire/<sft|rl>/
+    stage-journal.json`). None — стадия следом не владеет (её статус считает
+    сам оркестратор)."""
+    subdir = STAGE_TRACE_SUBDIR.get(name)
+    if subdir is None:
+        return None
+    return repo_root / TRACE_ROOT / subdir / "stage-journal.json"
+
+
+def read_stage_trace(repo_root: Path, name: str) -> Optional[dict[str, Any]]:
+    """След стадии — единственный источник её статуса (SFT-STAGE.delta §4 п. 4).
+
+    None, если следа нет, он не читается, не является JSON-объектом, не несёт
+    непустого строкового поля `status` или несёт статус вне словаря манифеста
+    (§2: `executed|skipped|absent`) — такой след не может стать статусом
+    стадии, генератор §5.1 его отвергнет и манифест не будет записан вовсе.
+    Вызывающий обязан эмитить `absent`, а не `executed`: фабрикация статуса
+    запрещена. След только читается — оркестратор стадию не исполняет и не
+    переигрывает.
+    """
+    path = stage_trace_path(repo_root, name)
+    if path is None or not path.is_file():
+        return None
+    try:
+        trace = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(trace, dict):
+        return None
+    status = trace.get("status")
+    if not isinstance(status, str) or status not in STAGE_TRACE_STATUSES:
+        return None
+    return trace
+
+
+def trace_rel_path(value: Any, repo_root: Path) -> Optional[str]:
+    """Путь из следа в относительной форме (ADR-014 п. 8: абсолютные пути в
+    манифесте запрещены).
+
+    Абсолютный путь внутри репозитория переводится в относительный; всё, что
+    вне репозитория, не строка или пусто, — не эмитится: оркестратор пути не
+    выдумывает и не пропускает в манифест абсолютных.
+    """
+    if not isinstance(value, str) or not value:
+        return None
+    path = Path(value)
+    if not path.is_absolute():
+        return path.as_posix()
+    try:
+        return path.resolve().relative_to(repo_root).as_posix()
+    except (OSError, ValueError):
+        return None
+
+
+def stage_from_trace(repo_root: Path, name: str) -> Optional[dict[str, Any]]:
+    """Стадия из следа: ``{name, status: <из следа>, evidence: [...]}``.
+
+    evidence собирается **только** из реально присутствующих полей следа:
+    путь самого следа, `steps`, `checkpoint.tree_hash` (или верхнеуровневый
+    `tree_hash`), `checkpoint.path`. Ничего не домысливается. None — следа нет
+    или он бит (см. `read_stage_trace`).
+    """
+    trace = read_stage_trace(repo_root, name)
+    if trace is None:
+        return None
+    path = stage_trace_path(repo_root, name)
+    if path is None:  # недостижимо: trace читается только для стадий со следом
+        return None
+
+    evidence = [f"stage_journal={repo_rel(path, repo_root)}"]
+    steps = trace.get("steps")
+    if isinstance(steps, int) and not isinstance(steps, bool):
+        evidence.append(f"steps={steps}")
+    checkpoint = trace.get("checkpoint")
+    tree_hash = checkpoint.get("tree_hash") if isinstance(checkpoint, dict) else None
+    if not isinstance(tree_hash, str) or not tree_hash:
+        tree_hash = trace.get("tree_hash")
+    if isinstance(tree_hash, str) and tree_hash:
+        evidence.append(f"tree_hash={tree_hash}")
+    checkpoint_path = (
+        trace_rel_path(checkpoint.get("path"), repo_root)
+        if isinstance(checkpoint, dict)
+        else None
+    )
+    if checkpoint_path:
+        evidence.append(f"checkpoint={checkpoint_path}")
+
+    return {"name": name, "status": trace["status"], "evidence": evidence}
+
+
 def assemble_stages(
     model_weights_sha256: str,
     checkpoint_dir: Path,
@@ -384,9 +501,13 @@ def assemble_stages(
 
     Пути в evidence — относительные от корня репозитория (ADR-014 п. 8):
     именно эти строки через `--stage` попадают в манифест без изменений.
+
+    Стадии `pretrain_checkpoint`/`spark_inference`/`rl_environment` считает сам
+    оркестратор; `sft` и `rl_base_scheme` эмитятся из следов стадий
+    (`stage_from_trace`), а при отсутствии/битом следе — `absent` с причиной.
     """
     passed = sum(1 for v in env_verdicts if v["passed"])
-    return [
+    stages: list[dict[str, Any]] = [
         {
             "name": "pretrain_checkpoint",
             "status": "executed",
@@ -414,17 +535,19 @@ def assemble_stages(
                 f"pass={passed}",
             ],
         },
-        {
-            "name": "sft",
-            "status": "absent",
-            "evidence": ["причина: кода SFT нет (ADR-005 п. 1 не реализован)"],
-        },
-        {
-            "name": "rl_base_scheme",
-            "status": "absent",
-            "evidence": ["причина: кода RL по схеме базы нет (ADR-005 п. 2 не реализован)"],
-        },
     ]
+    for name in STAGE_TRACE_SUBDIR:
+        traced = stage_from_trace(repo_root, name)
+        stages.append(
+            traced
+            if traced is not None
+            else {
+                "name": name,
+                "status": "absent",
+                "evidence": [STAGE_ABSENT_REASON[name]],
+            }
+        )
+    return stages
 
 
 def call_generator(

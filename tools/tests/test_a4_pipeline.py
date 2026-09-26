@@ -23,7 +23,10 @@ n2); расхождения кода со спекой здесь не подг�
 
 * K3 — wire-прогон с частичным покрытием: в --out непустой журнал прогона
   (run_ref), манифест создан, `pipeline_complete=false`, `--verify` даёт код 1
-  и поимённый список непокрытых стадий (sft, rl_base_scheme, spark_inference);
+  и поимённый список непокрытых стадий (список выводится из самого манифеста:
+  после дельты «статус из следа» `sft`/`rl_base_scheme` могут быть `executed`
+  — их следы исполнены на стенде и лежат в evidence/a4-run-wire/, — а
+  `spark_inference` непокрыта всегда: стенда gb10 у оркестратора нет);
 * K8 — детерминизм: два прогона с одним --seed дают одинаковые
   `model_weights_sha256` и вердикты среды;
 * §5.2 — stdout содержит JSON-сводку {run_ref, model_weights_sha256,
@@ -94,9 +97,14 @@ STAGE_SET_V1 = (
     "rl_base_scheme",
 )
 
-# Стадии, которые на 13.09.2026 не могут быть executed (спека §2): стенда gb10
-# у оркестратора нет, кода SFT/RL нет. Их подмена запрещена (ADR-010).
-UNCOVERED_STAGES = ("sft", "rl_base_scheme", "spark_inference")
+# Стадии, которые оркестратор не исполняет и не может объявить executed:
+# `spark_inference` — инференс идёт локально (CPU JAX), стенда gb10 у
+# оркестратора нет; подмена стенда запрещена (ADR-010). Статусы `sft` и
+# `rl_base_scheme` оркестратор берёт из следов стадий (SFT-STAGE.delta §4 п. 4)
+# и в конкретном окружении они могут быть `executed` — поэтому ожидаемый
+# список непокрытых стадий K3 выводится из собранного манифеста, а не из
+# константы, зафиксированной до появления следов.
+ALWAYS_UNCOVERED_STAGES = ("spark_inference",)
 
 # Верхний предел одного прогона в тесте (ручной замер 2026-09-13 — 169,6 с на
 # CPU; запас под jit-компиляцию на медленной машине).
@@ -107,17 +115,19 @@ RUN_TIMEOUT_SEC = 600
 #   (2:49.61 wall, exit 0);
 # * узел n3 (2026-09-13): прогон `--seed 0 --steps 1 --tasks 1` из чужого cwd
 #   (K12) — 122,9 с wall, exit 0.
-# Одиночный прогон БОЛЬШЕ бюджета 120 с. Поэтому все прогонные тесты ниже —
-# slow и по умолчанию скипаются; запуск: `A4_SLOW=1 ~/venv-axiom/bin/python
-# -m pytest tools/tests -q` (сюите нужно ~10 мин: ровно три прогона
-# оркестратора — общий фикстурный + повторный для K8 + прогон K12).
-pytestmark = [
-    pytest.mark.slow,
-    pytest.mark.skipif(
+# Одиночный прогон БОЛЬШЕ бюджета 120 с, поэтому прогонные тесты помечены
+# `WIRE_RUN` (slow + skip без A4_SLOW=1) — ровно три прогона оркестратора на
+# сюиту: общий фикстурный + повторный для K8 + прогон K12 (~10 мин).
+# Метки стоят на самих прогонных тестах, а не на модуле: файловые тесты следа
+# стадии (T1–T3, `assemble_stages`/`read_stage_trace` на tmp-фикстурах) быстрые,
+# GPU не требуют и обязаны исполняться в обычном прогоне.
+def WIRE_RUN(test):
+    """Метки прогонного теста: slow + пропуск без A4_SLOW=1 (см. выше)."""
+    test = pytest.mark.skipif(
         os.environ.get("A4_SLOW") != "1",
         reason="прогон оркестратора ~123–170 с (>120 с); включить: A4_SLOW=1",
-    ),
-]
+    )(test)
+    return pytest.mark.slow(test)
 
 
 def _run_orchestrator(out_dir: Path, manifest_out: Path) -> subprocess.CompletedProcess[str]:
@@ -200,6 +210,7 @@ def _env_verdicts(out_dir: Path) -> list[dict]:
 # --- K3: wire-прогон с частичным покрытием (§6, критерий K3) ---------------
 
 
+@WIRE_RUN
 def test_k3_wire_run_leaves_nonempty_journal_and_manifest(wire_run: dict) -> None:
     """K3: в --out есть непустой журнал прогона (run_ref из сводки §5.2 —
     относительный от корня репозитория путь) и созданный манифест с
@@ -216,20 +227,62 @@ def test_k3_wire_run_leaves_nonempty_journal_and_manifest(wire_run: dict) -> Non
     assert manifest["pipeline_complete"] is False
 
 
+@WIRE_RUN
 def test_k3_verify_reports_partial_coverage_with_stage_names(wire_run: dict) -> None:
     """K3: `--verify` на частичном манифесте — код 1 и поимённый список
-    непокрытых стадий (sft, rl_base_scheme, spark_inference): красный гейт
-    читается как план работ (§4 п. 3)."""
+    непокрытых стадий: красный гейт читается как план работ (§4 п. 3).
+
+    Состав списка выводится из собранного манифеста (правило §4 п. 2: не
+    `executed` или пустой `evidence`), а не из константы: статусы `sft` и
+    `rl_base_scheme` приходят из следов стадий и зависят от их наличия на
+    диске. Непокрытость `spark_inference` — инвариант (стенда нет, ADR-010)."""
     result = _verify(wire_run["manifest_path"])
     assert result.returncode == 1, result.stderr
     assert "покрытие частично" in result.stderr
-    for stage in UNCOVERED_STAGES:
+
+    manifest = json.loads(wire_run["manifest_path"].read_text(encoding="utf-8"))
+    uncovered = [
+        stage["name"]
+        for stage in manifest["stages"]
+        if stage["status"] != "executed" or not stage["evidence"]
+    ]
+    assert "spark_inference" in uncovered, (
+        f"spark_inference обязана быть непокрытой (ADR-010): {uncovered}"
+    )
+    for stage in ALWAYS_UNCOVERED_STAGES:
         assert stage in result.stderr, f"стадия {stage} не поименована в: {result.stderr}"
+    for stage in uncovered:
+        assert stage in result.stderr, f"стадия {stage} не поименована в: {result.stderr}"
+
+
+@WIRE_RUN
+def test_sft_rl_statuses_come_from_stage_journals(wire_run: dict) -> None:
+    """Канон SFT-STAGE.delta §4 п. 4: статус `sft`/`rl_base_scheme` — из следа
+    стадии, а не из копии в оркестраторе. Проверяется на реальном прогоне:
+    `executed` допустим только со ссылкой на след `stage-journal.json`; иначе
+    стадия обязана быть `absent` с причиной (фабрикация статуса запрещена)."""
+    stages = {stage["name"]: stage for stage in wire_run["summary"]["stages"]}
+    for name, subdir in (("sft", "sft"), ("rl_base_scheme", "rl")):
+        stage = stages[name]
+        if stage["status"] == "executed":
+            expected = f"stage_journal=evidence/a4-run-wire/{subdir}/stage-journal.json"
+            assert expected in stage["evidence"], (
+                f"{name}: executed без ссылки на след стадии: {stage['evidence']}"
+            )
+        else:
+            assert stage["status"] in ("absent", "skipped"), (
+                f"{name}: не executed и не skipped — статус вне словаря §2: "
+                f"{stage['status']}"
+            )
+            assert any(item.startswith("причина:") for item in stage["evidence"]), (
+                f"{name}: неисполненная стадия обязана нести причину: {stage['evidence']}"
+            )
 
 
 # --- K8: детерминизм при одном seed (§6, критерий K8) -----------------------
 
 
+@WIRE_RUN
 def test_k8_same_seed_same_weights_hash_and_verdicts(wire_run: dict, tmp_path: Path) -> None:
     """K8: повторный прогон с тем же --seed 0 даёт тот же
     `model_weights_sha256` и те же вердикты среды (репетиция A5)."""
@@ -249,12 +302,14 @@ def test_k8_same_seed_same_weights_hash_and_verdicts(wire_run: dict, tmp_path: P
 # --- Контракт §5.2: stdout JSON-сводка и честность статусов -----------------
 
 
+@WIRE_RUN
 def test_cli_exit_zero_on_partial_coverage(wire_run: dict) -> None:
     """§5.2: код 0 — доступные стадии исполнены, независимо от полноты
     конвейера (частичный прогон легален)."""
     assert wire_run["proc"].returncode == 0, wire_run["proc"].stderr[-2000:]
 
 
+@WIRE_RUN
 def test_cli_stdout_json_summary_contract(wire_run: dict) -> None:
     """§5.2: stdout — JSON-сводка {run_ref, model_weights_sha256,
     dataset_sha256, stages, pipeline_complete}; хеши — sha256 (64 hex)."""
@@ -270,6 +325,7 @@ def test_cli_stdout_json_summary_contract(wire_run: dict) -> None:
     assert sorted(names) == sorted(STAGE_SET_V1)
 
 
+@WIRE_RUN
 def test_spark_inference_not_executed(wire_run: dict) -> None:
     """§5.2/§2: стадия spark_inference НЕ имеет статуса executed — подмена
     стенда gb10 запрещена (ADR-010); статус честный: skipped или absent."""
@@ -332,6 +388,7 @@ def wire_run_foreign_cwd(tmp_path_factory: pytest.TempPathFactory) -> Iterator[d
         shutil.rmtree(out_abs, ignore_errors=True)
 
 
+@WIRE_RUN
 def test_k12_run_from_foreign_cwd_manifest_has_no_absolute_paths(
     wire_run_foreign_cwd: dict,
 ) -> None:
@@ -355,6 +412,7 @@ def test_k12_run_from_foreign_cwd_manifest_has_no_absolute_paths(
             )
 
 
+@WIRE_RUN
 def test_k12_run_ref_resolves_from_repo_root(wire_run_foreign_cwd: dict) -> None:
     """K12 (повторный вывод): `run_ref` из сводки stdout и из манифеста —
     относительный путь, резолвится от КОРНЯ РЕПОЗИТОРИЯ (а не от cwd
@@ -373,3 +431,146 @@ def test_k12_run_ref_resolves_from_repo_root(wire_run_foreign_cwd: dict) -> None
         f"run_ref не резолвится от корня репозитория: {resolved}"
     )
     assert resolved.stat().st_size > 0, f"run_ref пуст: {resolved}"
+
+
+# --- T1–T3: статус стадии sft/rl_base_scheme — из следа стадии --------------
+#
+# SFT-STAGE.delta §4 п. 4: «оркестратор обязан эмитить статус стадии из следа
+# (stage-journal.json), а не хранить свою копию». Проверяется файловыми
+# фикстурами на явном repo_root (cwd и каталог evidence/ кейса не
+# затрагиваются; GPU не нужен): оркестратор след только читает и не
+# переигрывает стадию.
+
+# Следы стадий лежат в repo_root по этому префиксу (см. TRACE_ROOT оркестратора).
+TRACE_ROOT = "evidence/a4-run-wire"
+STAGE_TRACE_SUBDIR = {"sft": "sft", "rl_base_scheme": "rl"}
+
+# Прежние причины absent — при отсутствии/битом следе они сохраняются дословно.
+ABSENT_REASON = {
+    "sft": "причина: кода SFT нет (ADR-005 п. 1 не реализован)",
+    "rl_base_scheme": "причина: кода RL по схеме базы нет (ADR-005 п. 2 не реализован)",
+}
+
+TREE_HASH = "ab" * 32
+
+
+@pytest.fixture(scope="module")
+def pipeline():
+    """Модуль оркестратора (импорт требует jax-интерпретатора, как и прогонные
+    тесты; сами T1–T3 работают только с файловой системой)."""
+    sys.path.insert(0, str(TOOLS_DIR))
+    import run_a4_pipeline
+
+    return run_a4_pipeline
+
+
+def _write_trace(repo_root: Path, name: str, payload: object) -> Path:
+    """След стадии в фикстурном репозитории: <repo_root>/evidence/a4-run-wire/
+    <sft|rl>/stage-journal.json (payload — то, что окажется в файле)."""
+    path = repo_root / TRACE_ROOT / STAGE_TRACE_SUBDIR[name] / "stage-journal.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return path
+
+
+def _valid_trace(name: str, steps: int) -> dict:
+    """Валидный след стадии: status=executed, steps, checkpoint.tree_hash."""
+    return {
+        "schema": f"{STAGE_TRACE_SUBDIR[name]}-stage-journal/v1",
+        "stage": name,
+        "status": "executed",
+        "steps": steps,
+        "checkpoint": {
+            "path": f"{TRACE_ROOT}/{STAGE_TRACE_SUBDIR[name]}/checkpoint",
+            "format": "orbax",
+            "tree_hash": TREE_HASH,
+        },
+    }
+
+
+def _assemble(pipeline, repo_root: Path) -> list[dict]:
+    """assemble_stages() с явным repo_root (cwd не подменяется). Входные пути
+    стадий оркестратора — фиктивные файлы внутри фикстурного репозитория:
+    проверяются только стадии sft/rl_base_scheme, читаемые из следов."""
+    return pipeline.assemble_stages(
+        model_weights_sha256="0" * 64,
+        checkpoint_dir=repo_root / "run" / "checkpoints" / "pretrain",
+        executed_steps=1,
+        env_summary=repo_root / "run" / "env" / "summary.json",
+        env_verdicts=[{"passed": True}],
+        inference_journal=repo_root / "run" / "inference" / "journal.json",
+        dataset_sha256="1" * 64,
+        repo_root=repo_root,
+    )
+
+
+def _stage(stages: list[dict], name: str) -> dict:
+    return next(stage for stage in stages if stage["name"] == name)
+
+
+def test_t1_stages_emitted_from_valid_traces(pipeline, tmp_path: Path) -> None:
+    """T1: валидные следы (status=executed, steps, checkpoint.tree_hash) ->
+    sft и rl_base_scheme эмитятся как executed, evidence несёт ссылку на след
+    и собран только из присутствующих полей (steps/tree_hash/checkpoint)."""
+    repo_root = tmp_path.resolve()
+    _write_trace(repo_root, "sft", _valid_trace("sft", steps=200))
+    _write_trace(repo_root, "rl_base_scheme", _valid_trace("rl_base_scheme", steps=10))
+
+    stages = _assemble(pipeline, repo_root)
+
+    for name, subdir, steps in (("sft", "sft", 200), ("rl_base_scheme", "rl", 10)):
+        stage = _stage(stages, name)
+        assert stage["status"] == "executed", stage
+        assert stage["evidence"] == [
+            f"stage_journal={TRACE_ROOT}/{subdir}/stage-journal.json",
+            f"steps={steps}",
+            f"tree_hash={TREE_HASH}",
+            f"checkpoint={TRACE_ROOT}/{subdir}/checkpoint",
+        ], stage["evidence"]
+        for item in stage["evidence"]:
+            assert not item.split("=", 1)[-1].startswith("/"), (
+                f"абсолютный путь в evidence (ADR-014 п. 8): {item!r}"
+            )
+
+
+def test_t2_missing_trace_gives_absent_with_prior_reason(pipeline, tmp_path: Path) -> None:
+    """T2: следа нет -> прежний absent с прежней причиной (executed не
+    выдумывается)."""
+    repo_root = tmp_path.resolve()  # следов не создаём
+
+    stages = _assemble(pipeline, repo_root)
+
+    for name in ("sft", "rl_base_scheme"):
+        stage = _stage(stages, name)
+        assert stage["status"] == "absent", stage
+        assert stage["evidence"] == [ABSENT_REASON[name]], stage["evidence"]
+
+
+@pytest.mark.parametrize(
+    ("name", "payload"),
+    [
+        ("sft", "{ это не JSON"),  # файл не парсится
+        ("rl_base_scheme", {"schema": "rl-stage-journal/v1", "steps": 10}),  # нет status
+        ("sft", {"status": ""}),  # status пуст
+        ("rl_base_scheme", {"status": "failed"}),  # статус вне словаря §2
+    ],
+)
+def test_t3_broken_trace_gives_absent_never_executed(
+    pipeline, tmp_path: Path, name: str, payload: object
+) -> None:
+    """T3: след битый (невалидный JSON, нет/пуст `status`, статус вне словаря
+    манифеста §2) -> absent с прежней причиной, НЕ executed: фабрикация
+    статуса запрещена (гейт C-038 не должен ложно зеленеть)."""
+    repo_root = tmp_path.resolve()
+    _write_trace(repo_root, name, payload)
+
+    stages = _assemble(pipeline, repo_root)
+
+    stage = _stage(stages, name)
+    assert stage["status"] != "executed", stage
+    assert stage["status"] == "absent", stage
+    assert stage["evidence"] == [ABSENT_REASON[name]], stage["evidence"]
+    assert pipeline.read_stage_trace(repo_root, name) is None

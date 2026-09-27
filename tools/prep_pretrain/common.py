@@ -489,17 +489,32 @@ def iter_hf_stream(
     repo: str,
     config: str | None = None,
     split: str = "train",
+    data_files: str | None = None,
     **_: Any,
 ) -> Iterator[dict]:
     """Поток записей из датасета на HuggingFace (``datasets`` streaming).
 
     Датасет не материализуется: ``load_dataset(..., streaming=True)`` отдаёт
     итератор, под капотом — загрузка parquet-файлов по мере чтения.
+
+    ``data_files`` нужен там, где один репозиторий хранит не parquet-конфиги, а
+    отдельные jsonl/json-файлы по языкам (например ``the-stack-smol-xl``:
+    ``data/<язык>/data.json`` собирается json-загрузчиком).
     """
     sanitize_proxy_env()
+    # Паркет-файлы источников — гигабайтные, и дефолтный таймаут чтения
+    # huggingface_hub на медленном канале рвёт запрос («The read operation timed
+    # out») и уходит в ретраи. Поднимаем таймаут, не переопределяя явную настройку.
+    os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "60")
+    os.environ.setdefault("HF_HUB_ETAG_TIMEOUT", "30")
     from datasets import load_dataset  # импорт ленивый: офлайн-путь его не требует
 
-    dataset = load_dataset(repo, config, split=split, streaming=True)
+    if data_files:
+        dataset = load_dataset(
+            "json", data_files={split: data_files}, split=split, streaming=True
+        )
+    else:
+        dataset = load_dataset(repo, config, split=split, streaming=True)
     return iter(dataset)
 
 
@@ -564,15 +579,20 @@ def source_iterator(
 
 
 def hm_get(record: dict, *names: str, default: Any = None) -> Any:
-    """Достать первое непустое поле из ``record`` или его ``meta`` словаря."""
+    """Достать первое непустое поле из ``record`` или вложенного словаря метаданных.
+
+    Вложенные контейнеры источников называются по-разному (``meta`` у записей
+    нашего формата, ``metadata`` у common-pile), поэтому проверяются оба.
+    """
     for name in names:
         if name in record and record[name] not in (None, ""):
             return record[name]
-    meta = record.get("meta")
-    if isinstance(meta, dict):
-        for name in names:
-            if name in meta and meta[name] not in (None, ""):
-                return meta[name]
+    for container in ("meta", "metadata"):
+        nested = record.get(container)
+        if isinstance(nested, dict):
+            for name in names:
+                if name in nested and nested[name] not in (None, ""):
+                    return nested[name]
     return default
 
 
@@ -600,6 +620,7 @@ def run_shard(
     restart: bool = False,
     max_records: int | None = None,
     max_output_bytes: int | None = None,
+    max_seconds: float | None = None,
     manifest_every: int = DEFAULT_MANIFEST_EVERY,
     manifest_extra: dict | None = None,
     progress: bool = False,
@@ -616,6 +637,7 @@ def run_shard(
     кончился раньше цели (``source_exhausted=true`` в отчёте).
     """
     started = time.time()
+    rss_at_start = max_rss_mb()
     out_dir = ensure_output_allowed(out_dir, allow_any=allow_any_out)
     out_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = ensure_output_allowed(manifest_path, allow_any=allow_any_out)
@@ -677,6 +699,8 @@ def run_shard(
     func, kwargs = source_iterator(source_spec, source_iterators)
     source_records = resume_from
     stop_reason = "source_exhausted"
+    rss_samples: list[dict] = []
+    sample_every = max(1, min(manifest_every, 5_000))
     try:
         for record in iter_source(func, skip_records=resume_from, **kwargs):
             if max_records is not None and counters["records_read"] >= max_records:
@@ -685,10 +709,33 @@ def run_shard(
             if max_output_bytes is not None and writer.total_bytes >= max_output_bytes:
                 stop_reason = "max_output_bytes"
                 break
+            if max_seconds is not None and elapsed(started) >= max_seconds:
+                stop_reason = "max_seconds"
+                break
             if target_tokens and writer.total_tokens >= target_tokens:
                 stop_reason = "target_tokens"
                 break
             counters["records_read"] += 1
+            if counters["records_read"] % sample_every == 0 and len(rss_samples) < 40:
+                # Профиль памяти: рост RSS виден по точкам, а не только по пику
+                # (пик включает импорт datasets/pyarrow). Сэмпл берётся до любых
+                # `continue`, иначе отброшенные записи съедают точку замера.
+                rss_samples.append(
+                    {
+                        "records": counters["records_read"],
+                        "output_mb": round(writer.total_bytes / (1024 * 1024), 2),
+                        "rss_mb": max_rss_mb(),
+                        "kept": counters["records_kept"],
+                    }
+                )
+            if progress and counters["records_read"] % 10_000 == 0:
+                print(
+                    f"  [{shard}] записей {counters['records_read']}, "
+                    f"в шард {counters['records_kept']}, "
+                    f"{human_bytes(writer.total_bytes)}, "
+                    f"{counters['approx_tokens'] / 1e9:.3f}B токенов",
+                    flush=True,
+                )
             # source_records растёт только после успешной нормализации: запись,
             # на которой прогон оборвался, не считается прочитанной и будет
             # перечитана на resume (иначе она теряется — off-by-one).
@@ -710,14 +757,7 @@ def run_shard(
             elif counters["records_read"] % manifest_every == 0:
                 manifest.set_cursor(source_records, counters)
                 manifest.save(force=False)
-            if progress and counters["records_read"] % 10_000 == 0:
-                print(
-                    f"  [{shard}] записей {counters['records_read']}, "
-                    f"в шард {counters['records_kept']}, "
-                    f"{human_bytes(writer.total_bytes)}, "
-                    f"{counters['approx_tokens'] / 1e9:.3f}B токенов",
-                    flush=True,
-                )
+
     finally:
         final = writer.close()
         if final is not None:
@@ -758,9 +798,17 @@ def run_shard(
         # Оценка длительности полной загрузки по темпу чтения источника:
         # по ADR-021 токенов ≈ символов/4, значит на target_tokens нужно 4× символов.
         "eta_hours_to_target": (
-            round((target_tokens * 4) / char_rate / 3600, 3) if char_rate > 0 else None
+            round((target_tokens * 4) / char_rate / 3600, 3)
+            if char_rate > 0 and target_tokens
+            else None
         ),
         "max_rss_mb": max_rss_mb(),
+        # Пик RSS включает импорт datasets/pyarrow: рост за прогон показывает,
+        # что обработка потоковая, а не «поднять датасет в память».
+        "rss_at_start_mb": rss_at_start,
+        "rss_growth_mb": round(max_rss_mb() - rss_at_start, 1),
+        "rss_end_mb": current_rss_mb(),
+        "rss_samples": rss_samples,
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
     if report_path is not None:
@@ -805,6 +853,16 @@ def human_bytes(value: float) -> str:
             return f"{value:.1f} {unit}"
         value /= 1024
     return f"{value:.1f} TiB"
+
+
+def current_rss_mb() -> float:
+    """Текущий RSS процесса в МиБ (пик ru_maxrss между шардами не сбрасывается)."""
+    try:
+        with open("/proc/self/statm", "r", encoding="ascii") as handle:
+            pages = int(handle.read().split()[1])
+    except (OSError, IndexError, ValueError):  # pragma: no cover - не-Linux
+        return max_rss_mb()
+    return round(pages * os.sysconf("SC_PAGE_SIZE") / (1024 * 1024), 1)
 
 
 def max_rss_mb() -> float:

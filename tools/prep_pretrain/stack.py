@@ -64,6 +64,13 @@ class SourceSpec:
     configs: dict[str, str] = field(default_factory=dict)
     #: True — по конфигу на язык; False — один поток, язык фильтруется полем.
     per_language_configs: bool = True
+    #: Шаблон файла на язык для источников без parquet-конфигов
+    #: (``{lang}`` подставляется строчным именем языка).
+    data_files_template: str | None = None
+    #: Язык источника, у которого в записи НЕТ поля языка, но корпус одноязычный
+    #: по построению (codeparrot-clean — только python). Это свойство источника,
+    #: а не догадка о записи; в мете записи оно фиксируется как факт источника.
+    assumed_language: str | None = None
 
     def config_for(self, language: str) -> str | None:
         if not self.per_language_configs:
@@ -117,12 +124,37 @@ SOURCES: dict[str, SourceSpec] = {
             "shell": "shell",
         },
     ),
+    "stack-smol-xl": SourceSpec(
+        name="stack-smol-xl",
+        repo="bigcode/the-stack-smol-xl",
+        note=(
+            "публичный НЕ-gated срез The Stack v1 ПО ЯЗЫКАМ (data/<язык>/data.json): "
+            "те же поля, что у the-stack-dedup — lang и список лицензий на файл; "
+            "объём мал (~0.6 ГБ на 5 языков) — годится для пробы и приёмки, не для 3B"
+        ),
+        gated=False,
+        text_fields=("content",),
+        license_fields=("max_stars_repo_licenses", "license", "licenses", "detected_licenses"),
+        lang_fields=("lang", "language"),
+        path_fields=("max_stars_repo_path", "path"),
+        repo_fields=("max_stars_repo_name", "repo_name"),
+        configs={
+            "python": "python",
+            "rust": "rust",
+            "go": "go",
+            "javascript": "javascript",
+            "shell": "shell",
+        },
+        data_files_template="hf://datasets/bigcode/the-stack-smol-xl/data/{lang}/data.json",
+    ),
     "common-pile-stackv2": SourceSpec(
         name="common-pile-stackv2",
         repo="common-pile/stackv2",
         note=(
-            "публичный НЕ-gated фолбэк с контентом Stack v2: один поток, "
-            "лицензия/язык в metadata.{license,language}; объём ~2.4 ГБ parquet"
+            "публичный НЕ-gated фолбэк с контентом Stack v2 (один поток, "
+            "лицензия/язык в metadata.{license,language}). Замер: language — "
+            "детектированный формат (CSV/Futhark/…), файлов объявленных языков в "
+            "потоке почти нет, поэтому для шарда C практически не даёт записей"
         ),
         gated=False,
         text_fields=("text", "content"),
@@ -137,8 +169,9 @@ SOURCES: dict[str, SourceSpec] = {
         name="codeparrot-clean",
         repo="codeparrot/codeparrot-clean",
         note=(
-            "публичный НЕ-gated фолбэк (только python): поля content/license/size; "
-            "годится для проверки пайплайна, не для боевого набора 5 языков"
+            "публичный НЕ-gated фолбэк (только python): поля content/license/size, "
+            "поля языка в записи НЕТ — корпус одноязычный по построению "
+            "(assumed_language=python); объём мал для 3B, годится для проверки"
         ),
         gated=False,
         text_fields=("content", "text"),
@@ -148,6 +181,7 @@ SOURCES: dict[str, SourceSpec] = {
         repo_fields=("repo_name",),
         configs={"*": None},
         per_language_configs=False,
+        assumed_language="python",
     ),
 }
 
@@ -158,8 +192,9 @@ DEFAULT_SOURCE_NAME = "stack-dedup-v1"
 AUTO_ORDER: tuple[str, ...] = (
     "stack-v2-dedup",
     "stack-dedup-v1",
-    "common-pile-stackv2",
+    "stack-smol-xl",
     "codeparrot-clean",
+    "common-pile-stackv2",
 )
 
 
@@ -273,8 +308,13 @@ def iter_stack_documents(
 
     def single(language: str | None) -> Iterator[dict]:
         config = spec.config_for(language) if language else spec.config_for("*")
+        data_files = None
+        if spec.data_files_template and language:
+            data_files = spec.data_files_template.format(lang=config or language)
         try:
-            return common.iter_hf_stream(spec.repo, config, split="train")
+            return common.iter_hf_stream(
+                spec.repo, config, split="train", data_files=data_files
+            )
         except Exception as exc:  # pragma: no cover - сетевой путь, проверяется пробой
             raise RuntimeError(
                 f"источник {spec.repo} (конфиг {config!r}) недоступен: {exc}. "
@@ -333,7 +373,11 @@ class StackFiles:
             self.stats["dropped_empty_text"] += 1
             return None
 
-        language = common.hm_get(record, *lang_fields, default=record.get("_target_lang"))
+        target_lang = record.get("_target_lang")
+        if target_lang == "*":  # один поток на все языки — целевого языка нет
+            target_lang = None
+        assumed = spec.assumed_language if spec else None
+        language = common.hm_get(record, *lang_fields, default=target_lang or assumed)
         language = str(language).strip().lower() if language else ""
         aliases = {"py": "python", "js": "javascript", "sh": "shell", "bash": "shell", "golang": "go"}
         language = aliases.get(language, language)
@@ -377,38 +421,70 @@ STACK_ITERATORS: dict[str, tuple[Any, tuple[str, ...]]] = {
 }
 
 
-def check_source(name: str, languages: Sequence[str] | None = None) -> dict:
-    """Проверка доступности источника: один документ из потока или ошибка.
+def check_source(
+    name: str,
+    languages: Sequence[str] | None = None,
+    sample: int = 2000,
+) -> dict:
+    """Доступность источника: читается ли поток и что из него проходит фильтры.
 
-    Это свидетельство для решения «v2 или v1»: показывает, что реально читается
-    стримингом с текущим токеном, а что закрыто гейтом.
+    Кроме факта чтения проверяется ПРИГОДНОСТЬ на пробе из ``sample`` записей:
+    источник может открываться, но не давать ни одной записи нужных языков и
+    лицензий (так ведёт себя ``common-pile/stackv2``). ``usable`` — признак,
+    по которому ``--source auto`` выбирает рабочий источник.
     """
     spec = SOURCES.get(name)
     if spec is None:
-        return {"source": name, "ok": False, "error": "нет в реестре"}
+        return {"source": name, "ok": False, "usable": False, "error": "нет в реестре"}
     started = time.time()
+    outcome: dict = {
+        "source": name,
+        "repo": spec.repo,
+        "gated": spec.gated,
+        "note": spec.note,
+    }
     try:
-        iterator = iter_stack_documents(name, languages)
-        record = next(iter(iterator))
-        return {
-            "source": name,
-            "repo": spec.repo,
-            "gated": spec.gated,
-            "ok": True,
-            "seconds": round(common.elapsed(started), 3),
-            "fields": sorted(record.keys())[:40],
-            "note": spec.note,
-        }
+        langs = tuple(languages or LANGUAGES)
+        normalizer = StackFiles(languages=langs, source_name=name)
+        iterator = iter(iter_stack_documents(name, langs))
+        languages_seen: dict[str, int] = {}
+        licenses_seen: dict[str, int] = {}
+        kept = 0
+        read = 0
+        for record in iterator:
+            if read >= sample:
+                break
+            read += 1
+            raw_lang = common.hm_get(record, *spec.lang_fields)
+            if raw_lang:
+                key = str(raw_lang).strip().lower()
+                languages_seen[key] = languages_seen.get(key, 0) + 1
+            for value in normalize_licenses(common.hm_get(record, *spec.license_fields)):
+                licenses_seen[value] = licenses_seen.get(value, 0) + 1
+            if normalizer(record) is not None:
+                kept += 1
+        outcome.update(
+            {
+                "ok": True,
+                "usable": kept > 0,
+                "sample": read,
+                "kept": kept,
+                "kept_share": round(kept / read, 4) if read else 0.0,
+                "languages_seen": dict(sorted(languages_seen.items(), key=lambda kv: -kv[1])[:10]),
+                "licenses_seen": dict(sorted(licenses_seen.items(), key=lambda kv: -kv[1])[:10]),
+                "dropped_by_rule": dict(normalizer.stats),
+            }
+        )
     except Exception as exc:
-        return {
-            "source": name,
-            "repo": spec.repo,
-            "gated": spec.gated,
-            "ok": False,
-            "error": f"{type(exc).__name__}: {exc}"[:400],
-            "seconds": round(common.elapsed(started), 3),
-            "note": spec.note,
-        }
+        outcome.update(
+            {
+                "ok": False,
+                "usable": False,
+                "error": f"{type(exc).__name__}: {exc}"[:400],
+            }
+        )
+    outcome["seconds"] = round(common.elapsed(started), 3)
+    return outcome
 
 
 def prepare_c(

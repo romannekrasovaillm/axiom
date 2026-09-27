@@ -137,15 +137,14 @@ def cmd_prepare_c(args: argparse.Namespace) -> int:
         if args.prefer:
             order = [args.prefer] + [name for name in order if name != args.prefer]
         for candidate in order:
-            result = stack.check_source(candidate, args.languages)
-            print(f"  проверка источника {candidate}: "
-                  f"{'доступен' if result['ok'] else 'НЕДОСТУПЕН'} ({result.get('error', 'ok')})")
-            if result["ok"]:
+            result = stack.check_source(candidate, args.languages, sample=args.check_sample)
+            print(f"  проверка источника {candidate}: {describe_source_check(result)}")
+            if result["usable"]:
                 source_name = candidate
                 check = result
                 break
         if source_name == "auto":
-            print("ни один источник кода не доступен — см. `build.py sources`", file=sys.stderr)
+            print("ни один источник кода не пригоден — см. `build.py sources`", file=sys.stderr)
             return 3
     elif source_name not in stack.SOURCES:
         print(f"неизвестный источник {source_name!r}; доступные: {sorted(stack.SOURCES)}",
@@ -182,11 +181,13 @@ def cmd_probe(args: argparse.Namespace) -> int:
     root.mkdir(parents=True, exist_ok=True)
     limit_bytes = int(args.limit_mb * MB)
     shard_bytes = int(args.shard_mb * MB)
+    max_seconds = args.max_minutes * 60 if args.max_minutes else None
     payload: dict = {
         "pipeline": common.PIPELINE_VERSION,
         "probe_root": str(root),
         "limit_mb": args.limit_mb,
         "shard_mb": args.shard_mb,
+        "max_minutes": args.max_minutes,
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
 
@@ -197,6 +198,7 @@ def cmd_probe(args: argparse.Namespace) -> int:
             target_tokens=0,
             source_spec=common.parse_source_spec(args.source_w),
             max_output_bytes=limit_bytes,
+            max_seconds=max_seconds,
             shard_bytes=shard_bytes,
             codec=args.codec,
             level=args.level,
@@ -218,11 +220,10 @@ def cmd_probe(args: argparse.Namespace) -> int:
             order = [args.prefer] + [name for name in order if name != args.prefer]
         source_name = ""
         for candidate in order:
-            result = stack.check_source(candidate, args.languages)
+            result = stack.check_source(candidate, args.languages, sample=args.check_sample)
             checks.append(result)
-            state = "доступен" if result["ok"] else "НЕДОСТУПЕН"
-            print(f"  проверка источника {candidate}: {state} ({result.get('error', 'ok')})")
-            if result["ok"]:
+            print(f"  проверка источника {candidate}: {describe_source_check(result)}")
+            if result["usable"]:
                 source_name = candidate
                 break
     payload["source_checks_c"] = checks
@@ -235,6 +236,7 @@ def cmd_probe(args: argparse.Namespace) -> int:
                 source_name=source_name,
                 languages=args.languages,
                 max_output_bytes=limit_bytes,
+                max_seconds=max_seconds,
                 shard_bytes=shard_bytes,
                 codec=args.codec,
                 level=args.level,
@@ -272,6 +274,13 @@ def summarise_probe(payload: dict) -> dict:
         if "error" in report:
             summary[key] = {"error": report["error"]}
             continue
+        chars_per_token = 4  # ADR-021: approx_tokens = len(text) // 4
+        text_rate = report["source_text_mb_per_s"]
+        eta = (
+            round((target * chars_per_token) / (1024 * 1024) / text_rate / 3600, 3)
+            if text_rate > 0
+            else None
+        )
         summary[key] = {
             "source": report["source"],
             "shards": report["totals"]["shards"],
@@ -284,20 +293,37 @@ def summarise_probe(payload: dict) -> dict:
             "tokens_per_s": report["tokens_per_s"],
             "max_rss_mb": report["max_rss_mb"],
             "target_tokens": target,
-            "eta_hours_to_target": report.get("eta_hours_to_target"),
+            "eta_hours_to_target": eta,
             "stop_reason": report["stop_reason"],
+            "rss_samples": report.get("rss_samples", []),
         }
     return summary
 
 
+def describe_source_check(result: dict) -> str:
+    """Короткая строка о результате проверки источника (для консоли и отчёта)."""
+    if not result["ok"]:
+        return f"НЕДОСТУПЕН ({result.get('error', '')[:160]})"
+    if not result["usable"]:
+        return (f"читается, но НЕПРИГОДЕН: {result['kept']}/{result['sample']} "
+                f"записей прошли фильтры")
+    return (f"пригоден: {result['kept']}/{result['sample']} записей прошли фильтры "
+            f"({result['kept_share']:.1%}, {result['seconds']} с)")
+
+
 def cmd_sources(args: argparse.Namespace) -> int:
     """Проверка доступности источников кода — свидетельство для решения v2/v1."""
-    results = [stack.check_source(name, args.languages) for name in stack.SOURCES]
+    results = [
+        stack.check_source(name, args.languages, sample=args.check_sample)
+        for name in stack.SOURCES
+    ]
     for result in results:
-        state = "доступен" if result["ok"] else "НЕДОСТУПЕН"
-        print(f"{result['source']:<20} gated={str(result['gated']):<5} {state:<10} "
-              f"{result.get('error', '')[:120]}")
-        print(f"{'':<20} {result['note']}")
+        print(f"{result['source']:<22} gated={str(result['gated']):<5} {describe_source_check(result)}")
+        if result.get("kept_share") is not None:
+            print(f"{'':<22} языки: {result['languages_seen']}")
+            print(f"{'':<22} лицензии: {result['licenses_seen']}")
+            print(f"{'':<22} отбой: {result['dropped_by_rule']}")
+        print(f"{'':<22} {result['note']}")
     payload = {
         "pipeline": common.PIPELINE_VERSION,
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -343,6 +369,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help=f"источник из реестра или auto; есть: {sorted(stack.SOURCES)}")
     c.add_argument("--prefer", default=None, help="источник, который пробовать первым при --source auto")
     c.add_argument("--languages", nargs="+", default=list(stack.LANGUAGES))
+    c.add_argument("--check-sample", type=int, default=2000,
+                   help="сколько записей источника прогнать через фильтры при проверке")
     add_shard_args(c, os.path.join(common.DATASET_ROOT, stack.SHARD))
     c.set_defaults(func=cmd_prepare_c)
 
@@ -353,7 +381,11 @@ def build_parser() -> argparse.ArgumentParser:
     probe.add_argument("--source-c", default="auto", help="источник кода или auto (перебор реестра)")
     probe.add_argument("--prefer", default=None, help="источник кода, который пробовать первым при auto")
     probe.add_argument("--languages", nargs="+", default=list(stack.LANGUAGES))
+    probe.add_argument("--check-sample", type=int, default=2000,
+                       help="сколько записей источника прогнать через фильтры при проверке")
     probe.add_argument("--shard-mb", type=float, default=100.0)
+    probe.add_argument("--max-minutes", type=float, default=20.0,
+                       help="предохранитель пробы: остановить шард по времени (0 — без ограничения)")
     probe.add_argument("--codec", choices=sorted(common.CODEC_EXTENSIONS), default=common.DEFAULT_CODEC)
     probe.add_argument("--level", type=int, default=3)
     probe.add_argument("--dedup-window", type=int, default=common.DEFAULT_DEDUP_WINDOW)
@@ -363,6 +395,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     src = sub.add_parser("sources", help="доступность источников кода (свидетельство v2/v1)")
     src.add_argument("--languages", nargs="+", default=list(stack.LANGUAGES))
+    src.add_argument("--check-sample", type=int, default=2000,
+                     help="сколько записей источника прогнать через фильтры при проверке")
     src.add_argument("--report", default=None, help="куда записать JSON-отчёт проверки")
     src.set_defaults(func=cmd_sources)
 

@@ -394,6 +394,31 @@ def test_t_p3_license_normalisation() -> None:
     assert stack.licenses_allowed(None) is False
 
 
+def test_t_p3_nested_metadata_and_assuming_single_language_source() -> None:
+    """Поля бывают вложены в metadata, а у одноязычного корпуса языка в записи нет."""
+    nested = stack.StackFiles(source_name="common-pile-stackv2")
+    parsed = nested(
+        {
+            "text": "z" * 400,
+            "metadata": {"license": "MIT", "language": "Python", "path": "a/b.py", "repo_name": "o/r"},
+        }
+    )
+    assert parsed is not None, "поля внутри metadata должны читаться"
+    text, meta = parsed
+    assert meta["lang"] == "python" and meta["license"] == "mit"
+    assert meta["path"] == "a/b.py" and meta["repo"] == "o/r"
+
+    # Язык записи не объявлен, но корпус одноязычный по построению.
+    assumed = stack.StackFiles(source_name="codeparrot-clean")
+    parsed = assumed({"content": "y" * 400, "license": "apache-2.0", "size": 400})
+    assert parsed is not None and parsed[1]["lang"] == "python"
+
+    # Без поля языка и без свойства источника запись отбрасывается, а не угадывается.
+    unknown = stack.StackFiles(source_name="stack-dedup-v1")
+    assert unknown({"content": "q" * 400, "license": "mit"}) is None
+    assert unknown.stats["dropped_language"] == 1
+
+
 def test_t_p3_source_registry_declares_stack_priority() -> None:
     """Реестр источников: приоритет ADR-021 и честная пометка гейтов."""
     assert stack.AUTO_ORDER[0] == "stack-v2-dedup"

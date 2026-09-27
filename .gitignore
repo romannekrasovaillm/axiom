@@ -15,3 +15,6 @@ evidence/a4-run-wire/**/checkpoint/
 evidence/a4-run-wire/**/dataset/
 evidence/a4-run-wire/**/inference/
 evidence/a4-run-wire/_violated-no-budget/
+net/tests/.sft-test-*/
+net/tests/.rl-test-*/
+net/tests/.a4-*-out-*/

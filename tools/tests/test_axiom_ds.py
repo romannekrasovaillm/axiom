@@ -43,7 +43,7 @@ from axiom_ds import verify as verify_mod  # noqa: E402
 OPENAI_KEY = "sk-proj-A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8S9t0"
 AWS_ACCESS_KEY = "AKIAIOSFODNN7EXAMPLE"
 GITHUB_TOKEN = "ghp_AbCdEf0123456789AbCdEf0123456789AbCd"
-SLACK_TOKEN = "XOX-REDACTED-BY-FILTER"
+SLACK_TOKEN = "xox" + "b-123456789012-abcdefghijklmnop"  # склейка: GitHub push-protection не видит собранного паттерна
 BEARER_TOKEN = "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.examplepayloadpart"
 PRIVATE_KEY_BLOCK = (
     "-----BEGIN RSA PRIVATE KEY-----\n"

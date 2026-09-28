@@ -64,8 +64,19 @@ CARD_BODY = """## Определение
 
 
 def unique_filler(tag: str, words: int = 120) -> str:
-    """Уникальный длинный текст фикстуры: соседние документы не near-dup друг другу."""
-    return " ".join(f"{tag}_слово{i:03d}" for i in range(words))
+    """Уникальный длинный текст фикстуры: соседние документы не near-dup друг другу.
+
+    Хвост слова — от хеша (тег, номер), а не общая обёртка ``_слово{номер}``:
+    нумерованный шаблон давал разным документам почти совпадающие 5-граммы
+    (у «algorithmic» и «algorithmic_primitive» совпадало 678 шинглов из 681), и
+    после фикса выборки шинглов (дельта-2) дедуп справедливо видел в таких
+    фикстурах near-дубли. Длина слова сохранена: 10 символов хвоста, как
+    ``_слово{000}``.
+    """
+    return " ".join(
+        f"{tag}{hashlib.sha1(f'{tag}:{i}'.encode('utf-8')).hexdigest()[:10]}"
+        for i in range(words)
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -430,21 +441,91 @@ def test_t_dd1_cross_component_dedup_is_near_dup(tmp_path: Path):
 
 
 def test_t_cal1_near_dup_calibration_documents_estimator_domain():
-    """Калибровка: MinHash-оценка верна до MAX_SHINGLES, выше — теряет чутьё.
+    """Калибровка: MinHash-оценка следует за истинным Jaccard и за MAX_SHINGLES.
 
-    Характеризационный тест зависимости (``dedup.py``): если дельта-3 поднимет
-    ``MAX_SHINGLES`` или сменит схему выборки шинглов, ожидания калибровки
-    обновляются вместе с ней — молчаливая деградация дедупа недопустима.
+    Характеризационный тест зависимости (``dedup.py``): дельта-2 заменила выборку
+    «по рангам хешей» на консистентную (bottom-k по значению хеша) — обрушение
+    оценки на длинных документах снято, и таблица калибровки это фиксирует.
+    Если дельта-3 сменит схему выборки, ожидания калибровки обновляются вместе
+    с ней — молчаливая деградация дедупа недопустима.
     """
     calibration = cpt.near_dup_calibration(sizes=(40, 120, 600))
     pairs = {row["words"]: row for row in calibration["pairs"]}
 
     assert calibration["max_shingles"] == cpt.dedup_mod.MAX_SHINGLES
-    assert pairs[120]["detected"] is True
-    assert abs(pairs[120]["true_jaccard"] - pairs[120]["estimated_jaccard"]) < 0.15
-    assert pairs[600]["unique_shingles"] > calibration["max_shingles"]
+    for row in calibration["pairs"]:
+        assert abs(row["true_jaccard"] - row["estimated_jaccard"]) < 0.15, row
+        assert row["detected"] is True, row
+    assert pairs[600]["unique_shingles"] > calibration["max_shingles"], \
+        "выборка шинглов обязана включиться: иначе тест не про сэмплирование"
     assert pairs[600]["true_jaccard"] > 0.8
-    assert pairs[600]["detected"] is False  # оценка обрушена сэмплированием шинглов
+
+
+# --------------------------------------------------------------------------- #
+# T-ct1 / T-ct2 — контейнмент D→K в прогоне сериализатора
+# --------------------------------------------------------------------------- #
+
+
+def card_inside_distillate(tmp_path: Path, card_words: int = 80) -> dict[str, Path]:
+    """Карточка K целиком внутри дистиллята D (боевая находка дельты-2)."""
+    card = " ".join(f"карточка_понятие{index}" for index in range(card_words))
+    distillate = (
+        " ".join(f"дистиллят_вступление{index}" for index in range(60))
+        + " " + card + " "
+        + " ".join(f"дистиллят_хвост{index}" for index in range(40))
+    )
+    k_root = tmp_path / "concepts"
+    d_root = tmp_path / "distillate"
+    write_card(k_root / "algorithmic_primitive" / "inside.md", "inside",
+               "algorithmic_primitive", card + "\n")
+    write_md(d_root / "2_статьи" / "host.md", "# Дайджест-хозяин\n\n" + distillate + "\n")
+    return {"k_root": k_root, "d_root": d_root, "s_root": tmp_path / "none"}
+
+
+def test_t_ct1_contained_card_is_dropped_from_corpus(tmp_path: Path):
+    """T-ct1: карточка внутри дистиллята не попадает в корпус, дистиллят остаётся."""
+    roots = card_inside_distillate(tmp_path)
+    out_dir = tmp_path / "out"
+    report = cpt.run_build_cpt(
+        out=out_dir / "cpt-kds-v0.1.jsonl.gz",
+        report=out_dir / "report.json",
+        codec="gzip",
+        **roots,
+    )
+    records = read_records(out_dir)
+
+    assert [record["component"] for record in records] == ["D"]
+    assert report["containment"]["enabled"] is True
+    assert report["containment"]["threshold"] == cpt.dedup_mod.CONTAINMENT_THRESHOLD
+    assert report["containment"]["dropped_K"] == 1
+    assert report["containment"]["checked_pairs"] >= 1
+    assert report["containment"]["dropped_by_component"] == {"K": 1}
+    # счётчики компоненты сняты вместе с записью: корпус их не считает
+    assert report["by_component"]["K"]["records"] == 0
+    assert report["by_component"]["K"]["dropped_containment"] == 1
+    assert report["components"]["K"]["records_written"] == 0
+    assert report["components"]["K"]["chars"] == 0
+    assert report["by_component"]["D"]["records"] == 1
+
+
+def test_t_ct2_no_containment_keeps_contained_card(tmp_path: Path):
+    """T-ct2: ``containment=False`` (флаг --no-containment) отключает ступень."""
+    roots = card_inside_distillate(tmp_path)
+    out_dir = tmp_path / "out"
+    report = cpt.run_build_cpt(
+        out=out_dir / "cpt-kds-v0.1.jsonl.gz",
+        report=out_dir / "report.json",
+        codec="gzip",
+        containment=False,
+        **roots,
+    )
+    records = read_records(out_dir)
+
+    assert sorted(record["component"] for record in records) == ["D", "K"]
+    assert report["containment"]["enabled"] is False
+    assert report["containment"]["dropped_K"] == 0
+    assert report["by_component"]["K"]["records"] == 1
+    assert report["by_component"]["K"]["dropped_containment"] == 0
 
 
 # --------------------------------------------------------------------------- #

@@ -4,7 +4,8 @@
 знании: концепты из статей (K), дистилляты статей (D), процедурные скиллы (S).
 Ступени этой дельты::
 
-    фильтр источника → скраб (ступень 1) → <HOME> → дедуп (общий пул K∪D∪S) → шард jsonl
+    фильтр источника → скраб (ступень 1) → <HOME> → дедуп (общий пул K∪D∪S)
+        → контейнмент D→K → шард jsonl
 
 Ключевые контракты:
 
@@ -14,6 +15,12 @@
   секрет не доживает до jsonl; отчёт получает только счётчики правил.
 * **Дедуп межкомпонентный**: один ``Deduper`` на K∪D∪S — пересечения D↔K и S↔D
   ожидаемы (дистиллят и карточка нередко выросли из одной статьи).
+* **Контейнмент D→K — ступень после дедупа** (``dedup.containment_dedup``):
+  содержание карточки K может лежать внутри дистиллята D, не будучи дублем
+  (документный Jaccard такой пары ≈0.3). Снимается K, D остаётся — он богаче
+  контекстом; ступень отключается ``containment=False`` (``--no-containment``).
+* **Буфер записей**: K→D→S читаются и дедуплицируются потоково, но пишутся
+  после обхода — судьба карточки K зависит от дистиллятов D, которые идут позже.
 * **Приватность**: содержимое библиотек в репозиторий и в отчёт не попадает —
   в отчёте числа и три примера id без содержимого (AD-6, C-032/C-033).
 
@@ -60,7 +67,9 @@ else:
     from . import scrub as scrub_mod
     from prep_pretrain import common as pp_common
 
-PIPELINE_VERSION = "axiom-cpt-kds/1"
+#: Версия пайплайна сборки. /2 — дельта-2: ступень контейнмента D→K и
+#: консистентная выборка шинглов (путь корпуса при этом не меняется).
+PIPELINE_VERSION = "axiom-cpt-kds/2"
 
 #: Порядок компонентов в корпусе и в общем пуле дедупа. Он же — приоритет при
 #: коллизии: дубль между компонентами оставляет **первый** (K → D → S).
@@ -414,6 +423,7 @@ class ComponentCounters:
     files_read: int = 0
     records_written: int = 0
     dropped_dedup: int = 0
+    dropped_containment: int = 0
     chars: int = 0
     home_replacements: int = 0
     encoding_replacements: int = 0
@@ -429,12 +439,27 @@ class ComponentCounters:
     length_buckets: Counter = field(default_factory=Counter)
     sample_ids: list[str] = field(default_factory=list)
 
+    def undo_written(self, chars: int, bucket: str, plugin: str = "") -> None:
+        """Снять запись со счёта «написано»: контейнмент решил её судьбу иначе.
+
+        Счётчики компоненты — про состав корпуса, а не про промежуточный результат
+        ступеней: снятая контейнментом запись не должна ни считаться записанной,
+        ни добавлять символы в объём датасета.
+        """
+        self.records_written -= 1
+        self.chars -= chars
+        self.dropped_containment += 1
+        self.length_buckets[bucket] -= 1
+        if plugin:
+            self.plugins[plugin] -= 1
+
     def to_dict(self) -> dict:
         return {
             "files_total": self.files_total,
             "files_read": self.files_read,
             "records_written": self.records_written,
             "dropped_dedup": self.dropped_dedup,
+            "dropped_containment": self.dropped_containment,
             "chars": self.chars,
             "home_replacements": self.home_replacements,
             "encoding_replacements": self.encoding_replacements,
@@ -458,6 +483,7 @@ class ComponentCounters:
             "files_read": self.files_read,
             "records": self.records_written,
             "dropped_dedup": self.dropped_dedup,
+            "dropped_containment": self.dropped_containment,
             "chars": self.chars,
         }
 
@@ -487,6 +513,16 @@ def _dedup_record(record_id: str, component: str, text: str) -> dict:
     }
 
 
+#: Состав записи корпуса. Всё остальное в возврате ``serialize_one`` — служебное
+#: (``block`` нужен ступеням дедупа и контейнмента) и в jsonl не пишется.
+OUTPUT_FIELDS = ("id", "component", "source_path", "text")
+
+
+def output_record(record: dict) -> dict:
+    """Проекция записи на состав корпуса: служебные поля не доживают до jsonl."""
+    return {key: record[key] for key in OUTPUT_FIELDS}
+
+
 def serialize_one(
     source: SourceFile,
     counters: ComponentCounters,
@@ -503,7 +539,9 @@ def serialize_one(
     Записываемый текст и блок дедупа различаются: дедуп сравнивает **блок
     источника** (тело карточки / полный текст D и S), а заголовок ``# title``
     (K) добавляется только в запись. Иначе один и тот же материал в K и D
-    перестал бы быть точным дублем из-за синтезированной строки.
+    перестал бы быть точным дублем из-за синтезированной строки. Тот же блок
+    отдаётся и контейменту (``block``) — синтезированный заголовок не должен
+    решать судьбу карточки.
     """
     try:
         raw, replaced_encoding = read_text(source.path)
@@ -565,6 +603,7 @@ def serialize_one(
         "component": source.component,
         "source_path": source.source_path,
         "text": final,
+        "block": block,
     }
 
 
@@ -577,12 +616,13 @@ def near_dup_calibration(sizes: Sequence[int] = NEAR_DUP_CALIBRATION_SIZES,
     """Калибровка near-dup ``Deduper``: оценка против ИСТИННОГО Jaccard.
 
     Синтетика, без приватного текста: пара документов, у которых ``share``
-    содержания общее. Пока уникальных шинглов в документе ≤ ``MAX_SHINGLES``,
-    MinHash-оценка согласуется с истинным Jaccard; выше — ``shingle_hashes``
-    берёт равномерную выборку по ЗНАЧЕНИЯМ хешей, выборки двух документов
-    расходятся, и оценка падает (near-dup перестаёт срабатывать на реальных
-    объёмах: карточка ≈ 2,5 КБ, дистиллят ≈ 9 КБ). Отчёт несёт эту таблицу как
-    свидетельство: она объясняет, почему снятые near-дубли считаются единицами.
+    содержания общее. Таблица — свидетельство чувствительности дедупа: оценка
+    обязана следовать за истинным Jaccard и ВЫШЕ ``MAX_SHINGLES`` (иначе выборка
+    шинглов обрушила бы оценку и near-дубли реальных объёмов — карточка ≈2,5 КБ,
+    дистиллят ≈9 КБ — снимались бы единицами). После дельты-2 выборка шинглов
+    консистентная (bottom-k по значению хеша), поэтому столбец ``estimated``
+    сходится с ``true`` на всех размерах, а ``sampled`` показывает, где выборка
+    вообще включалась. Провал этой таблицы — сигнал деградации дедупа.
     """
     rows: list[dict] = []
     for size in sizes:
@@ -602,6 +642,7 @@ def near_dup_calibration(sizes: Sequence[int] = NEAR_DUP_CALIBRATION_SIZES,
                 "words": size,
                 "chars": len(left),
                 "unique_shingles": len(left_shingles),
+                "sampled": len(left_shingles) > dedup_mod.MAX_SHINGLES,
                 "true_jaccard": round(true_jaccard, 4),
                 "estimated_jaccard": round(estimate, 4),
                 "detected": estimate >= dedup_mod.JACCARD_THRESHOLD,
@@ -694,6 +735,8 @@ def run_build_cpt(
     limit_files: int | None = None,
     min_chars: int = MIN_TEXT_CHARS,
     title_prefix: bool = True,
+    containment: bool = True,
+    containment_threshold: float = dedup_mod.CONTAINMENT_THRESHOLD,
     restart: bool = False,
     progress: bool = False,
     probe: bool = False,
@@ -701,10 +744,16 @@ def run_build_cpt(
 ) -> dict:
     """Собрать CPT-корпус K/D/S; вернуть числовой отчёт (и записать его).
 
-    Потоковый и возобновляемый прогон: курсор хранится **по компоненте**
-    (``limit-files`` режет компоненту, поэтому один глобальный сдвиг источника
-    неточен). Пул дедупа живёт в памяти и на resume НЕ восстанавливается: дубль
-    через границу прогонов снят не будет — боевая сборка идёт одним прогоном.
+    Порядок ступеней: скраб → блок источника → точный дедуп → **контейнмент**
+    (``containment``, порог ``containment_threshold``) → запись. Записи держатся
+    в буфере до конца обхода: контейнмент решает судьбу карточки K только после
+    того, как прочитаны все дистилляты D, а «старшинство» компонентов в дедупе
+    (K → D → S) задаётся порядком обхода.
+
+    Возобновляемый прогон: курсор хранится **по компоненте** (``limit-files``
+    режет компоненту, поэтому один глобальный сдвиг источника неточен). Пул
+    дедупа живёт в памяти и на resume НЕ восстанавливается: дубль через границу
+    прогонов снят не будет — боевая сборка идёт одним прогоном.
     """
     started = time.time()
     rss_at_start = pp_common.max_rss_mb()
@@ -755,6 +804,70 @@ def run_build_cpt(
         for name in COMPONENT_ORDER
     }
 
+    deduper = dedup_mod.Deduper()
+    scrub_stats = scrub_mod.ScrubStats()
+    shard_components: Counter = Counter()
+    consumed = dict(resume_cursor)
+    written_total = 0
+    #: Скраб → блок → дедуп дают записи в буфер: контейнмент решает судьбу K
+    #: только после того, как прочитаны ВСЕ записи-контейнеры (D идут после K),
+    #: а «старшинство» компонентов в дедупе сохраняется порядком K → D → S.
+    records: list[dict] = []
+
+    def consumed_total() -> int:
+        return sum(consumed.values())
+
+    def flush_shard(entry: dict | None) -> None:
+        if entry is None:
+            return
+        entry["by_component"] = dict(sorted(shard_components.items()))
+        shard_components.clear()
+        manifest_obj.add_shard(entry, consumed_total())
+
+    for name in COMPONENT_ORDER:
+        for source in pending[name]:
+            consumed[name] += 1
+            if progress and consumed_total() % 1000 == 0:
+                print(
+                    f"[axiom-cpt] файлов {consumed_total()}, записей в буфере {len(records)}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+            record = serialize_one(
+                source,
+                counters[name],
+                deduper,
+                min_chars=min_chars,
+                title_prefix=title_prefix,
+            )
+            if record is None:
+                continue
+            records.append(record)
+
+    # Ступень контейнмента: после точного дедупа и до записи (ADR-020, дельта-2).
+    containment_started = time.time()
+    containment_stats = dedup_mod.ContainmentStats(threshold=containment_threshold)
+    if containment:
+        before = records
+        # Сравнивается блок источника (без синтезированного заголовка K) — тот же
+        # материал, что видел дедуп: заголовок не должен решать судьбу карточки.
+        wires = [
+            {"id": record["id"], "component": record["component"], "text": record["block"]}
+            for record in before
+        ]
+        kept_wires, containment_stats = dedup_mod.containment_dedup(
+            wires, threshold=containment_threshold
+        )
+        kept_ids = {wire["id"] for wire in kept_wires}
+        records = [record for record in before if record["id"] in kept_ids]
+        for record in before:
+            if record["id"] in kept_ids:
+                continue
+            counters[record["component"]].undo_written(
+                len(record["text"]), length_bucket(len(record["text"]))
+            )
+    containment_seconds = pp_common.elapsed(containment_started)
+
     writer = pp_common.ShardWriter(
         out_dir,
         prefix=prefix,
@@ -769,45 +882,13 @@ def run_build_cpt(
     else:
         writer.drop_partial()
 
-    deduper = dedup_mod.Deduper()
-    scrub_stats = scrub_mod.ScrubStats()
-    shard_components: Counter = Counter()
-    consumed = dict(resume_cursor)
-    written_total = 0
-
-    def consumed_total() -> int:
-        return sum(consumed.values())
-
-    def flush_shard(entry: dict | None) -> None:
-        if entry is None:
-            return
-        entry["by_component"] = dict(sorted(shard_components.items()))
-        shard_components.clear()
-        manifest_obj.add_shard(entry, consumed_total())
-
     try:
-        for name in COMPONENT_ORDER:
-            for source in pending[name]:
-                consumed[name] += 1
-                if progress and consumed_total() % 1000 == 0:
-                    print(
-                        f"[axiom-cpt] файлов {consumed_total()}, записей {written_total}, "
-                        f"{pp_common.human_bytes(writer.total_bytes)}",
-                        file=sys.stderr,
-                        flush=True,
-                    )
-                record = serialize_one(
-                    source,
-                    counters[name],
-                    deduper,
-                    min_chars=min_chars,
-                    title_prefix=title_prefix,
-                )
-                if record is None:
-                    continue
-                written_total += 1
-                shard_components[name] += 1
-                flush_shard(writer.add(record, pp_common.approx_tokens(record["text"])))
+        for record in records:
+            written_total += 1
+            shard_components[record["component"]] += 1
+            flush_shard(
+                writer.add(output_record(record), pp_common.approx_tokens(record["text"]))
+            )
     finally:
         flush_shard(writer.close())
 
@@ -825,12 +906,21 @@ def run_build_cpt(
         "component_order": list(COMPONENT_ORDER),
     }
     by_component = {name: counters[name].compact() for name in COMPONENT_ORDER}
+    containment_block = {
+        "enabled": bool(containment),
+        **containment_stats.to_dict(),
+        "dropped_K": int(containment_stats.dropped_by_component.get("K", 0)),
+        "seconds": round(containment_seconds, 3),
+    }
+    filters["containment"] = containment
+    filters["containment_threshold"] = containment_threshold
     manifest_obj.data["filters"] = filters
     manifest_obj.data["roots"] = roots
     manifest_obj.data["dedup"] = {
         **deduper.stats.to_dict(),
         "calibration": near_dup_calibration(),
     }
+    manifest_obj.data["containment"] = containment_block
     manifest_obj.data["redactions"] = scrub_stats.to_dict()
     manifest_obj.data["by_component"] = by_component
     manifest_obj.data["plugin_table"] = plugin_table(dict(inventory), counters["S"].plugins)
@@ -871,6 +961,7 @@ def run_build_cpt(
         "by_component": by_component,
         "dedup": deduper.stats.to_dict(),
         "dedup_calibration": near_dup_calibration(),
+        "containment": containment_block,
         "redactions": scrub_stats.to_dict(),
         "plugin_table": manifest_obj.data["plugin_table"],
         "sample_ids": sample_ids,
@@ -924,6 +1015,8 @@ def build_parser() -> argparse.ArgumentParser:
                        help=f"минимальная длина текста записи (по умолчанию {MIN_TEXT_CHARS})")
     build.add_argument("--no-title-prefix", action="store_true",
                        help="не добавлять заголовок карточки (K) заголовком записи")
+    build.add_argument("--no-containment", action="store_true",
+                       help="отключить ступень контейнмента D→K (отладка и сверка)")
     build.add_argument("--probe", action="store_true",
                        help=f"проба: по умолчанию писать в {PROBE_ROOT}")
     build.add_argument("--codec", choices=sorted(pp_common.CODEC_EXTENSIONS),
@@ -957,6 +1050,7 @@ def cmd_build_cpt(args: argparse.Namespace) -> int:
             limit_files=args.limit_files,
             min_chars=args.min_chars,
             title_prefix=not args.no_title_prefix,
+            containment=not args.no_containment,
             restart=args.restart,
             progress=args.progress,
             probe=args.probe,
@@ -967,10 +1061,13 @@ def cmd_build_cpt(args: argparse.Namespace) -> int:
         return 2
     print(
         "[axiom-cpt] записей {records}, шардов {shards}, дублей снято {dups}, "
+        "контейнментом снято {contained} (пар {pairs}), "
         "redactions {red}, отчёт {report}".format(
             records=payload["totals"]["records"],
             shards=payload["totals"]["shards"],
             dups=payload["dedup"]["exact"] + payload["dedup"]["near"],
+            contained=payload["containment"]["dropped"],
+            pairs=payload["containment"]["checked_pairs"],
             red=payload["redactions"]["total"],
             report=payload["report"],
         ),

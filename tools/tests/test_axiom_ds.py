@@ -728,3 +728,242 @@ def test_harness_status_matching_by_time_window(tmp_path):
         "complete"
     )
     assert index.match(started_at="2026-09-05T10:05:00.000Z", ended_at="2026-09-05T10:40:00.000Z") is None
+
+
+# --------------------------------------------------------------------------- #
+# T-m1/T-m2, T-c1..T-c3 — сэмплирование шинглов и контейнмент D→K
+# (ADR-020, дельта-2: находки боевого прогона — «MinHash-обрушение на длинных
+#  документах» и «D↔K — контеймент, а не дубль»)
+# --------------------------------------------------------------------------- #
+
+
+def make_long_pair(target_chars: int, share: float, seed: int = 11) -> tuple[str, str]:
+    """Пара документов: доля ``share`` слов общая, остальное — своё.
+
+    Документ A — общий префикс + «свои» слова, документ B — тот же префикс +
+    другие «свои» слова. Истинный Jaccard шинглов пары измеряется тестом, а не
+    постулируется: фикстура обязана быть той, за которую себя выдаёт.
+    """
+    import random
+
+    rng = random.Random(seed)
+    words = []
+    total = 0
+    while total < target_chars:
+        word = "".join(rng.choice("абвгдежзиклмнопрстуф") for _ in range(rng.randint(4, 11)))
+        words.append(word)
+        total += len(word) + 1
+    cut = max(1, int(len(words) * share))
+    left = " ".join(words)
+    right = " ".join(words[:cut] + ["z" + word for word in words[cut:]])
+    return left, right
+
+
+def true_jaccard(left: str, right: str) -> float:
+    """Истинный Jaccard по 5-граммам: полный перебор шинглов, без выборки."""
+    a = set(dedup_mod.shingle_hashes(left, max_shingles=10**9))
+    b = set(dedup_mod.shingle_hashes(right, max_shingles=10**9))
+    return len(a & b) / len(a | b)
+
+
+def test_tm1_long_documents_estimate_tracks_true_jaccard():
+    """T-m1: 20k символов, истинный Jaccard ≈0.91 → оценка ≥0.8 (регресс обрушения).
+
+    До фикса выборка шинглов брала равномерные РАНГИ отсортированных хешей:
+    значения у двух документов расходились, и оценка падала до 0.02–0.17.
+    Консистентная выборка (bottom-k по значению хеша) сохраняет общие шинглы
+    в обеих выборках, поэтому оценка следует за истинным Jaccard.
+    """
+    left, right = make_long_pair(20_000, 0.92)
+    assert len(left) >= 20_000
+    true_value = true_jaccard(left, right)
+    assert 0.9 <= true_value <= 0.93, f"фикстура не та: истинный Jaccard {true_value:.3f}"
+
+    left_shingles = dedup_mod.shingle_hashes(left)
+    assert len(left_shingles) == dedup_mod.MAX_SHINGLES, "выборка обязана сработать"
+
+    estimate = dedup_mod.jaccard_estimate(
+        dedup_mod.minhash_signature(left), dedup_mod.minhash_signature(right)
+    )
+    assert estimate >= 0.8, f"оценка {estimate:.3f} при истинном Jaccard {true_value:.3f}"
+    assert abs(estimate - true_value) < 0.15
+
+
+def test_tm1_sampling_is_consistent_not_rank_based():
+    """Выборка шинглов — консистентная: Jaccard ВЫБОРОК следует за истинным.
+
+    Ранговая выборка брала у двух документов разные значения (квантили сортировки
+    расходятся), и Jaccard выборок обрушивался до ≈0.02 — здесь он обязан
+    следовать за истинным Jaccard шинглов. Проверка дешевле полной подписи и
+    бьёт ровно в свойство выборки: общий шингл входит в выборку обоих или ни одного.
+    """
+    left, right = make_long_pair(20_000, 0.92)
+    left_sample = set(dedup_mod.shingle_hashes(left))
+    right_sample = set(dedup_mod.shingle_hashes(right))
+    assert len(left_sample) == dedup_mod.MAX_SHINGLES, "выборка обязана сработать"
+
+    sample_jaccard = len(left_sample & right_sample) / len(left_sample | right_sample)
+    assert sample_jaccard >= 0.8, f"выборки разошлись: Jaccard выборок {sample_jaccard:.3f}"
+    assert abs(sample_jaccard - true_jaccard(left, right)) < 0.15
+
+
+def test_tm2_short_duplicates_are_still_detected():
+    """T-m2: регресс — короткие дубли (выборка не включается) ловятся как раньше."""
+    left, right = make_long_pair(500, 0.95, seed=3)
+    assert len(dedup_mod.shingle_hashes(left)) < dedup_mod.MAX_SHINGLES
+    true_value = true_jaccard(left, right)
+    assert true_value >= dedup_mod.JACCARD_THRESHOLD
+
+    estimate = dedup_mod.jaccard_estimate(
+        dedup_mod.minhash_signature(left), dedup_mod.minhash_signature(right)
+    )
+    assert estimate >= dedup_mod.JACCARD_THRESHOLD
+    assert abs(estimate - true_value) < 0.15
+
+    deduper = dedup_mod.Deduper()
+    assert deduper.add(make_episode("sess-a", 0, left)) is True
+    assert deduper.add(make_episode("sess-b", 0, right)) is False
+    assert deduper.stats.near == 1
+
+
+# --- контейнмент ------------------------------------------------------------ #
+
+
+def filler(prefix: str, count: int) -> str:
+    return " ".join(f"{prefix}{index}" for index in range(count))
+
+
+def card_with_chunks(chunks: int, prefix: str = "карточка") -> str:
+    """Текст ровно в ``chunks`` окон: длина вскрыта из шага нарезки.
+
+    Фикстура обязана быть той, за которую себя выдаёт: длину задаём по сетке
+    окон (``CHUNK_CHARS`` + шаг × (chunks - 1)), а не числом слов.
+    """
+    step = dedup_mod.CHUNK_CHARS - dedup_mod.CHUNK_OVERLAP_CHARS
+    target = dedup_mod.CHUNK_CHARS + step * (chunks - 1)
+    text = filler(prefix, target)
+    assert len(text) >= target
+    return text[:target]
+
+
+def containment_records(card: str, distillate: str) -> list[tuple[str, str, str]]:
+    return [("k-1", "K", card), ("d-1", "D", distillate)]
+
+
+def inside_distillate(card: str, padding: int = 60) -> str:
+    return filler("дистиллят", padding) + " " + card + " " + filler("хвост", 40)
+
+
+def test_tc1_contained_card_is_dropped_and_container_kept():
+    """T-c1: карточка (3 чанка) целиком внутри дистиллята → K снят, D остался."""
+    card = card_with_chunks(3)
+    assert len(dedup_mod.chunk_windows(card)) == 3, "фикстура: карточка ровно в 3 чанка"
+    distillate = inside_distillate(card)
+
+    kept, stats = dedup_mod.containment_dedup(containment_records(card, distillate))
+
+    assert [record[0] for record in kept] == ["d-1"]
+    assert stats.dropped == 1
+    assert stats.dropped_by_component == {"K": 1}
+    assert stats.checked_pairs == 1
+    assert stats.coverage_histogram["1.0"] == 1
+
+
+def test_tc1_containment_is_order_independent():
+    """Решения по K не зависят от порядка записей: контейнеры индексируются все."""
+    card = card_with_chunks(3)
+    records = containment_records(card, inside_distillate(card))
+
+    kept, stats = dedup_mod.containment_dedup(list(reversed(records)))
+
+    assert [record[0] for record in kept] == ["d-1"]
+    assert stats.dropped == 1
+
+
+def test_tc2_partially_overlapping_card_is_kept():
+    """T-c2: у карточки с D общий только 40% содержания → карточка остаётся."""
+    card_parts = [filler(f"карточка{index}", 20) for index in range(5)]
+    card = " ".join(card_parts)
+    assert len(dedup_mod.chunk_windows(card)) >= 5
+    # в дистиллят попадают только первые две части (40% содержания карточки)
+    distillate = filler("дистиллят", 60) + " " + " ".join(card_parts[:2])
+
+    kept, stats = dedup_mod.containment_dedup(containment_records(card, distillate))
+
+    assert {record[0] for record in kept} == {"k-1", "d-1"}
+    assert stats.dropped == 0
+    assert stats.checked_pairs == 1
+    coverages = [float(label) for label in stats.coverage_histogram]
+    assert coverages and max(coverages) < 0.8, f"покрытие {coverages} не может доходить до порога"
+
+
+def test_tc3_threshold_cuts_by_reported_counters():
+    """T-c3: срез делает ПОРОГ, и это видно по счётчикам отчёта.
+
+    Фикстура: карточка в 22 чанка, в дистиллят попал её хвост начиная с 600-го
+    символа — покрытие 19/22 = 0.864 (замер): 19 окон запроса лежат в дистилляте
+    целиком. При пороге 0.8 запись снимается, при 0.9 остаётся — различие даёт
+    порог, а не случайность, и корзина покрытия отчёта («не ниже 0.8») это
+    подтверждает.
+    """
+    card = card_with_chunks(22)
+    total = len(dedup_mod.chunk_windows(card))
+    assert total == 22, "фикстура: карточка ровно в 22 чанка"
+    distillate = filler("дистиллят", 60) + " " + card[600:]
+    records = containment_records(card, distillate)
+
+    kept_strict, strict = dedup_mod.containment_dedup(records, threshold=0.8)
+    kept_lenient, lenient = dedup_mod.containment_dedup(records, threshold=0.9)
+
+    assert [record[0] for record in kept_strict] == ["d-1"], strict.to_dict()
+    assert {record[0] for record in kept_lenient} == {"k-1", "d-1"}
+    assert strict.dropped == 1 and strict.threshold == 0.8
+    assert lenient.dropped == 0 and lenient.threshold == 0.9
+    assert strict.checked == 1 and lenient.checked == 1
+    # при пороге 0.9 первый же кандидат не успевает добрать порог (даже все
+    # оставшиеся чанки его не спасают) — пар не заведено вовсе, и это видно
+    assert strict.checked_pairs == 1 and lenient.checked_pairs == 0
+    # корзина — нижняя граница покрытия: снято при 0.8, оставлено при 0.9
+    assert strict.coverage_histogram["0.8"] == 1, strict.to_dict()
+    assert "0.9" not in strict.coverage_histogram
+
+
+def test_tc3_containment_is_component_agnostic():
+    """Ступень не знает про K/D: роли задаются парами (контейнер, содержимое)."""
+    inner = filler("блок", 80)
+    outer = filler("обёртка", 60) + " " + inner + " " + filler("хвост", 40)
+    records = [("y-1", "Y", inner), ("x-1", "X", outer)]
+
+    kept, stats = dedup_mod.containment_dedup(
+        records, sides=(("X", "Y"),), threshold=0.8
+    )
+
+    assert [record[0] for record in kept] == ["x-1"]
+    assert stats.dropped_by_component == {"Y": 1}
+
+
+def test_tc3_extract_blocks_limits_what_is_compared():
+    """``extract_blocks`` задаёт блоки записи: вне блоков содержание не ищется."""
+    card = filler("карточка", 80)
+    distillate = filler("дистиллят", 60) + " " + card + " " + filler("хвост", 40)
+    records = containment_records(card, distillate)
+
+    kept, stats = dedup_mod.containment_dedup(
+        records, extract_blocks=lambda text: [text.split(" ")[0]]
+    )
+
+    assert {record[0] for record in kept} == {"k-1", "d-1"}
+    assert stats.dropped == 0
+
+
+def test_tc3_container_is_never_dropped():
+    """Контейнер не снимается контейнментом, даже если он сам вложен в другого."""
+    inner = filler("блок", 80)
+    outer = filler("обёртка", 60) + " " + inner + " " + filler("хвост", 40)
+    records = [("d-2", "D", outer), ("d-1", "D", inner)]
+
+    kept, stats = dedup_mod.containment_dedup(records)
+
+    assert [record[0] for record in kept] == ["d-2", "d-1"]
+    assert stats.dropped == 0
+    assert stats.checked == 0

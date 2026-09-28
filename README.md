@@ -8,6 +8,13 @@
 > практикам фронтир-лабораторий; каждое решение зафиксировано ADR и проверяется механическими
 > fitness-правилами (`CONSTRAINTS.yaml`), без LLM-судей.
 
+## 📊 Отчёты и живые диаграммы (GitHub Pages)
+
+- **[Выводы после прогонов, 27.09 (RU)](https://romannekrasovaillm.github.io/axiom/RESULTS-2026-09-27.ru.html)** — стадии A4 с числами, 8 инженерных выводов, состояние гейтов ([markdown в репо](docs/RESULTS-2026-09-27.ru.md)).
+- **[Конвейер A4: стадии → манифест → verify](https://romannekrasovaillm.github.io/axiom/diagrams/a4-gate-flow.html)** — интерактивная диаграмма статусов (4/5 executed).
+- **[Карта данных: претрейн vs пост-трейн](https://romannekrasovaillm.github.io/axiom/diagrams/axiom-data-map.html)** — публичные W/C/Q → аренда, приватные E/K/D/S → контур.
+- В репо: `docs/diagrams/*.html` (Archify, self-contained), `docs/RESULTS-2026-09-27.ru.md`, `docs/adr/ADR-018…021` — решения по данным и стеку.
+
 ## What is here
 
 - **`net/`** — the model, in JAX: hybrid **KDA** linear attention (DeltaNet-family with short

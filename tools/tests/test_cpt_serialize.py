@@ -179,9 +179,13 @@ def run(tmp_path: Path, **kwargs) -> dict:
 
 
 def read_records(out_dir: Path, prefix: str = "cpt-kds-v0.1") -> list[dict]:
-    """Записи всех шардов каталога вывода (в порядке номеров шардов)."""
+    """Записи всех шардов каталога вывода (в порядке номеров шардов).
+
+    Маска — та же, что у ``--restart`` (``<prefix>-*.jsonl*``): рядом с шардами
+    законно живут курируемые файлы (заметки, отчёты), они не шарды.
+    """
     records: list[dict] = []
-    for path in sorted(Path(out_dir).glob(f"{prefix}-*")):
+    for path in sorted(Path(out_dir).glob(f"{prefix}-*.jsonl*")):
         if path.name.endswith(".part"):
             continue
         opener = gzip.open if path.suffix == ".gz" else open
@@ -753,6 +757,44 @@ def test_t_r2_restart_drops_previous_shards(tmp_path: Path):
     assert len(manifest["shards"]) == 1
 
 
+def test_t_r3_restart_keeps_curated_files_next_to_shards(tmp_path: Path):
+    """--restart: маска сноса сужена до сменных артефактов — курируемое рядом цело.
+
+    Прогон вправе снести только свои артефакты (``<prefix>-*.jsonl*`` и манифест);
+    заметка и посторонний json человека — не его добро, а старый шард данных —
+    его (иначе состав корпуса смешался бы). Т-r (дельта-3).
+    """
+    roots = make_roots(tmp_path)
+    out_dir = tmp_path / "out"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    curated_md = out_dir / "cpt-kds-v0.1-notes.md"
+    curated_md.write_text("# Курируемая заметка о прогоне\n", encoding="utf-8")
+    curated_json = out_dir / "cpt-kds-v0.1-audit.json"
+    curated_json.write_text('{"вывод": "сделан человеком"}\n', encoding="utf-8")
+    stale_shard = out_dir / "cpt-kds-v0.1-00007.jsonl.gz"
+    stale_shard.write_bytes(b"stale shard from a previous corpus\n")
+
+    assert cpt.main([
+        "build-cpt",
+        "--out", str(out_dir / "cpt-kds-v0.1.jsonl.gz"),
+        "--report", str(out_dir / "report.json"),
+        "--manifest", str(out_dir / "manifest-cpt.json"),
+        "--codec", "gzip",
+        "--limit-files", "1",
+        "--restart",
+        "--k-root", str(roots["k_root"]),
+        "--d-root", str(roots["d_root"]),
+        "--s-root", str(roots["s_root"]),
+    ]) == 0
+
+    assert curated_md.read_text(encoding="utf-8").startswith("# Курируемая заметка")
+    assert json.loads(curated_json.read_text(encoding="utf-8")) == {"вывод": "сделан человеком"}
+    assert not stale_shard.exists()                      # сменный шард данных снят
+    manifest = json.loads((out_dir / "manifest-cpt.json").read_text(encoding="utf-8"))
+    assert manifest["resume_cursor"] == {"K": 0, "D": 0, "S": 0}
+    assert len(read_records(out_dir)) == 3               # окно limit=1 по трём компонентам
+
+
 def test_t_opt1_min_chars_and_title_prefix_knobs(tmp_path: Path):
     """Порог длины и заголовок карточки — управляемые ручки, обе видны в отчёте."""
     roots = make_roots(tmp_path)
@@ -863,11 +905,24 @@ def test_t_pl1_plugin_table_in_report(tmp_path: Path):
     assert table["banking"]["in"] is False
     assert table["banking"]["reason"]
     assert table["_archive"]["in"] is False
+    # столбцы карточки датасета: «файлов» и «approx-токенов» записанных скиллов
+    assert table["laguna"]["approx_tokens"] > 0
+    assert table["banking"]["approx_tokens"] == 0        # вне allowlist — в корпус не идёт
 
 
 def test_t_pl1_allowlist_matches_card(tmp_path: Path):
-    """Константа — фильтр домена axiom из карточки ADR-020 (22 плагина)."""
+    """Константа — фильтр домена axiom из карточки ADR-020 (дельта-3: 22 + 9 = 31)."""
     assert cpt.PLUGIN_ALLOWLIST == {
+        "laguna", "agentic-rl", "data-curator", "verification", "effort", "frontier-lab",
+        "frontier-intelligence", "document-tools", "misc-tools", "agent-infra",
+        "agent-harnesses", "agent-harness", "cpt", "pretrain", "patterns-resilience",
+        "patterns-integration", "aws-builders", "arch-core", "dka", "kimi",
+        "tui-agent-skills", "arch-distilled",
+        # дельта-3 (+9, решение владельца 28.09.2026)
+        "rl-training", "memory-systems", "safety-eval", "credit-assignment", "reasoning",
+        "gb10", "lambert-rl", "agents", "kat",
+    }
+    assert cpt.PLUGIN_ALLOWLIST == set(cpt.PLUGIN_ALLOWLIST_DELTA3) | {
         "laguna", "agentic-rl", "data-curator", "verification", "effort", "frontier-lab",
         "frontier-intelligence", "document-tools", "misc-tools", "agent-infra",
         "agent-harnesses", "agent-harness", "cpt", "pretrain", "patterns-resilience",

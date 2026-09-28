@@ -1,4 +1,4 @@
-"""Сериализатор K/D/S → доменный CPT-корпус ``axiom-domain-ds-v1`` (ADR-020, дельта-2).
+"""Сериализатор K/D/S → доменный CPT-корпус ``axiom-domain-ds-v1`` (ADR-020, дельты-2/3).
 
 Фаза CPT (amendment ADR-020 от 27.09.2026) учится на **прозаическом** доменном
 знании: концепты из статей (K), дистилляты статей (D), процедурные скиллы (S).
@@ -40,7 +40,14 @@ D-корпусом — индекс чанков D строится разом �
 * **D** — ``~/library/distillate/``: подкаталоги :data:`D_SUBDIRS`
   (``1_методология`` — вне: это про процесс дистилляции, не про домен);
 * **S** — ``~/experiments/agents/0710-ariadna/plugins/<плагин>/…/SKILL.md``:
-  плагин — первый компонент пути под корнем, фильтр — :data:`PLUGIN_ALLOWLIST`.
+  плагин — первый компонент пути под корнем, фильтр — :data:`PLUGIN_ALLOWLIST`
+  (дельта-3 расширила список на 9 плагинов домена axiom — решение владельца
+  28.09.2026).
+
+Объём корпуса считается в :func:`prep_pretrain.common.approx_tokens`
+(``chars // 4``, ADR-021) — по записи, по компоненте (:attr:`ComponentCounters.approx_tokens`)
+и по плагину (:attr:`ComponentCounters.plugin_tokens`): карточка датасета
+собирает доли компонент той же мерой, что и таблицу плагинов.
 
 Примеры::
 
@@ -114,7 +121,11 @@ K_LEVELS = ("α", "β", "γ")
 D_SUBDIRS = ("2_статьи", "3_блоги")
 
 #: S: плагины домена axiom. Скиллы остальных плагинов — вне фильтра.
-PLUGIN_ALLOWLIST = frozenset(
+#: Ревизия дельты-2 показала 1 331 скилл вне allowlist; решение владельца
+#: 28.09.2026 (ADR-020, дельта-3) — расширение на 9 плагинов домена axiom
+#: (список кандидатов дельты-2). База и расширение разделены: карточка датасета
+#: показывает, что именно пришло в этой дельте, а не только итог.
+PLUGIN_ALLOWLIST_BASE = frozenset(
     {
         "laguna",
         "agentic-rl",
@@ -140,6 +151,24 @@ PLUGIN_ALLOWLIST = frozenset(
         "arch-distilled",
     }
 )
+
+#: Плагины, добавленные в allowlist дельтой-3 (решение владельца 28.09.2026).
+PLUGIN_ALLOWLIST_DELTA3 = frozenset(
+    {
+        "rl-training",
+        "memory-systems",
+        "safety-eval",
+        "credit-assignment",
+        "reasoning",
+        "gb10",
+        "lambert-rl",
+        "agents",
+        "kat",
+    }
+)
+
+#: Итоговый фильтр S: база дельты-1/2 + расширение дельты-3.
+PLUGIN_ALLOWLIST = PLUGIN_ALLOWLIST_BASE | PLUGIN_ALLOWLIST_DELTA3
 
 #: Имя файла скилла: скиллом считается только он.
 SKILL_FILENAME = "SKILL.md"
@@ -434,6 +463,7 @@ class ComponentCounters:
     dropped_dedup: int = 0
     dropped_containment: int = 0
     chars: int = 0
+    approx_tokens: int = 0
     home_replacements: int = 0
     encoding_replacements: int = 0
     type_mismatch: int = 0
@@ -445,22 +475,27 @@ class ComponentCounters:
     by_level: Counter = field(default_factory=Counter)
     redactions: scrub_mod.ScrubStats = field(default_factory=scrub_mod.ScrubStats)
     plugins: Counter = field(default_factory=Counter)
+    plugin_tokens: Counter = field(default_factory=Counter)
     length_buckets: Counter = field(default_factory=Counter)
     sample_ids: list[str] = field(default_factory=list)
 
-    def undo_written(self, chars: int, bucket: str, plugin: str = "") -> None:
+    def undo_written(self, chars: int, tokens: int, bucket: str, plugin: str = "") -> None:
         """Снять запись со счёта «написано»: контейнмент решил её судьбу иначе.
 
         Счётчики компоненты — про состав корпуса, а не про промежуточный результат
         ступеней: снятая контейнментом запись не должна ни считаться записанной,
-        ни добавлять символы в объём датасета.
+        ни добавлять символы/токены в объём датасета (``tokens`` — та же мера
+        ``chars // 4``, что и в записи; пересчитывать её от ``chars`` нельзя —
+        мера берётся по записи, а не по сумме).
         """
         self.records_written -= 1
         self.chars -= chars
+        self.approx_tokens -= tokens
         self.dropped_containment += 1
         self.length_buckets[bucket] -= 1
         if plugin:
             self.plugins[plugin] -= 1
+            self.plugin_tokens[plugin] -= tokens
 
     def to_dict(self) -> dict:
         return {
@@ -470,6 +505,7 @@ class ComponentCounters:
             "dropped_dedup": self.dropped_dedup,
             "dropped_containment": self.dropped_containment,
             "chars": self.chars,
+            "approx_tokens": self.approx_tokens,
             "home_replacements": self.home_replacements,
             "encoding_replacements": self.encoding_replacements,
             "type_mismatch": self.type_mismatch,
@@ -481,6 +517,7 @@ class ComponentCounters:
             "by_level": dict(sorted(self.by_level.items())),
             "redactions": self.redactions.to_dict(),
             "plugins": dict(sorted(self.plugins.items())),
+            "plugin_tokens": dict(sorted(self.plugin_tokens.items())),
             "length_buckets": {label: int(self.length_buckets.get(label, 0))
                                for _bound, label in LENGTH_BUCKETS},
         }
@@ -494,6 +531,7 @@ class ComponentCounters:
             "dropped_dedup": self.dropped_dedup,
             "dropped_containment": self.dropped_containment,
             "chars": self.chars,
+            "approx_tokens": self.approx_tokens,
         }
 
 
@@ -600,19 +638,24 @@ def serialize_one(
     # Заголовок карточки — в запись; дедуп сравнивает блок источника (см. docstring).
     final = f"# {title}\n\n{block}" if title and title_prefix and not block.startswith("# ") \
         else block
+    tokens = pp_common.approx_tokens(final)
     counters.records_written += 1
     counters.chars += len(final)
+    counters.approx_tokens += tokens
     counters.length_buckets[length_bucket(len(final))] += 1
     if not counters.sample_ids:
         counters.sample_ids.append(record_id)
     if source.component == "S":
         counters.plugins[source.plugin] += 1
+        counters.plugin_tokens[source.plugin] += tokens
     return {
         "id": record_id,
         "component": source.component,
         "source_path": source.source_path,
         "text": final,
         "block": block,
+        # служебное: нужно ступени снятия записи (контейнмент) для счётчиков S
+        "plugin": source.plugin,
     }
 
 
@@ -665,8 +708,19 @@ def near_dup_calibration(sizes: Sequence[int] = NEAR_DUP_CALIBRATION_SIZES,
     }
 
 
-def plugin_table(inventory: dict[str, int], plugins_written: dict[str, int]) -> list[dict]:
-    """Таблица «плагин → в/вне → почему»: по факту содержимого источника."""
+def plugin_table(
+    inventory: dict[str, int],
+    plugins_written: dict[str, int],
+    plugin_tokens: dict[str, int] | None = None,
+) -> list[dict]:
+    """Таблица «плагин → файлов → approx-токенов → в/вне → почему».
+
+    Числа — по факту содержимого источника (``inventory`` — все плагины корня,
+    включая вне allowlist) и по факту корпуса (``records``/``approx_tokens``
+    записанных скиллов). Столбец токенов заполнен для записанных скиллов; у
+    плагинов вне allowlist он законно нулевой — их текст в корпус не входит.
+    """
+    tokens = plugin_tokens or {}
     rows: list[dict] = []
     for name in sorted(set(inventory) | set(PLUGIN_ALLOWLIST)):
         inside = name in PLUGIN_ALLOWLIST
@@ -687,6 +741,7 @@ def plugin_table(inventory: dict[str, int], plugins_written: dict[str, int]) -> 
                 "in": inside,
                 "skills": skills,
                 "records": int(plugins_written.get(name, 0)),
+                "approx_tokens": int(tokens.get(name, 0)),
                 "reason": reason,
             }
         )
@@ -754,11 +809,20 @@ def _shard_prefix(name: str) -> str:
     return stem or DATASET_NAME
 
 
-def _drop_shards(out_dir: Path, prefix: str) -> None:
-    """--restart: снять прежние шарды и хвост ``.part``, чтобы не смешать состав."""
-    for stale in list(out_dir.glob(f"{prefix}-*")):
+#: Что снимает ``--restart`` (маска — сменные артефакты прогона, дельта-3):
+#: файлы данных ``<prefix>-*.jsonl[.zst|.gz]`` (включая хвост ``.part``) и
+#: манифест. Курируемое рядом — отчёты, ``*.md``, заметки — вне маски: его
+#: пишет человек, и прогон не вправе его снести.
+RESTART_SHARD_GLOB = "{prefix}-*.jsonl*"
+
+
+def _drop_shards(out_dir: Path, prefix: str, manifest_path: Path | None = None) -> None:
+    """--restart: снять прежние шарды и манифест, не трогая курируемые файлы."""
+    for stale in list(out_dir.glob(RESTART_SHARD_GLOB.format(prefix=prefix))):
         if stale.is_file():
             stale.unlink(missing_ok=True)
+    if manifest_path is not None and manifest_path.is_file():
+        manifest_path.unlink(missing_ok=True)
 
 
 def _load_manifest(path: Path, roots: dict[str, str], codec: str,
@@ -921,7 +985,10 @@ def run_build_cpt(
             if record["id"] in kept_ids:
                 continue
             counters[record["component"]].undo_written(
-                len(record["text"]), length_bucket(len(record["text"]))
+                len(record["text"]),
+                pp_common.approx_tokens(record["text"]),
+                length_bucket(len(record["text"])),
+                record.get("plugin", ""),
             )
     containment_seconds = pp_common.elapsed(containment_started)
 
@@ -936,7 +1003,7 @@ def run_build_cpt(
         existing_shards=manifest_obj.shards,
     )
     if restart:
-        _drop_shards(out_dir, prefix)
+        _drop_shards(out_dir, prefix, manifest_path)
     else:
         writer.drop_partial()
 
@@ -981,7 +1048,9 @@ def run_build_cpt(
     manifest_obj.data["containment"] = containment_block
     manifest_obj.data["redactions"] = scrub_stats.to_dict()
     manifest_obj.data["by_component"] = by_component
-    manifest_obj.data["plugin_table"] = plugin_table(dict(inventory), counters["S"].plugins)
+    manifest_obj.data["plugin_table"] = plugin_table(
+        dict(inventory), counters["S"].plugins, counters["S"].plugin_tokens
+    )
     manifest_obj.data["cursor_by_component"] = dict(sorted(consumed.items()))
     manifest_obj.data["resume_cursor"] = dict(sorted(resume_cursor.items()))
     manifest_obj.set_cursor(
@@ -1084,7 +1153,8 @@ def build_parser() -> argparse.ArgumentParser:
                        default=pp_common.DEFAULT_SHARD_BYTES / (1024 * 1024),
                        help="целевой размер сжатого шард-файла, МБ")
     build.add_argument("--restart", action="store_true",
-                       help="начать заново, игнорируя курсор манифеста")
+                       help="начать заново: снять прежние шарды <prefix>-*.jsonl* и манифест, "
+                            "курируемые файлы рядом (*.md, отчёты) остаются")
     build.add_argument("--progress", action="store_true", help="печатать прогресс в stderr")
     build.add_argument("--allow-any-out", action="store_true",
                        help="разрешить выход вне gb10-shared и /tmp (нарушает C-033)")

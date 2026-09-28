@@ -12,10 +12,21 @@
 
 Классы:
 
-* ``verified-complete`` — ``status=complete``; **только они** идут в SFT-компонент;
+* ``verified-complete`` — ``status=complete``; идут в SFT-компонент;
+* ``verified-partial`` — ``status=partial`` у источника **и** механический признак
+  зелёного сьюта в последних tool-результатах эпизода
+  (:data:`SUITE_GREEN_RE` / :data:`SUITE_RED_RE`, окно :data:`GREEN_SUITE_WINDOW`);
+  в SFT-компонент допускается **с флагом** ``verification: partial-green``;
 * ``verified-failed`` — ``status`` из ``{blocked, conflicts, failed}``; negative-пул RL;
-* ``unverified`` — всё остальное, включая ``partial``, отсутствие контракта и
-  неоднозначную пару с harness-отчётом; в SFT не попадает, считается счётчиком.
+* ``unverified`` — всё остальное, включая ``partial`` без зелёного сьюта,
+  отсутствие контракта и неоднозначную пару с harness-отчётом; в SFT не попадает,
+  считается счётчиком.
+
+Признак зелёного сьюта — **механический**, по последним ``GREEN_SUITE_WINDOW``
+tool-результатам эпизода: сьют зелёный, если в их текстах есть строка вида
+«N passed»/«passed» (:data:`SUITE_GREEN_RE`) и нет «FAILED»/«ERROR»
+(:data:`SUITE_RED_RE`). Проза и рассуждения модели признак не дают: берутся
+только ``tool_result``-ходы, то есть вывод среды.
 """
 
 from __future__ import annotations
@@ -25,21 +36,41 @@ import re
 from typing import Any, Iterator
 
 VERIFIED_COMPLETE = "verified-complete"
+VERIFIED_PARTIAL = "verified-partial"
 VERIFIED_FAILED = "verified-failed"
 UNVERIFIED = "unverified"
 
-CLASSES = (VERIFIED_COMPLETE, VERIFIED_FAILED, UNVERIFIED)
+CLASSES = (VERIFIED_COMPLETE, VERIFIED_PARTIAL, VERIFIED_FAILED, UNVERIFIED)
+
+#: Классы, допускаемые в SFT-компонент (ADR-020, дельты-1/3).
+SFT_CLASSES = (VERIFIED_COMPLETE, VERIFIED_PARTIAL)
 
 #: Словарь статусов — ровно контракт результата харнесса (complete|partial|blocked)
 #: плюс статусы, названные в дельте-1 ADR-020. Никаких синонимов: неизвестный
 #: статус — это unverified, а не догадка о его смысле.
 COMPLETE_STATUSES = frozenset({"complete"})
 FAILED_STATUSES = frozenset({"blocked", "conflicts", "failed"})
+#: ``partial`` — исход объявлен неполным; сам по себе в SFT не пускает, но в паре
+#: с зелёным сьютом даёт ``verified-partial``.
+PARTIAL_STATUSES = frozenset({"partial"})
 
 #: Значения evidence в эпизоде — чем именно подтверждён класс.
 EVIDENCE_CONTRACT = "in-session-contract"
 EVIDENCE_HARNESS = "harness-report"
+EVIDENCE_PARTIAL_GREEN = "partial-green"
 EVIDENCE_NONE = "none"
+
+#: Флаг записи: эпизод допущен в SFT как **частично** верифицированный. Прочие
+#: записи флага не несут (``verification: null``): их допуск решает класс.
+VERIFICATION_PARTIAL_GREEN = "partial-green"
+
+#: Окно поиска признака зелёного сьюта: последние N tool-результатов эпизода.
+GREEN_SUITE_WINDOW = 5
+
+#: Зелёный сьют: строка вида «N passed»/«passed» (pytest-подобный итог).
+SUITE_GREEN_RE = re.compile(r"\b(?:\d+\s+)?passed\b")
+#: Красный сьют: «FAILED»/«ERROR» (регистр значим — pytest-итог в верхнем регистре).
+SUITE_RED_RE = re.compile(r"\b(?:FAILED|ERROR)\b")
 
 #: Окно поиска JSON-объекта: хвост ответа, а не весь текст (защита от O(n^2)).
 TAIL_WINDOW = 64_000
@@ -139,6 +170,39 @@ def _status_class(status: str | None) -> str | None:
     return None
 
 
+def _normalized_status(status: str | None) -> str:
+    return status.strip().lower() if isinstance(status, str) else ""
+
+
+def green_suite_evidence(episode: Any) -> bool:
+    """True, если последние ``GREEN_SUITE_WINDOW`` tool-результатов дают зелёный сьют.
+
+    Признак строго механический (AD-2) и смотрит только на вывод среды:
+
+    * берутся последние ``GREEN_SUITE_WINDOW`` ходов ``kind=tool_result``
+      (рассуждения и текст ассистента в признак не входят — модель может
+      написать «тесты прошли» и без тестов);
+    * сьют зелёный, если в их текстах срабатывает :data:`SUITE_GREEN_RE`
+      («N passed»/«passed») и **не** срабатывает :data:`SUITE_RED_RE`
+      («FAILED»/«ERROR») — красная строка в тех же результатах отменяет признак.
+
+    Отсутствие tool-результатов — не зелёный сьют (``False``), а не «нет данных
+    против»: без вывода среды механического подтверждения нет.
+    """
+    turns = getattr(episode, "turns", None)
+    if not turns:
+        return False
+    tail = [
+        str(getattr(turn, "content", "") or "")
+        for turn in turns
+        if getattr(turn, "kind", None) == "tool_result"
+    ][-GREEN_SUITE_WINDOW:]
+    if not tail:
+        return False
+    joined = "\n".join(tail)
+    return bool(SUITE_GREEN_RE.search(joined)) and not SUITE_RED_RE.search(joined)
+
+
 def classify_with_evidence(
     episode: Any, harness_status: str | None = None
 ) -> tuple[str, str]:
@@ -152,12 +216,21 @@ def classify_with_evidence(
        (в том числе когда контракт сессии объявил ``complete``: расхождение
        источников трактуется против эпизода, а не в его пользу);
     3. иначе ``complete`` от любого источника → ``verified-complete``;
-    4. иначе ``unverified`` — включая неполный статус контракта (``partial``):
-       harness-отчёт по времени может только подтвердить полный успех, но не
-       переписать «сессия сама сказала, что не закончила».
+    4. иначе ``partial`` у источника **и** зелёный сьют в последних
+       tool-результатах (:func:`green_suite_evidence`) → ``verified-partial``;
+    5. иначе ``unverified`` — включая неполный статус контракта (``partial``)
+       без механического подтверждения: harness-отчёт по времени может только
+       подтвердить полный успех, но не переписать «сессия сама сказала, что не
+       закончила».
+
+    ``verified-partial`` — снисхождение ровно на один шаг и только по
+    механическому свидетельству: неполный статус (``partial``) плюс вывод среды
+    с зелёным сьютом. Полного класса он не даёт (``partial`` ≠ ``complete``), а
+    без зелёного сьюта остаётся ``unverified``.
     """
     contract = extract_final_contract(episode)
     contract_class = _status_class(contract.get("status")) if contract is not None else None
+    contract_status = _normalized_status(contract.get("status")) if contract is not None else ""
 
     if contract_class == VERIFIED_FAILED:
         return VERIFIED_FAILED, EVIDENCE_CONTRACT
@@ -169,15 +242,19 @@ def classify_with_evidence(
     if contract is not None:
         if contract_class == VERIFIED_COMPLETE:
             return VERIFIED_COMPLETE, EVIDENCE_CONTRACT
+        if contract_status in PARTIAL_STATUSES and green_suite_evidence(episode):
+            return VERIFIED_PARTIAL, EVIDENCE_PARTIAL_GREEN
         return UNVERIFIED, EVIDENCE_CONTRACT
 
     if harness_class == VERIFIED_COMPLETE:
         return VERIFIED_COMPLETE, EVIDENCE_HARNESS
+    if _normalized_status(harness_status) in PARTIAL_STATUSES and green_suite_evidence(episode):
+        return VERIFIED_PARTIAL, EVIDENCE_PARTIAL_GREEN
     return UNVERIFIED, EVIDENCE_NONE
 
 
 def classify_episode(episode: Any, harness_status: str | None = None) -> str:
-    """Класс верификации эпизода: verified-complete | verified-failed | unverified."""
+    """Класс верификации: verified-complete | verified-partial | verified-failed | unverified."""
     return classify_with_evidence(episode, harness_status)[0]
 
 

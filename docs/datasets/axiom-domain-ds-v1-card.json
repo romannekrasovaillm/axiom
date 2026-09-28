@@ -1,0 +1,1392 @@
+{
+ "card": "axiom-domain-ds-v1",
+ "card_version": "v1",
+ "status": "v1-draft",
+ "status_reasons": [
+  "allowlist корпуса (22) не совпадает с константой (31): корпус собран до расширения дельты-3 — нужна пересборка K/D/S",
+  "в allowlist константы, но не в прогоне корпуса: agents, credit-assignment, gb10, kat, lambert-rl, memory-systems, reasoning, rl-training, safety-eval — нужна пересборка K/D/S"
+ ],
+ "generated_at": "2026-09-28T10:29:22Z",
+ "dataset_root": "<HOME>/gb10-shared/datasets/axiom-domain-ds-v1",
+ "repos_symlink": "data/datasets/axiom-domain-ds-v1",
+ "decision": "ADR-020 (дельта-1..3), ADR-004 (карточка + хеш), ADR-005 (SFT-стадия)",
+ "components": {
+  "E": {
+   "component": "E",
+   "title": "агентные эпизоды сессий (класс исхода — механический)",
+   "present": true,
+   "artifact": "<HOME>/gb10-shared/datasets/axiom-domain-ds-v1/episodes-v1-report.json",
+   "generated_at": "2026-09-28T10:22:43Z",
+   "records": 2042,
+   "files": 1393,
+   "file_unit": "файлов сессий",
+   "chars": 241139267,
+   "approx_tokens": 60284039,
+   "approx_tokens_basis": "manifest",
+   "by_class": {
+    "unverified": 1918,
+    "verified-complete": 120,
+    "verified-failed": 3,
+    "verified-partial": 1
+   },
+   "sft_ready": 120,
+   "sft_partial_ready": 1,
+   "negative_ready": 3,
+   "sources": [
+    "<HOME>/.claude/projects"
+   ],
+   "rules": {
+    "classes": [
+     "verified-complete",
+     "verified-partial",
+     "verified-failed",
+     "unverified"
+    ],
+    "sft_classes": [
+     "verified-complete",
+     "verified-partial"
+    ],
+    "evidence": [
+     "in-session-contract",
+     "harness-report",
+     "partial-green",
+     "none"
+    ],
+    "green_suite_window": 5,
+    "green_suite_pattern": "\\b(?:\\d+\\s+)?passed\\b",
+    "red_suite_pattern": "\\b(?:FAILED|ERROR)\\b"
+   },
+   "evidence": {
+    "in-session-contract": 141,
+    "none": 2281,
+    "partial-green": 1
+   },
+   "notes": [],
+   "out": "<HOME>/gb10-shared/datasets/axiom-domain-ds-v1/episodes-v1.jsonl",
+   "sha256_declared": "7467209ed292ca81412cc6ee013a155dcbbd56379bfbe815c5f943e8e3e128b0",
+   "bytes_declared": 331231314,
+   "sha256": "7467209ed292ca81412cc6ee013a155dcbbd56379bfbe815c5f943e8e3e128b0",
+   "bytes": 331231314
+  },
+  "K": {
+   "component": "K",
+   "title": "концепты из статей (карточки библиотеки)",
+   "present": true,
+   "artifact": null,
+   "generated_at": "2026-09-28T09:16:51Z",
+   "records": 96217,
+   "files": 107916,
+   "file_unit": "файлов карточек",
+   "chars": 179395197,
+   "approx_tokens": 44848799,
+   "approx_tokens_basis": "chars//4 (манифест без пофайловых токенов)",
+   "dropped_dedup": 9873,
+   "dropped_containment": 0,
+   "sources": [
+    "<HOME>/library/concepts"
+   ],
+   "filters": {
+    "k_types": [
+     "algorithmic",
+     "algorithmic_primitive",
+     "architectural_component",
+     "benchmark",
+     "dataset",
+     "design_proposition",
+     "hypothesis",
+     "task"
+    ],
+    "k_levels": [
+     "α",
+     "β",
+     "γ"
+    ],
+    "k_title_prefix": true,
+    "d_subdirs": null,
+    "s_plugins": null,
+    "skill_filename": null,
+    "min_text_chars": 32,
+    "containment": true,
+    "containment_threshold": 0.8
+   },
+   "plugins": {},
+   "plugin_tokens": {},
+   "by_type": {
+    "algorithmic_primitive": 49046,
+    "architectural_component": 42070,
+    "benchmark": 13416,
+    "dataset": 1,
+    "design_proposition": 8,
+    "hypothesis": 2911,
+    "task": 352
+   },
+   "by_level": {
+    "advanced": 2,
+    "core": 1,
+    "meta": 2,
+    "unknown": 10466,
+    "α": 52923,
+    "β": 43905,
+    "γ": 505
+   },
+   "notes": []
+  },
+  "D": {
+   "component": "D",
+   "title": "дистилляты статей",
+   "present": true,
+   "artifact": null,
+   "generated_at": "2026-09-28T09:16:51Z",
+   "records": 5658,
+   "files": 5658,
+   "file_unit": "файлов дистиллятов",
+   "chars": 32685563,
+   "approx_tokens": 8171390,
+   "approx_tokens_basis": "chars//4 (манифест без пофайловых токенов)",
+   "dropped_dedup": 0,
+   "dropped_containment": 0,
+   "sources": [
+    "<HOME>/library/distillate"
+   ],
+   "filters": {
+    "k_types": null,
+    "k_levels": null,
+    "k_title_prefix": null,
+    "d_subdirs": [
+     "2_статьи",
+     "3_блоги"
+    ],
+    "s_plugins": null,
+    "skill_filename": null,
+    "min_text_chars": 32,
+    "containment": true,
+    "containment_threshold": 0.8
+   },
+   "plugins": {},
+   "plugin_tokens": {},
+   "by_type": {},
+   "by_level": {},
+   "notes": []
+  },
+  "S": {
+   "component": "S",
+   "title": "процедурные скиллы (SKILL.md плагинов домена)",
+   "present": true,
+   "artifact": null,
+   "generated_at": "2026-09-28T09:16:51Z",
+   "records": 263,
+   "files": 263,
+   "file_unit": "файлов SKILL.md",
+   "chars": 1652238,
+   "approx_tokens": 413059,
+   "approx_tokens_basis": "chars//4 (манифест без пофайловых токенов)",
+   "dropped_dedup": 0,
+   "dropped_containment": 0,
+   "sources": [
+    "<HOME>/experiments/agents/0710-ariadna/plugins"
+   ],
+   "filters": {
+    "k_types": null,
+    "k_levels": null,
+    "k_title_prefix": null,
+    "d_subdirs": null,
+    "s_plugins": [
+     "agent-harness",
+     "agent-harnesses",
+     "agent-infra",
+     "agentic-rl",
+     "arch-core",
+     "arch-distilled",
+     "aws-builders",
+     "cpt",
+     "data-curator",
+     "dka",
+     "document-tools",
+     "effort",
+     "frontier-intelligence",
+     "frontier-lab",
+     "kimi",
+     "laguna",
+     "misc-tools",
+     "patterns-integration",
+     "patterns-resilience",
+     "pretrain",
+     "tui-agent-skills",
+     "verification"
+    ],
+    "skill_filename": "SKILL.md",
+    "min_text_chars": 32,
+    "containment": true,
+    "containment_threshold": 0.8
+   },
+   "plugins": {
+    "agent-harness": 5,
+    "agent-harnesses": 40,
+    "agent-infra": 25,
+    "agentic-rl": 11,
+    "cpt": 4,
+    "data-curator": 18,
+    "dka": 5,
+    "document-tools": 6,
+    "effort": 16,
+    "frontier-intelligence": 8,
+    "frontier-lab": 22,
+    "kimi": 26,
+    "laguna": 43,
+    "misc-tools": 6,
+    "pretrain": 10,
+    "tui-agent-skills": 14,
+    "verification": 4
+   },
+   "plugin_tokens": {},
+   "by_type": {},
+   "by_level": {},
+   "notes": []
+  }
+ },
+ "shares": {
+  "basis": "approx-tokens",
+  "total_approx_tokens": 113717287,
+  "shares": {
+   "E": 0.5301,
+   "K": 0.3944,
+   "D": 0.0719,
+   "S": 0.0036
+  },
+  "measured": [
+   "E",
+   "K",
+   "D",
+   "S"
+  ],
+  "unmeasured": []
+ },
+ "shards": [
+  {
+   "component": "D+K+S",
+   "file": "cpt-kds-v0.1-00000.jsonl.zst",
+   "records": 102138,
+   "bytes_declared": 79193928,
+   "bytes": 79193928,
+   "sha256_declared": "eecba497f7c3319919c0691f21e22ec1254af7cd7df97f6c04824160ba87689a",
+   "sha256": "eecba497f7c3319919c0691f21e22ec1254af7cd7df97f6c04824160ba87689a",
+   "match": true,
+   "present": true
+  },
+  {
+   "component": "E",
+   "file": "<HOME>/gb10-shared/datasets/axiom-domain-ds-v1/episodes-v1.jsonl",
+   "records": 2042,
+   "bytes_declared": 331231314,
+   "bytes": 331231314,
+   "sha256_declared": "7467209ed292ca81412cc6ee013a155dcbbd56379bfbe815c5f943e8e3e128b0",
+   "sha256": "7467209ed292ca81412cc6ee013a155dcbbd56379bfbe815c5f943e8e3e128b0",
+   "match": true,
+   "present": true
+  }
+ ],
+ "plugin_allowlist": [
+  {
+   "plugin": "agent-harness",
+   "in_allowlist": true,
+   "in_corpus_run": true,
+   "added_in_delta3": false,
+   "files": 5,
+   "records": 5,
+   "approx_tokens": null,
+   "reason": "allowlist домена axiom (ADR-020): ML/агентный контур"
+  },
+  {
+   "plugin": "agent-harnesses",
+   "in_allowlist": true,
+   "in_corpus_run": true,
+   "added_in_delta3": false,
+   "files": 40,
+   "records": 40,
+   "approx_tokens": null,
+   "reason": "allowlist домена axiom (ADR-020): ML/агентный контур"
+  },
+  {
+   "plugin": "agent-infra",
+   "in_allowlist": true,
+   "in_corpus_run": true,
+   "added_in_delta3": false,
+   "files": 25,
+   "records": 25,
+   "approx_tokens": null,
+   "reason": "allowlist домена axiom (ADR-020): ML/агентный контур"
+  },
+  {
+   "plugin": "agentic-rl",
+   "in_allowlist": true,
+   "in_corpus_run": true,
+   "added_in_delta3": false,
+   "files": 11,
+   "records": 11,
+   "approx_tokens": null,
+   "reason": "allowlist домена axiom (ADR-020): ML/агентный контур"
+  },
+  {
+   "plugin": "agents",
+   "in_allowlist": true,
+   "in_corpus_run": false,
+   "added_in_delta3": true,
+   "files": 22,
+   "records": 0,
+   "approx_tokens": null,
+   "reason": "вне allowlist карточки ADR-020 (чужой домен контура)"
+  },
+  {
+   "plugin": "arch-core",
+   "in_allowlist": true,
+   "in_corpus_run": true,
+   "added_in_delta3": false,
+   "files": 0,
+   "records": 0,
+   "approx_tokens": null,
+   "reason": "в allowlist карточки ADR-020, в источнике скиллов нет (0)"
+  },
+  {
+   "plugin": "arch-distilled",
+   "in_allowlist": true,
+   "in_corpus_run": true,
+   "added_in_delta3": false,
+   "files": 0,
+   "records": 0,
+   "approx_tokens": null,
+   "reason": "в allowlist карточки ADR-020, в источнике скиллов нет (0)"
+  },
+  {
+   "plugin": "aws-builders",
+   "in_allowlist": true,
+   "in_corpus_run": true,
+   "added_in_delta3": false,
+   "files": 0,
+   "records": 0,
+   "approx_tokens": null,
+   "reason": "в allowlist карточки ADR-020, в источнике скиллов нет (0)"
+  },
+  {
+   "plugin": "cpt",
+   "in_allowlist": true,
+   "in_corpus_run": true,
+   "added_in_delta3": false,
+   "files": 4,
+   "records": 4,
+   "approx_tokens": null,
+   "reason": "allowlist домена axiom (ADR-020): ML/агентный контур"
+  },
+  {
+   "plugin": "credit-assignment",
+   "in_allowlist": true,
+   "in_corpus_run": false,
+   "added_in_delta3": true,
+   "files": 26,
+   "records": 0,
+   "approx_tokens": null,
+   "reason": "вне allowlist карточки ADR-020 (чужой домен контура)"
+  },
+  {
+   "plugin": "data-curator",
+   "in_allowlist": true,
+   "in_corpus_run": true,
+   "added_in_delta3": false,
+   "files": 18,
+   "records": 18,
+   "approx_tokens": null,
+   "reason": "allowlist домена axiom (ADR-020): ML/агентный контур"
+  },
+  {
+   "plugin": "dka",
+   "in_allowlist": true,
+   "in_corpus_run": true,
+   "added_in_delta3": false,
+   "files": 5,
+   "records": 5,
+   "approx_tokens": null,
+   "reason": "allowlist домена axiom (ADR-020): ML/агентный контур"
+  },
+  {
+   "plugin": "document-tools",
+   "in_allowlist": true,
+   "in_corpus_run": true,
+   "added_in_delta3": false,
+   "files": 6,
+   "records": 6,
+   "approx_tokens": null,
+   "reason": "allowlist домена axiom (ADR-020): ML/агентный контур"
+  },
+  {
+   "plugin": "effort",
+   "in_allowlist": true,
+   "in_corpus_run": true,
+   "added_in_delta3": false,
+   "files": 16,
+   "records": 16,
+   "approx_tokens": null,
+   "reason": "allowlist домена axiom (ADR-020): ML/агентный контур"
+  },
+  {
+   "plugin": "frontier-intelligence",
+   "in_allowlist": true,
+   "in_corpus_run": true,
+   "added_in_delta3": false,
+   "files": 8,
+   "records": 8,
+   "approx_tokens": null,
+   "reason": "allowlist домена axiom (ADR-020): ML/агентный контур"
+  },
+  {
+   "plugin": "frontier-lab",
+   "in_allowlist": true,
+   "in_corpus_run": true,
+   "added_in_delta3": false,
+   "files": 22,
+   "records": 22,
+   "approx_tokens": null,
+   "reason": "allowlist домена axiom (ADR-020): ML/агентный контур"
+  },
+  {
+   "plugin": "gb10",
+   "in_allowlist": true,
+   "in_corpus_run": false,
+   "added_in_delta3": true,
+   "files": 25,
+   "records": 0,
+   "approx_tokens": null,
+   "reason": "вне allowlist карточки ADR-020 (чужой домен контура)"
+  },
+  {
+   "plugin": "kat",
+   "in_allowlist": true,
+   "in_corpus_run": false,
+   "added_in_delta3": true,
+   "files": 21,
+   "records": 0,
+   "approx_tokens": null,
+   "reason": "вне allowlist карточки ADR-020 (чужой домен контура)"
+  },
+  {
+   "plugin": "kimi",
+   "in_allowlist": true,
+   "in_corpus_run": true,
+   "added_in_delta3": false,
+   "files": 26,
+   "records": 26,
+   "approx_tokens": null,
+   "reason": "allowlist домена axiom (ADR-020): ML/агентный контур"
+  },
+  {
+   "plugin": "laguna",
+   "in_allowlist": true,
+   "in_corpus_run": true,
+   "added_in_delta3": false,
+   "files": 43,
+   "records": 43,
+   "approx_tokens": null,
+   "reason": "allowlist домена axiom (ADR-020): ML/агентный контур"
+  },
+  {
+   "plugin": "lambert-rl",
+   "in_allowlist": true,
+   "in_corpus_run": false,
+   "added_in_delta3": true,
+   "files": 23,
+   "records": 0,
+   "approx_tokens": null,
+   "reason": "вне allowlist карточки ADR-020 (чужой домен контура)"
+  },
+  {
+   "plugin": "memory-systems",
+   "in_allowlist": true,
+   "in_corpus_run": false,
+   "added_in_delta3": true,
+   "files": 40,
+   "records": 0,
+   "approx_tokens": null,
+   "reason": "вне allowlist карточки ADR-020 (чужой домен контура)"
+  },
+  {
+   "plugin": "misc-tools",
+   "in_allowlist": true,
+   "in_corpus_run": true,
+   "added_in_delta3": false,
+   "files": 6,
+   "records": 6,
+   "approx_tokens": null,
+   "reason": "allowlist домена axiom (ADR-020): ML/агентный контур"
+  },
+  {
+   "plugin": "patterns-integration",
+   "in_allowlist": true,
+   "in_corpus_run": true,
+   "added_in_delta3": false,
+   "files": 0,
+   "records": 0,
+   "approx_tokens": null,
+   "reason": "в allowlist карточки ADR-020, в источнике скиллов нет (0)"
+  },
+  {
+   "plugin": "patterns-resilience",
+   "in_allowlist": true,
+   "in_corpus_run": true,
+   "added_in_delta3": false,
+   "files": 0,
+   "records": 0,
+   "approx_tokens": null,
+   "reason": "в allowlist карточки ADR-020, в источнике скиллов нет (0)"
+  },
+  {
+   "plugin": "pretrain",
+   "in_allowlist": true,
+   "in_corpus_run": true,
+   "added_in_delta3": false,
+   "files": 10,
+   "records": 10,
+   "approx_tokens": null,
+   "reason": "allowlist домена axiom (ADR-020): ML/агентный контур"
+  },
+  {
+   "plugin": "reasoning",
+   "in_allowlist": true,
+   "in_corpus_run": false,
+   "added_in_delta3": true,
+   "files": 25,
+   "records": 0,
+   "approx_tokens": null,
+   "reason": "вне allowlist карточки ADR-020 (чужой домен контура)"
+  },
+  {
+   "plugin": "rl-training",
+   "in_allowlist": true,
+   "in_corpus_run": false,
+   "added_in_delta3": true,
+   "files": 45,
+   "records": 0,
+   "approx_tokens": null,
+   "reason": "вне allowlist карточки ADR-020 (чужой домен контура)"
+  },
+  {
+   "plugin": "safety-eval",
+   "in_allowlist": true,
+   "in_corpus_run": false,
+   "added_in_delta3": true,
+   "files": 27,
+   "records": 0,
+   "approx_tokens": null,
+   "reason": "вне allowlist карточки ADR-020 (чужой домен контура)"
+  },
+  {
+   "plugin": "tui-agent-skills",
+   "in_allowlist": true,
+   "in_corpus_run": true,
+   "added_in_delta3": false,
+   "files": 14,
+   "records": 14,
+   "approx_tokens": null,
+   "reason": "allowlist домена axiom (ADR-020): ML/агентный контур"
+  },
+  {
+   "plugin": "verification",
+   "in_allowlist": true,
+   "in_corpus_run": true,
+   "added_in_delta3": false,
+   "files": 4,
+   "records": 4,
+   "approx_tokens": null,
+   "reason": "allowlist домена axiom (ADR-020): ML/агентный контур"
+  }
+ ],
+ "plugin_allowlist_outside": {
+  "plugins": [
+   {
+    "plugin": "_archive",
+    "files": 19
+   },
+   {
+    "plugin": "_inbox_архив_2026-09",
+    "files": 6
+   },
+   {
+    "plugin": "a2a",
+    "files": 3
+   },
+   {
+    "plugin": "aef1",
+    "files": 7
+   },
+   {
+    "plugin": "agent-tooling",
+    "files": 1
+   },
+   {
+    "plugin": "ai-detection",
+    "files": 3
+   },
+   {
+    "plugin": "ai-engineering-ng",
+    "files": 7
+   },
+   {
+    "plugin": "ai2-olmo",
+    "files": 1
+   },
+   {
+    "plugin": "ai21-jamba",
+    "files": 1
+   },
+   {
+    "plugin": "alibaba-qwen",
+    "files": 16
+   },
+   {
+    "plugin": "android-lab-skills",
+    "files": 5
+   },
+   {
+    "plugin": "antgroup-ling",
+    "files": 20
+   },
+   {
+    "plugin": "anthropic",
+    "files": 4
+   },
+   {
+    "plugin": "api-tools",
+    "files": 1
+   },
+   {
+    "plugin": "arcee",
+    "files": 15
+   },
+   {
+    "plugin": "authorial-integrity",
+    "files": 4
+   },
+   {
+    "plugin": "automated-research",
+    "files": 13
+   },
+   {
+    "plugin": "baidu-ernie",
+    "files": 1
+   },
+   {
+    "plugin": "career-tools",
+    "files": 1
+   },
+   {
+    "plugin": "classification",
+    "files": 1
+   },
+   {
+    "plugin": "claude-code",
+    "files": 17
+   },
+   {
+    "plugin": "cli-tui-tools",
+    "files": 7
+   },
+   {
+    "plugin": "code-analysis",
+    "files": 1
+   },
+   {
+    "plugin": "code-maintenance",
+    "files": 1
+   },
+   {
+    "plugin": "codemidas",
+    "files": 8
+   },
+   {
+    "plugin": "codewhale",
+    "files": 7
+   },
+   {
+    "plugin": "cohere",
+    "files": 1
+   },
+   {
+    "plugin": "concept-extraction",
+    "files": 1
+   },
+   {
+    "plugin": "context-engineering",
+    "files": 4
+   },
+   {
+    "plugin": "cron",
+    "files": 2
+   },
+   {
+    "plugin": "cuda-kernels",
+    "files": 9
+   },
+   {
+    "plugin": "cuda-tools",
+    "files": 1
+   },
+   {
+    "plugin": "daily-operations",
+    "files": 1
+   },
+   {
+    "plugin": "debugging",
+    "files": 1
+   },
+   {
+    "plugin": "deepseek",
+    "files": 28
+   },
+   {
+    "plugin": "deepseek-harness",
+    "files": 11
+   },
+   {
+    "plugin": "deepseek-tools",
+    "files": 1
+   },
+   {
+    "plugin": "disk-skills",
+    "files": 7
+   },
+   {
+    "plugin": "distillation",
+    "files": 10
+   },
+   {
+    "plugin": "domain-llm-strategy",
+    "files": 5
+   },
+   {
+    "plugin": "domain-tools",
+    "files": 1
+   },
+   {
+    "plugin": "experiment-tools",
+    "files": 1
+   },
+   {
+    "plugin": "fetch",
+    "files": 5
+   },
+   {
+    "plugin": "freetoken",
+    "files": 3
+   },
+   {
+    "plugin": "frontend",
+    "files": 6
+   },
+   {
+    "plugin": "fs-memory",
+    "files": 5
+   },
+   {
+    "plugin": "gigachat-tools",
+    "files": 1
+   },
+   {
+    "plugin": "git-workflows",
+    "files": 1
+   },
+   {
+    "plugin": "github-tools",
+    "files": 3
+   },
+   {
+    "plugin": "glm",
+    "files": 26
+   },
+   {
+    "plugin": "glm-tools",
+    "files": 2
+   },
+   {
+    "plugin": "google-deepmind",
+    "files": 3
+   },
+   {
+    "plugin": "google-gemma",
+    "files": 18
+   },
+   {
+    "plugin": "grafting",
+    "files": 1
+   },
+   {
+    "plugin": "headless",
+    "files": 4
+   },
+   {
+    "plugin": "hermes-agent",
+    "files": 12
+   },
+   {
+    "plugin": "huawei-pangu",
+    "files": 2
+   },
+   {
+    "plugin": "huggingface-tools",
+    "files": 2
+   },
+   {
+    "plugin": "hypothesis-router",
+    "files": 1
+   },
+   {
+    "plugin": "ibm-granite",
+    "files": 2
+   },
+   {
+    "plugin": "ifm",
+    "files": 1
+   },
+   {
+    "plugin": "incident-response",
+    "files": 2
+   },
+   {
+    "plugin": "inference",
+    "files": 4
+   },
+   {
+    "plugin": "inference-engines",
+    "files": 4
+   },
+   {
+    "plugin": "jev-pilot",
+    "files": 8
+   },
+   {
+    "plugin": "kernels",
+    "files": 8
+   },
+   {
+    "plugin": "kimi-code",
+    "files": 10
+   },
+   {
+    "plugin": "kimi-k3-concept-skills",
+    "files": 37
+   },
+   {
+    "plugin": "kimi-kda-skills",
+    "files": 6
+   },
+   {
+    "plugin": "kimi-kda-skills-alt",
+    "files": 6
+   },
+   {
+    "plugin": "kimi-tools",
+    "files": 1
+   },
+   {
+    "plugin": "laguna-gb10",
+    "files": 5
+   },
+   {
+    "plugin": "liquid-ai",
+    "files": 1
+   },
+   {
+    "plugin": "llm-pipelines",
+    "files": 8
+   },
+   {
+    "plugin": "local-ops",
+    "files": 3
+   },
+   {
+    "plugin": "long-context",
+    "files": 6
+   },
+   {
+    "plugin": "lora",
+    "files": 9
+   },
+   {
+    "plugin": "mcp-tools",
+    "files": 3
+   },
+   {
+    "plugin": "meituan-longcat",
+    "files": 14
+   },
+   {
+    "plugin": "memory",
+    "files": 4
+   },
+   {
+    "plugin": "meta",
+    "files": 3
+   },
+   {
+    "plugin": "microsoft-ai-thinking",
+    "files": 12
+   },
+   {
+    "plugin": "midtraining",
+    "files": 4
+   },
+   {
+    "plugin": "minimax",
+    "files": 47
+   },
+   {
+    "plugin": "ml-infrastructure",
+    "files": 1
+   },
+   {
+    "plugin": "model-lifecycle",
+    "files": 1
+   },
+   {
+    "plugin": "model-optimization",
+    "files": 2
+   },
+   {
+    "plugin": "moe",
+    "files": 5
+   },
+   {
+    "plugin": "motif-technologies",
+    "files": 7
+   },
+   {
+    "plugin": "multi-agent-systems",
+    "files": 10
+   },
+   {
+    "plugin": "multimodal",
+    "files": 6
+   },
+   {
+    "plugin": "muon",
+    "files": 4
+   },
+   {
+    "plugin": "naver-hyperclova",
+    "files": 1
+   },
+   {
+    "plugin": "ncp-tui-skills",
+    "files": 9
+   },
+   {
+    "plugin": "networking",
+    "files": 24
+   },
+   {
+    "plugin": "nvidia-nemotron",
+    "files": 34
+   },
+   {
+    "plugin": "openai",
+    "files": 2
+   },
+   {
+    "plugin": "openclaw",
+    "files": 9
+   },
+   {
+    "plugin": "openspec",
+    "files": 13
+   },
+   {
+    "plugin": "optimization",
+    "files": 3
+   },
+   {
+    "plugin": "ornith",
+    "files": 1
+   },
+   {
+    "plugin": "packing",
+    "files": 1
+   },
+   {
+    "plugin": "pixso",
+    "files": 4
+   },
+   {
+    "plugin": "pokeeai",
+    "files": 18
+   },
+   {
+    "plugin": "postrain",
+    "files": 12
+   },
+   {
+    "plugin": "prime-agent-tools",
+    "files": 4
+   },
+   {
+    "plugin": "prime-intellect",
+    "files": 1
+   },
+   {
+    "plugin": "product-backlog",
+    "files": 7
+   },
+   {
+    "plugin": "prompting",
+    "files": 1
+   },
+   {
+    "plugin": "python",
+    "files": 5
+   },
+   {
+    "plugin": "pytorch",
+    "files": 10
+   },
+   {
+    "plugin": "qat",
+    "files": 4
+   },
+   {
+    "plugin": "quality-metrics",
+    "files": 1
+   },
+   {
+    "plugin": "quantization",
+    "files": 2
+   },
+   {
+    "plugin": "qwen-training",
+    "files": 7
+   },
+   {
+    "plugin": "qwencloud",
+    "files": 10
+   },
+   {
+    "plugin": "realtime-voice",
+    "files": 1
+   },
+   {
+    "plugin": "reasoning-tools",
+    "files": 6
+   },
+   {
+    "plugin": "rec-tf-skills",
+    "files": 7
+   },
+   {
+    "plugin": "rec-tf-skills-alt",
+    "files": 7
+   },
+   {
+    "plugin": "research-tools",
+    "files": 4
+   },
+   {
+    "plugin": "rlvr",
+    "files": 5
+   },
+   {
+    "plugin": "rubrics",
+    "files": 13
+   },
+   {
+    "plugin": "rust",
+    "files": 6
+   },
+   {
+    "plugin": "safe-coding",
+    "files": 3
+   },
+   {
+    "plugin": "sber-ai-disrupt",
+    "files": 1
+   },
+   {
+    "plugin": "security",
+    "files": 3
+   },
+   {
+    "plugin": "self-evolving",
+    "files": 3
+   },
+   {
+    "plugin": "sensetime-sensenova",
+    "files": 1
+   },
+   {
+    "plugin": "session-management",
+    "files": 1
+   },
+   {
+    "plugin": "sft",
+    "files": 1
+   },
+   {
+    "plugin": "shanghai-intern",
+    "files": 1
+   },
+   {
+    "plugin": "skill-evolution",
+    "files": 1
+   },
+   {
+    "plugin": "skill-management",
+    "files": 25
+   },
+   {
+    "plugin": "skill-optimization",
+    "files": 2
+   },
+   {
+    "plugin": "skills",
+    "files": 11
+   },
+   {
+    "plugin": "skills-creator",
+    "files": 13
+   },
+   {
+    "plugin": "skt",
+    "files": 1
+   },
+   {
+    "plugin": "slai-t-rex",
+    "files": 1
+   },
+   {
+    "plugin": "specification",
+    "files": 1
+   },
+   {
+    "plugin": "speculative-decoding",
+    "files": 1
+   },
+   {
+    "plugin": "stepfun",
+    "files": 17
+   },
+   {
+    "plugin": "task-management",
+    "files": 2
+   },
+   {
+    "plugin": "tencent",
+    "files": 1
+   },
+   {
+    "plugin": "tencent-hunyuan",
+    "files": 24
+   },
+   {
+    "plugin": "tests",
+    "files": 16
+   },
+   {
+    "plugin": "thinkingmachines",
+    "files": 24
+   },
+   {
+    "plugin": "tii-falcon",
+    "files": 1
+   },
+   {
+    "plugin": "time-drift",
+    "files": 15
+   },
+   {
+    "plugin": "tinker",
+    "files": 8
+   },
+   {
+    "plugin": "tool-calling",
+    "files": 5
+   },
+   {
+    "plugin": "toolcall-skills",
+    "files": 10
+   },
+   {
+    "plugin": "toolcall-skills-alt",
+    "files": 10
+   },
+   {
+    "plugin": "training-tools",
+    "files": 5
+   },
+   {
+    "plugin": "transformer-alternatives",
+    "files": 3
+   },
+   {
+    "plugin": "tui-design",
+    "files": 7
+   },
+   {
+    "plugin": "tui-git-workflow",
+    "files": 8
+   },
+   {
+    "plugin": "tui-trace-control",
+    "files": 8
+   },
+   {
+    "plugin": "typesafe-jev",
+    "files": 4
+   },
+   {
+    "plugin": "typescript",
+    "files": 5
+   },
+   {
+    "plugin": "upstage-solar",
+    "files": 1
+   },
+   {
+    "plugin": "vastai-infra",
+    "files": 8
+   },
+   {
+    "plugin": "xiaomi",
+    "files": 3
+   }
+  ],
+  "files": 1080
+ },
+ "decisions": {
+  "plugin_allowlist": {
+   "decided": "2026-09-28 (ADR-020, дельта-3)",
+   "base": [
+    "agent-harness",
+    "agent-harnesses",
+    "agent-infra",
+    "agentic-rl",
+    "arch-core",
+    "arch-distilled",
+    "aws-builders",
+    "cpt",
+    "data-curator",
+    "dka",
+    "document-tools",
+    "effort",
+    "frontier-intelligence",
+    "frontier-lab",
+    "kimi",
+    "laguna",
+    "misc-tools",
+    "patterns-integration",
+    "patterns-resilience",
+    "pretrain",
+    "tui-agent-skills",
+    "verification"
+   ],
+   "added_delta3": [
+    "agents",
+    "credit-assignment",
+    "gb10",
+    "kat",
+    "lambert-rl",
+    "memory-systems",
+    "reasoning",
+    "rl-training",
+    "safety-eval"
+   ],
+   "total": 31,
+   "corpus_run_allowlist": [
+    "agent-harness",
+    "agent-harnesses",
+    "agent-infra",
+    "agentic-rl",
+    "arch-core",
+    "arch-distilled",
+    "aws-builders",
+    "cpt",
+    "data-curator",
+    "dka",
+    "document-tools",
+    "effort",
+    "frontier-intelligence",
+    "frontier-lab",
+    "kimi",
+    "laguna",
+    "misc-tools",
+    "patterns-integration",
+    "patterns-resilience",
+    "pretrain",
+    "tui-agent-skills",
+    "verification"
+   ]
+  },
+  "legacy_corpus": {
+   "file": "~/gb10-shared/datasets/cpt_corpus_full.txt",
+   "share_in_v1": 0.0,
+   "reason": "txt-склейка прошлых корпусов (30.8 % пересечения типов с K/D/S): в v1 не входит — состав v1 целиком собирается сериализатором K/D/S (ADR-020, дельта-3)"
+  },
+  "containment": {
+   "role": "монитор пересечения D↔K (не удаляющая ступень)",
+   "threshold": 0.8,
+   "chunk_jaccard": 0.55,
+   "containers": 5658,
+   "checked": 96217,
+   "dropped": 0,
+   "verdict": "премиса вложения «карточка K внутри дистиллята D» опровергнута измерением 28.09.2026 (0 пар на 96 217 × 5 658 при пороге 0.55): на боевом корпусе ступень — no-op, оставлена наблюдателем"
+  },
+  "mixing": {
+   "declaration": "docs/datasets/axiom-domain-ds-v1-mix.md",
+   "note": "гипотеза долей при упаковке CPT/SFT — в микс-декларации; в карточке только измеренные доли компонент"
+  }
+ },
+ "counters": {
+  "redactions": {
+   "total": 1865,
+   "by_component": {
+    "E": 1865,
+    "K/D/S": 0
+   },
+   "by_pattern": {
+    "aws": 45,
+    "bearer": 23,
+    "env_assignment": 637,
+    "github": 18,
+    "hex_env": 722,
+    "jwt": 12,
+    "openai": 92,
+    "private_key": 52,
+    "private_key_dangling": 49,
+    "private_key_marker": 5,
+    "slack": 6,
+    "url_password": 204
+   }
+  },
+  "dedup": {
+   "E": {
+    "exact": 202,
+    "near": 179,
+    "kept": 2042
+   },
+   "K/D/S": {
+    "exact": 9765,
+    "near": 108,
+    "kept": 102138,
+    "candidates": 15774198
+   },
+   "cross_component": "общий пул дедупа K∪D∪S; E дедуплицируется отдельно"
+  }
+ },
+ "artifacts": {
+  "cpt_manifest": "<HOME>/gb10-shared/datasets/axiom-domain-ds-v1/manifest-cpt.json",
+  "cpt_report": "<HOME>/gb10-shared/datasets/axiom-domain-ds-v1/cpt-kds-v0.1-report.json",
+  "episodes": "<HOME>/gb10-shared/datasets/axiom-domain-ds-v1/episodes-v1-report.json",
+  "cpt_manifest_bytes": 39768,
+  "episodes_bytes": 1862
+ },
+ "notes": [
+  "доли компонент — по approx_tokens (chars // 4, ADR-021), измеренные, не гипотеза: гипотеза упаковки — в микс-декларации",
+  "приватные корпуса в репозиторий не попадают: в git — карточка и симлинк (C-032/C-033, AD-6)"
+ ],
+ "outputs": {
+  "markdown": "/home/roman/axiom/docs/datasets/axiom-domain-ds-v1-card.md",
+  "json": "/home/roman/axiom/docs/datasets/axiom-domain-ds-v1-card.json"
+ }
+}

@@ -14,7 +14,13 @@
     {"id": str, "source_session": str, "class": str,
      "turns": [{"role": user|assistant|tool, "kind": text|tool_call|tool_result,
                 "content": str}],
-     "started_at": iso8601, "ended_at": iso8601}
+     "started_at": iso8601, "ended_at": iso8601,
+     "evidence": in-session-contract|harness-report|partial-green|none,
+     "verification": partial-green|null}
+
+``verification`` — флаг допуска в SFT-компонент: ``partial-green`` у класса
+``verified-partial`` (эпизод неполного исхода с механическим признаком зелёного
+сьюта), ``null`` у остальных — их допуск определяет ``class``.
 
 ``content`` у ``tool_call`` — JSON-строка ``{"name": …, "input": …}``: имя
 инструмента без аргументов теряет агентную траекторию, поэтому аргументы
@@ -34,6 +40,7 @@ from pathlib import Path
 from typing import Any, Iterable, Iterator, Sequence
 
 from . import scrub as scrub_mod
+from . import verify as verify_mod
 
 #: Максимальный размер одной строки jsonl (защита от «одной огромной строки»).
 MAX_LINE_BYTES = 32 * 1024 * 1024
@@ -74,6 +81,13 @@ class Episode:
             "started_at": self.started_at,
             "ended_at": self.ended_at,
             "evidence": self.evidence,
+            # Флаг допуска в SFT-компонент (ADR-020, дельта-3): несут только
+            # частично верифицированные записи; у прочих допуск решает класс.
+            "verification": (
+                verify_mod.VERIFICATION_PARTIAL_GREEN
+                if self.cls == verify_mod.VERIFIED_PARTIAL
+                else None
+            ),
         }
 
     def text(self) -> str:

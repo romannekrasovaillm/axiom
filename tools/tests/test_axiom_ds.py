@@ -2,13 +2,17 @@
 
 Проверяются четыре ступени пайплайна ``tools/axiom_ds``:
 
-* **скраб** (T-s1) — секреты не доживают до выхода ни в одном из объявленных классов;
+* **скраб** (T-s1, T-s3) — секреты не доживают до выхода ни в одном из объявленных
+  классов; ключи с hash-именами (sha256/md5/hash/salt/checksum) правилом ``hex_env``
+  не трогаются — их значения суть доменные данные (дельта-3);
 * **deny-list** (T-s2) — запретные каталоги и файлы не открываются вовсе (не «чистятся»,
   а пропускаются до чтения), счётчик ``sessions_denied`` отделён от ``parse_errors``;
 * **эпизодизация** (T-e1) — граница эпизода проходит по пользовательскому запросу,
   tool-цикл остаётся внутри эпизода;
-* **верификация** (T-v1..T-v3) — класс исхода механический: контракт сессии или
-  парный harness-отчёт, никакой интерпретации прозой (AD-2);
+* **верификация** (T-v1..T-v4) — класс исхода механический: контракт сессии или
+  парный harness-отчёт, никакой интерпретации прозой (AD-2); ``verified-partial``
+  (дельта-3) — ``partial`` плюс зелёный сьют в последних tool-результатах, в SFT
+  только с флагом ``verification: partial-green``;
 * **дедуп** (T-d1, T-d2) — точные хеши блоков и MinHash near-dup;
 * **CLI** (T-b1, T-b2) — ``--limit 0`` даёт пустой валидный jsonl + числовой отчёт,
   полный прогон на синтетике даёт скрабленный jsonl и счётчики классов.
@@ -472,6 +476,207 @@ def test_tv3_contract_must_be_trailing_not_quoted_mid_episode():
     # контракт в середине эпизода перекрыт более поздним ответом без статуса
     ep = episode_with_final("```json\n{\"status\": \"complete\"}\n```\n\nещё поработаю")
     assert verify_mod.classify_episode(ep) == verify_mod.UNVERIFIED
+
+
+# --------------------------------------------------------------------------- #
+# T-v4 — verified-partial: partial + механический признак зелёного сьюта
+# --------------------------------------------------------------------------- #
+
+GREEN_SUITE_RESULT = "============================= 12 passed in 3.41s =============================="
+RED_SUITE_RESULT = "FAILED tests/test_x.py::test_y - AssertionError: 1 != 2"
+
+
+def episode_with_tool_tail(
+    results: list[str], final: str | None = None, sid: str = "sess-green"
+) -> ep_mod.Episode:
+    """Эпизод с хвостом tool-результатов: материалы для признака зелёного сьюта."""
+    stamp = "2026-09-04T10:{:02d}:00.000Z"
+
+    def at(minute: int) -> str:
+        return stamp.format(minute)
+
+    events = [ev_user_text("прогони тесты", at(0), sid, "u1")]
+    for index, result in enumerate(results):
+        events.append(
+            ev_assistant(
+                [ev_tool_use(f"t{index}", "Bash", {"command": "pytest -q"})],
+                at(2 * index + 1),
+                sid,
+                f"a{index}",
+            )
+        )
+        events.append(ev_tool_result(f"t{index}", result, at(2 * index + 2), sid, f"r{index}"))
+    if final is not None:
+        events.append(ev_assistant([ev_text_block(final)], at(2 * len(results) + 1), sid, "af"))
+    return ep_mod.split_episodes(events, sid)[0]
+
+
+def test_tv4_partial_with_green_suite_is_verified_partial():
+    """partial + зелёный сьют в tool-результатах → SFT-допуск с флагом."""
+    ep = episode_with_tool_tail([GREEN_SUITE_RESULT], final=contract_text("partial"))
+    assert verify_mod.apply_class(ep) == verify_mod.VERIFIED_PARTIAL
+    assert ep.evidence == verify_mod.EVIDENCE_PARTIAL_GREEN
+    row = ep.to_dict()
+    assert row["class"] == verify_mod.VERIFIED_PARTIAL
+    assert row["verification"] == "partial-green"
+    assert verify_mod.VERIFIED_PARTIAL in verify_mod.SFT_CLASSES
+
+
+def test_tv4_partial_without_green_suite_stays_unverified():
+    """partial без механического подтверждения — прежний unverified (без флага)."""
+    ep = episode_with_tool_tail(["компиляция прошла, отчёта сьюта нет"],
+                                final=contract_text("partial"))
+    assert verify_mod.apply_class(ep) == verify_mod.UNVERIFIED
+    assert ep.evidence == verify_mod.EVIDENCE_CONTRACT
+    assert ep.to_dict()["verification"] is None
+
+
+def test_tv4_green_suite_without_partial_status_does_not_change_class():
+    """Зелёный сьют — снисхождение ровно на шаг: complete остаётся complete."""
+    complete = episode_with_tool_tail([GREEN_SUITE_RESULT], final=contract_text("complete"))
+    assert verify_mod.classify_episode(complete) == verify_mod.VERIFIED_COMPLETE
+    # без контракта зелёный сьют класса не поднимает — статуса partial нет
+    no_contract = episode_with_tool_tail([GREEN_SUITE_RESULT])
+    assert verify_mod.classify_episode(no_contract) == verify_mod.UNVERIFIED
+
+
+def test_tv4_harness_partial_with_green_suite_is_verified_partial():
+    """Источник `partial` — и контракт сессии, и парный harness-отчёт."""
+    ep = episode_with_tool_tail([GREEN_SUITE_RESULT])
+    assert verify_mod.classify_episode(ep, harness_status="partial") == (
+        verify_mod.VERIFIED_PARTIAL
+    )
+    assert verify_mod.classify_episode(
+        episode_with_tool_tail(["ничего про сьют"]), harness_status="partial"
+    ) == verify_mod.UNVERIFIED
+
+
+def test_tv4_red_line_in_same_results_cancels_green():
+    """«FAILED»/«ERROR» в тех же результатах отменяет признак зелёного сьюта."""
+    ep = episode_with_tool_tail([GREEN_SUITE_RESULT + "\n" + RED_SUITE_RESULT],
+                                final=contract_text("partial"))
+    assert verify_mod.classify_episode(ep) == verify_mod.UNVERIFIED
+
+
+def test_tv4_window_is_last_five_tool_results():
+    """Признак ищется по последним 5 tool-результатам, а не по всему эпизоду."""
+    outside = episode_with_tool_tail([GREEN_SUITE_RESULT] + ["шум без отчёта"] * 5,
+                                     final=contract_text("partial"))
+    assert verify_mod.classify_episode(outside) == verify_mod.UNVERIFIED  # сьют за окном
+    inside = episode_with_tool_tail(["шум без отчёта"] * 5 + [GREEN_SUITE_RESULT],
+                                    final=contract_text("partial"))
+    assert verify_mod.classify_episode(inside) == verify_mod.VERIFIED_PARTIAL
+    assert verify_mod.GREEN_SUITE_WINDOW == 5
+
+
+def test_tv4_assistant_text_is_not_a_green_suite():
+    """Проза ассистента («тесты зелёные») признак не даёт: смотрится вывод среды."""
+    stamp = "2026-09-04T11:{:02d}:00.000Z"
+    events = [
+        ev_user_text("прогони тесты", stamp.format(0), "sess-text", "u1"),
+        ev_assistant([ev_text_block("тесты passed, всё зелёное")], stamp.format(1),
+                     "sess-text", "a1"),
+        ev_tool_result("t0", "лог без отчёта сьюта", stamp.format(2), "sess-text", "r0"),
+        ev_assistant([ev_text_block(contract_text("partial"))], stamp.format(3),
+                     "sess-text", "a2"),
+    ]
+    ep = ep_mod.split_episodes(events, "sess-text")[0]
+    assert verify_mod.classify_episode(ep) == verify_mod.UNVERIFIED
+
+
+def test_tv4_partial_green_episode_lands_in_sft_component(tmp_path):
+    """SFT-компонент: verified-partial пишется с флагом, unverified — не пишется."""
+    source = tmp_path / "projects"
+    stamp = "2026-09-05T10:{:02d}:00.000Z"
+
+    partial_green = unique_tool_cycle_session("sess-partial-green", "delta", contract="partial")
+    partial_green[6] = ev_tool_result(
+        "t2", f"delta: {GREEN_SUITE_RESULT}", stamp.format(6), "sess-partial-green", "r2"
+    )
+    write_jsonl(source / "p1" / "partial-green.jsonl", partial_green)
+
+    partial_dry = unique_tool_cycle_session("sess-partial-dry", "epsilon", contract="partial")
+    write_jsonl(source / "p2" / "partial-dry.jsonl", partial_dry)
+
+    complete = unique_tool_cycle_session("sess-complete", "zeta", contract="complete")
+    write_jsonl(source / "p3" / "complete.jsonl", complete)
+
+    out = tmp_path / "episodes-v1.jsonl"
+    report_path = tmp_path / "report.json"
+    sft = tmp_path / "episodes-v1-sft.jsonl"
+    assert build_mod.main([
+        "--source", str(source), "--out", str(out), "--report", str(report_path),
+        "--sft-out", str(sft),
+    ]) == 0
+
+    rows = [json.loads(line) for line in sft.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert rows, "SFT-компонент пуст"
+    assert all(row["class"] in verify_mod.SFT_CLASSES for row in rows)
+    flagged = [row for row in rows if row["class"] == verify_mod.VERIFIED_PARTIAL]
+    assert flagged, "verified-partial не попал в SFT-компонент"
+    assert all(row["verification"] == "partial-green" for row in flagged)
+
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["by_class"][verify_mod.VERIFIED_PARTIAL] >= 1
+    assert report["sft_partial_ready"] == report["by_class_written"][verify_mod.VERIFIED_PARTIAL]
+    # классы дельты-1 сохранены — счётчики не подменены новым классом
+    assert report["sft_ready"] == report["by_class_written"][verify_mod.VERIFIED_COMPLETE]
+    assert report["episodes_written"] == sum(report["by_class_written"].values())
+    # объём компоненты E — той же мерой, что K/D/S (для долей карточки)
+    assert report["approx_tokens"] > 0 and report["chars"] > 0
+    assert report["out_bytes"] > 0 and len(report["out_sha256"]) == 64
+
+
+# --------------------------------------------------------------------------- #
+# T-s3 — hex_env не трогает ключи с hash-именами
+# --------------------------------------------------------------------------- #
+
+
+HEX_HASH_VALUE = "0123456789abcdef0123456789abcdef"  # 32 hex — значение-хеш, не секрет
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["sha256", "doc_sha256", "SHA1", "md5", "MD5_CHECKSUM", "img_hash", "hash", "salt",
+     "salt_v2", "body_checksum"],
+)
+def test_ts3_hash_named_keys_are_left_untouched(key):
+    """Ключи с hash-именами — доменные данные: правило hex_env к ним не применяется."""
+    text = f"{key}={HEX_HASH_VALUE}"
+    stats = scrub_mod.ScrubStats()
+    assert scrub_mod.scrub_text_stats(text, stats) == text
+    assert stats.total == 0
+
+
+def test_ts3_boundary_of_applied_rules_is_explicit():
+    """Граница правил видна в счётчиках: hash-имя не даёт hex_env-замен.
+
+    Имя, оканчивающееся на ``SALT``, остаётся в списке имён правила
+    ``env_assignment`` (credential-контекст дельты-1) — там замена прежняя, а
+    именно ``hex_env`` к hash-именам не применяется. Граница зафиксирована
+    тестом, а не молчанием: снятие ``SALT`` из имён ``env_assignment`` —
+    отдельное решение архитектора.
+    """
+    stats = scrub_mod.ScrubStats()
+    cleaned = scrub_mod.scrub_text_stats(f"AXIOM_SIGNING_SALT={HEX_HASH_VALUE}", stats)
+    assert HEX_HASH_VALUE not in cleaned            # прежнее правило имён сработало
+    assert "hex_env" not in stats.by_pattern        # новое правило к hash-имени не применено
+    assert stats.by_pattern.get("env_assignment") == 1
+
+
+@pytest.mark.parametrize(
+    "key", ["OPENAI_API_KEY", "AXIOM_SERVICE_TOKEN", "SERVICE_SECRET", "db_password"]
+)
+def test_ts3_credential_named_hex_values_are_still_redacted(key):
+    """Для credential-имён правило работает как прежде: hex-значение вычищается."""
+    cleaned = scrub_mod.scrub_text(f"{key}={HEX_HASH_VALUE}")
+    assert HEX_HASH_VALUE not in cleaned
+    assert REDACTED in cleaned
+
+
+def test_ts3_marker_list_is_the_declared_one():
+    """Список подстрок зафиксирован константой (ADR-020, дельта-3)."""
+    assert scrub_mod.HASH_KEY_MARKERS == ("sha256", "sha1", "md5", "hash", "salt", "checksum")
 
 
 # --------------------------------------------------------------------------- #

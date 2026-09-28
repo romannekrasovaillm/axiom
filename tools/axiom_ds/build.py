@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -34,12 +35,14 @@ if __package__ in (None, ""):  # запуск файлом: python tools/axiom_d
     from axiom_ds import harness as harness_mod
     from axiom_ds import scrub as scrub_mod
     from axiom_ds import verify as verify_mod
+    from prep_pretrain import common as pp_common
 else:
     from . import dedup as dedup_mod
     from . import episodes as ep_mod
     from . import harness as harness_mod
     from . import scrub as scrub_mod
     from . import verify as verify_mod
+    from prep_pretrain import common as pp_common
 
 PIPELINE_VERSION = "axiom-ds-episodes/1"
 
@@ -65,6 +68,12 @@ class BuildCounters:
     oversized_lines: int = 0
     episodes_total: int = 0
     episodes_written: int = 0
+    #: Объём записанного корпуса: байты jsonl, символы текста ходов и оценка
+    #: токенов той же мерой, что CPT-компонент (``chars // 4``, ADR-021) —
+    #: иначе доли компонент в карточке были бы несравнимы.
+    bytes_written: int = 0
+    chars: int = 0
+    approx_tokens: int = 0
     by_class: dict = field(default_factory=dict)
     by_class_written: dict = field(default_factory=dict)
     by_evidence: dict = field(default_factory=dict)
@@ -193,6 +202,7 @@ def run_build(
     out_path.parent.mkdir(parents=True, exist_ok=True)
     sft_handle = _open_optional(sft_out)
     negative_handle = _open_optional(negative_out)
+    out_digest = hashlib.sha256()
 
     try:
         with out_path.open("w", encoding="utf-8") as out_handle:
@@ -214,6 +224,7 @@ def run_build(
                         out_handle,
                         sft_handle,
                         negative_handle,
+                        out_digest,
                     )
                     counters.sessions_processed += 1
                 except Exception as error:  # noqa: BLE001 - сессия не роняет прогон
@@ -234,7 +245,10 @@ def run_build(
         "pipeline": PIPELINE_VERSION,
         "sources": [os.path.expanduser(item) for item in sources],
         "out": str(out_path),
+        "out_bytes": counters.bytes_written,
+        "out_sha256": out_digest.hexdigest(),
         "limit": limit,
+        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "duration_sec": round(duration, 3),
         "sessions_total": counters.sessions_total,
         "sessions_processed": counters.sessions_processed,
@@ -246,11 +260,17 @@ def run_build(
         "oversized_lines": counters.oversized_lines,
         "episodes_total": counters.episodes_total,
         "episodes_written": counters.episodes_written,
+        # Объём компоненты E — той же мерой, что K/D/S (ADR-021): иначе доли в
+        # карточке датасета несравнимы.
+        "chars": counters.chars,
+        "approx_tokens": counters.approx_tokens,
         # by_class — все эпизоды до дедупа (состав корпуса); by_class_written —
-        # то, что легло в jsonl (состав датасета); sft_ready — размер SFT-ядра.
+        # то, что легло в jsonl (состав датасета); sft_ready — размер SFT-ядра
+        # (только verified-complete), sft_partial_ready — допущенные с флагом.
         "by_class": dict(sorted(counters.by_class.items())),
         "by_class_written": dict(sorted(counters.by_class_written.items())),
         "sft_ready": counters.by_class_written.get(verify_mod.VERIFIED_COMPLETE, 0),
+        "sft_partial_ready": counters.by_class_written.get(verify_mod.VERIFIED_PARTIAL, 0),
         "negative_ready": counters.by_class_written.get(verify_mod.VERIFIED_FAILED, 0),
         "by_evidence": dict(sorted(counters.by_evidence.items())),
         "turns": dict(sorted(counters.turns.items())),
@@ -286,6 +306,7 @@ def _process_session(
     out_handle,
     sft_handle,
     negative_handle,
+    out_digest=None,
 ) -> None:
     session_stats = ep_mod.SessionStats()
     for episode in ep_mod.iter_episodes(session_path, session_stats, scrub_stats):
@@ -304,10 +325,19 @@ def _process_session(
 
         row = episode.to_dict()
         line = json.dumps(row, ensure_ascii=False) + "\n"
+        payload = line.encode("utf-8")
+        text = episode.text()
         counters.episodes_written += 1
         counters.bump_map("by_class_written", cls)
+        counters.bytes_written += len(payload)
+        counters.chars += len(text)
+        counters.approx_tokens += pp_common.approx_tokens(text)
         out_handle.write(line)
-        if cls == verify_mod.VERIFIED_COMPLETE and sft_handle is not None:
+        if out_digest is not None:
+            out_digest.update(payload)
+        # SFT-компонент: полные (verified-complete) и частичные с механическим
+        # подтверждением (verified-partial, флаг verification=partial-green).
+        if cls in verify_mod.SFT_CLASSES and sft_handle is not None:
             sft_handle.write(line)
         elif cls == verify_mod.VERIFIED_FAILED and negative_handle is not None:
             negative_handle.write(line)

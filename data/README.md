@@ -18,6 +18,7 @@ find . -type f \( -name '*.safetensors' -o -name '*.gguf' -o -name '*.pt' \
 | Симлинк | Цель | Назначение |
 |---|---|---|
 | `datasets/sft_train_v12.jsonl` | `~/gb10-shared/datasets/sft_train_v12.jsonl` | SFT-стадия A4 (`tools/run_sft_smoke.py`) |
+| `datasets/axiom-domain-ds-v1` | `~/gb10-shared/datasets/axiom-domain-ds-v1/` | доменный датасет ADR-020 (E-эпизоды + CPT-корпус K/D/S); карточка — `docs/datasets/axiom-domain-ds-v1-card.md` |
 
 `sft_train_v12.jsonl` = `sft_train_v10.1.jsonl` + `sft_train_v11.jsonl`
 (`~/gb10-shared/build_sft_v12.sh`, 28.08.2026), 44 949 документов формата
@@ -32,7 +33,12 @@ find . -type f \( -name '*.safetensors' -o -name '*.gguf' -o -name '*.pt' \
 
 ```bash
 ln -sfn ~/gb10-shared/datasets/sft_train_v12.jsonl data/datasets/sft_train_v12.jsonl
+ln -sfn ~/gb10-shared/datasets/axiom-domain-ds-v1 data/datasets/axiom-domain-ds-v1
 ```
+
+Содержимое `axiom-domain-ds-v1` (приватный домен, AD-6) в git не попадает никогда:
+в репозитории — только симлинк и карточка с числами и хешами
+(`docs/datasets/axiom-domain-ds-v1-card.md`).
 
 Симлинк, ведущий на несуществующий файл или вне `~/gb10-shared`, — отказ
 стадии до всякого обучения (`tools/run_sft_smoke.py:validate_data_path`).

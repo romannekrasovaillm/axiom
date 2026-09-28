@@ -7,6 +7,13 @@
     фильтр источника → скраб (ступень 1) → <HOME> → дедуп (общий пул K∪D∪S)
         → контейнмент D→K → шард jsonl
 
+Сборка идёт **тремя явными фазами** (:func:`run_build_cpt`): фаза А читает и
+сериализует ВСЕ компоненты (K → D → S — порядок старшинства дедупа), фаза Б
+решает судьбу записей контейнментом по полному набору (:func:`apply_containment`),
+фаза В пишет уцелевших в шарды. Порядок потока при этом не решает судьбу
+карточки: K идёт в потоке раньше своих дистиллятов D, но сравнивается с ПОЛНЫМ
+D-корпусом — индекс чанков D строится разом в начале фазы Б.
+
 Ключевые контракты:
 
 * **Одна запись — один документ.** Записи не склеиваются: упаковка в
@@ -19,8 +26,10 @@
   содержание карточки K может лежать внутри дистиллята D, не будучи дублем
   (документный Jaccard такой пары ≈0.3). Снимается K, D остаётся — он богаче
   контекстом; ступень отключается ``containment=False`` (``--no-containment``).
-* **Буфер записей**: K→D→S читаются и дедуплицируются потоково, но пишутся
-  после обхода — судьба карточки K зависит от дистиллятов D, которые идут позже.
+* **Буфер записей**: записи всех компонент копятся целиком (фаза А) и пишутся
+  только после решения контейнмента (фаза В) — судьба карточки K зависит от
+  дистиллятов D, которые идут в потоке позже. Память: боевой корпус ≈180 МБ
+  текста K + ≈32 МБ текста D — буфер держится в памяти целиком.
 * **Приватность**: содержимое библиотек в репозиторий и в отчёт не попадает —
   в отчёте числа и три примера id без содержимого (AD-6, C-032/C-033).
 
@@ -685,6 +694,50 @@ def plugin_table(inventory: dict[str, int], plugins_written: dict[str, int]) -> 
 
 
 # --------------------------------------------------------------------------- #
+# Фаза Б: контейнмент по полному набору записей
+# --------------------------------------------------------------------------- #
+
+
+def apply_containment(
+    records: Sequence[dict],
+    threshold: float = dedup_mod.CONTAINMENT_THRESHOLD,
+) -> tuple[list[dict], dedup_mod.ContainmentStats]:
+    """Снять записи, содержание которых лежит внутри записи-контейнера.
+
+    Вызывается ТОЛЬКО по полному набору записей фазы А. ``containment_dedup``
+    индексирует чанки всех контейнеров (D) до первого решения, поэтому карточка
+    K, идущая в потоке раньше своих дистиллятов (порядок компонент K → D → S),
+    сравнивается с ПОЛНЫМ D-корпусом, а не с уже принятыми записями. Решение не
+    зависит от порядка входа и детерминировано (T-order).
+
+    Инвариант готовности: если записи-контейнеры в наборе есть, индекс чанков не
+    может остаться пустым. Пустой индекс означал бы молчаливое «снято 0» вместо
+    работающей ступени — именно такой ноль на боевом прогоне неотличим от
+    честного «вложенных карточек нет». Нарушение — отказ (``ValueError``:
+    CLI печатает «отказ» и возвращает код 2), а не тихая потеря ступени.
+
+    Хитрость единого вызова: ``dedup_mod.containment_dedup`` делает обе половины
+    ступени разом (индекс контейнеров + решения по содержимому) и отдаёт числа
+    в ``ContainmentStats`` — повторной реализации ступени здесь нет.
+    """
+    wires = [
+        {"id": record["id"], "component": record["component"], "text": record["block"]}
+        for record in records
+    ]
+    kept_wires, stats = dedup_mod.containment_dedup(wires, threshold=threshold)
+    container_components = {container for container, _ in dedup_mod.CONTAINMENT_SIDES}
+    if stats.containers == 0 and any(
+        record["component"] in container_components for record in records
+    ):
+        raise ValueError(
+            "контейнмент: записи-контейнеры есть, но индекс чанков пуст — "
+            "ступень не сработала; проверить sides и тексты контейнеров"
+        )
+    kept_ids = {wire["id"] for wire in kept_wires}
+    return [record for record in records if record["id"] in kept_ids], stats
+
+
+# --------------------------------------------------------------------------- #
 # Прогон
 # --------------------------------------------------------------------------- #
 
@@ -745,10 +798,16 @@ def run_build_cpt(
     """Собрать CPT-корпус K/D/S; вернуть числовой отчёт (и записать его).
 
     Порядок ступеней: скраб → блок источника → точный дедуп → **контейнмент**
-    (``containment``, порог ``containment_threshold``) → запись. Записи держатся
-    в буфере до конца обхода: контейнмент решает судьбу карточки K только после
-    того, как прочитаны все дистилляты D, а «старшинство» компонентов в дедупе
-    (K → D → S) задаётся порядком обхода.
+    (``containment``, порог ``containment_threshold``) → запись, — и он разложен
+    на три фазы:
+
+    * **фаза А** — чтение, скраб и дедуп всех компонент (K → D → S: этот же
+      порядок задаёт «старшинство» компонентов в общем пуле дедупа); записи
+      копятся целиком, ничего не пишется;
+    * **фаза Б** — контейнмент по ПОЛНОМУ набору (:func:`apply_containment`):
+      индекс чанков дистиллятов строится разом, поэтому карточка K, идущая в
+      потоке раньше своих D, всё равно сравнивается с полным D-корпусом;
+    * **фаза В** — запись уцелевших в шарды в порядке K → D → S.
 
     Возобновляемый прогон: курсор хранится **по компоненте** (``limit-files``
     режет компоненту, поэтому один глобальный сдвиг источника неточен). Пул
@@ -809,13 +868,16 @@ def run_build_cpt(
     shard_components: Counter = Counter()
     consumed = dict(resume_cursor)
     written_total = 0
-    #: Скраб → блок → дедуп дают записи в буфер: контейнмент решает судьбу K
-    #: только после того, как прочитаны ВСЕ записи-контейнеры (D идут после K),
-    #: а «старшинство» компонентов в дедупе сохраняется порядком K → D → S.
-    records: list[dict] = []
+    #: Фаза А: записи по компонентам, целиком. Судьба карточки K решается в фазе Б
+    #: контейнментом против ПОЛНОГО D-корпуса, поэтому до конца обхода не пишется
+    #: ни одна запись. Порядок обхода K → D → S — он же старшинство дедупа.
+    phase_a: dict[str, list[dict]] = {name: [] for name in COMPONENT_ORDER}
 
     def consumed_total() -> int:
         return sum(consumed.values())
+
+    def buffered_total() -> int:
+        return sum(len(items) for items in phase_a.values())
 
     def flush_shard(entry: dict | None) -> None:
         if entry is None:
@@ -824,12 +886,13 @@ def run_build_cpt(
         shard_components.clear()
         manifest_obj.add_shard(entry, consumed_total())
 
+    # -- ФАЗА А: чтение → скраб → дедуп (все компоненты, полные тексты) ------ #
     for name in COMPONENT_ORDER:
         for source in pending[name]:
             consumed[name] += 1
             if progress and consumed_total() % 1000 == 0:
                 print(
-                    f"[axiom-cpt] файлов {consumed_total()}, записей в буфере {len(records)}",
+                    f"[axiom-cpt] файлов {consumed_total()}, записей в буфере {buffered_total()}",
                     file=sys.stderr,
                     flush=True,
                 )
@@ -842,24 +905,18 @@ def run_build_cpt(
             )
             if record is None:
                 continue
-            records.append(record)
+            phase_a[name].append(record)
 
-    # Ступень контейнмента: после точного дедупа и до записи (ADR-020, дельта-2).
+    # -- ФАЗА Б: контейнмент по полному набору (индекс D строится разом) ----- #
     containment_started = time.time()
     containment_stats = dedup_mod.ContainmentStats(threshold=containment_threshold)
+    records = [record for name in COMPONENT_ORDER for record in phase_a[name]]
     if containment:
         before = records
         # Сравнивается блок источника (без синтезированного заголовка K) — тот же
         # материал, что видел дедуп: заголовок не должен решать судьбу карточки.
-        wires = [
-            {"id": record["id"], "component": record["component"], "text": record["block"]}
-            for record in before
-        ]
-        kept_wires, containment_stats = dedup_mod.containment_dedup(
-            wires, threshold=containment_threshold
-        )
-        kept_ids = {wire["id"] for wire in kept_wires}
-        records = [record for record in before if record["id"] in kept_ids]
+        records, containment_stats = apply_containment(before, containment_threshold)
+        kept_ids = {record["id"] for record in records}
         for record in before:
             if record["id"] in kept_ids:
                 continue
@@ -868,6 +925,7 @@ def run_build_cpt(
             )
     containment_seconds = pp_common.elapsed(containment_started)
 
+    # -- ФАЗА В: запись уцелевших в шарды (порядок K → D → S) ---------------- #
     writer = pp_common.ShardWriter(
         out_dir,
         prefix=prefix,

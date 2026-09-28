@@ -14,6 +14,10 @@
 * **T-e1** — карточка с пустым телом (только frontmatter) не пишется;
 * **T-ttl1** — тело K получает заголовок `# <title>` из frontmatter (H1 в телах нет);
 * **T-dd1** — дедуп МЕЖКОМПОНЕНТНЫЙ: один пул хешей на K∪D∪S, дубль K↔D остаётся один;
+* **T-order** — порядок потока не решает судьбу карточки: K идёт РАНЬШЕ своего
+  D-контейнера (порядок компонент K → D → S), но сравнивается с ПОЛНЫМ
+  D-корпусом; решение фазы Б не зависит от порядка входа, а пустой индекс
+  контейнеров при непустом D — отказ, не молчаливый ноль;
 * **T-f1** — манифест шарда: `file/bytes/sha256/records/by_component`, sha256
   совпадает с файлом на диске (проверяется `prep_pretrain.common.verify_manifest`);
 * **T-l1** — `--limit-files N` — предел НА КОМПОНЕНТУ (проба покрывает все три);
@@ -526,6 +530,105 @@ def test_t_ct2_no_containment_keeps_contained_card(tmp_path: Path):
     assert report["containment"]["dropped_K"] == 0
     assert report["by_component"]["K"]["records"] == 1
     assert report["by_component"]["K"]["dropped_containment"] == 0
+
+
+# --------------------------------------------------------------------------- #
+# T-order — порядок потока не решает судьбу карточки (двухфазный контейнмент)
+# --------------------------------------------------------------------------- #
+
+
+def serialize_fixture(roots: dict[str, Path], min_chars: int = cpt.MIN_TEXT_CHARS) -> list[dict]:
+    """Записи фикстуры через ``serialize_one`` — тем же путём, что в прогоне.
+
+    Порядок обхода — K → D → S (как в ``COMPONENT_ORDER``): карточка K входит в
+    поток РАНЬШЕ своего дистиллята-контейнера. Именно этот порядок обязан быть
+    безопасен для контейнмента: решение принимается по ПОЛНОМУ набору фазы А.
+    """
+    records: list[dict] = []
+    deduper = cpt.dedup_mod.Deduper()
+    pairs = (
+        ("K", cpt.discover_k, roots["k_root"]),
+        ("D", cpt.discover_d, roots["d_root"]),
+        ("S", cpt.discover_s, roots["s_root"]),
+    )
+    for _component, discoverer, root in pairs:
+        for source in discoverer(root, None):
+            record = cpt.serialize_one(source, cpt.ComponentCounters(), deduper,
+                                       min_chars=min_chars)
+            if record is not None:
+                records.append(record)
+    return records
+
+
+def test_t_order_card_dropped_even_though_k_comes_first(tmp_path: Path):
+    """T-order: K идёт в потоке РАНЬШЕ D — карточка всё равно снята контейнментом.
+
+    Боевой дефект, ради которого ступень сделана двухфазной: контейнмент,
+    принимающий решения по ходу обхода, видит для K пустой/неполный D-корпус
+    (порядок компонент K → D → S) и молча снимает ноль записей. Ступень обязана
+    сравнивать K с ПОЛНЫМ D-корпусом — на момент решения индекс D уже построен.
+    """
+    roots = card_inside_distillate(tmp_path)
+    assert cpt.COMPONENT_ORDER.index("K") < cpt.COMPONENT_ORDER.index("D"), \
+        "фикстура обязана повторять боевой порядок: K раньше D"
+    out_dir = tmp_path / "out"
+    report = cpt.run_build_cpt(
+        out=out_dir / "cpt-kds-v0.1.jsonl.gz",
+        report=out_dir / "report.json",
+        codec="gzip",
+        **roots,
+    )
+    records = read_records(out_dir)
+
+    assert report["components"]["K"]["files_read"] == 1
+    assert report["containment"]["containers"] == 1, \
+        "индекс контейнеров строится по всем D фазы А, а не по уже принятым записям"
+    assert report["containment"]["dropped_K"] == 1
+    assert [record["component"] for record in records] == ["D"]
+
+
+def test_t_order_containment_phase_is_input_order_invariant(tmp_path: Path):
+    """Фаза Б: перестановка входа не меняет решение (K раньше/позже контейнера)."""
+    roots = card_inside_distillate(tmp_path)
+    records = serialize_fixture(roots)
+    k_record = next(record for record in records if record["component"] == "K")
+    d_record = next(record for record in records if record["component"] == "D")
+
+    kept_stream, stats_stream = cpt.apply_containment([k_record, d_record])
+    kept_reverse, stats_reverse = cpt.apply_containment([d_record, k_record])
+
+    assert [record["id"] for record in kept_stream] == [d_record["id"]]
+    assert sorted(record["id"] for record in kept_reverse) == [d_record["id"]]
+    assert stats_stream.dropped == stats_reverse.dropped == 1
+    assert stats_stream.dropped_by_component == {"K": 1}
+    assert stats_stream.checked == stats_reverse.checked == 1
+    assert stats_stream.containers == stats_reverse.containers == 1
+
+
+def test_t_order_empty_container_index_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Пустой индекс контейнеров при непустом D — отказ, а не молчаливое «снято 0»."""
+    records = serialize_fixture(card_inside_distillate(tmp_path))
+
+    def fake_containment_dedup(wires, **_kwargs):
+        return list(wires), cpt.dedup_mod.ContainmentStats()  # containers == 0
+
+    monkeypatch.setattr(cpt.dedup_mod, "containment_dedup", fake_containment_dedup)
+    with pytest.raises(ValueError):
+        cpt.apply_containment(records)
+
+
+def test_t_order_no_containers_no_refusal(tmp_path: Path):
+    """Обратная граница: без D-контейнеров (нечего индексировать) отказа нет."""
+    roots = card_inside_distillate(tmp_path)
+    records = [record for record in serialize_fixture(roots) if record["component"] == "K"]
+
+    kept, stats = cpt.apply_containment(records)
+
+    assert [record["component"] for record in kept] == ["K"]
+    assert stats.containers == 0
+    assert stats.dropped == 0
 
 
 # --------------------------------------------------------------------------- #

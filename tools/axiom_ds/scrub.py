@@ -16,11 +16,14 @@
 
 Границы правил (ADR-020, дельты-3/3b): правила ``hex_env`` (длинное hex-значение
 в контексте присваивания) и ``env_assignment`` (присваивание «секретного» имени)
-**не применяются** к ключам с hash-именами — подстроки :data:`HASH_KEY_MARKERS`
-в имени ключа; значения таких ключей суть хеши/соли доменных данных (sha256
-дистиллята, соль сплита), их замена портит корпус, а не защищает. Для
-credential-имён (key/token/secret/password и родственных) оба правила работают
-как прежде.
+**не применяются** к ключам hash-семейства — имя режется по ``_``, и если ЛЮБОЙ
+сегмент (после lowercase) равен маркеру :data:`HASH_KEY_MARKERS`, присваивание
+пропускается целиком. Значения таких ключей суть хеши/соли доменных данных (sha256
+дистиллята, соль сплита), их замена портит корпус, а не защищает: ``SALT_KEY`` и
+``sha256_HASH`` остаются нетронутыми, а ``HASHICORP_VAULT_TOKEN`` (сегмент
+``hashicorp`` — не маркер) ловится. Оба правила **сохраняют имя ключа** — заменяется
+значение (``KEY=<REDACTED>``), а не присваивание целиком. Для credential-имён
+(key/token/secret/password и родственных) оба правила работают как прежде.
 """
 
 from __future__ import annotations
@@ -94,23 +97,27 @@ def is_denied_path(path: str | os.PathLike[str]) -> bool:
 # Правила скраба
 # --------------------------------------------------------------------------- #
 
-#: Подстроки имени ключа, при которых hex_env и env_assignment НЕ применяются:
-#: хеши и соли — не credential, а их значения — доменные данные (sha256
-#: дистиллята, соль сплита), которые замена портит (ADR-020, дельты-3/3b).
+#: Маркеры hash-семейства — СЕГМЕНТЫ имени ключа (split по ``_``, после lowercase),
+#: при которых hex_env и env_assignment НЕ применяются: хеши и соли — не credential,
+#: а их значения — доменные данные (sha256 дистиллята, соль сплита), которые замена
+#: портит (ADR-020, дельты-3/3b).
 HASH_KEY_MARKERS = ("sha256", "sha1", "md5", "hash", "salt", "checksum")
 
-#: Имя ключа целиком до hash-маркера — подстрока в любом месте имени, включая
-#: суффикс (``SALT_KEY``, ``DOC_SHA256``): hash-семейство имён исключено из обоих
-#: правил полностью, а не только по суффиксу.
-_HASH_NAME_SCAN = r"[A-Za-z0-9_]*(?i:" + "|".join(HASH_KEY_MARKERS) + r")"
+#: Тот же список множеством: заслон ищет равенство сегмента, а не подстроку.
+_HASH_SEGMENTS = frozenset(HASH_KEY_MARKERS)
 
-#: Заслон по имени ключа: правило не применяется, если имя содержит hash-подстроку.
-#: Lookahead нулевой ширины — своей группы захвата не добавляет, поэтому нумерация
-#: ``m.lastindex`` в сборной регулярке не сдвигается. ``\b`` (в варианте для
-#: hex_env) ставит скан на границу слова, чтобы lookahead не начал с середины
-#: имени: у env_assignment ту же роль играет lookbehind ``(?<![A-Za-z0-9_])``.
-_HASH_KEY_GUARD = r"(?!" + _HASH_NAME_SCAN + r")"
-_HEX_KEY_GUARD = r"\b" + _HASH_KEY_GUARD
+
+def _is_hash_key(name: str) -> bool:
+    """Имя ключа принадлежит hash-семейству: ЛЮБОЙ его сегмент — маркер.
+
+    Семантика сегментная, а не подстрочная (дельта-3b): ``SALT_KEY`` и
+    ``doc_sha256`` исключаются целиком — в том числе когда имя кончается
+    credential-словом (``KEY``/``TOKEN``/``SECRET``/``PASSWORD``), — а
+    ``HASHICORP_VAULT_TOKEN`` ловится: подстрока ``hash`` внутри сегмента
+    ``hashicorp`` маркером не является.
+    """
+    return any(segment in _HASH_SEGMENTS for segment in name.lower().split("_"))
+
 
 #: Порядок важен: сначала «широкие» блочные правила, потом точечные.
 #: Все группы внутри правил — необязательные (``(?:...)``), поэтому в сборной
@@ -144,16 +151,28 @@ _PATTERNS: tuple[tuple[str, str], ...] = (
     ("bearer", r"(?i:\bbearer\s+[A-Za-z0-9\-._~+/=]{16,})"),
     # URL с паролем: ://user:pass@
     ("url_password", r"(?<=://)[^/\s:@]{1,64}:[^/\s:@]{1,64}(?=@)"),
-    # hex длиной >=32 в контексте присваивания (env-контекст), но только для
-    # credential-имён: ключи с hash-именами (sha256/salt/…) не трогаются — их
-    # значения суть хеши доменных данных, а не секреты (ADR-020, дельта-3).
-    ("hex_env", _HEX_KEY_GUARD + r"[A-Za-z_][A-Za-z0-9_]{2,40}\s*=\s*[\"']?[0-9a-fA-F]{32,}[\"']?"),
 )
 
 #: Сборная регулярка для дешёвой разведки: какие правила вообще срабатывают.
+#: Правила присваиваний (``hex_env``, ``env_assignment``) сюда не входят: они несут
+#: именованные группы (``head``/``name``), а разведка опознаёт сработавшую ветку по
+#: ``m.lastindex`` — именованная группа внутри ветки сдвинула бы его. Их наличие
+#: проверяется отдельными поисками в :func:`_touched_patterns`.
 _COMBINED = re.compile("|".join(f"({pat})" for _, pat in _PATTERNS))
 
 _NAME_BY_INDEX = {i + 1: name for i, (name, _) in enumerate(_PATTERNS)}
+
+#: Присваивание с длинным hex-значением (≥32) при имени без hash-сегмента: имя
+#: сохраняется, значение вычищается — ``KEY=<REDACTED>`` (дельта-3b; прежняя
+#: семантика дельты-3 заменяла совпадение целиком вместе с именем). ``\b`` держит
+#: скан на границе слова: имя не подхватывается с середины длинного идентификатора.
+#: Замыкающая кавычка значения в совпадение не входит и остаётся на месте —
+#: ``KEY="<REDACTED>"`` читается как присваивание, а не как рваная строка.
+_HEX_ENV = re.compile(
+    r"\b(?P<head>(?P<name>[A-Za-z_][A-Za-z0-9_]{2,40})\s*=\s*[\"']?)"
+    r"(?P<value>[0-9a-fA-F]{32,})"
+)
+_HEX_ENV_NAME = "hex_env"
 
 #: Присваивание «секретного» имени: ключ сохраняем, значение вычищаем.
 #:
@@ -161,12 +180,11 @@ _NAME_BY_INDEX = {i + 1: name for i, (name, _) in enumerate(_PATTERNS)}
 #: (``OPENAI_API_KEY``) или lower_snake (``db_password``), и суффикс обязан
 #: *завершать* имя. Без этого правила ловится код: ``ExperimentalMaterial3Api``,
 #: ``Unauthorized``, ``_cached_key``, ``SPECIAL_KEYS`` — имена, а не секреты.
-#: ``SALT`` из списка суффиксов снят дельтой-3b: соли — хеш-семейство, и заслон
-#: :data:`_HASH_KEY_GUARD` исключает их из правила целиком (как и ``sha256``/
-#: ``md5``/``hash``/``checksum`` в любом месте имени).
+#: ``SALT`` из списка суффиксов снят дельтой-3b: соли — hash-семейство, и заслон
+#: :func:`_is_hash_key` исключает их из правила по сегменту имени (как и ``sha256``/
+#: ``md5``/``hash``/``checksum`` в любом сегменте).
 _ENV_ASSIGN = re.compile(
-    _HASH_KEY_GUARD
-    + r"(?P<head>(?:"
+    r"(?P<head>(?P<name>"
     r"(?<![A-Za-z0-9_])[A-Z][A-Z0-9_]{0,60}"
     r"(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|CREDS|AUTH|SIGNATURE|API)"
     r"|(?<![A-Za-z0-9_])[a-z][a-z0-9_]*"
@@ -206,8 +224,29 @@ def _redact(match: re.Match) -> str:
     return REDACTED
 
 
-def _redact_env(match: re.Match) -> str:
-    return match.group("head") + REDACTED
+def _redact_assignment(
+    pattern: re.Pattern, rule: str, text: str, stats: ScrubStats | None
+) -> str:
+    """Вычистить значения присваиваний, сохранив имена ключей.
+
+    Имя hash-семейства (:func:`_is_hash_key`) не трогается вовсе: реплейсер
+    возвращает совпадение как есть, поэтому текст и счётчики правила остаются
+    нетронутыми — срабатывание считается по числу замен, а не по числу найденных
+    присваиваний.
+    """
+    replaced = 0
+
+    def repl(match: re.Match) -> str:
+        nonlocal replaced
+        if _is_hash_key(match.group("name")):
+            return match.group(0)
+        replaced += 1
+        return match.group("head") + REDACTED
+
+    out = pattern.sub(repl, text)
+    if stats is not None:
+        stats.add(rule, replaced)
+    return out
 
 
 def _touched_patterns(text: str) -> set[str]:
@@ -219,6 +258,8 @@ def _touched_patterns(text: str) -> set[str]:
             found.add(name)
         if len(found) == len(_PATTERNS):
             break
+    if _HEX_ENV.search(text):
+        found.add(_HEX_ENV_NAME)
     if _ENV_ASSIGN.search(text):
         found.add(_ENV_ASSIGN_NAME)
     return found
@@ -238,10 +279,13 @@ def scrub_text_stats(text: str, stats: ScrubStats | None = None) -> str:
         out, count = re.subn(pattern, _redact, out)
         if stats is not None:
             stats.add(name, count)
+    # Правила присваиваний идут после блочных: их значение — остаток строки, уже
+    # очищенный от ключевого материала (token/bearer/…). Оба сохраняют имя ключа и
+    # оба пропускают hash-семейство имён (см. :func:`_is_hash_key`).
+    if _HEX_ENV_NAME in touched:
+        out = _redact_assignment(_HEX_ENV, _HEX_ENV_NAME, out, stats)
     if _ENV_ASSIGN_NAME in touched:
-        out, count = _ENV_ASSIGN.subn(_redact_env, out)
-        if stats is not None:
-            stats.add(_ENV_ASSIGN_NAME, count)
+        out = _redact_assignment(_ENV_ASSIGN, _ENV_ASSIGN_NAME, out, stats)
     return out
 
 

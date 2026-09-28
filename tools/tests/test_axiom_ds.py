@@ -3,8 +3,9 @@
 Проверяются четыре ступени пайплайна ``tools/axiom_ds``:
 
 * **скраб** (T-s1, T-s3) — секреты не доживают до выхода ни в одном из объявленных
-  классов; ключи с hash-именами (sha256/md5/hash/salt/checksum) не трогаются ни
-  ``hex_env``, ни ``env_assignment`` — их значения суть доменные данные (дельты-3/3b);
+  классов; ключи с hash-СЕГМЕНТОМ в имени (sha256/md5/hash/salt/checksum после
+  разбиения по ``_``) не трогаются ни ``hex_env``, ни ``env_assignment`` — их
+  значения суть доменные данные, а имена оба правила сохраняют (дельты-3/3b);
 * **deny-list** (T-s2) — запретные каталоги и файлы не открываются вовсе (не «чистятся»,
   а пропускаются до чтения), счётчик ``sessions_denied`` отделён от ``parse_errors``;
 * **эпизодизация** (T-e1) — граница эпизода проходит по пользовательскому запросу,
@@ -57,10 +58,11 @@ PRIVATE_KEY_BLOCK = (
 )
 URL_WITH_PASSWORD = "postgres://admin:S3cretPw42@db.internal:5432/warehouse"
 ENV_ASSIGNMENT = "AXIOM_SERVICE_TOKEN=Zx9Qw8Er7Ty6Ui5Op4As3Df2Gh1Jk0"
-#: credential-имя с hex-значением: приманка правила ``hex_env`` (имя без hash-подстрок).
+#: credential-имя с hex-значением: приманка правила ``hex_env`` (имя без hash-сегмента).
+#: Имя при вычистке сохраняется: ``AXIOM_SIGNING_KEY=<REDACTED>`` (дельта-3b).
 HEX_SECRET_ASSIGNMENT = "AXIOM_SIGNING_KEY=0123456789abcdef0123456789abcdef"
-#: hash-имя (соль сплита): НЕ приманка — значение обязано выжить целиком (дельты-3/3b:
-#: hash-семейство имён исключено из hex_env и env_assignment).
+#: hash-имя (соль сплита): НЕ приманка — присваивание обязано выжить целиком (дельты-3/3b:
+#: hash-семейство имён исключено из hex_env и env_assignment по сегменту имени).
 HASH_SALT_ASSIGNMENT = "AXIOM_SPLIT_SALT=feedfacecafebeedfeedfacecafebeed"
 JWT_TOKEN = (
     "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJheGlvbS10ZXN0In0.QWERTYuiopASDFghjklZXCVbnm"
@@ -666,7 +668,7 @@ def test_tv4_partial_green_episode_lands_in_sft_component(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
-# T-s3 — hash-имена: ни hex_env, ни env_assignment
+# T-s3 — hash-сегменты имён: ни hex_env, ни env_assignment
 # --------------------------------------------------------------------------- #
 
 
@@ -695,8 +697,8 @@ def test_ts3b_hash_named_assignments_survive_both_rules(key):
     """hash-семейство имён исключено ПОЛНОСТЬЮ (дельта-3b).
 
     Имена ниже суффиксное правило ``env_assignment`` поймало бы (KEY/SECRET/TOKEN/
-    CREDS/API), но hash-подстрока в любом месте имени — суффиксом или внутри —
-    отключает правило целиком: значение соли/хеша остаётся в корпусе.
+    CREDS/API), но hash-СЕГМЕНТ в имени — суффиксом или внутри — отключает правило
+    целиком: значение соли/хеша остаётся в корпусе.
     """
     text = f"{key}={HEX_HASH_VALUE}"
     stats = scrub_mod.ScrubStats()
@@ -704,12 +706,59 @@ def test_ts3b_hash_named_assignments_survive_both_rules(key):
     assert stats.total == 0
 
 
+def test_ts3b_declared_cases_of_segment_guard_and_name_keeping():
+    """Три случая, названные решением архитектора (дельта-3b, финал).
+
+    (а) подстрока ``hash`` внутри сегмента ``hashicorp`` — не маркер: правило
+    работает, но имя ключа сохраняется (``ИМЯ=<REDACTED>``, а не всё присваивание);
+    (б) сегмент ``salt`` — присваивание не трогается, хотя имя кончается на ``KEY``;
+    (в) сегменты ``sha256``/``hash`` — не трогается.
+    """
+    stats = scrub_mod.ScrubStats()
+    assert scrub_mod.scrub_text_stats(
+        f"HASHICORP_VAULT_TOKEN={HEX_HASH_VALUE}", stats
+    ) == f"HASHICORP_VAULT_TOKEN={REDACTED}"
+    assert scrub_mod.scrub_text_stats(
+        f"SALT_KEY={HEX_HASH_VALUE}", stats
+    ) == f"SALT_KEY={HEX_HASH_VALUE}"
+    assert scrub_mod.scrub_text_stats(
+        f"sha256_HASH={HEX_HASH_VALUE}", stats
+    ) == f"sha256_HASH={HEX_HASH_VALUE}"
+    assert stats.total == 1
+    assert stats.by_pattern.get("env_assignment") is None
+
+
+def test_ts3b_hash_guard_is_segment_wise_not_substring():
+    """Заслон — по сегментам (split ``_``), а не по подстроке имени.
+
+    ``SALTED_KEY``/``HASHICORP_VAULT_TOKEN`` несут маркер подстрокой, но сегмента-
+    маркера в них нет: прежняя (подстрочная) семантика дельты-3 пропускала такие
+    присваивания с секретом, нынешняя — вычищает значение, сохраняя имя.
+    """
+    for key in ("SALTED_KEY", "HASHICORP_VAULT_TOKEN", "hashicorp_token", "CHECKSUMMED_KEY"):
+        cleaned = scrub_mod.scrub_text(f"{key}={HEX_HASH_VALUE}")
+        assert cleaned == f"{key}={REDACTED}", key
+
+
+def test_ts3b_hex_env_preserves_key_name():
+    """hex_env сохраняет имя ключа: заменяется значение, не присваивание целиком.
+
+    Прежняя семантика дельты-3 заменяла всё совпадение: имя исчезало, и в корпусе
+    оставалось ``<REDACTED>`` без предмета защиты. Кавычки значения остаются на
+    месте — строка не превращается в рваную.
+    """
+    assert scrub_mod.scrub_text(HEX_SECRET_ASSIGNMENT) == f"AXIOM_SIGNING_KEY={REDACTED}"
+    assert scrub_mod.scrub_text(
+        f'AXIOM_SIGNING_KEY="{HEX_HASH_VALUE}"'
+    ) == f'AXIOM_SIGNING_KEY="{REDACTED}"'
+
+
 def test_ts3_boundary_of_applied_rules_is_explicit():
     """Граница зафиксирована решением архитектора (дельта-3b), а не молчанием.
 
     Дельта-3 оставляла ``SALT`` в списке имён ``env_assignment`` и оговаривала снятие
-    как отдельное решение; дельта-3b его снимает: hash-имя не трогает ни ``hex_env``,
-    ни ``env_assignment`` — и в тексте, и в счётчиках.
+    как отдельное решение; дельта-3b его снимает: hash-сегмент имени не трогает ни
+    ``hex_env``, ни ``env_assignment`` — и в тексте, и в счётчиках.
     """
     stats = scrub_mod.ScrubStats()
     text = f"AXIOM_SIGNING_SALT={HEX_HASH_VALUE}"
@@ -746,20 +795,20 @@ def test_ts3b_env_assignment_still_redacts_credential_names():
 def test_ts3b_hash_named_decoy_survives_full_scrub():
     """В полном скрабе приманок соль выживает, credential-значение — нет.
 
-    Соль сплита не тронута целиком (имя и значение); у credential-имени выживает
-    имя, значение вычищается. ``hex_env`` (правило «hex-значение в присваивании»)
-    заменяет присваивание целиком с именем — прежняя семантика дельты-3, здесь
-    проверяется только граница hash-имён.
+    Соль сплита не тронута целиком (имя и значение); у credential-имён выживают
+    имена, значения вычищаются — и у ``env_assignment``, и у ``hex_env``
+    (дельта-3b: имя сохраняют оба правила).
     """
     cleaned = scrub_mod.scrub_text(poisoned_text())
     assert HASH_SALT_ASSIGNMENT in cleaned                       # соль не тронута
     assert HEX_HASH_VALUE not in cleaned                         # hex-значение вычищено
+    assert f"AXIOM_SIGNING_KEY={REDACTED}" in cleaned            # имя hex-ключа сохранено
     assert "AXIOM_SERVICE_TOKEN=" in cleaned                     # имя сохранено
     assert ENV_ASSIGNMENT.split("=", 1)[1] not in cleaned        # неhex-значение вычищено
 
 
 def test_ts3_marker_list_is_the_declared_one():
-    """Список подстрок зафиксирован константой (ADR-020, дельты-3/3b)."""
+    """Список сегментов-маркеров зафиксирован константой (ADR-020, дельты-3/3b)."""
     assert scrub_mod.HASH_KEY_MARKERS == ("sha256", "sha1", "md5", "hash", "salt", "checksum")
 
 

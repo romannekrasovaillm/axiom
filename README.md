@@ -1,20 +1,33 @@
-# axiom
+<div align="center">
+  <img src="docs/assets/banner.svg" alt="AXIOM — LLM from scratch on JAX" width="100%"/>
 
-**An LLM built from scratch on JAX — full pretrain + posttrain pipeline, single-box first.**
+  [![A4 gate](https://img.shields.io/badge/A4_gate-4%2F5_stages_executed-ff9f1c?style=flat-square)](docs/RESULTS-2026-09-27.ru.md)
+  [![tests](https://img.shields.io/badge/tests-374_passed-2ea44f?style=flat-square)](net/tests/)
+  [![data](https://img.shields.io/badge/data-101k%20domain%20records-8250df?style=flat-square)](docs/datasets/axiom-domain-ds-v1-card.md)
+  [![JAX](https://img.shields.io/badge/JAX-0.10.2-2b6cb0?style=flat-square)](https://github.com/jax-ml/jax)
+  [![Python](https://img.shields.io/badge/Python-3.11-3776ab?style=flat-square)](https://www.python.org/)
+  [![license](https://img.shields.io/badge/license-MIT-2ea44f?style=flat-square)](LICENSE)
+  [![reports](https://img.shields.io/badge/reports-live_on_Pages-8250df?style=flat-square)](https://romannekrasovaillm.github.io/axiom/)
 
-> TL;DR (RU): собственная нейросеть с нуля на JAX — претрейн, SFT, RL, агентные способности и свой
-> конвейер обучения. Не адаптация чужих весов. Скелет **L3** (~1B MoE / 20B токенов) обучается
-> целиком на одной машине (NVIDIA GB10 / DGX Spark). Архитектура и дисциплина — по опубликованным
-> практикам фронтир-лабораторий; каждое решение зафиксировано ADR и проверяется механическими
-> fitness-правилами (`CONSTRAINTS.yaml`), без LLM-судей.
+  **RU:** собственная нейросеть с нуля на JAX — претрейн, SFT, RL, агентные способности и свой
+  конвейер обучения. Не адаптация чужих весов. Скелет **L3** (~1B MoE / 20B токенов) обучается
+  целиком на одной машине (NVIDIA GB10 / DGX Spark). Каждое решение зафиксировано ADR и проверяется
+  механическими fitness-правилами (`CONSTRAINTS.yaml`) — без LLM-судей.
+</div>
 
-## 📊 Отчёты и живые диаграммы (GitHub Pages)
+## ✨ Why this is interesting
 
-- **[Выводы после прогонов, 27.09 (RU)](https://romannekrasovaillm.github.io/axiom/RESULTS-2026-09-27.ru.html)** — стадии A4 с числами, 8 инженерных выводов, состояние гейтов ([markdown в репо](docs/RESULTS-2026-09-27.ru.md)).
-- **[Конвейер A4: стадии → манифест → verify](https://romannekrasovaillm.github.io/axiom/diagrams/a4-gate-flow.html)** — интерактивная диаграмма статусов (4/5 executed).
-- **[Карта данных: претрейн vs пост-трейн](https://romannekrasovaillm.github.io/axiom/diagrams/axiom-data-map.html)** — публичные W/C/Q → аренда, приватные E/K/D/S → контур.
-- В репо: `docs/diagrams/*.html` (Archify, self-contained), `docs/RESULTS-2026-09-27.ru.md`, `docs/adr/ADR-018…021` — решения по данным и стеку.
-- **[Открытые вопросы и развилки](docs/OPEN-QUESTIONS.md)** — V-1…V-5 (решения владельца), O-1…O-3 (операторские на GB10), очередь дельт.
+- **Built from scratch, verified mechanically.** Hybrid **KDA** linear attention + **MLA** + **LatentMoE** + **MTP-1**, BF16 pretrain, Muon/Newton–Schulz — and every architectural claim is pinned by a behavioural fitness rule, not prose.
+- **A dishonest green gate is worse than an honest red one.** The A4 run manifest carries the *composition* of pipeline stages and a *computed* `pipeline_complete` — a partial run cannot close the gate, forge hashes are rejected by construction.
+- **The full pipeline, proven end-to-end on a single box** (≈$200 of compute): checkpoint → inference → RL environment → SFT → RL, with 374 acceptance tests, deterministic XLA profiling and run manifests with sha256 pinning.
+- **Live architecture-as-code**: interactive [Archify diagrams](https://romannekrasovaillm.github.io/axiom/) rendered from a typed JSON IR — pipeline status and the data map update with every push.
+- **A curated domain dataset**: verified agent episodes (mechanical verdicts, fail-closed), 101k records of concepts/distillates/skills from a private library — scrubbed, deduplicated, carded.
+
+## 📊 Live reports (GitHub Pages)
+
+- [Pipeline A4: stages → manifest → verify](https://romannekrasovaillm.github.io/axiom/diagrams/a4-gate-flow.html) — interactive Archify diagram
+- [Data map: pretrain (public) vs post-train (private)](https://romannekrasovaillm.github.io/axiom/diagrams/axiom-data-map.html)
+- [Results report (RU)](https://romannekrasovaillm.github.io/axiom/RESULTS-2026-09-27.ru.html) · [Open questions & forks](https://romannekrasovaillm.github.io/axiom/OPEN-QUESTIONS.md)
 
 ## What is here
 
@@ -24,32 +37,15 @@
   minimal vision path (ViT). BF16 pretrain, Muon + Newton–Schulz (Polar Express) optimizer.
 - **`env/`** — the RL environment: task generation, verifier, reward (binary, mechanical), net executor.
 - **`tools/`** — training/eval harness: SFT/RL smoke runs, precision pinning checks, A4 pipeline,
-  manifest and budget gates.
+  manifest and budget gates, **dataset pipelines** (`tools/prep_pretrain/`, `tools/axiom_ds/`).
 - **`docs/adr/`** — architecture decision records (RU): scale class, JAX/MaxText stack (ADR-008),
-  determinism & accuracy pinning, RL arena, post-training, fitness-gate domain.
+  determinism & accuracy pinning, RL arena, post-training, **long-context mechanics (ADR-009/012/018),
+  domain dataset (ADR-020), pretrain mix (ADR-021), compute stack (ADR-017)**.
 - **`docs/specs/`** — model skeleton spec, environment spec, stage deltas.
 - **`docs/research/`** — kernel/delta research notes from actual runs.
-- **`ARCHITECTURE-SPINE.md`** — the invariants (AD-1…AD-8): mechanical verdicts, single run contract,
-  privacy, GB10 resource limits, cost ceiling.
-- **`CONSTRAINTS.yaml`** — 31+ mechanical fitness rules (C-001…C-031) checked without any LLM.
-- **`docs/CASE-PASSPORT.ru.md`** — the original project passport: goals, scale decisions, budgets.
-
-## Architecture at a glance
-
-```
-tokens ─┬─ KDA (18 layers)  short-conv + decay gates, 1M-context friendly, SWA window 128
-        ├─ MLA (6 layers)   latent 512, top-k 512 index heads
-        ├─ AttnRes blocks   every 12 layers
-        └─ LatentMoE        latent 768, 12 routed (top-2) + 2 shared, QB monitoring
-head:   tied embeddings, MTP-1 (weight 0.1), vocab 160k
-vision: ViT patch 14, depth 12 → fused into the trunk
-train:  BF16, Muon (Newton–Schulz, Polar Express) + AdamW, QAT-ready (MXFP4 fake-quant)
-```
-
-Why KDA: a 1M context does not fit into 128 GB of a single GB10 with a classic KV cache at any
-quantization — see ADR-001/ADR-003.
-
-## Frontier practices, attributed
+- **`docs/datasets/`** — dataset cards (machine-readable + human): composition, sha256, provenance.
+- **`ARCHITECTURE-SPINE.md`** — the invariants (AD-1…AD-11): mechanical verdicts, single run contract,
+  snapshot pinning, privacy, GB10 resource limits, cost ceiling, subject-matter guards.
 
 Design decisions cite published reports and keep a fidelity matrix (`docs/FIDELITY-TO-K3.md`):
 KDA/AttnRes/LatentMoE skeleton follows the published Kimi K3 design; router/bias/routed-scale
@@ -58,7 +54,7 @@ MoE routing pathologies, async CISPO recipe and eval-integrity practice from Poo
 Our novelty lives in the data pipeline, post-training and the harness — not in re-deriving
 published kernels.
 
-## Quickstart
+## 🚀 Quickstart
 
 ```bash
 # pure-python harness tests (no JAX needed)
@@ -72,10 +68,25 @@ python3 -m pytest net/tests -q
 `venv` note: tests and smoke scripts expect a JAX-enabled interpreter (see `net/README.md` for
 CUDA `LD_LIBRARY_PATH` details).
 
+## 🤝 How to help
+
+Pick a fork from [`docs/OPEN-QUESTIONS.md`](docs/OPEN-QUESTIONS.md) — every item names the owner,
+the options and what it unblocks:
+
+- **Operator on GB10/DGX Spark** — run the smoke pipeline + `spark_inference` on the stand; closes the A4 gate (O-1).
+- **Dataset curation** — review the 1 331 skills outside the domain allowlist (V-2); legacy corpus conversion (V-3).
+- **Pretrain loop** — the streaming loader + resume path (V-4) before the 20B-token run (≈$200).
+- **Long-context measurement** — 64K gap benchmarks for the block-wise token merging flag (D-4).
+- **Docs & diagrams** — keep the live Pages and the fidelity matrix honest.
+
+Rules of engagement: no weakening of fitness rules (anti-weakening, ADR-011), no fabricated
+evidence (fail-closed everywhere), every decision as an ADR **before** implementation.
+
 ## Status
 
-Skeleton L3 pretrain pipeline: walking skeleton complete, staged training in progress.
-Scale class L1 (≈$44k) is an open decision after skeleton results.
+Skeleton L3 pretrain pipeline: walking skeleton complete (4/5 A4 stages executed with
+mechanical evidence), staged training in progress. Scale class L1 (≈$44k) is an open decision
+after skeleton results. Pretrain corpus W/C shards downloading; domain dataset v1 carded.
 
 ## License
 

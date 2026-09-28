@@ -73,6 +73,21 @@ MIX_DECLARATION = f"docs/datasets/{CARD_NAME}-mix.md"
 #: Legacy-источник CPT (txt-склейка прошлых корпусов): доля в v1 — 0.
 LEGACY_CORPUS = "~/gb10-shared/datasets/cpt_corpus_full.txt"
 
+#: Замер пересечения D↔K на реальных парах «одна статья» (диагностика 28.09.2026,
+#: зафиксирована в ADR-020): ступень контейнмента на боевом корпусе не срабатывает —
+#: ни одна пара не достигает порога окна. Числа — измерение, а не оценка; карточка
+#: несёт их рядом со счётчиками прогона, потому что сам прогон даёт только нули.
+CONTAINMENT_MEASURED = {
+    "pairs_measured": 294,
+    "max_window_jaccard": 0.3524,
+    "threshold": 0.55,
+    "pairs_at_or_above_threshold": 0,
+    "source": (
+        "ADR-020 (дельта-2/3): диагностика контейнмента D↔K 28.09.2026 — 294 реальные "
+        "пары «одна статья»; боевой прогон дельты-2 (96 217 K × 5 658 D) пар ≥ порога не дал"
+    ),
+}
+
 COMPONENT_ORDER = ("E", "K", "D", "S")
 COMPONENT_TITLES = {
     "E": "агентные эпизоды сессий (класс исхода — механический)",
@@ -249,6 +264,17 @@ def component_e(artifact: Path | None, data: dict | None) -> dict:
     entry["sft_partial_ready"] = data.get("sft_partial_ready")
     entry["negative_ready"] = data.get("negative_ready")
     entry["evidence"] = data.get("by_evidence") or {}
+    # Доля verified-partial (флаг ``partial-green``) — в SFT-компоненте: это
+    # допуск по снисхождению, и в карточке он виден числом, а не только флагом.
+    complete = entry["sft_ready"]
+    partial = entry["sft_partial_ready"]
+    sft_total = (complete + partial) if isinstance(complete, int) and isinstance(partial, int) else 0
+    entry["sft_partial_share"] = round(partial / sft_total, 4) if sft_total else None
+    entry["sft_partial_share_of_records"] = (
+        round(partial / entry["records"], 4)
+        if isinstance(partial, int) and isinstance(entry["records"], int) and entry["records"]
+        else None
+    )
 
     chars = data.get("chars")
     tokens = data.get("approx_tokens")
@@ -456,14 +482,22 @@ def decisions_section(manifest: dict | None) -> dict:
             "role": "монитор пересечения D↔K (не удаляющая ступень)",
             "threshold": containment.get("threshold"),
             "chunk_jaccard": containment.get("chunk_jaccard"),
-            "containers": containment.get("containers"),
-            "checked": containment.get("checked"),
-            "dropped": containment.get("dropped"),
+            # Числа этого прогона — из манифеста, а не из текста решения: после
+            # пересборки они меняются, и вердикт не должен пересказывать старые.
+            "run": {
+                "containers": containment.get("containers"),
+                "checked": containment.get("checked"),
+                "checked_pairs": containment.get("checked_pairs"),
+                "dropped": containment.get("dropped"),
+                "seconds": containment.get("seconds"),
+            },
             "verdict": (
                 "премиса вложения «карточка K внутри дистиллята D» опровергнута "
-                "измерением 28.09.2026 (0 пар на 96 217 × 5 658 при пороге 0.55): "
-                "на боевом корпусе ступень — no-op, оставлена наблюдателем"
+                "измерением 28.09.2026: на боевом корпусе при пороге окна 0.55 "
+                "ступень сняла 0 записей — она работает наблюдателем (no-op) "
+                "и оставлена в коде как непрерывный монитор пересечения"
             ),
+            "measured_overlap": dict(CONTAINMENT_MEASURED),
         },
         "mixing": {
             "declaration": MIX_DECLARATION,
@@ -507,6 +541,23 @@ def counters_section(manifest: dict | None, e_data: dict | None) -> dict:
                 "candidates": m_dedup.get("candidates"),
             },
             "cross_component": "общий пул дедупа K∪D∪S; E дедуплицируется отдельно",
+        },
+        # Near-dup MinHash-LSH на боевом объёме даёт коллизии (нечёткие совпадения
+        # похожих текстов) — это известное поведение ступени, а не ошибка прогона.
+        # Повторный дедуп выхода даёт 0/0 по решению архитектора дельты-3b: числа
+        # источника названы явно, чтобы карточка не выдавала их за перезамер.
+        "near_dup": {
+            "lsh_collisions": {
+                "K/D/S": m_dedup.get("near"),
+                "E": e_dedup.get("near"),
+            },
+            "known_behavior": True,
+            "re_dedup": "0/0",
+            "source": (
+                "решение архитектора (дельта-3b): near-dup LSH-коллизии — известное "
+                "поведение ступени; повторный дедуп выхода корпуса — 0/0 (точных и "
+                "near-дублей не остаётся)"
+            ),
         },
     }
 
@@ -768,6 +819,17 @@ def render_markdown(card: dict) -> str:
                 f"- скраб и deny-list — до эпизодизации: значения секретов до карточки "
                 f"не доходят, в отчёте только счётчики"
             )
+            if entry.get("sft_partial_ready") is not None:
+                share = entry.get("sft_partial_share")
+                of_records = entry.get("sft_partial_share_of_records")
+                lines.append(
+                    f"- SFT-компонент: `verified-complete` {_num(entry.get('sft_ready'))} + "
+                    f"`verified-partial` (флаг `partial-green`) "
+                    f"{_num(entry['sft_partial_ready'])}"
+                    + (f" — {_pct(share)} компоненты" if share is not None else "")
+                    + (f" ({_pct(of_records)} всех записанных E)" if of_records is not None else "")
+                    + f"; negative-пул `verified-failed` {_num(entry.get('negative_ready'))}"
+                )
             classes = entry.get("by_class") or {}
             if classes:
                 lines.append(
@@ -793,6 +855,8 @@ def render_markdown(card: dict) -> str:
         "",
     ]
     allowlist = card["decisions"]["plugin_allowlist"]
+    measured_overlap = card["decisions"]["containment"]["measured_overlap"]
+    run = card["decisions"]["containment"]["run"]
     lines += [
         f"- **Allowlist плагинов:** решение владельца {allowlist['decided']}; "
         f"база {len(allowlist['base'])} + расширение дельты-3 {len(allowlist['added_delta3'])} "
@@ -801,7 +865,15 @@ def render_markdown(card: dict) -> str:
         f"{card['decisions']['legacy_corpus']['share_in_v1']:.0%}: "
         f"{card['decisions']['legacy_corpus']['reason']}",
         f"- **Контейнмент D→K** — {card['decisions']['containment']['role']}; "
-        f"{card['decisions']['containment']['verdict']}",
+        f"{card['decisions']['containment']['verdict']}. "
+        f"Прогон: контейнеров {_num(run['containers'])}, проверок {_num(run['checked'])}, "
+        f"снято {_num(run['dropped'])} (порог {_num(card['decisions']['containment']['threshold'])}, "
+        f"окно {_num(card['decisions']['containment']['chunk_jaccard'])}). "
+        f"Замер пересечения по парам «одна статья»: max оконный Jaccard "
+        f"{_num(measured_overlap['max_window_jaccard'])} при пороге "
+        f"{_num(measured_overlap['threshold'])}, пар ≥ порога — "
+        f"{_num(measured_overlap['pairs_at_or_above_threshold'])} "
+        f"({_num(measured_overlap['pairs_measured'])} пар; {measured_overlap['source']})",
         f"- **Микс при упаковке** — {card['decisions']['mixing']['note']} "
         f"(`{card['decisions']['mixing']['declaration']}`).",
         "",
@@ -835,6 +907,7 @@ def render_markdown(card: dict) -> str:
             "ещё нет — стоят прочерки, а не нули.",
             "",
         ]
+    near_dup = card["counters"]["near_dup"]
     lines += [
         "## 6. Скраб и дедуп (счётчики)",
         "",
@@ -864,6 +937,11 @@ def render_markdown(card: dict) -> str:
         "",
         f"Дедуп K/D/S — {card['counters']['dedup']['cross_component']} "
         f"(пересечения D↔K, S↔D↔K ожидаемы); шум E-контура в пул K/D/S не попадает.",
+        "",
+        f"Near-dup LSH-коллизии — известное поведение ступени "
+        f"(K/D/S: {_num(near_dup['lsh_collisions']['K/D/S'])}, "
+        f"E: {_num(near_dup['lsh_collisions']['E'])}); повторный дедуп выхода — "
+        f"{near_dup['re_dedup']}. Источник числа: {near_dup['source']}.",
         "",
         "## 7. Что не сделано и открытые вопросы",
         "",

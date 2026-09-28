@@ -3,8 +3,8 @@
 Проверяются четыре ступени пайплайна ``tools/axiom_ds``:
 
 * **скраб** (T-s1, T-s3) — секреты не доживают до выхода ни в одном из объявленных
-  классов; ключи с hash-именами (sha256/md5/hash/salt/checksum) правилом ``hex_env``
-  не трогаются — их значения суть доменные данные (дельта-3);
+  классов; ключи с hash-именами (sha256/md5/hash/salt/checksum) не трогаются ни
+  ``hex_env``, ни ``env_assignment`` — их значения суть доменные данные (дельты-3/3b);
 * **deny-list** (T-s2) — запретные каталоги и файлы не открываются вовсе (не «чистятся»,
   а пропускаются до чтения), счётчик ``sessions_denied`` отделён от ``parse_errors``;
 * **эпизодизация** (T-e1) — граница эпизода проходит по пользовательскому запросу,
@@ -12,7 +12,8 @@
 * **верификация** (T-v1..T-v4) — класс исхода механический: контракт сессии или
   парный harness-отчёт, никакой интерпретации прозой (AD-2); ``verified-partial``
   (дельта-3) — ``partial`` плюс зелёный сьют в последних tool-результатах, в SFT
-  только с флагом ``verification: partial-green``;
+  только с флагом ``verification: partial-green``; красный признак — и «FAILED»/
+  «ERROR», и строчные итоги pytest («1 failed, 5 passed») — дельта-3b;
 * **дедуп** (T-d1, T-d2) — точные хеши блоков и MinHash near-dup;
 * **CLI** (T-b1, T-b2) — ``--limit 0`` даёт пустой валидный jsonl + числовой отчёт,
   полный прогон на синтетике даёт скрабленный jsonl и счётчики классов.
@@ -56,7 +57,11 @@ PRIVATE_KEY_BLOCK = (
 )
 URL_WITH_PASSWORD = "postgres://admin:S3cretPw42@db.internal:5432/warehouse"
 ENV_ASSIGNMENT = "AXIOM_SERVICE_TOKEN=Zx9Qw8Er7Ty6Ui5Op4As3Df2Gh1Jk0"
-HEX_SECRET_ASSIGNMENT = "AXIOM_SIGNING_SALT=0123456789abcdef0123456789abcdef"
+#: credential-имя с hex-значением: приманка правила ``hex_env`` (имя без hash-подстрок).
+HEX_SECRET_ASSIGNMENT = "AXIOM_SIGNING_KEY=0123456789abcdef0123456789abcdef"
+#: hash-имя (соль сплита): НЕ приманка — значение обязано выжить целиком (дельты-3/3b:
+#: hash-семейство имён исключено из hex_env и env_assignment).
+HASH_SALT_ASSIGNMENT = "AXIOM_SPLIT_SALT=feedfacecafebeedfeedfacecafebeed"
 JWT_TOKEN = (
     "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJheGlvbS10ZXN0In0.QWERTYuiopASDFghjklZXCVbnm"
 )
@@ -91,6 +96,7 @@ def poisoned_text() -> str:
             f"connect via {URL_WITH_PASSWORD}",
             f"{ENV_ASSIGNMENT}",
             f"{HEX_SECRET_ASSIGNMENT}",
+            f"{HASH_SALT_ASSIGNMENT}",
             f"token={JWT_TOKEN}",
             "обычный текст без секретов: правка tools/axiom_ds/build.py",
         ]
@@ -558,6 +564,38 @@ def test_tv4_red_line_in_same_results_cancels_green():
     assert verify_mod.classify_episode(ep) == verify_mod.UNVERIFIED
 
 
+def test_tv4_lowercase_pytest_summary_is_red_not_green():
+    """«1 failed, 5 passed» — красный сьют: строчный итог pytest отменяет признак.
+
+    До дельты-3b красный признак знал только верхний регистр («FAILED»/«ERROR»),
+    и строка «1 failed, 5 passed» проходила по слову ``passed``: partial-эпизод
+    красного прогона получал флаг ``partial-green`` («зелёный сьют» из отчёта,
+    в котором тест упал). Теперь такой эпизод — ``unverified`` и в SFT не идёт.
+    """
+    red_total = "============================= 1 failed, 5 passed in 0.42s ============================"
+    ep = episode_with_tool_tail([red_total], final=contract_text("partial"))
+    assert verify_mod.classify_episode(ep) == verify_mod.UNVERIFIED
+    assert verify_mod.apply_class(ep) == verify_mod.UNVERIFIED
+    assert ep.to_dict()["verification"] is None          # флага partial-green нет
+
+
+@pytest.mark.parametrize(
+    "red_line",
+    [
+        "---------- 2 errors in 0.11s ----------",
+        "tests/test_x.py::test_y failed",
+        "ERROR: сборка пакета не прошла",
+        "1 failed",
+        "error: no tests ran",
+    ],
+)
+def test_tv4_lowercase_red_words_cancel_green(red_line):
+    """Строчные ``failed``/``error`` (bare-слова) в тех же результатах — красный признак."""
+    ep = episode_with_tool_tail([GREEN_SUITE_RESULT + "\n" + red_line],
+                                final=contract_text("partial"))
+    assert verify_mod.classify_episode(ep) == verify_mod.UNVERIFIED
+
+
 def test_tv4_window_is_last_five_tool_results():
     """Признак ищется по последним 5 tool-результатам, а не по всему эпизоду."""
     outside = episode_with_tool_tail([GREEN_SUITE_RESULT] + ["шум без отчёта"] * 5,
@@ -628,7 +666,7 @@ def test_tv4_partial_green_episode_lands_in_sft_component(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
-# T-s3 — hex_env не трогает ключи с hash-именами
+# T-s3 — hash-имена: ни hex_env, ни env_assignment
 # --------------------------------------------------------------------------- #
 
 
@@ -641,7 +679,25 @@ HEX_HASH_VALUE = "0123456789abcdef0123456789abcdef"  # 32 hex — значени
      "salt_v2", "body_checksum"],
 )
 def test_ts3_hash_named_keys_are_left_untouched(key):
-    """Ключи с hash-именами — доменные данные: правило hex_env к ним не применяется."""
+    """Ключи с hash-именами — доменные данные: правила к ним не применяются."""
+    text = f"{key}={HEX_HASH_VALUE}"
+    stats = scrub_mod.ScrubStats()
+    assert scrub_mod.scrub_text_stats(text, stats) == text
+    assert stats.total == 0
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["SALT_KEY", "SHA256_SECRET", "MD5_TOKEN", "IMG_HASH_KEY", "BODY_CHECKSUM_KEY",
+     "salt_key", "doc_sha1_api", "SPLIT_SALT_CREDS", "hash_key"],
+)
+def test_ts3b_hash_named_assignments_survive_both_rules(key):
+    """hash-семейство имён исключено ПОЛНОСТЬЮ (дельта-3b).
+
+    Имена ниже суффиксное правило ``env_assignment`` поймало бы (KEY/SECRET/TOKEN/
+    CREDS/API), но hash-подстрока в любом месте имени — суффиксом или внутри —
+    отключает правило целиком: значение соли/хеша остаётся в корпусе.
+    """
     text = f"{key}={HEX_HASH_VALUE}"
     stats = scrub_mod.ScrubStats()
     assert scrub_mod.scrub_text_stats(text, stats) == text
@@ -649,19 +705,18 @@ def test_ts3_hash_named_keys_are_left_untouched(key):
 
 
 def test_ts3_boundary_of_applied_rules_is_explicit():
-    """Граница правил видна в счётчиках: hash-имя не даёт hex_env-замен.
+    """Граница зафиксирована решением архитектора (дельта-3b), а не молчанием.
 
-    Имя, оканчивающееся на ``SALT``, остаётся в списке имён правила
-    ``env_assignment`` (credential-контекст дельты-1) — там замена прежняя, а
-    именно ``hex_env`` к hash-именам не применяется. Граница зафиксирована
-    тестом, а не молчанием: снятие ``SALT`` из имён ``env_assignment`` —
-    отдельное решение архитектора.
+    Дельта-3 оставляла ``SALT`` в списке имён ``env_assignment`` и оговаривала снятие
+    как отдельное решение; дельта-3b его снимает: hash-имя не трогает ни ``hex_env``,
+    ни ``env_assignment`` — и в тексте, и в счётчиках.
     """
     stats = scrub_mod.ScrubStats()
-    cleaned = scrub_mod.scrub_text_stats(f"AXIOM_SIGNING_SALT={HEX_HASH_VALUE}", stats)
-    assert HEX_HASH_VALUE not in cleaned            # прежнее правило имён сработало
-    assert "hex_env" not in stats.by_pattern        # новое правило к hash-имени не применено
-    assert stats.by_pattern.get("env_assignment") == 1
+    text = f"AXIOM_SIGNING_SALT={HEX_HASH_VALUE}"
+    assert scrub_mod.scrub_text_stats(text, stats) == text
+    assert stats.total == 0
+    assert "hex_env" not in stats.by_pattern
+    assert "env_assignment" not in stats.by_pattern
 
 
 @pytest.mark.parametrize(
@@ -674,8 +729,37 @@ def test_ts3_credential_named_hex_values_are_still_redacted(key):
     assert REDACTED in cleaned
 
 
+def test_ts3b_env_assignment_still_redacts_credential_names():
+    """Регресс дельты-3b: ``env_assignment`` не ослаблен для credential-имён.
+
+    Значение не hex (``hex_env`` его не видит): единственное сработавшее правило —
+    ``env_assignment``, и оно по-прежнему вычищает значение, оставляя имя.
+    """
+    value = "Zx9Qw8Er7Ty6Ui5Op4As3Df2Gh1Jk0"
+    stats = scrub_mod.ScrubStats()
+    cleaned = scrub_mod.scrub_text_stats(f"SECRET_KEY={value}", stats)
+    assert value not in cleaned
+    assert "SECRET_KEY=" in cleaned and REDACTED in cleaned
+    assert stats.by_pattern.get("env_assignment") == 1
+
+
+def test_ts3b_hash_named_decoy_survives_full_scrub():
+    """В полном скрабе приманок соль выживает, credential-значение — нет.
+
+    Соль сплита не тронута целиком (имя и значение); у credential-имени выживает
+    имя, значение вычищается. ``hex_env`` (правило «hex-значение в присваивании»)
+    заменяет присваивание целиком с именем — прежняя семантика дельты-3, здесь
+    проверяется только граница hash-имён.
+    """
+    cleaned = scrub_mod.scrub_text(poisoned_text())
+    assert HASH_SALT_ASSIGNMENT in cleaned                       # соль не тронута
+    assert HEX_HASH_VALUE not in cleaned                         # hex-значение вычищено
+    assert "AXIOM_SERVICE_TOKEN=" in cleaned                     # имя сохранено
+    assert ENV_ASSIGNMENT.split("=", 1)[1] not in cleaned        # неhex-значение вычищено
+
+
 def test_ts3_marker_list_is_the_declared_one():
-    """Список подстрок зафиксирован константой (ADR-020, дельта-3)."""
+    """Список подстрок зафиксирован константой (ADR-020, дельты-3/3b)."""
     assert scrub_mod.HASH_KEY_MARKERS == ("sha256", "sha1", "md5", "hash", "salt", "checksum")
 
 

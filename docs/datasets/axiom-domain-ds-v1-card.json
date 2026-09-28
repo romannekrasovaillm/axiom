@@ -1,12 +1,9 @@
 {
  "card": "axiom-domain-ds-v1",
  "card_version": "v1",
- "status": "v1-draft",
- "status_reasons": [
-  "allowlist корпуса (22) не совпадает с константой (31): корпус собран до расширения дельты-3 — нужна пересборка K/D/S",
-  "в allowlist константы, но не в прогоне корпуса: agents, credit-assignment, gb10, kat, lambert-rl, memory-systems, reasoning, rl-training, safety-eval — нужна пересборка K/D/S"
- ],
- "generated_at": "2026-09-28T10:29:22Z",
+ "status": "v1",
+ "status_reasons": [],
+ "generated_at": "2026-09-28T11:28:09Z",
  "dataset_root": "<HOME>/gb10-shared/datasets/axiom-domain-ds-v1",
  "repos_symlink": "data/datasets/axiom-domain-ds-v1",
  "decision": "ADR-020 (дельта-1..3), ADR-004 (карточка + хеш), ADR-005 (SFT-стадия)",
@@ -16,21 +13,20 @@
    "title": "агентные эпизоды сессий (класс исхода — механический)",
    "present": true,
    "artifact": "<HOME>/gb10-shared/datasets/axiom-domain-ds-v1/episodes-v1-report.json",
-   "generated_at": "2026-09-28T10:22:43Z",
-   "records": 2042,
-   "files": 1393,
+   "generated_at": "2026-09-28T11:00:11Z",
+   "records": 2043,
+   "files": 1394,
    "file_unit": "файлов сессий",
-   "chars": 241139267,
-   "approx_tokens": 60284039,
+   "chars": 241641088,
+   "approx_tokens": 60409494,
    "approx_tokens_basis": "manifest",
    "by_class": {
     "unverified": 1918,
-    "verified-complete": 120,
-    "verified-failed": 3,
-    "verified-partial": 1
+    "verified-complete": 122,
+    "verified-failed": 3
    },
-   "sft_ready": 120,
-   "sft_partial_ready": 1,
+   "sft_ready": 122,
+   "sft_partial_ready": 0,
    "negative_ready": 3,
    "sources": [
     "<HOME>/.claude/projects"
@@ -54,32 +50,33 @@
     ],
     "green_suite_window": 5,
     "green_suite_pattern": "\\b(?:\\d+\\s+)?passed\\b",
-    "red_suite_pattern": "\\b(?:FAILED|ERROR)\\b"
+    "red_suite_pattern": "(?i)\\b(?:failed|error)s?\\b"
    },
    "evidence": {
-    "in-session-contract": 141,
-    "none": 2281,
-    "partial-green": 1
+    "in-session-contract": 144,
+    "none": 2280
    },
    "notes": [],
+   "sft_partial_share": 0.0,
+   "sft_partial_share_of_records": 0.0,
    "out": "<HOME>/gb10-shared/datasets/axiom-domain-ds-v1/episodes-v1.jsonl",
-   "sha256_declared": "7467209ed292ca81412cc6ee013a155dcbbd56379bfbe815c5f943e8e3e128b0",
-   "bytes_declared": 331231314,
-   "sha256": "7467209ed292ca81412cc6ee013a155dcbbd56379bfbe815c5f943e8e3e128b0",
-   "bytes": 331231314
+   "sha256_declared": "2bd5508c72e3ecfb62bcb88a5c6c0de0f79755f0618606d00cad60f151a3647f",
+   "bytes_declared": 331887836,
+   "sha256": "2bd5508c72e3ecfb62bcb88a5c6c0de0f79755f0618606d00cad60f151a3647f",
+   "bytes": 331887836
   },
   "K": {
    "component": "K",
    "title": "концепты из статей (карточки библиотеки)",
    "present": true,
    "artifact": null,
-   "generated_at": "2026-09-28T09:16:51Z",
+   "generated_at": "2026-09-28T11:26:30Z",
    "records": 96217,
    "files": 107916,
    "file_unit": "файлов карточек",
    "chars": 179395197,
-   "approx_tokens": 44848799,
-   "approx_tokens_basis": "chars//4 (манифест без пофайловых токенов)",
+   "approx_tokens": 44812494,
+   "approx_tokens_basis": "manifest",
    "dropped_dedup": 9873,
    "dropped_containment": 0,
    "sources": [
@@ -136,13 +133,13 @@
    "title": "дистилляты статей",
    "present": true,
    "artifact": null,
-   "generated_at": "2026-09-28T09:16:51Z",
+   "generated_at": "2026-09-28T11:26:30Z",
    "records": 5658,
    "files": 5658,
    "file_unit": "файлов дистиллятов",
    "chars": 32685563,
-   "approx_tokens": 8171390,
-   "approx_tokens_basis": "chars//4 (манифест без пофайловых токенов)",
+   "approx_tokens": 8169289,
+   "approx_tokens_basis": "manifest",
    "dropped_dedup": 0,
    "dropped_containment": 0,
    "sources": [
@@ -173,13 +170,13 @@
    "title": "процедурные скиллы (SKILL.md плагинов домена)",
    "present": true,
    "artifact": null,
-   "generated_at": "2026-09-28T09:16:51Z",
-   "records": 263,
-   "files": 263,
+   "generated_at": "2026-09-28T11:26:30Z",
+   "records": 520,
+   "files": 520,
    "file_unit": "файлов SKILL.md",
-   "chars": 1652238,
-   "approx_tokens": 413059,
-   "approx_tokens_basis": "chars//4 (манифест без пофайловых токенов)",
+   "chars": 3337345,
+   "approx_tokens": 834142,
+   "approx_tokens_basis": "manifest",
    "dropped_dedup": 0,
    "dropped_containment": 0,
    "sources": [
@@ -195,22 +192,31 @@
      "agent-harnesses",
      "agent-infra",
      "agentic-rl",
+     "agents",
      "arch-core",
      "arch-distilled",
      "aws-builders",
      "cpt",
+     "credit-assignment",
      "data-curator",
      "dka",
      "document-tools",
      "effort",
      "frontier-intelligence",
      "frontier-lab",
+     "gb10",
+     "kat",
      "kimi",
      "laguna",
+     "lambert-rl",
+     "memory-systems",
      "misc-tools",
      "patterns-integration",
      "patterns-resilience",
      "pretrain",
+     "reasoning",
+     "rl-training",
+     "safety-eval",
      "tui-agent-skills",
      "verification"
     ],
@@ -221,24 +227,60 @@
    },
    "plugins": {
     "agent-harness": 5,
-    "agent-harnesses": 40,
+    "agent-harnesses": 41,
     "agent-infra": 25,
     "agentic-rl": 11,
+    "agents": 22,
     "cpt": 4,
+    "credit-assignment": 26,
     "data-curator": 18,
     "dka": 5,
     "document-tools": 6,
     "effort": 16,
     "frontier-intelligence": 8,
     "frontier-lab": 22,
+    "gb10": 25,
+    "kat": 21,
     "kimi": 26,
     "laguna": 43,
+    "lambert-rl": 23,
+    "memory-systems": 40,
     "misc-tools": 6,
     "pretrain": 10,
+    "reasoning": 25,
+    "rl-training": 45,
+    "safety-eval": 29,
     "tui-agent-skills": 14,
     "verification": 4
    },
-   "plugin_tokens": {},
+   "plugin_tokens": {
+    "agent-harness": 6674,
+    "agent-harnesses": 76122,
+    "agent-infra": 54754,
+    "agentic-rl": 16989,
+    "agents": 36260,
+    "cpt": 7752,
+    "credit-assignment": 44141,
+    "data-curator": 22480,
+    "dka": 9236,
+    "document-tools": 10197,
+    "effort": 25082,
+    "frontier-intelligence": 15702,
+    "frontier-lab": 37563,
+    "gb10": 39758,
+    "kat": 22347,
+    "kimi": 31953,
+    "laguna": 55164,
+    "lambert-rl": 32019,
+    "memory-systems": 71094,
+    "misc-tools": 12487,
+    "pretrain": 15891,
+    "reasoning": 33185,
+    "rl-training": 91211,
+    "safety-eval": 49410,
+    "tui-agent-skills": 9996,
+    "verification": 6675
+   },
    "by_type": {},
    "by_level": {},
    "notes": []
@@ -246,12 +288,12 @@
  },
  "shares": {
   "basis": "approx-tokens",
-  "total_approx_tokens": 113717287,
+  "total_approx_tokens": 114225419,
   "shares": {
-   "E": 0.5301,
-   "K": 0.3944,
-   "D": 0.0719,
-   "S": 0.0036
+   "E": 0.5289,
+   "K": 0.3923,
+   "D": 0.0715,
+   "S": 0.0073
   },
   "measured": [
    "E",
@@ -265,22 +307,22 @@
   {
    "component": "D+K+S",
    "file": "cpt-kds-v0.1-00000.jsonl.zst",
-   "records": 102138,
-   "bytes_declared": 79193928,
-   "bytes": 79193928,
-   "sha256_declared": "eecba497f7c3319919c0691f21e22ec1254af7cd7df97f6c04824160ba87689a",
-   "sha256": "eecba497f7c3319919c0691f21e22ec1254af7cd7df97f6c04824160ba87689a",
+   "records": 102395,
+   "bytes_declared": 79987774,
+   "bytes": 79987774,
+   "sha256_declared": "286f0a29e1d6f5cdfe5fcc4dcd197493e2d0ae8502fc7ef9eb5c9e7358ec531e",
+   "sha256": "286f0a29e1d6f5cdfe5fcc4dcd197493e2d0ae8502fc7ef9eb5c9e7358ec531e",
    "match": true,
    "present": true
   },
   {
    "component": "E",
    "file": "<HOME>/gb10-shared/datasets/axiom-domain-ds-v1/episodes-v1.jsonl",
-   "records": 2042,
-   "bytes_declared": 331231314,
-   "bytes": 331231314,
-   "sha256_declared": "7467209ed292ca81412cc6ee013a155dcbbd56379bfbe815c5f943e8e3e128b0",
-   "sha256": "7467209ed292ca81412cc6ee013a155dcbbd56379bfbe815c5f943e8e3e128b0",
+   "records": 2043,
+   "bytes_declared": 331887836,
+   "bytes": 331887836,
+   "sha256_declared": "2bd5508c72e3ecfb62bcb88a5c6c0de0f79755f0618606d00cad60f151a3647f",
+   "sha256": "2bd5508c72e3ecfb62bcb88a5c6c0de0f79755f0618606d00cad60f151a3647f",
    "match": true,
    "present": true
   }
@@ -293,7 +335,7 @@
    "added_in_delta3": false,
    "files": 5,
    "records": 5,
-   "approx_tokens": null,
+   "approx_tokens": 6674,
    "reason": "allowlist домена axiom (ADR-020): ML/агентный контур"
   },
   {
@@ -301,9 +343,9 @@
    "in_allowlist": true,
    "in_corpus_run": true,
    "added_in_delta3": false,
-   "files": 40,
-   "records": 40,
-   "approx_tokens": null,
+   "files": 41,
+   "records": 41,
+   "approx_tokens": 76122,
    "reason": "allowlist домена axiom (ADR-020): ML/агентный контур"
   },
   {
@@ -313,7 +355,7 @@
    "added_in_delta3": false,
    "files": 25,
    "records": 25,
-   "approx_tokens": null,
+   "approx_tokens": 54754,
    "reason": "allowlist домена axiom (ADR-020): ML/агентный контур"
   },
   {
@@ -323,18 +365,18 @@
    "added_in_delta3": false,
    "files": 11,
    "records": 11,
-   "approx_tokens": null,
+   "approx_tokens": 16989,
    "reason": "allowlist домена axiom (ADR-020): ML/агентный контур"
   },
   {
    "plugin": "agents",
    "in_allowlist": true,
-   "in_corpus_run": false,
+   "in_corpus_run": true,
    "added_in_delta3": true,
    "files": 22,
-   "records": 0,
-   "approx_tokens": null,
-   "reason": "вне allowlist карточки ADR-020 (чужой домен контура)"
+   "records": 22,
+   "approx_tokens": 36260,
+   "reason": "allowlist домена axiom (ADR-020): ML/агентный контур"
   },
   {
    "plugin": "arch-core",
@@ -343,7 +385,7 @@
    "added_in_delta3": false,
    "files": 0,
    "records": 0,
-   "approx_tokens": null,
+   "approx_tokens": 0,
    "reason": "в allowlist карточки ADR-020, в источнике скиллов нет (0)"
   },
   {
@@ -353,7 +395,7 @@
    "added_in_delta3": false,
    "files": 0,
    "records": 0,
-   "approx_tokens": null,
+   "approx_tokens": 0,
    "reason": "в allowlist карточки ADR-020, в источнике скиллов нет (0)"
   },
   {
@@ -363,7 +405,7 @@
    "added_in_delta3": false,
    "files": 0,
    "records": 0,
-   "approx_tokens": null,
+   "approx_tokens": 0,
    "reason": "в allowlist карточки ADR-020, в источнике скиллов нет (0)"
   },
   {
@@ -373,18 +415,18 @@
    "added_in_delta3": false,
    "files": 4,
    "records": 4,
-   "approx_tokens": null,
+   "approx_tokens": 7752,
    "reason": "allowlist домена axiom (ADR-020): ML/агентный контур"
   },
   {
    "plugin": "credit-assignment",
    "in_allowlist": true,
-   "in_corpus_run": false,
+   "in_corpus_run": true,
    "added_in_delta3": true,
    "files": 26,
-   "records": 0,
-   "approx_tokens": null,
-   "reason": "вне allowlist карточки ADR-020 (чужой домен контура)"
+   "records": 26,
+   "approx_tokens": 44141,
+   "reason": "allowlist домена axiom (ADR-020): ML/агентный контур"
   },
   {
    "plugin": "data-curator",
@@ -393,7 +435,7 @@
    "added_in_delta3": false,
    "files": 18,
    "records": 18,
-   "approx_tokens": null,
+   "approx_tokens": 22480,
    "reason": "allowlist домена axiom (ADR-020): ML/агентный контур"
   },
   {
@@ -403,7 +445,7 @@
    "added_in_delta3": false,
    "files": 5,
    "records": 5,
-   "approx_tokens": null,
+   "approx_tokens": 9236,
    "reason": "allowlist домена axiom (ADR-020): ML/агентный контур"
   },
   {
@@ -413,7 +455,7 @@
    "added_in_delta3": false,
    "files": 6,
    "records": 6,
-   "approx_tokens": null,
+   "approx_tokens": 10197,
    "reason": "allowlist домена axiom (ADR-020): ML/агентный контур"
   },
   {
@@ -423,7 +465,7 @@
    "added_in_delta3": false,
    "files": 16,
    "records": 16,
-   "approx_tokens": null,
+   "approx_tokens": 25082,
    "reason": "allowlist домена axiom (ADR-020): ML/агентный контур"
   },
   {
@@ -433,7 +475,7 @@
    "added_in_delta3": false,
    "files": 8,
    "records": 8,
-   "approx_tokens": null,
+   "approx_tokens": 15702,
    "reason": "allowlist домена axiom (ADR-020): ML/агентный контур"
   },
   {
@@ -443,28 +485,28 @@
    "added_in_delta3": false,
    "files": 22,
    "records": 22,
-   "approx_tokens": null,
+   "approx_tokens": 37563,
    "reason": "allowlist домена axiom (ADR-020): ML/агентный контур"
   },
   {
    "plugin": "gb10",
    "in_allowlist": true,
-   "in_corpus_run": false,
+   "in_corpus_run": true,
    "added_in_delta3": true,
    "files": 25,
-   "records": 0,
-   "approx_tokens": null,
-   "reason": "вне allowlist карточки ADR-020 (чужой домен контура)"
+   "records": 25,
+   "approx_tokens": 39758,
+   "reason": "allowlist домена axiom (ADR-020): ML/агентный контур"
   },
   {
    "plugin": "kat",
    "in_allowlist": true,
-   "in_corpus_run": false,
+   "in_corpus_run": true,
    "added_in_delta3": true,
    "files": 21,
-   "records": 0,
-   "approx_tokens": null,
-   "reason": "вне allowlist карточки ADR-020 (чужой домен контура)"
+   "records": 21,
+   "approx_tokens": 22347,
+   "reason": "allowlist домена axiom (ADR-020): ML/агентный контур"
   },
   {
    "plugin": "kimi",
@@ -473,7 +515,7 @@
    "added_in_delta3": false,
    "files": 26,
    "records": 26,
-   "approx_tokens": null,
+   "approx_tokens": 31953,
    "reason": "allowlist домена axiom (ADR-020): ML/агентный контур"
   },
   {
@@ -483,28 +525,28 @@
    "added_in_delta3": false,
    "files": 43,
    "records": 43,
-   "approx_tokens": null,
+   "approx_tokens": 55164,
    "reason": "allowlist домена axiom (ADR-020): ML/агентный контур"
   },
   {
    "plugin": "lambert-rl",
    "in_allowlist": true,
-   "in_corpus_run": false,
+   "in_corpus_run": true,
    "added_in_delta3": true,
    "files": 23,
-   "records": 0,
-   "approx_tokens": null,
-   "reason": "вне allowlist карточки ADR-020 (чужой домен контура)"
+   "records": 23,
+   "approx_tokens": 32019,
+   "reason": "allowlist домена axiom (ADR-020): ML/агентный контур"
   },
   {
    "plugin": "memory-systems",
    "in_allowlist": true,
-   "in_corpus_run": false,
+   "in_corpus_run": true,
    "added_in_delta3": true,
    "files": 40,
-   "records": 0,
-   "approx_tokens": null,
-   "reason": "вне allowlist карточки ADR-020 (чужой домен контура)"
+   "records": 40,
+   "approx_tokens": 71094,
+   "reason": "allowlist домена axiom (ADR-020): ML/агентный контур"
   },
   {
    "plugin": "misc-tools",
@@ -513,7 +555,7 @@
    "added_in_delta3": false,
    "files": 6,
    "records": 6,
-   "approx_tokens": null,
+   "approx_tokens": 12487,
    "reason": "allowlist домена axiom (ADR-020): ML/агентный контур"
   },
   {
@@ -523,7 +565,7 @@
    "added_in_delta3": false,
    "files": 0,
    "records": 0,
-   "approx_tokens": null,
+   "approx_tokens": 0,
    "reason": "в allowlist карточки ADR-020, в источнике скиллов нет (0)"
   },
   {
@@ -533,7 +575,7 @@
    "added_in_delta3": false,
    "files": 0,
    "records": 0,
-   "approx_tokens": null,
+   "approx_tokens": 0,
    "reason": "в allowlist карточки ADR-020, в источнике скиллов нет (0)"
   },
   {
@@ -543,38 +585,38 @@
    "added_in_delta3": false,
    "files": 10,
    "records": 10,
-   "approx_tokens": null,
+   "approx_tokens": 15891,
    "reason": "allowlist домена axiom (ADR-020): ML/агентный контур"
   },
   {
    "plugin": "reasoning",
    "in_allowlist": true,
-   "in_corpus_run": false,
+   "in_corpus_run": true,
    "added_in_delta3": true,
    "files": 25,
-   "records": 0,
-   "approx_tokens": null,
-   "reason": "вне allowlist карточки ADR-020 (чужой домен контура)"
+   "records": 25,
+   "approx_tokens": 33185,
+   "reason": "allowlist домена axiom (ADR-020): ML/агентный контур"
   },
   {
    "plugin": "rl-training",
    "in_allowlist": true,
-   "in_corpus_run": false,
+   "in_corpus_run": true,
    "added_in_delta3": true,
    "files": 45,
-   "records": 0,
-   "approx_tokens": null,
-   "reason": "вне allowlist карточки ADR-020 (чужой домен контура)"
+   "records": 45,
+   "approx_tokens": 91211,
+   "reason": "allowlist домена axiom (ADR-020): ML/агентный контур"
   },
   {
    "plugin": "safety-eval",
    "in_allowlist": true,
-   "in_corpus_run": false,
+   "in_corpus_run": true,
    "added_in_delta3": true,
-   "files": 27,
-   "records": 0,
-   "approx_tokens": null,
-   "reason": "вне allowlist карточки ADR-020 (чужой домен контура)"
+   "files": 29,
+   "records": 29,
+   "approx_tokens": 49410,
+   "reason": "allowlist домена axiom (ADR-020): ML/агентный контур"
   },
   {
    "plugin": "tui-agent-skills",
@@ -583,7 +625,7 @@
    "added_in_delta3": false,
    "files": 14,
    "records": 14,
-   "approx_tokens": null,
+   "approx_tokens": 9996,
    "reason": "allowlist домена axiom (ADR-020): ML/агентный контур"
   },
   {
@@ -593,7 +635,7 @@
    "added_in_delta3": false,
    "files": 4,
    "records": 4,
-   "approx_tokens": null,
+   "approx_tokens": 6675,
    "reason": "allowlist домена axiom (ADR-020): ML/агентный контур"
   }
  ],
@@ -1133,7 +1175,7 @@
    },
    {
     "plugin": "skill-management",
-    "files": 25
+    "files": 26
    },
    {
     "plugin": "skill-optimization",
@@ -1252,7 +1294,7 @@
     "files": 3
    }
   ],
-  "files": 1080
+  "files": 1081
  },
  "decisions": {
   "plugin_allowlist": {
@@ -1298,22 +1340,31 @@
     "agent-harnesses",
     "agent-infra",
     "agentic-rl",
+    "agents",
     "arch-core",
     "arch-distilled",
     "aws-builders",
     "cpt",
+    "credit-assignment",
     "data-curator",
     "dka",
     "document-tools",
     "effort",
     "frontier-intelligence",
     "frontier-lab",
+    "gb10",
+    "kat",
     "kimi",
     "laguna",
+    "lambert-rl",
+    "memory-systems",
     "misc-tools",
     "patterns-integration",
     "patterns-resilience",
     "pretrain",
+    "reasoning",
+    "rl-training",
+    "safety-eval",
     "tui-agent-skills",
     "verification"
    ]
@@ -1327,10 +1378,21 @@
    "role": "монитор пересечения D↔K (не удаляющая ступень)",
    "threshold": 0.8,
    "chunk_jaccard": 0.55,
-   "containers": 5658,
-   "checked": 96217,
-   "dropped": 0,
-   "verdict": "премиса вложения «карточка K внутри дистиллята D» опровергнута измерением 28.09.2026 (0 пар на 96 217 × 5 658 при пороге 0.55): на боевом корпусе ступень — no-op, оставлена наблюдателем"
+   "run": {
+    "containers": 5658,
+    "checked": 96217,
+    "checked_pairs": 0,
+    "dropped": 0,
+    "seconds": 1450.354
+   },
+   "verdict": "премиса вложения «карточка K внутри дистиллята D» опровергнута измерением 28.09.2026: на боевом корпусе при пороге окна 0.55 ступень сняла 0 записей — она работает наблюдателем (no-op) и оставлена в коде как непрерывный монитор пересечения",
+   "measured_overlap": {
+    "pairs_measured": 294,
+    "max_window_jaccard": 0.3524,
+    "threshold": 0.55,
+    "pairs_at_or_above_threshold": 0,
+    "source": "ADR-020 (дельта-2/3): диагностика контейнмента D↔K 28.09.2026 — 294 реальные пары «одна статья»; боевой прогон дельты-2 (96 217 K × 5 658 D) пар ≥ порога не дал"
+   }
   },
   "mixing": {
    "declaration": "docs/datasets/axiom-domain-ds-v1-mix.md",
@@ -1339,47 +1401,56 @@
  },
  "counters": {
   "redactions": {
-   "total": 1865,
+   "total": 1906,
    "by_component": {
-    "E": 1865,
-    "K/D/S": 0
+    "E": 1905,
+    "K/D/S": 1
    },
    "by_pattern": {
-    "aws": 45,
-    "bearer": 23,
-    "env_assignment": 637,
-    "github": 18,
-    "hex_env": 722,
-    "jwt": 12,
-    "openai": 92,
-    "private_key": 52,
-    "private_key_dangling": 49,
+    "aws": 49,
+    "bearer": 25,
+    "env_assignment": 636,
+    "github": 22,
+    "hex_env": 733,
+    "jwt": 16,
+    "openai": 96,
+    "private_key": 56,
+    "private_key_dangling": 51,
     "private_key_marker": 5,
-    "slack": 6,
-    "url_password": 204
+    "slack": 8,
+    "url_password": 209
    }
   },
   "dedup": {
    "E": {
     "exact": 202,
     "near": 179,
-    "kept": 2042
+    "kept": 2043
    },
    "K/D/S": {
     "exact": 9765,
     "near": 108,
-    "kept": 102138,
-    "candidates": 15774198
+    "kept": 102395,
+    "candidates": 15774770
    },
    "cross_component": "общий пул дедупа K∪D∪S; E дедуплицируется отдельно"
+  },
+  "near_dup": {
+   "lsh_collisions": {
+    "K/D/S": 108,
+    "E": 179
+   },
+   "known_behavior": true,
+   "re_dedup": "0/0",
+   "source": "решение архитектора (дельта-3b): near-dup LSH-коллизии — известное поведение ступени; повторный дедуп выхода корпуса — 0/0 (точных и near-дублей не остаётся)"
   }
  },
  "artifacts": {
   "cpt_manifest": "<HOME>/gb10-shared/datasets/axiom-domain-ds-v1/manifest-cpt.json",
   "cpt_report": "<HOME>/gb10-shared/datasets/axiom-domain-ds-v1/cpt-kds-v0.1-report.json",
   "episodes": "<HOME>/gb10-shared/datasets/axiom-domain-ds-v1/episodes-v1-report.json",
-  "cpt_manifest_bytes": 39768,
-  "episodes_bytes": 1862
+  "cpt_manifest_bytes": 44608,
+  "episodes_bytes": 1784
  },
  "notes": [
   "доли компонент — по approx_tokens (chars // 4, ADR-021), измеренные, не гипотеза: гипотеза упаковки — в микс-декларации",

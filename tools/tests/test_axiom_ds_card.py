@@ -14,7 +14,10 @@
 * **T-card5** — происхождение: пути источников в форме ``<HOME>/…``, приватные
   абсолютные пути в карточку не попадают;
 * **T-card6** — статус механический: полный набор артефактов — ``v1``, отсутствие
-  компоненты E — ``v1-draft`` с причиной.
+  компоненты E — ``v1-draft`` с причиной;
+* **T-card7** (дельта-3b) — финальные поля: контейнмент с числами прогона **и**
+  замером пересечения, near-dup LSH-коллизии как известное поведение с названным
+  источником числа, доля ``verified-partial`` (флаг ``partial-green``) числом.
 
 Фикстуры синтетические: корпус K/D/S собирается реальным сериализатором, эпизоды
 E — реальным сборщиком на синтетических сессиях; приватная библиотека в тесты не
@@ -36,6 +39,7 @@ sys.path.insert(0, str(TOOLS_DIR))
 from axiom_ds import build as build_mod  # noqa: E402
 from axiom_ds import card as card_mod  # noqa: E402
 from axiom_ds import cpt_serialize as cpt  # noqa: E402
+from axiom_ds import dedup as dedup_mod  # noqa: E402
 from test_cpt_serialize import make_roots  # noqa: E402  (фикстуры K/D/S — те же)
 
 CONTRACT_COMPLETE = (
@@ -389,3 +393,63 @@ def test_t_card6_allowlist_mismatch_is_draft(tmp_path: Path):
     reasons = " ".join(card["status_reasons"])
     assert "не совпадает с константой" in reasons
     assert "не в прогоне корпуса" in reasons
+
+
+# --------------------------------------------------------------------------- #
+# T-card7 — финальные поля дельты-3b (контейнмент, near-dup, verified-partial)
+# --------------------------------------------------------------------------- #
+
+
+def test_t_card7_containment_has_run_numbers_and_measurement(tmp_path: Path):
+    """Контейнмент — монитор no-op: числа прогона из манифеста + замер пересечения.
+
+    Числа прогона карточка обязана читать из манифеста (после пересборки они
+    меняются), а замер «max оконный Jaccard 0.3524» — нести отдельно, с источником:
+    сам прогон даёт нули и о величине пересечения не говорит.
+    """
+    root = make_dataset_root(tmp_path)
+    card = card_mod.build_card(root=root)
+    containment = card["decisions"]["containment"]
+    manifest = json.loads((root / "manifest-cpt.json").read_text(encoding="utf-8"))
+
+    run = containment["run"]
+    assert run["containers"] == manifest["containment"]["containers"]
+    assert run["checked"] == manifest["containment"]["checked"]
+    assert run["dropped"] == 0                      # монитор: на боевом корпусе no-op
+    assert containment["role"].startswith("монитор")
+
+    measured = containment["measured_overlap"]
+    assert measured["max_window_jaccard"] == 0.3524
+    assert measured["pairs_at_or_above_threshold"] == 0
+    assert measured["pairs_measured"] > 0
+    assert "ADR-020" in measured["source"]
+    # порог замера — порог ступени (дрейф одного без другого ломает тест)
+    assert measured["threshold"] == dedup_mod.CHUNK_JACCARD
+    assert "0.3524" in card_mod.render_markdown(card)
+
+
+def test_t_card7_near_dup_known_behavior_is_attributed(tmp_path: Path):
+    """near-dup LSH-коллизии — известное поведение; источник числа назван явно."""
+    root = make_dataset_root(tmp_path)
+    card = card_mod.build_card(root=root)
+    near_dup = card["counters"]["near_dup"]
+    assert near_dup["known_behavior"] is True
+    assert near_dup["re_dedup"] == "0/0"
+    assert "дельта-3b" in near_dup["source"]
+    assert set(near_dup["lsh_collisions"]) == {"K/D/S", "E"}
+    # числа коллизий — из прогона, а не из текста решения
+    assert near_dup["lsh_collisions"]["K/D/S"] == card["counters"]["dedup"]["K/D/S"]["near"]
+    assert "известное поведение" in card_mod.render_markdown(card)
+
+
+def test_t_card7_verified_partial_share_is_measured(tmp_path: Path):
+    """Доля verified-partial (флаг partial-green) — числом, а не только флагом."""
+    root = make_dataset_root(tmp_path)
+    card = card_mod.build_card(root=root)
+    entry = card["components"]["E"]
+    complete = entry["sft_ready"]
+    partial = entry["sft_partial_ready"]
+    total = complete + partial
+    assert entry["sft_partial_share"] == (round(partial / total, 4) if total else None)
+    assert entry["sft_partial_share_of_records"] == round(partial / entry["records"], 4)
+    assert "`verified-partial`" in card_mod.render_markdown(card)

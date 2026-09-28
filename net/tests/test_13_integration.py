@@ -87,6 +87,58 @@ def _run_task(spec, base_ws, out_dir, cfg, tok, params, bin):
     )
 
 
+def _bytecode_files(ws_dir: Path) -> list[str]:
+    """Относительные пути байткод-кеша в снапшоте (``__pycache__``, ``*.pyc``).
+
+    Байткод несёт mtime исходника и его абсолютный путь (``co_filename``),
+    поэтому снапшот с ним даёт разные ``workspace_sha256`` у двух одинаковых
+    прогонов в разные каталоги — A5 требует пустоты этого списка.
+    """
+    out: list[str] = []
+    for p in sorted(ws_dir.rglob("*")):
+        rel = p.relative_to(ws_dir).as_posix()
+        if p.is_dir() and p.name == net_executor.BYTECODE_DIR:
+            out.append(rel)
+        elif p.is_file() and p.name.endswith(net_executor.BYTECODE_SUFFIX):
+            out.append(rel)
+    return out
+
+
+def test_workspace_snapshot_has_no_pyc(tmp_path, tiny_cfg):
+    """Мини-прогон (те же фикстуры, без гейтов): снапшот без байткод-кеша.
+
+    Полный прогон с гейтами проверяет то же в
+    ``test_end_to_end_manifest_and_determinism``; здесь — сам снапшот: байткод
+    в базовом кейсе (кеш рядом с исходником и «осиротевший» ``*.pyc`` старого
+    layout) в снапшот не попадает, а источник не мутируется. Гейт исполняет
+    ``command_succeeds`` внутри workspace и оставляет ``__pycache__/*.pyc``,
+    маршалящий абсолютный путь исходника, — отсюда недетерминированный
+    ``workspace_sha256`` до фикса.
+    """
+    cfg, tok, params = _tiny_setup(tiny_cfg)
+    spec, base_ws = _make_task(tmp_path)
+
+    cache = base_ws / "net" / net_executor.BYTECODE_DIR
+    cache.mkdir(parents=True)
+    (cache / "config.cpython-311.pyc").write_bytes(b"\x00fake-bytecode")
+    stray = base_ws / "net" / "legacy.pyc"
+    stray.write_bytes(b"\x00fake-bytecode")
+
+    out_dir = tmp_path / "ws-snapshot"
+    net_executor.run_net_model(
+        spec, base_ws, out_dir,
+        params=params, cfg=cfg, tokenizer=tok,
+        decoding={**DECODING_DEFAULT, "seed": int(spec["seed"])},
+        max_new_tokens=MAX_NEW_TOKENS,
+    )
+
+    assert _bytecode_files(out_dir) == []
+    # Кейс скопирован (снапшот — копия, а не пустое дерево), источник цела.
+    assert (out_dir / "CONSTRAINTS.yaml").is_file()
+    assert (out_dir / net_executor.RESPONSE_FILE).is_file()
+    assert cache.is_dir() and stray.is_file()
+
+
 def test_generate_greedy_deterministic(tiny_cfg):
     """Same seed → identical token sequence; greedy is seed-independent."""
     cfg, _, params = _tiny_setup(tiny_cfg)
@@ -126,6 +178,12 @@ def test_end_to_end_manifest_and_determinism(tmp_path, tiny_cfg):
 
     # A5: повторный прогон с тем же seed → идентичный манифест.
     assert m1 == m2
+
+    # A5-механизм: гейт исполняет command_succeeds внутри workspace и оставляет
+    # там байткод-кеш с абсолютным путём исходника — снапшот его не несёт
+    # (иначе два прогона в разные каталоги расходятся по workspace_sha256).
+    assert _bytecode_files(tmp_path / "ws-a") == []
+    assert _bytecode_files(tmp_path / "ws-b") == []
 
     # Манифест записывается и проходит валидацию загрузчика (AD-4).
     mpath = tmp_path / "run-manifest.json"

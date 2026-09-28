@@ -11,6 +11,10 @@ verifier → вердикт → манифест». Пиннинг (AD-4): сн�
 JSON-конфигурации, routing seed — ``cfg.routing_seed``, decoding-параметры —
 полностью в манифесте §8.
 
+A5: снапшот workspace не несёт байткод-кеш (``__pycache__``/``*.pyc``) — он
+маршалит абсолютный путь исходника и сделал бы ``workspace_sha256`` функцией
+пути снапшота (``snapshot_workspace``, ``purge_bytecode``).
+
 jax и пакет net импортируются лениво внутри функций: остальная среда
 (calibrate, verifier, CLI) обязана работать без ML-стека.
 """
@@ -18,6 +22,8 @@ jax и пакет net импортируются лениво внутри фу�
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -33,6 +39,56 @@ from .verifier import arch_ml_bin, arch_ml_build_hash
 # Ответ исполнителя материализуется файлом в workspace (для restore-gates;
 # для keep-gates-implement ответ пишется в IMPLEMENTATION.md задачи).
 RESPONSE_FILE = "MODEL-RESPONSE.md"
+
+# --- A5: снапшот workspace не несёт байткод ---------------------------------
+#
+# Правила ``command_succeeds`` гейт исполняет **внутри проверяемого workspace**
+# (``arch-ml control check``): импорт модулей кейса пишет рядом с исходником
+# ``__pycache__/*.pyc``, а байткод маршалит абсолютный путь исходника
+# (``co_filename``). Тогда ``workspace_sha256`` = ``tree_sha256(out_dir)``
+# становится функцией пути снапшота: два одинаковых прогона в разные каталоги
+# (ws-a/ws-b) дают разные манифесты — A5 («повтор прогона → тот же манифест»)
+# нарушается. Тот же инвариант в своём процессе держит страж C-042
+# (``tools/check_precision_pinning.py``); здесь он обеспечивается для снапшота
+# целиком: запрет записи байткода подпроцессам (``PYTHONDONTWRITEBYTECODE``)
+# плюс вычистка кеша из снапшота — на копировании и перед хешированием.
+
+BYTECODE_DIR = "__pycache__"
+BYTECODE_SUFFIX = ".pyc"
+DONT_WRITE_BYTECODE_ENV = "PYTHONDONTWRITEBYTECODE"
+
+
+def purge_bytecode(root: Path) -> int:
+    """Удаляет из дерева ``root`` байткод-кеш (``__pycache__``, ``*.pyc``).
+
+    Возвращает число удалённых файлов. Байткод — артефакт рантайма, а не
+    состояние кейса: он несёт mtime исходника и его абсолютный путь, из-за
+    чего одно и то же содержимое кейса даёт разные байты в разных каталогах.
+    """
+    removed = 0
+    for cache in sorted(root.rglob(BYTECODE_DIR)):
+        if cache.is_dir() and not cache.is_symlink():
+            removed += sum(1 for p in cache.rglob("*") if p.is_file())
+            shutil.rmtree(cache)
+        else:  # симлинк на каталог кеша: снимаем ссылку, цель не трогаем
+            cache.unlink()
+            removed += 1
+    for stray in sorted(root.rglob("*" + BYTECODE_SUFFIX)):
+        if stray.is_file() or stray.is_symlink():  # старый layout: .pyc рядом с исходником
+            stray.unlink()
+            removed += 1
+    return removed
+
+
+def snapshot_workspace(src: Path, dst: Path) -> None:
+    """Снапшот workspace прогона: копия кейса без рантайм-мусора (A5).
+
+    Копирование и вычистка байткода — в одном месте: снапшот, по которому
+    считается ``workspace_sha256``, не несёт ``__pycache__``/``*.pyc`` даже
+    если они были в источнике (гейт исполняется и на базовом кейсе).
+    """
+    copy_case_snapshot(src, dst)
+    purge_bytecode(dst)
 
 
 @dataclass
@@ -68,7 +124,7 @@ def run_net_model(
     """
     from net import infer  # ленивый импорт: среда без ML-стека остаётся лёгкой
 
-    copy_case_snapshot(base_ws, out_dir)
+    snapshot_workspace(base_ws, out_dir)
 
     prompt = str(task_spec.get("prompt", ""))
     token_ids = tokenizer.encode(prompt)
@@ -121,6 +177,10 @@ def run_net_task(
     прогоны (A5: повтор с тем же seed → идентичный манифест) передают
     фиксированные значения.
     """
+    # A5: до первого подпроцесса (гейты исполняют command_succeeds внутри
+    # workspace) запрещаем запись байткода — иначе в снапшоте появится
+    # __pycache__ с абсолютным путём каталога прогона (см. блок A5 выше).
+    os.environ.setdefault(DONT_WRITE_BYTECODE_ENV, "1")
     b = bin or arch_ml_bin()
     net_run = run_net_model(
         task_spec, base_ws, out_dir,
@@ -131,6 +191,9 @@ def run_net_task(
         task_spec, base_ws, out_dir, net_run.spent_tokens,
         bin=b, hidden_constraints=hidden_constraints,
     )
+    # Вторая линия A5: снапшот хешируется и отдаётся вызывающему без байткода
+    # (переменная выше — первая; подпроцесс мог её не унаследовать).
+    purge_bytecode(out_dir)
     now = _now_iso()
     dec = {
         "temperature": float(decoding["temperature"]),

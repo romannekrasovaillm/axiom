@@ -1,0 +1,50 @@
+# Контракт INT-001 → Аренда GPU-кластера под претрейн (v1)
+# Внешняя система: провайдер аренды. Артефакт контракта, на который ссылается model/INT-001-arenda-gpu.md.
+# Проверяется механически: наличие операций, лимитов и поведения при сбое.
+
+interface: gpu-rental-pretrain
+version: 1
+status: planned
+
+operations:
+  submit_run:
+    input:
+      - dataset_uri: "объектное хранилище, обезличенный/публичный датасет"
+      - dataset_sha256: "хеш датасета (обязателен, AD-4)"
+      - config_uri: "конфиг модели и расписания"
+      - node_count: "число GPU: 8 (L3) | 64 (L1, L1+)"
+      - checkpoint_interval_steps: "интервал чекпойнтинга"
+      - budget_h800_hours: "лимит прогона в H800-часах (обязателен, AD-8)"
+    output:
+      - run_id
+      - checkpoint_prefix: "внешнее объектное хранилище, вне арендованного хоста"
+      - metrics_stream: "loss, grad_norm, throughput, tokens/sec"
+  resume_run:
+    input: [run_id, checkpoint_id]
+    output: [run_id, resumed_from_step]
+  fetch_metrics:
+    input: [run_id]
+    output: [metrics_timeseries]
+  terminate_run:
+    input: [run_id]
+    output: [final_checkpoint_id, consumed_h800_hours]
+
+limits:
+  budget_enforcement: "прогон останавливается на ближайшем чекпойнте при достижении budget_h800_hours"
+  max_wall_clock_hours: 960
+  checkpoint_retention: "до конца проекта"
+
+failure_handling:
+  node_preemption: "возобновление из последнего валидного чекпойнта; повторная попытка ограничена 3"
+  storage_unavailable: "прогон не стартует (блокирующее условие: чекпойнты вне хоста)"
+  provider_outage: "переключение на проверенный резервный провайдер по тому же контракту"
+
+boundaries:
+  private_corpus_export: forbidden           # AD-6
+  api_keys_in_configs: forbidden             # C-011
+  unscheduled_run_without_budget: forbidden  # AD-8
+  local_weight_copies: forbidden             # каноническое хранилище весов — gb10-shared, в контуре симлинки (решение владельца 2026-09-12, C-032)
+
+slo:
+  checkpoint_durability: "не менее 2 копий в разных зонах"
+  metrics_lag_seconds: 300

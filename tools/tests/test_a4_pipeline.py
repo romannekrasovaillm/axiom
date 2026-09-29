@@ -27,13 +27,17 @@ n2); расхождения кода со спекой здесь не подг�
   непокрытых стадий (список выводится из самого манифеста: после дельты
   «статус из следа» `sft`/`rl_base_scheme` могут быть `executed` — их следы
   исполнены на стенде и лежат в evidence/a4-run-wire/, — а `spark_inference`
-  непокрыта всегда: стенда gb10 у оркестратора нет). `run_ref` манифеста —
-  slug без «/» (C-041): имя прогона, по которому страж стоимости ищет смету;
+  непокрыта в прогоне этой сюиты: сюита идёт на CPU (`JAX_PLATFORMS=cpu`),
+  `device_kind` журнала — не стенд gb10/DGX Spark, значит стадия обязана
+  остаться `skipped`; стендовый прогон эта сюита не исполняет). `run_ref`
+  манифеста — slug без «/» (C-041): имя прогона, по которому страж ищет смету;
 * K8 — детерминизм: два прогона с одним --seed дают одинаковые
   `model_weights_sha256` и вердикты среды;
 * §5.2 — stdout содержит JSON-сводку {run_ref, model_weights_sha256,
-  dataset_sha256, stages, pipeline_complete}; стадия spark_inference НЕ имеет
-  статуса executed (подмена стенда запрещена); код 0 при частичном покрытии;
+  dataset_sha256, stages, pipeline_complete}; в CPU-прогоне стадия
+  spark_inference НЕ имеет статуса executed (журнал несёт `device_kind=cpu`,
+  а не стенд gb10/DGX Spark: подмена стенда запрещена); код 0 при частичном
+  покрытии. Разбор «стенд / не стенд» по журналу — T-stand1–T-stand3;
 * K12 — сквозная портируемость: прогон из НЕ-корневого cwd (tmp-каталог) с
   минимальными `--steps 1 --tasks 1` и относительным `--out` внутри
   репозитория -> код 0; в манифесте рекурсивно нет ни одной строки,
@@ -112,14 +116,15 @@ STAGE_SET_V1 = (
     "rl_base_scheme",
 )
 
-# Стадии, которые оркестратор не исполняет и не может объявить executed:
-# `spark_inference` — инференс идёт локально (CPU JAX), стенда gb10 у
-# оркестратора нет; подмена стенда запрещена (ADR-010). Статусы `sft` и
-# `rl_base_scheme` оркестратор берёт из следов стадий (SFT-STAGE.delta §4 п. 4)
-# и в конкретном окружении они могут быть `executed` — поэтому ожидаемый
-# список непокрытых стадий K3 выводится из собранного манифеста, а не из
-# константы, зафиксированной до появления следов.
-ALWAYS_UNCOVERED_STAGES = ("spark_inference",)
+# Стадии, непокрытые в прогоне ЭТОЙ сюиты: она идёт на CPU (`JAX_PLATFORMS=cpu`
+# в `_run_orchestrator`), `device_kind` журнала инференса — не стенд gb10/DGX
+# Spark, поэтому `spark_inference` обязана остаться `skipped` (стенд даёт
+# `executed` только по журналу стенда — T-stand1; подмена стенда запрещена,
+# ADR-010). Статусы `sft` и `rl_base_scheme` оркестратор берёт из следов
+# стадий (SFT-STAGE.delta §4 п. 4) и в конкретном окружении они могут быть
+# `executed` — поэтому ожидаемый список непокрытых стадий K3 выводится из
+# собранного манифеста, а не из константы, зафиксированной до появления следов.
+CPU_RUN_UNCOVERED_STAGES = ("spark_inference",)
 
 # Верхний предел одного прогона в тесте (ручной замер 2026-09-13 — 169,6 с на
 # CPU; запас под jit-компиляцию на медленной машине).
@@ -269,7 +274,8 @@ def test_k3_verify_reports_partial_coverage_with_stage_names(wire_run: dict) -> 
     Состав списка выводится из собранного манифеста (правило §4 п. 2: не
     `executed` или пустой `evidence`), а не из константы: статусы `sft` и
     `rl_base_scheme` приходят из следов стадий и зависят от их наличия на
-    диске. Непокрытость `spark_inference` — инвариант (стенда нет, ADR-010)."""
+    диске. Непокрытость `spark_inference` — инвариант для CPU-прогона сюиты
+    (журнал несёт `device_kind=cpu`, а не стенд gb10/DGX Spark, ADR-010)."""
     result = _verify(wire_run["manifest_path"])
     assert result.returncode == 1, result.stderr
     assert "покрытие частично" in result.stderr
@@ -283,7 +289,7 @@ def test_k3_verify_reports_partial_coverage_with_stage_names(wire_run: dict) -> 
     assert "spark_inference" in uncovered, (
         f"spark_inference обязана быть непокрытой (ADR-010): {uncovered}"
     )
-    for stage in ALWAYS_UNCOVERED_STAGES:
+    for stage in CPU_RUN_UNCOVERED_STAGES:
         assert stage in result.stderr, f"стадия {stage} не поименована в: {result.stderr}"
     for stage in uncovered:
         assert stage in result.stderr, f"стадия {stage} не поименована в: {result.stderr}"
@@ -361,8 +367,10 @@ def test_cli_stdout_json_summary_contract(wire_run: dict) -> None:
 
 @WIRE_RUN
 def test_spark_inference_not_executed(wire_run: dict) -> None:
-    """§5.2/§2: стадия spark_inference НЕ имеет статуса executed — подмена
-    стенда gb10 запрещена (ADR-010); статус честный: skipped или absent."""
+    """§5.2/§2: в CPU-прогоне (`JAX_PLATFORMS=cpu`) стадия spark_inference НЕ
+    имеет статуса executed — журнал несёт `device_kind=cpu`, а не стенд
+    gb10/DGX Spark; подмена стенда запрещена (ADR-010). Статус честный:
+    skipped или absent. Разбор «стенд / не стенд» — T-stand1–T-stand3."""
     statuses = {stage["name"]: stage["status"] for stage in wire_run["summary"]["stages"]}
     assert statuses["spark_inference"] != "executed"
     assert statuses["spark_inference"] in ("skipped", "absent")
@@ -656,6 +664,156 @@ def test_t4_failed_trace_emitted_as_failed_not_absent(
     assert pipeline.read_stage_trace(repo_root, "sft") is not None
     # Соседняя стадия не заражена: статус берётся из её собственного следа.
     assert _stage(stages, "rl_base_scheme")["status"] == "executed"
+
+
+# --- T-stand1…T-stand4: стадия spark_inference — по журналу инференса -------
+#
+# Спека A4-RUN.delta §2: `spark_inference` доказывается журналом инференса с
+# `device_kind` стенда gb10 (DGX Spark); «замер есть на RTX 4080 → skipped».
+# Оркестратор различает стенд и локальный прогон по `device_kind` САМОГО
+# журнала (`detect_spark_stage`), а не по факту запуска: до этой дельты подпись
+# устройства не читалась вовсе, и боевой прогон на GB10 (29.09.2026) записал
+# честно исполненную стадию как `skipped` с причиной «инференс исполнен
+# локально на CPU». Проверки файловые (журнал-фикстура): прогон инференса и GPU
+# не нужны, cwd и каталог evidence/ кейса не затрагиваются.
+
+# Журнал, который `_assemble` передаёт в assemble_stages как inference_journal.
+INFERENCE_JOURNAL_REL = "run/inference/journal.json"
+
+# Прежняя пометка журнала для локального прогона — при не-стенде обязана
+# сохраниться ДОСЛОВНО (дельты прозы в стадии не вносит).
+LOCAL_JOURNAL_NOTE = (
+    "Локальный инференс (CPU JAX) — провод «чекпойнт → генерация»; "
+    "это НЕ стадия spark_inference (стенд gb10/DGX Spark)."
+)
+
+STAND_JOURNAL_NOTE = "инференс на стенде (spark_inference)"
+
+
+def _journal_path(repo_root: Path) -> Path:
+    return repo_root / INFERENCE_JOURNAL_REL
+
+
+def _write_journal(repo_root: Path, payload: object) -> Path:
+    """Журнал инференса на пути, который видит `_assemble` (payload — то, что
+    окажется в файле)."""
+    path = _journal_path(repo_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return path
+
+
+def _rel(repo_root: Path, path: Path) -> str:
+    """Путь от корня так, как его считает `repo_rel` оркестратора (через
+    resolve): сверяются именно те строки, что уйдут в манифест."""
+    return (
+        Path(os.path.realpath(path))
+        .relative_to(Path(os.path.realpath(repo_root)))
+        .as_posix()
+    )
+
+
+def _spark_skipped_evidence(repo_root: Path) -> list[str]:
+    """Прежняя причина skipped — дословно, с путём локального журнала."""
+    return [
+        "причина: инференс исполнен локально на CPU JAX, а не на стенде "
+        "gb10/DGX Spark; подмена стенда запрещена (ADR-010). "
+        f"Локальный журнал: {_rel(repo_root, _journal_path(repo_root))}"
+    ]
+
+
+@pytest.mark.parametrize("device_kind", ["NVIDIA GB10", "gb10", "NVIDIA DGX Spark"])
+def test_t_stand1_stand_journal_gives_executed(
+    pipeline, tmp_path: Path, device_kind: str
+) -> None:
+    """T-stand1 / §2: журнал с `device_kind` стенда (GB10 или DGX; регистр не
+    значим — JAX отдаёт «NVIDIA GB10», спека пишет `device_kind=gb10`) даёт
+    стадии `executed`; evidence — относительный путь журнала (ADR-014 п. 8) и
+    `device_kind` из журнала, и ничего домысленного."""
+    repo_root = tmp_path.resolve()
+    _write_journal(repo_root, {"device_kind": device_kind, "generated_ids": [1, 2]})
+
+    stage = _stage(_assemble(pipeline, repo_root), "spark_inference")
+
+    assert stage["status"] == "executed", stage
+    assert stage["evidence"] == [
+        f"journal={INFERENCE_JOURNAL_REL}",
+        f"device_kind={device_kind}",
+    ], stage["evidence"]
+    for item in stage["evidence"]:
+        assert not item.split("=", 1)[-1].startswith("/"), (
+            f"абсолютный путь в evidence (ADR-014 п. 8): {item!r}"
+        )
+    # Тот же вердикт даёт и чистая функция детекции (её вызывает assemble).
+    assert pipeline.detect_spark_stage(_journal_path(repo_root), repo_root) == stage
+
+
+def test_t_stand2_rtx4080_journal_stays_skipped(pipeline, tmp_path: Path) -> None:
+    """T-stand2 (anti-weakening) / §2: журнал с `device_kind` другой GPU —
+    «NVIDIA GeForce RTX 4080 SUPER» (реальная подпись замеров кейса,
+    evidence/a4-run-wire/*/stage-journal.json) — `executed` НЕ даёт: статус
+    прежний `skipped` с прежней причиной. Замер на 4080 стендом не является,
+    подмена стенда запрещена (ADR-010)."""
+    repo_root = tmp_path.resolve()
+    _write_journal(repo_root, {"device_kind": "NVIDIA GeForce RTX 4080 SUPER"})
+
+    stage = _stage(_assemble(pipeline, repo_root), "spark_inference")
+
+    assert stage["status"] != "executed", stage
+    assert stage["status"] == "skipped", stage
+    assert stage["evidence"] == _spark_skipped_evidence(repo_root), stage["evidence"]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        None,  # журнала нет вовсе
+        "{ это не JSON",  # журнал не парсится
+        [1, 2, 3],  # не JSON-объект
+        {"note": "журнал без device_kind"},  # поля device_kind нет
+        {"device_kind": ""},  # поле пусто
+        {"device_kind": 42},  # поле не строка
+        {"device_kind": "cpu"},  # CPU JAX — локальный прогон
+        # Подпись с разделителем следов: генератор §5.1 делит evidence по «;»,
+        # такая строка исказила бы состав стадии — стендом не признаётся.
+        {"device_kind": "NVIDIA GB10; sft=executed"},
+    ],
+)
+def test_t_stand3_missing_or_broken_journal_keeps_prior_behaviour(
+    pipeline, tmp_path: Path, payload: object
+) -> None:
+    """T-stand3 / §2: журнала нет или он бит (не JSON, не объект, нет/пусто/
+    не строка `device_kind`, чужая подпись устройства) -> прежнее поведение:
+    `skipped` с прежней причиной, не `executed`. Без следа стенда `executed` не
+    выдумывается (фабрикация статуса запрещена)."""
+    repo_root = tmp_path.resolve()
+    if payload is not None:
+        _write_journal(repo_root, payload)
+
+    stage = _stage(_assemble(pipeline, repo_root), "spark_inference")
+
+    assert stage["status"] != "executed", stage
+    assert stage["status"] == "skipped", stage
+    assert stage["evidence"] == _spark_skipped_evidence(repo_root), stage["evidence"]
+
+
+def test_t_stand4_journal_note_names_stand_as_stand(pipeline) -> None:
+    """T-stand4 / §2 + честность журнала: `note` журнала инференса называет
+    стенд стендом («инференс на стенде (spark_inference)»), а локальный
+    прогон — прежним текстом ДОСЛОВНО. Проверяется на сборщике тела журнала:
+    сам инференс на CPU требует jit-компиляции и в быстрый прогон не входит,
+    поэтому честность пометки держится на чистой функции."""
+    for device_kind in ("NVIDIA GB10", "gb10", "NVIDIA DGX Spark"):
+        payload = pipeline.inference_journal_payload(device_kind, [1, 2], 0)
+        assert payload["device_kind"] == device_kind
+        assert payload["note"] == STAND_JOURNAL_NOTE, payload["note"]
+
+    for device_kind in ("cpu", "NVIDIA GeForce RTX 4080 SUPER"):
+        payload = pipeline.inference_journal_payload(device_kind, [1, 2], 0)
+        assert payload["note"] == LOCAL_JOURNAL_NOTE, payload["note"]
 
 
 # --- C-041: run_ref по умолчанию — slug, а не путь --------------------------

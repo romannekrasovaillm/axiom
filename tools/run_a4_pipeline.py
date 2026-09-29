@@ -28,10 +28,21 @@
 прежний `absent` с причиной (ADR-005 п. 1/2). Фабрикация `executed` без следа
 запрещена.
 
-Недоступные стадии помечаются честно:
+Стадия `spark_inference` различает стенд и локальный прогон по **следу
+самого инференса** — журналу `<--out>/inference/journal.json`, который пишет
+`run_local_inference` (спека `docs/specs/A4-RUN.delta.md` §2: «инференс
+исполнен на стенде gb10 (DGX Spark), не на другой GPU»; страж — журнал):
 
-* `spark_inference` — `skipped`: инференс исполняется локально (CPU JAX),
-  что не является стендом gb10/DGX Spark (подмена стенда запрещена, ADR-010).
+* `device_kind` журнала — стенд gb10/DGX Spark (регистр не значим: JAX отдаёт
+  «NVIDIA GB10», спека пишет `device_kind=gb10`) → `executed`, evidence —
+  относительный путь журнала и `device_kind` из него;
+* иначе (локальный CPU JAX или другая GPU: замер на RTX 4080 стендом не
+  является) → прежний `skipped` с прежней причиной; журнала нет или он бит —
+  тот же `skipped`: отсутствие следа `executed` не даёт. Подмена стенда
+  запрещена (ADR-010, AD-4).
+
+Решение принимается по журналу, а не по устройству оркестратора: стадия
+доказывает инференс на стенде, а не хост, с которого запущен оркестратор.
 
 Манифест A4 собирает генератор `tools/a4_manifest.py` (владеет узел n1);
 оркестратор вызывает его **подпроцессом** по контракту §5.1 с
@@ -335,27 +346,140 @@ def run_pretrain_checkpoint(
     return digest, checkpoint_dir, executed
 
 
+# --- распознавание стенда по журналу инференса (спека A4-RUN §2) -------------
+#
+# Стадия `spark_inference` доказывается журналом инференса (`device_kind`
+# стенда gb10/DGX Spark + путь журнала). Подпись устройства берётся из самого
+# журнала, а не из окружения оркестратора: доказывается инференс на стенде, а
+# не хост запуска. Замер на RTX 4080 стендом не является (спека §2) — прогон
+# на нём обязан остаться `skipped` (подмена стенда запрещена, ADR-010).
+STAND_DEVICE_RE = re.compile(r"gb10|dgx", re.IGNORECASE)
+
+# Прежняя причина `skipped` стадии `spark_inference` — дословная цитата прежнего
+# поведения оркестратора; к ней дописывается путь локального журнала.
+SPARK_SKIPPED_REASON = (
+    "причина: инференс исполнен локально на CPU JAX, а не на стенде "
+    "gb10/DGX Spark; подмена стенда запрещена (ADR-010). "
+)
+
+# Прежняя пометка журнала для локального прогона — сохраняется дословно.
+LOCAL_JOURNAL_NOTE = (
+    "Локальный инференс (CPU JAX) — провод «чекпойнт → генерация»; "
+    "это НЕ стадия spark_inference (стенд gb10/DGX Spark)."
+)
+
+
+def is_stand_device_kind(value: Any) -> bool:
+    """`device_kind` описывает стенд gb10/DGX Spark? (подстрока, без регистра).
+
+    Не-строка, пустая строка и строка с разделителем следов `;` или переводом
+    строки стендом не считаются: такая подпись исказила бы состав evidence при
+    передаче `--stage` (генератор §5.1 делит следы по `;`) — честнее не
+    признать стенд, чем испортить манифест.
+    """
+    if not isinstance(value, str) or not value.strip():
+        return False
+    if any(ch in value for ch in ";\r\n"):
+        return False
+    return STAND_DEVICE_RE.search(value) is not None
+
+
+def inference_journal_note(device_kind: str) -> str:
+    """Честная пометка журнала: стенд называется стендом.
+
+    Журнал — источник вердикта стадии `spark_inference`; пометка «локальный
+    инференс, это НЕ стадия» при прогоне на стенде была бы ложью о прогоне
+    (ровно так стадия и теряла `executed` при боевом прогоне 29.09).
+    """
+    if is_stand_device_kind(device_kind):
+        return "инференс на стенде (spark_inference)"
+    return LOCAL_JOURNAL_NOTE
+
+
+def inference_journal_payload(
+    device_kind: str, generated_ids: Any, seed: int
+) -> dict[str, Any]:
+    """Тело журнала инференса (чистая функция — состав журнала проверяется
+    тестами без прогона инференса: на CPU он требует jit-компиляции)."""
+    return {
+        "device_kind": device_kind,
+        "prompt_ids": INFER_PROMPT_IDS,
+        "max_new_tokens": MAX_NEW_TOKENS,
+        "temperature": 0.0,
+        "seed": seed,
+        "generated_ids": generated_ids,
+        "note": inference_journal_note(device_kind),
+    }
+
+
+def read_inference_device_kind(journal_path: Path) -> Optional[str]:
+    """`device_kind` инференс-журнала (тем же полем, что пишет сам оркестратор).
+
+    None — журнала нет, он не читается, не является JSON-объектом или поля
+    `device_kind` в нём нет/оно не строка. Журнал только читается: оркестратор
+    инференс не переигрывает и подпись устройства не выдумывает (фабрикация
+    статуса запрещена, §2).
+    """
+    if not journal_path.is_file():
+        return None
+    try:
+        payload = json.loads(journal_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    value = payload.get("device_kind")
+    return value if isinstance(value, str) else None
+
+
+def detect_spark_stage(journal_path: Path, repo_root: Path) -> dict[str, Any]:
+    """Стадия `spark_inference` — по журналу инференса (спека A4-RUN §2).
+
+    `executed` — только если журнал несёт `device_kind` стенда gb10/DGX Spark:
+    тогда evidence — путь журнала (относительный от корня репозитория,
+    ADR-014 п. 8) и `device_kind` из журнала. Иначе — прежний `skipped` с
+    прежней причиной: локальный CPU JAX и другая GPU (RTX 4080) стендом не
+    являются, подмена стенда запрещена (ADR-010). Журнала нет или он бит —
+    тот же `skipped`: без следа `executed` не выдумывается (§2, AD-4).
+    """
+    device_kind = read_inference_device_kind(journal_path)
+    if device_kind is not None and is_stand_device_kind(device_kind):
+        return {
+            "name": "spark_inference",
+            "status": "executed",
+            "evidence": [
+                f"journal={repo_rel(journal_path, repo_root)}",
+                f"device_kind={device_kind.strip()}",
+            ],
+        }
+    return {
+        "name": "spark_inference",
+        "status": "skipped",
+        "evidence": [
+            SPARK_SKIPPED_REASON
+            + f"Локальный журнал: {repo_rel(journal_path, repo_root)}"
+        ],
+    }
+
+
 def run_local_inference(cfg: ModelConfig, params, out_dir: Path, seed: int) -> Path:
-    """Детерминированный инференс (net/infer.py) на том же чекпойнте → журнал."""
+    """Детерминированный инференс (net/infer.py) на том же чекпойнте → журнал.
+
+    Журнал несёт `device_kind` устройства, на котором инференс реально шёл, —
+    по нему `detect_spark_stage` отличает стенд от локального прогона, а
+    `note` называет прогон стендом, если это стенд.
+    """
     from net import infer
 
     out_ids = infer.generate(
         params, cfg, INFER_PROMPT_IDS, MAX_NEW_TOKENS, 0.0, seed=seed
     )
+    device_kind = detect_backend()["device_kind"]
     journal = out_dir / "inference" / "journal.json"
     journal.parent.mkdir(parents=True, exist_ok=True)
     journal.write_text(
         json.dumps(
-            {
-                "device_kind": detect_backend()["device_kind"],
-                "prompt_ids": INFER_PROMPT_IDS,
-                "max_new_tokens": MAX_NEW_TOKENS,
-                "temperature": 0.0,
-                "seed": seed,
-                "generated_ids": out_ids,
-                "note": "Локальный инференс (CPU JAX) — провод «чекпойнт → генерация»; "
-                "это НЕ стадия spark_inference (стенд gb10/DGX Spark).",
-            },
+            inference_journal_payload(device_kind, out_ids, seed),
             ensure_ascii=False,
             indent=2,
         )
@@ -550,7 +674,9 @@ def assemble_stages(
     именно эти строки через `--stage` попадают в манифест без изменений.
 
     Стадии `pretrain_checkpoint`/`spark_inference`/`rl_environment` считает сам
-    оркестратор; `sft` и `rl_base_scheme` эмитятся из следов стадий
+    оркестратор, причём `spark_inference` — по журналу инференса
+    (`detect_spark_stage`: стенд gb10/DGX Spark → `executed`, иначе прежний
+    `skipped` с причиной); `sft` и `rl_base_scheme` эмитятся из следов стадий
     (`stage_from_trace`), а при отсутствии/битом следе — `absent` с причиной.
     Статус `failed` из валидного следа эмитится как есть (§2).
     """
@@ -565,15 +691,7 @@ def assemble_stages(
                 f"steps={executed_steps}",
             ],
         },
-        {
-            "name": "spark_inference",
-            "status": "skipped",
-            "evidence": [
-                "причина: инференс исполнен локально на CPU JAX, а не на стенде "
-                "gb10/DGX Spark; подмена стенда запрещена (ADR-010). "
-                f"Локальный журнал: {repo_rel(inference_journal, repo_root)}",
-            ],
-        },
+        detect_spark_stage(inference_journal, repo_root),
         {
             "name": "rl_environment",
             "status": "executed",
@@ -783,7 +901,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         checkpoint_dir, target=model_mod.init_params(jax.random.PRNGKey(args.seed), cfg)
     )
 
-    # --- локальный инференс (не стадия, а провод чекпойнт → генерация) -------
+    # --- инференс (провод чекпойнт → генерация) + его журнал — источник
+    # вердикта стадии spark_inference: стенд в device_kind → executed ---------
     inference_journal = run_local_inference(cfg, params, out_dir, args.seed)
 
     # --- доступная стадия: rl_environment -----------------------------------

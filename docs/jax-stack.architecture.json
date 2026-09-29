@@ -1,0 +1,329 @@
+{
+ "schema_version": 1,
+ "diagram_type": "architecture",
+ "meta": {
+  "title": "axiom — стек вычислений: JAX + XLA + MaxText/Orbax/Tunix (27.09.2026)",
+  "output": "jax-stack.html",
+  "quality_profile": "showcase"
+ },
+ "components": [
+  {
+   "id": "ours",
+   "type": "backend",
+   "label": "Наш код: net/ + env/ + tools/",
+   "sublabel": "модель KDA/MLA/MoE, среда, гейты — своё",
+   "tag": "REQ-001",
+   "pos": [
+    60,
+    60
+   ],
+   "size": [
+    280,
+    70
+   ]
+  },
+  {
+   "id": "jaxapi",
+   "type": "backend",
+   "label": "JAX API: jit / vmap / grad",
+   "sublabel": "обучение = композиция трансформаций",
+   "tag": "jax 0.10.2",
+   "pos": [
+    60,
+    210
+   ],
+   "size": [
+    280,
+    70
+   ]
+  },
+  {
+   "id": "xla",
+   "type": "backend",
+   "label": "XLA-компилятор",
+   "sublabel": "фьюзинг, детерминизм (ADR-013)",
+   "tag": "OpenXLA",
+   "pos": [
+    60,
+    360
+   ],
+   "size": [
+    280,
+    70
+   ]
+  },
+  {
+   "id": "pallas",
+   "type": "backend",
+   "label": "Pallas: KDA-кернелы",
+   "sublabel": "delta-rule + conv + decay на JAX-диалекте",
+   "tag": "ADR-008",
+   "pos": [
+    60,
+    510
+   ],
+   "size": [
+    280,
+    70
+   ]
+  },
+  {
+   "id": "cuda",
+   "type": "backend",
+   "label": "CUDA 12 plugin / GB10",
+   "sublabel": "RTX 4080 (дев) → DGX Spark (стенд)",
+   "tag": "AD-7",
+   "pos": [
+    60,
+    660
+   ],
+   "size": [
+    280,
+    70
+   ]
+  },
+  {
+   "id": "maxtext",
+   "type": "backend",
+   "label": "Форк MaxText",
+   "sublabel": "шардирование — на L1 (30B)",
+   "tag": "ADR-008",
+   "pos": [
+    420,
+    60
+   ],
+   "size": [
+    280,
+    70
+   ]
+  },
+  {
+   "id": "orbax",
+   "type": "backend",
+   "label": "Orbax: чекпойнты",
+   "sublabel": "round-trip + tree_hash (AD-4)",
+   "tag": "checkpoint",
+   "pos": [
+    420,
+    210
+   ],
+   "size": [
+    280,
+    70
+   ]
+  },
+  {
+   "id": "tunix",
+   "type": "backend",
+   "label": "Tunix: SFT + GRPO",
+   "sublabel": "рецепты K2-семейства",
+   "tag": "ADR-005",
+   "pos": [
+    420,
+    360
+   ],
+   "size": [
+    280,
+    70
+   ]
+  },
+  {
+   "id": "muon",
+   "type": "backend",
+   "label": "Muon + Newton–Schulz",
+   "sublabel": "per-head оптимизатор",
+   "tag": "PolarExpress",
+   "pos": [
+    420,
+    510
+   ],
+   "size": [
+    280,
+    70
+   ]
+  },
+  {
+   "id": "h800",
+   "type": "external",
+   "label": "Аренда H800: претрейн 20B",
+   "sublabel": "публичные шарды W/C/Q",
+   "tag": "ADR-021",
+   "pos": [
+    780,
+    360
+   ],
+   "size": [
+    280,
+    70
+   ]
+  },
+  {
+   "id": "pytorch",
+   "type": "external",
+   "label": "PyTorch — отвергнут",
+   "sublabel": "нет Muon/MTP-рецептов",
+   "tag": "ADR-007✗",
+   "pos": [
+    780,
+    60
+   ],
+   "size": [
+    280,
+    70
+   ]
+  },
+  {
+   "id": "rust",
+   "type": "external",
+   "label": "Rust-стек — отвергнут",
+   "sublabel": "нет порта JAX/XLA (ADR-017)",
+   "tag": "ADR-017",
+   "pos": [
+    780,
+    510
+   ],
+   "size": [
+    280,
+    70
+   ]
+  }
+ ],
+ "boundaries": [
+  {
+   "kind": "security-group",
+   "label": "100% собственный код (REQ-001)",
+   "wraps": [
+    "ours"
+   ]
+  },
+  {
+   "kind": "security-group",
+   "label": "Открытая инфраструктура — фундамент",
+   "wraps": [
+    "jaxapi",
+    "xla",
+    "pallas",
+    "maxtext",
+    "orbax",
+    "tunix",
+    "muon"
+   ]
+  },
+  {
+   "kind": "security-group",
+   "label": "Отвергнутые альтернативы",
+   "wraps": [
+    "pytorch",
+    "rust"
+   ]
+  }
+ ],
+ "connections": [
+  {
+   "id": "ours-jax",
+   "from": "ours",
+   "to": "jaxapi",
+   "label": "вся математика",
+   "labelDx": 115,
+   "labelAt": [
+    315,
+    144
+   ]
+  },
+  {
+   "id": "jax-xla",
+   "from": "jaxapi",
+   "to": "xla",
+   "label": "компиляция графов",
+   "labelDx": 115,
+   "labelAt": [
+    315,
+    294
+   ]
+  },
+  {
+   "id": "xla-pallas",
+   "from": "xla",
+   "to": "pallas",
+   "label": "KDA-кернелы",
+   "labelDx": 115,
+   "labelAt": [
+    315,
+    444
+   ]
+  },
+  {
+   "id": "pallas-cuda",
+   "from": "pallas",
+   "to": "cuda",
+   "label": "исполнение",
+   "labelDx": 115,
+   "labelAt": [
+    315,
+    594
+   ]
+  },
+  {
+   "id": "maxtext-ours",
+   "from": "maxtext",
+   "to": "ours"
+  },
+  {
+   "id": "orbax-ours",
+   "from": "orbax",
+   "to": "ours"
+  },
+  {
+   "id": "tunix-ours",
+   "from": "tunix",
+   "to": "ours"
+  },
+  {
+   "id": "muon-ours",
+   "from": "muon",
+   "to": "ours"
+  },
+  {
+   "id": "cuda-h800",
+   "from": "cuda",
+   "to": "h800",
+   "label": "на аренде",
+   "labelDy": -16,
+   "labelAt": [
+    756,
+    594
+   ]
+  }
+ ],
+ "cards": [
+  {
+   "dot": "cyan",
+   "title": "Почему JAX (ADR-008/017)",
+   "items": [
+    "XLA-детерминизм для A5 (ADR-013)",
+    "Pallas: KDA-кернелы без C++",
+    "Tunix: GRPO/GSPO + MTP из коробки",
+    "MaxText: шардирование L1 без своего пайплайна"
+   ]
+  },
+  {
+   "dot": "amber",
+   "title": "Почему НЕ PyTorch/Rust",
+   "items": [
+    "PyTorch: нет Muon/MTP-рецептов",
+    "Rust: нет порта JAX/XLA (проверено 25.09)",
+    "Гибрид: два тулчейна (ADR-017)"
+   ]
+  },
+  {
+   "dot": "violet",
+   "title": "Как работает вместе",
+   "items": [
+    "наш код → JAX → XLA → CUDA: один граф",
+    "Muon внутри графа — компилируется с моделью",
+    "Orbax tree_hash — пиннинг (AD-4)",
+    "один код: 4080 → GB10 → H800"
+   ]
+  }
+ ]
+}

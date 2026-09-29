@@ -1,7 +1,7 @@
 <div align="center">
   <img src="docs/assets/banner.svg" alt="AXIOM — LLM from scratch on JAX" width="100%"/>
 
-  [![A4 gate](https://img.shields.io/badge/A4_gate-4%2F5_stages_executed-ff9f1c?style=flat-square)](docs/RESULTS-2026-09-27.ru.md)
+  [![A4 gate](https://img.shields.io/badge/A4_gate-5%2F5_stages-CLOSED-2ea44f?style=flat-square)](docs/RESULTS-GB10-2026-09-29.ru.md)
   [![tests](https://img.shields.io/badge/tests-374_passed-2ea44f?style=flat-square)](net/tests/)
   [![data](https://img.shields.io/badge/data-101k%20domain%20records-8250df?style=flat-square)](docs/datasets/axiom-domain-ds-v1-card.md)
   [![JAX](https://img.shields.io/badge/JAX-0.10.2-2b6cb0?style=flat-square)](https://github.com/jax-ml/jax)
@@ -25,7 +25,8 @@
 
 ## 📊 Live reports (GitHub Pages)
 
-- [Pipeline A4: stages → manifest → verify](https://romannekrasovaillm.github.io/axiom/diagrams/a4-gate-flow.html) — interactive Archify diagram
+- [Pipeline A4: 5/5 stages executed on GB10 — gate CLOSED](https://romannekrasovaillm.github.io/axiom/diagrams/a4-gate-flow.html) — interactive Archify diagram
+- [Hardware run report (RU, 29.09)](https://romannekrasovaillm.github.io/axiom/RESULTS-GB10-2026-09-29.ru.html) — full pipeline on DGX Spark
 - [Data map: pretrain (public) vs post-train (private)](https://romannekrasovaillm.github.io/axiom/diagrams/axiom-data-map.html)
 - [Results report (RU)](https://romannekrasovaillm.github.io/axiom/RESULTS-2026-09-27.ru.html) · [Open questions & forks](https://romannekrasovaillm.github.io/axiom/OPEN-QUESTIONS.md)
 - **[Contributing guide (RU)](docs/CONTRIBUTING.ru.md)** — how to join, where to help, acceptance rules

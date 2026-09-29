@@ -1,0 +1,20 @@
+{
+  "report": "a5-drift-20260929",
+  "date": "2026-09-29",
+  "runs": [
+    {"run_ref": "a4-gb10", "host": "spark-44c3 (GB10)", "xla_deterministic": false, "seed": 0},
+    {"run_ref": "a5-rerun", "host": "spark-44c3 (GB10)", "xla_deterministic": true, "seed": 0}
+  ],
+  "checks": {
+    "model_weights_sha256": {"a4_gb10": "ecab10780283e010…", "a5_rerun": "ecab10780283e010…", "identical": true},
+    "stages": {"both": "5/5 executed", "identical": true},
+    "env_verdict_tuples": {"identical": true, "detail": "(task_id, seed, passed) × 10 — идентичны, pass_count 0/10 в обоих"},
+    "inference_generated_ids": {"seed": 0, "max_new_tokens": 8, "identical": true, "device_kind": "NVIDIA GB10 / NVIDIA GB10"}
+  },
+  "verdict": "A5 PASS: повторный прогон на том же стенде воспроизводит модель побитово и генерацию идентично",
+  "notes": [
+    "XLA_FLAGS=--xla_gpu_deterministic_ops=true выставлен в A5-прогоне (ADR-013); в A4-прогоне флага не было — совпадение model_sha означает, что на GB10 недетерминизм XLA в этом графе не проявился (позитивный сюрприз, но A5-канон сохраняет флаг обязательным в гейтовом профиле)",
+    "pipelene_complete в run-journal обоих прогонов false до финализации — канонический манифест evidence/a4-skeleton-run-manifest.json содержит 5/5 executed",
+    "различия run_ref/out-путей/дат — законные поля прогона, в сверку не входят"
+  ]
+}

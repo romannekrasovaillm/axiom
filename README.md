@@ -1,7 +1,8 @@
 <div align="center">
   <img src="docs/assets/banner.svg" alt="AXIOM — LLM from scratch on JAX" width="100%"/>
 
-  [![A4 gate](https://img.shields.io/badge/A4_gate-5%2F5_stages-CLOSED-2ea44f?style=flat-square)](docs/RESULTS-GB10-2026-09-29.ru.md)
+  [![A4 gate](https://img.shields.io/badge/A4_gate-5%2F5_stages_CLOSED-2ea44f?style=flat-square)](docs/RESULTS-GB10-2026-09-29.ru.md)
+  [![A5 drift](https://img.shields.io/badge/A5_drift-bitwise_reproduction-2ea44f?style=flat-square)](evidence/a5-drift-report-20260929.json)
   [![tests](https://img.shields.io/badge/tests-374_passed-2ea44f?style=flat-square)](net/tests/)
   [![data](https://img.shields.io/badge/data-101k%20domain%20records-8250df?style=flat-square)](docs/datasets/axiom-domain-ds-v1-card.md)
   [![JAX](https://img.shields.io/badge/JAX-0.10.2-2b6cb0?style=flat-square)](https://github.com/jax-ml/jax)

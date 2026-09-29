@@ -1442,10 +1442,10 @@
    },
    "known_behavior": true,
    "re_dedup": {
-    "records": 2042,
+    "records": 2043,
     "exact_dropped": 0,
     "near_dropped": 0,
-    "source": "дельта-3 прогон 28.09.2026"
+    "source": "дельта-3 прогон 2026-09-28T11:00:11Z"
    }
   }
  },

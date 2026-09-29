@@ -17,7 +17,12 @@
   компоненты E — ``v1-draft`` с причиной;
 * **T-card7** (дельта-3b) — финальные поля: контейнмент с числами прогона **и**
   замером пересечения, near-dup LSH-коллизии как известное поведение с названным
-  источником числа, доля ``verified-partial`` (флаг ``partial-green``) числом.
+  источником числа, доля ``verified-partial`` (флаг ``partial-green``) числом;
+  повторный дедуп выхода — **объектом** (``records``/``exact_dropped``/
+  ``near_dropped``/``source``, дельта-3c), а не строкой;
+* **T-card8** (дельта-3c) — пересборка карточки не теряет объект ``re_dedup``:
+  ``records`` идёт за фактическим выходом эпизод-корпуса из отчёта, отсутствие
+  отчёта даёт ``None`` и названную причину, а не выдуманное число.
 
 Фикстуры синтетические: корпус K/D/S собирается реальным сериализатором, эпизоды
 E — реальным сборщиком на синтетических сессиях; приватная библиотека в тесты не
@@ -429,17 +434,75 @@ def test_t_card7_containment_has_run_numbers_and_measurement(tmp_path: Path):
 
 
 def test_t_card7_near_dup_known_behavior_is_attributed(tmp_path: Path):
-    """near-dup LSH-коллизии — известное поведение; источник числа назван явно."""
+    """near-dup LSH-коллизии — известное поведение; промежуточный дедуп — объектом."""
     root = make_dataset_root(tmp_path)
     card = card_mod.build_card(root=root)
     near_dup = card["counters"]["near_dup"]
+    report = json.loads((root / "episodes-v1-report.json").read_text(encoding="utf-8"))
     assert near_dup["known_behavior"] is True
-    assert near_dup["re_dedup"] == "0/0"
-    assert "дельта-3b" in near_dup["source"]
     assert set(near_dup["lsh_collisions"]) == {"K/D/S", "E"}
     # числа коллизий — из прогона, а не из текста решения
     assert near_dup["lsh_collisions"]["K/D/S"] == card["counters"]["dedup"]["K/D/S"]["near"]
-    assert "известное поведение" in card_mod.render_markdown(card)
+
+    # re_dedup — объект (дельта-3c), а не строка «0/0»: числа адресуются по имени,
+    # records идёт за фактическим выходом эпизод-корпуса, источник — прогон
+    re_dedup = near_dup["re_dedup"]
+    assert isinstance(re_dedup, dict)
+    assert set(re_dedup) == {"records", "exact_dropped", "near_dropped", "source"}
+    assert re_dedup["exact_dropped"] == 0 and re_dedup["near_dropped"] == 0
+    assert re_dedup["records"] == report["episodes_written"] == card["components"]["E"]["records"]
+    assert re_dedup["source"] == f"{card_mod.RE_DEDUP_RUN_PREFIX} {report['generated_at']}"
+    assert report["generated_at"] in re_dedup["source"]
+
+    markdown = card_mod.render_markdown(card)
+    assert "известное поведение" in markdown
+    # объект рендерится колонками records/exact/near, а не строкой «0/0»
+    assert "| Контур | Записей | Точных снято | Near снято | Источник |" in markdown
+    assert f"| E (эпизоды) | {card_mod._num(re_dedup['records'])} | 0 | 0 |" in markdown
+    assert re_dedup["source"] in markdown
+
+
+def test_t_card8_rebuild_keeps_re_dedup_object(tmp_path: Path):
+    """Пересборка карточки не теряет объект ``re_dedup`` и не возвращает строку.
+
+    Регрессия дельты-3c: карточка в репозитории несла `re_dedup` объектом, а
+    генератор писал строку «0/0» — первый же rebuild откатывал форму. Тест
+    собирает карточку, кладёт её на диск и собирает заново из тех же артефактов:
+    форма и числа объекта обязаны сохраниться.
+    """
+    root = make_dataset_root(tmp_path)
+    json_path = tmp_path / "card.json"
+    md_path = tmp_path / "card.md"
+    first = card_mod.run_build_card(root=root, out_md=md_path, out_json=json_path)
+    on_disk = json.loads(json_path.read_text(encoding="utf-8"))
+
+    second = card_mod.build_card(root=root)
+    for card in (first, on_disk, second):
+        re_dedup = card["counters"]["near_dup"]["re_dedup"]
+        assert isinstance(re_dedup, dict), type(re_dedup)
+        assert isinstance(re_dedup["records"], int)
+    assert on_disk["counters"]["near_dup"]["re_dedup"] == second["counters"]["near_dup"]["re_dedup"]
+    assert first["counters"]["near_dup"]["re_dedup"]["records"] == second["counters"]["near_dup"]["re_dedup"]["records"]
+
+    # records следует за данными отчёта, а не за литералом: правим выход в отчёте —
+    # карточка едет за ним
+    report_path = root / "episodes-v1-report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["episodes_written"] = report["episodes_written"] + 7
+    report_path.write_text(json.dumps(report, ensure_ascii=False), encoding="utf-8")
+
+    rebuilt = card_mod.build_card(root=root)
+    assert rebuilt["counters"]["near_dup"]["re_dedup"]["records"] == report["episodes_written"]
+    assert card_mod._num(report["episodes_written"]) in card_mod.render_markdown(rebuilt)
+
+    # нет отчёта E — объект остаётся объектом, но числа не выдумываются
+    report_path.unlink()
+    absent = card_mod.build_card(root=root)
+    re_dedup = absent["counters"]["near_dup"]["re_dedup"]
+    assert isinstance(re_dedup, dict)
+    assert re_dedup["records"] is None
+    assert re_dedup["source"] == card_mod.RE_DEDUP_NO_SOURCE
+    assert "—" in card_mod.render_markdown(absent)
 
 
 def test_t_card7_verified_partial_share_is_measured(tmp_path: Path):

@@ -99,6 +99,13 @@ COMPONENT_TITLES = {
 #: Имя шард-файла с номером шарда: ``<prefix>-00000.jsonl[.zst|.gz]``.
 SHARD_INDEX_RE = re.compile(r"-\d+\.jsonl(?:\.(?:zst|gz))?$")
 
+#: Имя прогона, породившего выход E: с ним ``re_dedup.source`` называет источник
+#: числа, а не пересказывает решение (дельта-3c).
+RE_DEDUP_RUN_PREFIX = "дельта-3 прогон"
+
+#: Что карточка говорит, когда отчёта эпизодов нет: числа не измерены — не ноль.
+RE_DEDUP_NO_SOURCE = "нет отчёта сборки эпизодов: повторный дедуп не измерен"
+
 #: Что за единица в столбце «файлов» у компоненты.
 COMPONENT_FILE_UNITS = {
     "E": "файлов сессий",
@@ -509,6 +516,37 @@ def decisions_section(manifest: dict | None) -> dict:
     }
 
 
+def re_dedup_records(e_data: dict | None) -> int | None:
+    """Записей в фактическом выходе эпизод-корпуса — из отчёта прогона, не литерал.
+
+    ``re_dedup.records`` обязан следовать за артефактом: после пересборки E число
+    меняется, и карточка не вправе держать прежнее. Порядок источников — тот же,
+    что у компоненты E (см. :func:`component_e`): сначала выход сборки, затем
+    оставленное дедупом; ничего не нашлось — ``None`` (неизмеренное, не ноль).
+    """
+    if not isinstance(e_data, dict):
+        return None
+    for key in ("episodes_written", "records"):
+        value = e_data.get(key)
+        if isinstance(value, int):
+            return value
+    dedup = e_data.get("dedup")
+    kept = dedup.get("kept") if isinstance(dedup, dict) else None
+    return kept if isinstance(kept, int) else None
+
+
+def re_dedup_source(e_data: dict | None) -> str | None:
+    """Источник числа повторного дедупа — прогон, породивший выход.
+
+    Штамп берётся из отчёта (``generated_at``): строка называет прогон, а не
+    пересказывает решение. Нет отчёта — источника нет, и карточка это говорит.
+    """
+    stamp = (e_data or {}).get("generated_at") if isinstance(e_data, dict) else None
+    if not isinstance(stamp, str) or not stamp:
+        return None
+    return f"{RE_DEDUP_RUN_PREFIX} {stamp}"
+
+
 def counters_section(manifest: dict | None, e_data: dict | None) -> dict:
     """Счётчики скраба и дедупа: по компонентам и суммарно (числа, без значений)."""
     m_redactions = (manifest or {}).get("redactions") or {}
@@ -544,20 +582,23 @@ def counters_section(manifest: dict | None, e_data: dict | None) -> dict:
         },
         # Near-dup MinHash-LSH на боевом объёме даёт коллизии (нечёткие совпадения
         # похожих текстов) — это известное поведение ступени, а не ошибка прогона.
-        # Повторный дедуп выхода даёт 0/0 по решению архитектора дельты-3b: числа
-        # источника названы явно, чтобы карточка не выдавала их за перезамер.
+        # Повторный дедуп выхода — объектом (дельта-3c): ``records`` — фактический
+        # выход эпизод-корпуса из отчёта (не литерал: после пересборки число идёт
+        # за артефактом), ``exact_dropped``/``near_dropped`` — 0 по решению
+        # архитектора дельты-3b (повторная ступень на выходе ничего не снимает),
+        # ``source`` — прогон, породивший выход.
         "near_dup": {
             "lsh_collisions": {
                 "K/D/S": m_dedup.get("near"),
                 "E": e_dedup.get("near"),
             },
             "known_behavior": True,
-            "re_dedup": "0/0",
-            "source": (
-                "решение архитектора (дельта-3b): near-dup LSH-коллизии — известное "
-                "поведение ступени; повторный дедуп выхода корпуса — 0/0 (точных и "
-                "near-дублей не остаётся)"
-            ),
+            "re_dedup": {
+                "records": re_dedup_records(e_data),
+                "exact_dropped": 0,
+                "near_dropped": 0,
+                "source": re_dedup_source(e_data) or RE_DEDUP_NO_SOURCE,
+            },
         },
     }
 
@@ -908,6 +949,7 @@ def render_markdown(card: dict) -> str:
             "",
         ]
     near_dup = card["counters"]["near_dup"]
+    re_dedup = near_dup.get("re_dedup") or {}
     lines += [
         "## 6. Скраб и дедуп (счётчики)",
         "",
@@ -940,8 +982,20 @@ def render_markdown(card: dict) -> str:
         "",
         f"Near-dup LSH-коллизии — известное поведение ступени "
         f"(K/D/S: {_num(near_dup['lsh_collisions']['K/D/S'])}, "
-        f"E: {_num(near_dup['lsh_collisions']['E'])}); повторный дедуп выхода — "
-        f"{near_dup['re_dedup']}. Источник числа: {near_dup['source']}.",
+        f"E: {_num(near_dup['lsh_collisions']['E'])}).",
+        "",
+        "Повторный дедуп выхода корпуса (проверка ступени, не перезамер):",
+        "",
+        _table(
+            ["Контур", "Записей", "Точных снято", "Near снято", "Источник"],
+            [[
+                "E (эпизоды)",
+                _num(re_dedup.get("records")),
+                _num(re_dedup.get("exact_dropped")),
+                _num(re_dedup.get("near_dropped")),
+                re_dedup.get("source") or "—",
+            ]],
+        ),
         "",
         "## 7. Что не сделано и открытые вопросы",
         "",

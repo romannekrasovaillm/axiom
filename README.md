@@ -28,6 +28,7 @@
 - [Pipeline A4: stages → manifest → verify](https://romannekrasovaillm.github.io/axiom/diagrams/a4-gate-flow.html) — interactive Archify diagram
 - [Data map: pretrain (public) vs post-train (private)](https://romannekrasovaillm.github.io/axiom/diagrams/axiom-data-map.html)
 - [Results report (RU)](https://romannekrasovaillm.github.io/axiom/RESULTS-2026-09-27.ru.html) · [Open questions & forks](https://romannekrasovaillm.github.io/axiom/OPEN-QUESTIONS.md)
+- **[Contributing guide (RU)](docs/CONTRIBUTING.ru.md)** — how to join, where to help, acceptance rules
 
 ## What is here
 

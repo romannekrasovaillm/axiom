@@ -320,13 +320,19 @@ def capture_forward(
         if not is_kda:
             mla_inputs.append(rms_norm(h, block.norm_attn))  # what the MLA layer reads
         delta, _qb, pool = model._block_delta(block, is_kda, cfg, h, chunk_size, False, mode, pool)
-        if use_attnres and i > 0:
-            sources = jnp.stack([embed_src] + layer_deltas, axis=0)
-            corr = model.attnres_mod.apply_layer(params.attnres.w[i], sources)
+        if use_attnres:
+            if i > 0:
+                sources = jnp.stack([embed_src] + layer_deltas, axis=0)
+                corr = model.attnres_mod.apply_layer(params.attnres.w[i], sources)
+            else:
+                corr = 0.0
+            layer_deltas.append(delta)
         else:
+            # AttnRes off: no consumer for per-layer deltas — do not append.
+            # A live python-list reference defeats XLA DCE and holds
+            # 24 x (T, hidden) in memory (the 15.4 GiB capture OOM at 64K).
             corr = 0.0
         h = h + delta + corr
-        layer_deltas.append(delta)
     return rms_norm(h, params.norm_final), tuple(mla_inputs)
 
 

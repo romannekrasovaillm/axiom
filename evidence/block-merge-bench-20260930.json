@@ -1,0 +1,602 @@
+{
+  "report": "ADR-018 block-wise token merging — 64K gap bench",
+  "date": "2026-09-30",
+  "status": "measured",
+  "gpu": "NVIDIA GeForce RTX 4080 SUPER, 16376 MiB, 3105 MHz",
+  "platform": [
+    "cuda:0"
+  ],
+  "jax_version": "0.10.2",
+  "config": {
+    "path": "net/config.json",
+    "sha256": "15720ff3a5a75d26c49330f8c2ba087b8ca8758b472180013ad81a6e4b572aed",
+    "declared_mla_block_merge": {
+      "enabled": false,
+      "block": 16
+    },
+    "switch": "runtime: a temporary copy of the pinned config with mla_block_merge flipped is read through net.config.CONFIG_PATH (spine AD-9 / C-035); the pinned net/config.json is not edited and stays off",
+    "block": 16,
+    "mla_top_k": 512,
+    "swa_window": 128,
+    "mla_layer_modes": [
+      "full",
+      "reindex",
+      "reindex",
+      "reindex",
+      "reindex",
+      "reindex"
+    ]
+  },
+  "bounds": {
+    "capture_form": "scan",
+    "capture_form_requested": "auto",
+    "capture_form_reference_need_gib": 15.3,
+    "capture_form_device_budget_gib": 14.82,
+    "capture_form_why": "the capture is the model's forward either way; the form is a memory choice. 'loop' is the model's layer-by-layer form, bit-equal to model.forward both eagerly and compiled, and the only form AttnRes can use; its traced chain keeps ~3.4 activation copies per layer live, so at 64K it needs ~15.3 GiB and dies on a 16 GB card (measured: XLA remat 'only reduced to 20.27GiB'). 'scan' runs the repeated four-layer units in one lax.scan (18 KDA layers: 247 KB/rec in the python chain vs 38 KB/rec in one scan) and fits; it is compiled by construction, so it is bit-equal to model.forward compiled, not eager — a compiled body lowers the RMSNorm reduction in a different association order than op-by-op. The bench consumes the capture compiled (capture_leg), so the numbers are on the model's own activations.",
+    "attn_dense_reference": false,
+    "attnres": false,
+    "head_vocab": 4096,
+    "why": "64K on a 16 GB card: the dense oracle needs (B,H,T,T) fp32 ~206 GB; the tied 160K head needs (1,T,160000) fp32 42 GB; the AttnRes source stack needs 25 x (1,T,1536) fp32 plus a copy for the normalised keys ~20 GB. None of the three is part of the measured mechanism (the MLA indexer selection)."
+  },
+  "recall": {
+    "source": "isolated",
+    "length": 65536,
+    "seed": 0,
+    "block": 16,
+    "layers": [
+      3,
+      7,
+      11,
+      15,
+      19,
+      23
+    ],
+    "query_position": 65535,
+    "tolerance": 0.02,
+    "probes": [
+      {
+        "position_fraction": 0.1,
+        "fact_index": 0,
+        "start": 6553,
+        "length": 4,
+        "block_ids": [
+          409
+        ],
+        "per_layer": {
+          "off": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "on": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "eq": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "recall_off": 0.0,
+        "recall_on": 0.0,
+        "recall_on_equal_budget": 0.0,
+        "equal_budget_blocks": 32,
+        "recall_delta": 0.0,
+        "needle_rank_off": 7859.5,
+        "needle_rank_on": 2496.5,
+        "needle_percentile_off": -14.3505859375,
+        "needle_percentile_on": 0.3905029296875,
+        "chance_off": 0.0078125,
+        "chance_on": 0.125
+      },
+      {
+        "position_fraction": 0.1,
+        "fact_index": 1,
+        "start": 6569,
+        "length": 4,
+        "block_ids": [
+          410
+        ],
+        "per_layer": {
+          "off": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "on": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "eq": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "recall_off": 0.0,
+        "recall_on": 0.0,
+        "recall_on_equal_budget": 0.0,
+        "equal_budget_blocks": 32,
+        "recall_delta": 0.0,
+        "needle_rank_off": 3622.0,
+        "needle_rank_on": 1322.5,
+        "needle_percentile_off": -6.07421875,
+        "needle_percentile_on": 0.6771240234375,
+        "chance_off": 0.0078125,
+        "chance_on": 0.125
+      },
+      {
+        "position_fraction": 0.1,
+        "fact_index": 2,
+        "start": 6585,
+        "length": 4,
+        "block_ids": [
+          411
+        ],
+        "per_layer": {
+          "off": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "on": [
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "eq": [
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "recall_off": 0.0,
+        "recall_on": 0.16666666666666666,
+        "recall_on_equal_budget": 0.16666666666666666,
+        "equal_budget_blocks": 32,
+        "recall_delta": 0.16666666666666666,
+        "needle_rank_off": 18157.5,
+        "needle_rank_on": 2748.0,
+        "needle_percentile_off": -34.4638671875,
+        "needle_percentile_on": 0.3291015625,
+        "chance_off": 0.0078125,
+        "chance_on": 0.125
+      },
+      {
+        "position_fraction": 0.5,
+        "fact_index": 0,
+        "start": 32768,
+        "length": 4,
+        "block_ids": [
+          2048
+        ],
+        "per_layer": {
+          "off": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "on": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "eq": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "recall_off": 0.0,
+        "recall_on": 0.0,
+        "recall_on_equal_budget": 0.0,
+        "equal_budget_blocks": 32,
+        "recall_delta": 0.0,
+        "needle_rank_off": 11308.0,
+        "needle_rank_on": 3078.5,
+        "needle_percentile_off": -21.0859375,
+        "needle_percentile_on": 0.2484130859375,
+        "chance_off": 0.0078125,
+        "chance_on": 0.125
+      },
+      {
+        "position_fraction": 0.5,
+        "fact_index": 1,
+        "start": 32784,
+        "length": 4,
+        "block_ids": [
+          2049
+        ],
+        "per_layer": {
+          "off": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "on": [
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+            0.0,
+            0.0
+          ],
+          "eq": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "recall_off": 0.0,
+        "recall_on": 0.16666666666666666,
+        "recall_on_equal_budget": 0.0,
+        "equal_budget_blocks": 32,
+        "recall_delta": 0.16666666666666666,
+        "needle_rank_off": 11392.0,
+        "needle_rank_on": 1509.5,
+        "needle_percentile_off": -21.25,
+        "needle_percentile_on": 0.6314697265625,
+        "chance_off": 0.0078125,
+        "chance_on": 0.125
+      },
+      {
+        "position_fraction": 0.5,
+        "fact_index": 2,
+        "start": 32800,
+        "length": 4,
+        "block_ids": [
+          2050
+        ],
+        "per_layer": {
+          "off": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "on": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "eq": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "recall_off": 0.0,
+        "recall_on": 0.0,
+        "recall_on_equal_budget": 0.0,
+        "equal_budget_blocks": 32,
+        "recall_delta": 0.0,
+        "needle_rank_off": 13772.5,
+        "needle_rank_on": 844.0,
+        "needle_percentile_off": -25.8994140625,
+        "needle_percentile_on": 0.7939453125,
+        "chance_off": 0.0078125,
+        "chance_on": 0.125
+      },
+      {
+        "position_fraction": 0.9,
+        "fact_index": 0,
+        "start": 58982,
+        "length": 4,
+        "block_ids": [
+          3686
+        ],
+        "per_layer": {
+          "off": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "on": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "eq": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "recall_off": 0.0,
+        "recall_on": 0.0,
+        "recall_on_equal_budget": 0.0,
+        "equal_budget_blocks": 32,
+        "recall_delta": 0.0,
+        "needle_rank_off": 15066.5,
+        "needle_rank_on": 2312.0,
+        "needle_percentile_off": -28.4267578125,
+        "needle_percentile_on": 0.435546875,
+        "chance_off": 0.0078125,
+        "chance_on": 0.125
+      },
+      {
+        "position_fraction": 0.9,
+        "fact_index": 1,
+        "start": 58998,
+        "length": 4,
+        "block_ids": [
+          3687
+        ],
+        "per_layer": {
+          "off": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "on": [
+            0.0,
+            0.0,
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "eq": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "recall_off": 0.0,
+        "recall_on": 0.16666666666666666,
+        "recall_on_equal_budget": 0.0,
+        "equal_budget_blocks": 32,
+        "recall_delta": 0.16666666666666666,
+        "needle_rank_off": 18675.0,
+        "needle_rank_on": 2486.5,
+        "needle_percentile_off": -35.474609375,
+        "needle_percentile_on": 0.3929443359375,
+        "chance_off": 0.0078125,
+        "chance_on": 0.125
+      },
+      {
+        "position_fraction": 0.9,
+        "fact_index": 2,
+        "start": 59014,
+        "length": 4,
+        "block_ids": [
+          3688
+        ],
+        "per_layer": {
+          "off": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.25,
+            0.0
+          ],
+          "on": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          "eq": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "recall_off": 0.041666666666666664,
+        "recall_on": 0.16666666666666666,
+        "recall_on_equal_budget": 0.0,
+        "equal_budget_blocks": 32,
+        "recall_delta": 0.125,
+        "needle_rank_off": 4485.5,
+        "needle_rank_on": 2115.5,
+        "needle_percentile_off": -7.7607421875,
+        "needle_percentile_on": 0.4835205078125,
+        "chance_off": 0.0078125,
+        "chance_on": 0.125
+      }
+    ],
+    "by_position": {
+      "0.10": {
+        "probes": 3,
+        "recall_off": 0.0,
+        "recall_on": 0.05555555555555555,
+        "recall_on_equal_budget": 0.05555555555555555
+      },
+      "0.50": {
+        "probes": 3,
+        "recall_off": 0.0,
+        "recall_on": 0.05555555555555555,
+        "recall_on_equal_budget": 0.0
+      },
+      "0.90": {
+        "probes": 3,
+        "recall_off": 0.013888888888888888,
+        "recall_on": 0.1111111111111111,
+        "recall_on_equal_budget": 0.0
+      }
+    },
+    "overall": {
+      "recall_off": 0.004629629629629629,
+      "recall_on": 0.07407407407407407,
+      "recall_on_equal_budget": 0.018518518518518517,
+      "equal_budget_blocks": 32,
+      "delta": 0.06944444444444445,
+      "delta_equal_budget": 0.013888888888888888,
+      "chance_off": 0.0078125,
+      "chance_on": 0.125,
+      "chance_on_equal_budget": 0.0078125
+    },
+    "all_probes_within_tolerance": true
+  },
+  "cost": {
+    "label": "ADR-018 block merge | MLA stack x6 | 64K",
+    "layers": 6,
+    "length": 65536,
+    "mode_layout": [
+      "full",
+      "reindex",
+      "reindex",
+      "reindex",
+      "reindex",
+      "reindex"
+    ],
+    "legs": {
+      "off": {
+        "p50_s": 1.935606064998865,
+        "p90_s": 1.935895516000528,
+        "min_s": 1.934626712998579,
+        "max_s": 1.9362943279993488,
+        "spread_s": 0.0016676150007697288,
+        "n": 9,
+        "per_round_s": [
+          1.9352944719994412,
+          1.9355561590000434,
+          1.935895516000528,
+          1.9356356389998837,
+          1.9362943279993488,
+          1.935606064998865,
+          1.934626712998579,
+          1.9352332660000684,
+          1.9356284019995655
+        ]
+      },
+      "on": {
+        "p50_s": 0.7778942850000021,
+        "p90_s": 0.7782696720005333,
+        "min_s": 0.7764669849984784,
+        "max_s": 0.7783914129995537,
+        "spread_s": 0.0019244280010752846,
+        "n": 9,
+        "per_round_s": [
+          0.7783914129995537,
+          0.7782360919991334,
+          0.7775634299996455,
+          0.7764669849984784,
+          0.7780801259996224,
+          0.7778942850000021,
+          0.7782696720005333,
+          0.7766024859993195,
+          0.7776312509995478
+        ]
+      }
+    },
+    "ratio_of_medians": 0.4018866747043688,
+    "ratio_threshold": 0.95,
+    "cost_drop_measurable": true,
+    "rounds": {
+      "declared": 10,
+      "dropped": 1,
+      "counted": 9,
+      "inner_repeats": 4
+    },
+    "adr015": {
+      "verdict": "pass",
+      "threshold": 0.95,
+      "dispersion_limit": 0.0475,
+      "ratio_median": 0.4018398002557616,
+      "ratio_min": 0.40114315388389327,
+      "ratio_max": 0.4022841547526512,
+      "ratio_spread": 0.0011410008687579576,
+      "reasons": [],
+      "clock": "backend=gpu; max=3105MHz; hard pin `-lgc 3105,3105` -> FAILED: The current user does not have permission to change clocks for GPU 00000000:01:00.0. Terminating early due to previous errors.; soft control GPUPowerMizerMode=2->1 (readback 1 (prefer maximum performance)); warm-up clocks 2685.0…2700.0 MHz (median 2700, n=6)",
+      "clock_controlled": true,
+      "hard_pin_ok": false
+    }
+  },
+  "verdict": {
+    "rule": "flag_on iff recall_on >= recall_off - 0.02 on all probes AND cost_on.p50 < 0.95 x cost_off.p50; else flag_off",
+    "verdict": "flag_on",
+    "recall_condition": true,
+    "cost_condition": true,
+    "reasons": [],
+    "applied_by_architect": false,
+    "note": "the verdict is reported, not applied: net/config.json keeps mla_block_merge.enabled = false until the architect rules on this report"
+  },
+  "caveats": [
+    "The two recall arms do not attend the same number of records: the unmerged leg reads mla_top_k records, the merged leg mla_top_k blocks (= block times as many records). recall_on_equal_budget is the merged arm at the same record budget, and the chance columns are the coverage of each budget — read the recall table together with them.",
+    "Weights are at initialisation: no trained L3 checkpoint exists in the case, so the recall arm measures selection coverage of the needle position, not learned retrieval. The needle rank and the chance coverage in this report let a reader see whether the instrument had a signal to lose.",
+    "The recall arm hands both modes identical activations (isolated source): that is the delta's own idiom and isolates the mechanism from the projections feeding it.",
+    "The cost arm measures the MLA stack at 64K — the object ADR-018 changes — not the full forward: 18 of the 24 layers are KDA and the dense MoE path is untouched by the flag, so a whole-model ratio would dilute the effect it is meant to measure."
+  ],
+  "runs": {
+    "command": "tools/bench_block_merge.py --length 65536 --seed 0 --dtype bf16 --out /tmp/bench64k-final.json",
+    "wall_seconds": 362.6186203956604,
+    "skip_recall": false,
+    "skip_cost": false,
+    "shards_or_caches_written_to_repo": false
+  }
+}

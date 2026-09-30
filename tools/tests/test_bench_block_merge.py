@@ -18,7 +18,16 @@ rest on:
 * **T-b4** — the capture is `net/model.py`'s forward: its hidden state equals
   ``model.forward(..., return_hidden=True)`` exactly, and the MLA layer inputs it
   reports are the tensors the layers were actually handed (recorded by wrapping
-  ``net.mla.apply_with_pool``), for both AttnRes settings;
+  ``net.mla.apply_with_pool``), for both AttnRes settings.  The capture has two
+  forms and the equality is pinned for both, each in the environment it runs in:
+  eagerly for the reference (loop) form, which is what a fixture of this size
+  takes and what T-b4 above asserts; compiled for the scan form, which is the
+  64K form and is compiled by construction (T-b4b).  The scan form cannot pass
+  the eager assertion — and no scan-based capture can: ``lax.scan`` compiles its
+  body, and XLA lowers a reduction inside a compiled body in a different
+  association order than op by op, so ``jax.jit(rms_norm) != rms_norm`` by ~1
+  ULP, which RMSNorm compounds across layers (measured: 3.5e-5 on this fixture,
+  4.6e-5 for ``jax.jit(model.forward)`` against ``model.forward`` itself);
 * **T-b5** — the instrument's unmerged selection is the model's own: its record
   ids equal ``net.mla.topk_indices``'s row for the same layer input, and the
   runtime switch really moves the declared reader.
@@ -28,6 +37,7 @@ from __future__ import annotations
 
 import dataclasses
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 import jax
@@ -322,6 +332,100 @@ def test_t_b4_capture_equals_model_forward(use_attnres: bool):
         "model's"
     )
     assert len(mla_inputs) == cfg.num_mla_layers
+
+
+def test_t_b4b_scan_form_capture_equals_model_forward_compiled():
+    """T-b4 for the scan form, in the environment the bench uses it in.
+
+    The scan form is the 64K one (the reference form needs ~15.3 GiB there and
+    dies on a 16 GB card), and ``capture_leg`` compiles the capture, so the
+    equality that matters is against a compiled ``model.forward``.  This is the
+    same assertion as T-b4 — the capture *is* the model's forward, bit for bit —
+    with the reference compiled too, which is the only way a ``lax.scan``-based
+    capture can be compared: ``lax.scan`` compiles its body, and a compiled body
+    cannot reproduce an eager reference bit for bit (module docstring, T-b4).
+    """
+    cfg = tiny_cfg()
+    params = _tiny_params(cfg)
+    ids = jnp.arange(T_TINY, dtype=jnp.int32)[None, :] % cfg.vocab_size
+
+    assert bench.capture_form(params, cfg, ids, form="scan") == "scan", (
+        "the fixture must be able to take the scan form, or this test is vacuous"
+    )
+    with bench.declared_switch(False, 16):
+        expected = jax.jit(lambda p, x: model.forward(
+            p, cfg, x, chunk_size=16, use_attnres=False, return_hidden=True))(params, ids)[1]
+        hidden, mla_inputs = jax.jit(lambda p, x: bench.capture_forward(
+            p, cfg, x, use_attnres=False, chunk_size=16, form="scan"))(params, ids)
+    assert bool(jnp.array_equal(hidden, expected)), (
+        "the scan form drifts from net/model.py's compiled forward — its activations are "
+        "not the model's"
+    )
+    # The captured MLA inputs are the model's too: they equal the compiled
+    # reference form's, and T-b4 pins that form's inputs against the tensors the
+    # layers were actually handed (by wrapping net.mla.apply_with_pool — done
+    # eagerly there, because a recorded tensor cannot escape a jit trace).
+    compiled_loop = jax.jit(lambda p, x: bench.capture_forward(
+        p, cfg, x, use_attnres=False, chunk_size=16, form="loop"))(params, ids)[1]
+    assert len(compiled_loop) == len(mla_inputs) == cfg.num_mla_layers
+    for layer, (reference, scanned) in enumerate(zip(compiled_loop, mla_inputs)):
+        assert bool(jnp.array_equal(reference, scanned)), (
+            f"MLA layer {layer}: the scan form reports a different input than the "
+            f"reference form"
+        )
+
+
+@contextmanager
+def _budget_of(value: int | None):
+    """Run a block with ``bench._device_budget_bytes`` reporting ``value``."""
+    original = bench._device_budget_bytes
+    bench._device_budget_bytes = lambda: value
+    try:
+        yield
+    finally:
+        bench._device_budget_bytes = original
+
+
+def test_t_b4c_capture_form_is_chosen_by_need_and_declared():
+    """The form decision: the reference form while it fits, the scan form after.
+
+    Both forms are the model's forward; the choice is memory, and the bench
+    records it (``bounds.capture_form``) so the numbers declare their instrument.
+    """
+    cfg = tiny_cfg()
+    params = _tiny_params(cfg)
+    itemsize = int(params.embedding.dtype.itemsize)
+    ids = jnp.arange(T_TINY, dtype=jnp.int32)[None, :] % cfg.vocab_size
+
+    # the fixture is tiny and this backend reports no budget: the reference
+    # (eager-exact) form is what the capture takes, which is what T-b4 asserts
+    assert bench.capture_form(params, cfg, ids) == "loop"
+    assert bench.capture_form(params, cfg, ids, form="auto") == "loop"
+
+    # the estimate is the documented arithmetic, and it is what decides the form
+    need = bench._reference_form_bytes(cfg, T_TINY, itemsize)
+    assert need == int(cfg.num_layers * T_TINY * cfg.hidden * itemsize
+                       * bench._REFERENCE_LIVE_COPIES_PER_LAYER)
+    long_ids = jnp.zeros((1, 1 << 20), dtype=jnp.int32)
+    long_need = bench._reference_form_bytes(cfg, 1 << 20, itemsize)
+    with _budget_of(long_need - 1):
+        assert bench.capture_form(params, cfg, long_ids) == "scan", (
+            "a capture whose estimated live set exceeds the device budget must take the "
+            "memory-safe form"
+        )
+    with _budget_of(long_need):
+        assert bench.capture_form(params, cfg, long_ids) == "loop", (
+            "the boundary: a live set that just fits the budget stays on the reference form"
+        )
+
+    # the explicit forms override the estimate, and an unusable scan form falls back
+    assert bench.capture_form(params, cfg, long_ids, form="loop") == "loop"
+    assert bench.capture_form(params, cfg, long_ids, form="scan") == "scan"
+    assert bench.capture_form(params, cfg, long_ids, use_attnres=True) == "loop", (
+        "AttnRes keeps every earlier delta live and cannot be carried by a scan"
+    )
+    with pytest.raises(ValueError):
+        bench.capture_form(params, cfg, ids, form="nonsense")
 
 
 def test_t_b4_captured_inputs_are_what_the_layers_were_handed():

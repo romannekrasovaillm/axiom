@@ -1,0 +1,46 @@
+E0930 09:49:29.367605  104767 cuda_executor.cc:1182] [0] Failed to allocate device memory of 14.82GiB (15911092224 bytes): RESOURCE_EXHAUSTED: : CUDA_ERROR_OUT_OF_MEMORY: out of memory
+[bench] config /home/roman/axiom/net/config.json sha256 15720ff3a5a75d26… declared block merge BlockMergeConfig(enabled=False, block=16) (pinned off)
+[bench] active overrides: attn_dense_reference=False (64K sparse path), use_attnres=False, head_vocab=4096
+[bench] gpu: NVIDIA GeForce RTX 4080 SUPER, 16376 MiB, 3105 MHz
+[bench] jax 0.10.2 devices [CudaDevice(id=0)]
+[bench] sequence: 65536 records, seed 0, 9 probes at [0.1, 0.5, 0.9] of the length
+[bench] params initialised (pinned l3-full init, PRNGKey(0))
+[bench] capture form: scan (reference form would need ~15.3 GiB, device budget 14.8 GiB)
+[bench] forward (flag off) 87.7s (compile+run, hidden (1, 65536, 1536))
+[recall] 65536 records, seed 0, block 16, source isolated, query position 65535, MLA layers [3, 7, 11, 15, 19, 23]
+[recall]  position fact   start     off      on   on_eq   delta  rank_off  rank_on chance_off chance_on
+[recall]      0.10    0    6553   0.000   0.000   0.000  +0.000    7859.5   2496.5    0.00781    0.1250
+[recall]      0.10    1    6569   0.000   0.000   0.000  +0.000    3622.0   1322.5    0.00781    0.1250
+[recall]      0.10    2    6585   0.000   0.167   0.167  +0.167   18157.5   2748.0    0.00781    0.1250
+[recall]      0.50    0   32768   0.000   0.000   0.000  +0.000   11308.0   3078.5    0.00781    0.1250
+[recall]      0.50    1   32784   0.000   0.167   0.000  +0.167   11392.0   1509.5    0.00781    0.1250
+[recall]      0.50    2   32800   0.000   0.000   0.000  +0.000   13772.5    844.0    0.00781    0.1250
+[recall]      0.90    0   58982   0.000   0.000   0.000  +0.000   15066.5   2312.0    0.00781    0.1250
+[recall]      0.90    1   58998   0.000   0.167   0.000  +0.167   18675.0   2486.5    0.00781    0.1250
+[recall]      0.90    2   59014   0.042   0.167   0.000  +0.125    4485.5   2115.5    0.00781    0.1250
+[recall] by position 0.10: off 0.000 on 0.056 on@equal_budget 0.056 (n=3)
+[recall] by position 0.50: off 0.000 on 0.056 on@equal_budget 0.000 (n=3)
+[recall] by position 0.90: off 0.014 on 0.111 on@equal_budget 0.000 (n=3)
+[recall] overall: off 0.005 on 0.074 (delta +0.069); on at the equal record budget (32 blocks) 0.019 (delta +0.014); chance coverage off 0.00781 on 0.1250 on@equal_budget 0.00781; all probes within tolerance: True
+[cost] leg off compiled+ran in 20.5s
+[cost] leg on compiled+ran in 9.6s
+[ADR-018 block merge | MLA stack x6 | 64K] clock: backend=gpu; max=3105MHz; hard pin `-lgc 3105,3105` -> FAILED: The current user does not have permission to change clocks for GPU 00000000:01:00.0. Terminating early due to previous errors.; soft control GPUPowerMizerMode=2->1 (readback 1 (prefer maximum performance))
+[ADR-018 block merge | MLA stack x6 | 64K] strict (task p.3): жёсткий пиннинг недоступен -> по строгому чтению вердикт не выдаётся; реализовано чтение п.1 ADR-015 (контроль + проверенная стабильность частот)
+[ADR-018 block merge | MLA stack x6 | 64K] warm-up: all legs until the clock plateaus (min 3 passes / 15s, plateau held 3s, budget 180s)
+[ADR-018 block merge | MLA stack x6 | 64K] warm-up done: 6 passes, 16.7s, clock plateau=yes, samples=(2700, 2700, 2685, 2700, 2700, 2700)
+[ADR-018 block merge | MLA stack x6 | 64K] rounds: 10 x 4 inner repeats, order alternated dense-first/sparse-first, round 0 dropped
+[ADR-018 block merge | MLA stack x6 | 64K] method: ADR-015 — 10 rounds (1 dropped, 9 counted) x 4 inner repeats (round value = min); warm-up 6 passes, 16.7s, clock plateau yes; threshold 0.95, dispersion limit 0.0475
+[ADR-018 block merge | MLA stack x6 | 64K] clock during counted rounds: stable — частоты в учтённых раундах 2685…2685 МГц (медиана 2685, n=9)
+[ADR-018 block merge | MLA stack x6 | 64K]   off      (ref) median  1935.606 ms  min  1934.627  max  1936.294  spread   1.668 ms  n=9  inner spread 0.1%
+[ADR-018 block merge | MLA stack x6 | 64K]   on             median   777.894 ms  min   776.467  max   778.391  spread   1.924 ms  n=9  inner spread 0.3%
+[ADR-018 block merge | MLA stack x6 | 64K]   ratio on/off: median 0.4018  min 0.4011  max 0.4023  разброс 0.0011  n=9  per-round [0.402, 0.402, 0.402, 0.401, 0.402, 0.402, 0.402, 0.401, 0.402]
+[ADR-018 block merge | MLA stack x6 | 64K [ADR-015 gate: on/off < 0.95]] VERDICT: PASS — on/off median 0.4018 (min 0.4011…max 0.4023, разброс 0.0011, порог 0.95, лимит разброса 0.0475, раундов учтено 9); 
+[cost] ADR-018 block merge | MLA stack x6 | 64K: modes ['full', 'reindex', 'reindex', 'reindex', 'reindex', 'reindex']
+[cost] off: p50 1935.606 ms  p90 1935.896 ms  min 1934.627  max 1936.294  n=9
+[cost] on : p50 777.894 ms  p90 778.270 ms  min 776.467  max 778.391  n=9
+[cost] ratio on/off (p50) 0.4019 (threshold 0.95); measurable drop: True
+[cost] ADR-015 gate: pass — ratio median 0.4018 (min 0.4011…max 0.4023, spread 0.0011); clock: backend=gpu; max=3105MHz; hard pin `-lgc 3105,3105` -> FAILED: The current user does not have permission to change clocks for GPU 00000000:01:00.0. Terminating early due to previous errors.; soft control GPUPowerMizerMode=2->1 (readback 1 (prefer maximum performance)); warm-up clocks 2685.0…2700.0 MHz (median 2700, n=6)
+[verdict] FLAG_ON — recall condition True, cost condition True
+[verdict] rule: flag_on iff recall_on >= recall_off - 0.02 on all probes AND cost_on.p50 < 0.95 x cost_off.p50; else flag_off
+[verdict] the verdict is reported, not applied: net/config.json keeps mla_block_merge.enabled = false until the architect rules on this report
+[bench] report written to /tmp/bench64k-final.json (16417 bytes, wall 362.6s)

@@ -79,9 +79,26 @@ Honest limits (declared, because they bound what the numbers can mean)
      its source stack at 64K is ``25 x (1, 65536, 1536)`` fp32 = 10 GB plus a
      second copy for the normalised keys, which does not fit next to the params.
 
+   The capture itself is the fourth bound, and it is a *choice of form*, not a
+   scope cut: ``--capture-form`` / :func:`capture_form` (the report records
+   which form ran, in ``bounds.capture_form``).  The reference form — the
+   model's own layer loop — keeps ~3.4 activation copies per layer live, so at
+   64K it needs ~15.3 GiB and XLA's remat cannot lower that (it reports "only
+   reduced to 20.27GiB"); the scan form runs the repeated units in one
+   ``lax.scan`` and fits.  Both compute the same forward;
+
+   The allocator limit is the fifth, and it is easy to mistake for the card:
+   jax caps itself at ``XLA_PYTHON_CLIENT_MEM_FRACTION`` (75% by default) of
+   the GPU, so a 16 GB card silently limits the run to ~11.7 GiB regardless of
+   what is free.  The 64K capture needs the fraction raised (the run below uses
+   0.95; ``XLA_PYTHON_CLIENT_PREALLOCATE=false`` is an equivalent escape when
+   the pool fragments — see the usage).  Neither touches the measurement: the
+   same forward, the same clock procedure, the same rule.
+
 Usage::
 
     export LD_LIBRARY_PATH=$(ls -d ~/venv-axiom/lib/python3.11/site-packages/nvidia/*/lib | tr '\\n' ':')
+    export XLA_PYTHON_CLIENT_MEM_FRACTION=0.95    # else the default 75% cap OOMs the 64K capture
     python tools/bench_block_merge.py                        # the боeвой 64K run
     python tools/bench_block_merge.py --smoke                # ~minute dry run
     python tools/bench_block_merge.py --skip-cost --length 16384
@@ -290,23 +307,116 @@ def declared_switch(enabled: bool, block: int, base: Path = CONFIG_PATH) -> Iter
 # ---------------------------------------------------------------------------
 
 
-def capture_forward(
+#: ``net/model.py``'s backbone pattern: ``_layer_is_kda(i) = (i % 4) != 3``, so
+#: the 24 layers are six repetitions of the unit ``[KDA, KDA, KDA, MLA]``.  The
+#: scan form below (``_capture_forward_scan``) is built on exactly that period.
+_LAYERS_PER_UNIT = 4
+
+#: Activation copies the reference (loop) form keeps live per layer.  Measured
+#: on the 64K form: XLA's ``memory_analysis()`` reports ~250 KB per record at
+#: 24 layers x 1536 hidden in bf16 (one ``(B, T, hidden)`` copy is 3072 B), so
+#: ``250e3 / 3072 / 24 = 3.4`` copies per layer.  Scaled to 64K that estimates
+#: ``24 x 65536 x 1536 x 2 x 3.4 = 16.4e9 B ~= 15.3 GiB`` of live set — above a
+#: 16 GB card (the same figure the scan form below is measured against),
+#: which is why the reference form dies there with ``RESOURCE_EXHAUSTED`` and
+#: the scan form exists.  Only :func:`capture_form` reads it; ``form=``
+#: overrides the choice.
+_REFERENCE_LIVE_COPIES_PER_LAYER = 3.4
+
+
+def _device_budget_bytes() -> int | None:
+    """Bytes the device lets this process allocate, or ``None`` when unreported.
+
+    ``jax`` reports the allocator limit on a GPU (its share of the card, by
+    default ``XLA_PYTHON_CLIENT_MEM_FRACTION`` = 75% of the total — a cap that
+    is *not* the card and that a 64K capture must clear, see the module
+    docstring) and reports nothing on the CPU backend.
+
+    An unreported budget is read as "the reference form fits": it is the model's
+    own form and the eager-exact one (this function's callers document why that
+    matters), and the scan form stays reachable through ``form="scan"``.
+    """
+    try:
+        stats = jax.local_devices()[0].memory_stats()
+    except Exception:  # pragma: no cover - a backend without accounting
+        return None
+    if not stats:
+        return None
+    limit = stats.get("bytes_limit")
+    return int(limit) if limit else None
+
+
+def _reference_form_bytes(cfg: ModelConfig, length: int, itemsize: int) -> int:
+    """Estimated live set of the reference (loop) form at ``length`` records."""
+    return int(
+        int(cfg.num_layers) * int(length) * int(cfg.hidden) * int(itemsize)
+        * _REFERENCE_LIVE_COPIES_PER_LAYER
+    )
+
+
+def capture_form(
     params: model.ModelParams,
     cfg: ModelConfig,
     input_ids: jnp.ndarray,
     *,
     use_attnres: bool = False,
-    chunk_size: int = 64,
-) -> tuple[jnp.ndarray, tuple[jnp.ndarray, ...]]:
-    """``net/model.py``'s forward, returning the MLA layer inputs as well.
+    form: str = "auto",
+) -> str:
+    """Which form :func:`capture_forward` will take — ``"loop"`` or ``"scan"``.
 
-    The layer loop is ``model.forward``'s, verbatim: the same
-    :func:`net.model._block_delta`, the same layer modes and the same AttnRes
-    call, in the same order — only the output head is dropped (this bench reads
-    no logits) and the RMSNorm that feeds each MLA layer is kept.  The equality
-    of the hidden state with ``model.forward(..., return_hidden=True)`` is
-    asserted by ``tools/tests/test_bench_block_merge.py`` (T-b4), so the capture
-    cannot drift from the model it claims to be.
+    The bench records this in its report, so the instrument the numbers came
+    from is declared rather than inferred by a reader.
+
+    ``"loop"`` (the reference form, ``_capture_forward_loop``) is the model's
+    forward traced one layer at a time: it is bit-equal to ``model.forward``
+    both eagerly and compiled, and it is the only form that carries AttnRes.
+    ``"scan"`` (``_capture_forward_scan``) runs the repeated units in one
+    ``lax.scan`` and is what makes 64K fit a 16 GB card — but a compiled body
+    cannot reproduce an *eagerly* evaluated ``model.forward`` bit for bit (XLA
+    lowers the RMSNorm reduction differently inside a compiled body than op by
+    op; ``jax.jit(rms_norm) != rms_norm``, ~1 ULP per layer, ~3.5e-5 on the
+    tiny fixture after 8 layers).  Under compilation the two agree exactly, and
+    compilation is how the bench consumes the capture (``capture_leg`` jits it,
+    as does any real 64K measurement).  So the scan form is chosen when the
+    reference form's estimated live set does not fit the device, and the
+    reference form is chosen otherwise — which keeps the eager-exact form as
+    the default wherever it is affordable.
+    """
+    if form not in ("auto", "loop", "scan"):
+        raise ValueError(f"unknown capture form {form!r}: expected auto, loop or scan")
+    if form == "loop":
+        return "loop"
+    if form == "auto":
+        budget = _device_budget_bytes()
+        need = _reference_form_bytes(
+            cfg, int(input_ids.shape[-1]), int(params.embedding.dtype.itemsize)
+        )
+        # An unreported budget reads as "the reference form fits": it is the
+        # model's own layer loop and the eager-exact form, and a caller that
+        # knows better can ask for the scan form by name.  That is the case a
+        # 16 GiB-sized forward can still slip through on, so the bench warns
+        # when it picks the reference form for a need this large.
+        if budget is None or need <= budget:
+            return "loop"
+    if _scanned_units(cfg, use_attnres) is None:
+        return "loop"
+    return "scan"
+
+
+def _capture_forward_loop(
+    params: model.ModelParams,
+    cfg: ModelConfig,
+    input_ids: jnp.ndarray,
+    *,
+    use_attnres: bool,
+    chunk_size: int,
+) -> tuple[jnp.ndarray, tuple[jnp.ndarray, ...]]:
+    """The layer loop as written, one traced layer at a time.
+
+    This is the reference form: it is what ``model.forward`` does and it is the
+    only form that can carry AttnRes (which needs every earlier layer's delta
+    live, ``O(num_layers x T x hidden)`` by construction).  At 64K its memory
+    is what :func:`_capture_forward_scan` exists to fix — see that function.
     """
     emb = params.embedding[input_ids]
     h = emb
@@ -334,6 +444,210 @@ def capture_forward(
             corr = 0.0
         h = h + delta + corr
     return rms_norm(h, params.norm_final), tuple(mla_inputs)
+
+
+def _stack_units(tree_list: Sequence) -> object:
+    """``jax.tree_util`` stack with a leading unit axis (``None`` leaves pass)."""
+    return jax.tree_util.tree_map(lambda *xs: jnp.stack(xs), *tree_list)
+
+
+def _first_scanned_unit(cfg: ModelConfig) -> int:
+    """First unit whose four layers are all past the dense-MLP prefix.
+
+    Only whole units are scanned: the unit body indexes its four sub-layers
+    statically, and the dense layer-0 MLP has a different parameter tree from
+    the LatentMoE layers that follow it, so a unit containing a dense layer
+    cannot share the stacked parameter tree.  ``moe_dense_layers`` layers are
+    dense, i.e. ``ceil(moe_dense_layers / 4)`` leading units.
+    """
+    return -(-int(cfg.moe_dense_layers) // _LAYERS_PER_UNIT)
+
+
+def _scanned_mode(cfg: ModelConfig, first_unit: int) -> str | None:
+    """The one MLA mode shared by the scanned units, or ``None`` if not shared.
+
+    ``mla_layer_modes`` is indexed by MLA ordinal, and a unit's MLA layer is the
+    unit's fourth layer, so its ordinal *is* the unit index — the mode is a
+    property of the unit.  ``mode`` is consumed by ``net/mla.py`` in Python
+    control flow (it is not a traced value), so the scan can only be built when
+    every scanned unit agrees on it.  A scanned ``full`` mode that publishes the
+    ADR-012 pool is also rejected: the pool would change the scan carry's type
+    part-way through, which a scan cannot carry.
+    """
+    n_units = int(cfg.num_layers) // _LAYERS_PER_UNIT
+    modes = {mla.layer_mode(cfg, u) for u in range(first_unit, n_units)}
+    if len(modes) != 1:
+        return None
+    mode = modes.pop()
+    if mode == "full" and int(cfg.mla_pool_size) > 0:
+        return None
+    return mode
+
+
+def _scanned_units(cfg: ModelConfig, use_attnres: bool) -> tuple[int, str] | None:
+    """``(first_scanned_unit, mode)`` when the scan form is usable, else ``None``.
+
+    The single place the scan form's preconditions live, so the form decision
+    (:func:`capture_form`) and the dispatch (:func:`capture_forward`) cannot
+    disagree about them.
+    """
+    n_units = int(cfg.num_layers) // _LAYERS_PER_UNIT
+    first_unit = _first_scanned_unit(cfg)
+    if (
+        use_attnres
+        or int(cfg.num_layers) % _LAYERS_PER_UNIT != 0
+        or first_unit >= n_units
+    ):
+        return None
+    mode = _scanned_mode(cfg, first_unit)
+    if mode is None:
+        return None
+    return first_unit, mode
+
+
+def _capture_forward_scan(
+    params: model.ModelParams,
+    cfg: ModelConfig,
+    input_ids: jnp.ndarray,
+    *,
+    chunk_size: int,
+    first_unit: int,
+    mode: str,
+) -> tuple[jnp.ndarray, tuple[jnp.ndarray, ...]]:
+    """The same layer loop with its repeated units run by one ``lax.scan``.
+
+    Why this exists (measurement, RTX 4080 16 GiB, T = 16384, temp = XLA's
+    ``memory_analysis()``): the traced-one-layer-at-a-time form costs
+    ``~250 KB per record`` at 24 layers and grows *linearly in the layer count*
+    (KDA-only: 31 KB/rec at 1 layer, 99 KB at 6, 247 KB at 18), so at 64K its
+    working set is ~15.3 GiB and the forward dies with ``RESOURCE_EXHAUSTED`` on
+    a 15.4 GiB card.  The growth is real liveness, not a reporting artifact:
+    ``jax.checkpoint`` on every layer leaves the number *bit-identical*
+    (XLA's own remat pass already reports "only reduced to 20.27GiB ... down
+    from 20.27GiB"), and XLA's while-loop double buffering is not the cause.
+    Running the repeated units inside a single ``lax.scan`` makes XLA reuse one
+    unit's buffers across iterations instead of keeping every layer's live:
+    18 KDA layers cost 247 KB/rec in a python chain and 38 KB/rec inside one
+    scan, flat in the layer count.
+
+    The arithmetic is untouched — same :func:`net.model._block_delta`, same
+    mode, same order, same parameters (only stacked along a leading axis and
+    sliced back) — so the hidden state is the model's.  Equality is checked in
+    the environment the bench uses, i.e. compiled: the scan body is XLA-compiled
+    by construction, so it reproduces ``jax.jit(model.forward(..., return_hidden=True))``
+    bit for bit but *cannot* reproduce an eagerly evaluated ``model.forward``
+    (XLA lowers a reduction inside a compiled body in a different association
+    order than op-by-op — ``jax.jit(rms_norm) != rms_norm`` by ~1 ULP, which
+    RMSNorm compounds across layers).  :func:`capture_form` carries the
+    measurement; T-b4 pins the eager equality for the reference form and the
+    compiled one for this form.
+
+    The units are ``[KDA, KDA, KDA, MLA]`` (``net/model.py``'s pattern), the
+    ``first_unit`` leading units are run in python (they hold the dense MLP) and
+    the rest by the scan.  The scan body returns each unit's MLA layer input, so
+    the stacked scan output is exactly the per-MLA-layer capture, in order.
+    """
+    n_units = int(cfg.num_layers) // _LAYERS_PER_UNIT
+    units = list(range(first_unit, n_units))
+
+    def layer(u: int, s: int) -> model.BlockParams:
+        return params.layers[u * _LAYERS_PER_UNIT + s]
+
+    # One leading-unit stack per sub-layer and field, so ``lax.scan`` slices the
+    # unit axis for us and the body needs no dynamic indexing (a NamedTuple
+    # parameter tree cannot be indexed on a stacked axis).
+    xs = (
+        jnp.stack([jnp.stack([layer(u, s).norm_attn for s in range(4)]) for u in units]),
+        jnp.stack([jnp.stack([layer(u, s).norm_mlp for s in range(4)]) for u in units]),
+        _stack_units([layer(u, 0).attn for u in units]),  # KDA
+        _stack_units([layer(u, 1).attn for u in units]),  # KDA
+        _stack_units([layer(u, 2).attn for u in units]),  # KDA
+        _stack_units([layer(u, 3).attn for u in units]),  # MLA
+        tuple(_stack_units([layer(u, s).mlp for u in units]) for s in range(4)),
+    )
+
+    def body(carry, unit):
+        h, pool = carry
+        norm_attn, norm_mlp, attn0, attn1, attn2, attn_mla, mlp = unit
+        mla_in = None
+        for s, attn_p in enumerate((attn0, attn1, attn2, attn_mla)):
+            is_kda = s != _LAYERS_PER_UNIT - 1
+            block = model.BlockParams(
+                norm_attn=norm_attn[s], attn=attn_p, norm_mlp=norm_mlp[s], mlp=mlp[s]
+            )
+            if not is_kda:
+                mla_in = rms_norm(h, norm_attn[s])  # what the MLA layer reads
+            delta, _qb, pool = model._block_delta(
+                block, is_kda, cfg, h, chunk_size, False, "full" if is_kda else mode, pool
+            )
+            h = h + delta
+        return (h, pool), mla_in
+
+    h = params.embedding[input_ids]
+    mla_inputs: list[jnp.ndarray] = []
+    pool = None
+    for i in range(first_unit * _LAYERS_PER_UNIT):
+        block = params.layers[i]
+        is_kda = model._layer_is_kda(i)
+        layer_mode = "full" if is_kda else mla.layer_mode(cfg, model._mla_ordinal(i))
+        if not is_kda:
+            mla_inputs.append(rms_norm(h, block.norm_attn))
+        delta, _qb, pool = model._block_delta(
+            block, is_kda, cfg, h, chunk_size, False, layer_mode, pool
+        )
+        h = h + delta
+
+    (h, _pool), ys = jax.lax.scan(body, (h, pool), xs)
+    mla_inputs.extend(ys[u] for u in range(len(units)))
+    return rms_norm(h, params.norm_final), tuple(mla_inputs)
+
+
+def capture_forward(
+    params: model.ModelParams,
+    cfg: ModelConfig,
+    input_ids: jnp.ndarray,
+    *,
+    use_attnres: bool = False,
+    chunk_size: int = 64,
+    form: str = "auto",
+) -> tuple[jnp.ndarray, tuple[jnp.ndarray, ...]]:
+    """``net/model.py``'s forward, returning the MLA layer inputs as well.
+
+    The layer loop is ``model.forward``'s, verbatim: the same
+    :func:`net.model._block_delta`, the same layer modes and the same AttnRes
+    call, in the same order — only the output head is dropped (this bench reads
+    no logits) and the RMSNorm that feeds each MLA layer is kept.  The equality
+    of the hidden state with ``model.forward(..., return_hidden=True)`` is
+    asserted by ``tools/tests/test_bench_block_merge.py`` (T-b4: eagerly for the
+    reference form, which is what the fixture takes, and compiled for the scan
+    form — :func:`capture_form` documents why the scan form cannot be held to
+    the eager comparison), so the capture cannot drift from the model it claims
+    to be.
+
+    The loop is traced one layer at a time (``_capture_forward_loop``) or, when
+    the reference form's live set does not fit the card, with its repeated units
+    run by a single ``lax.scan`` (``_capture_forward_scan``, which documents the
+    64K measurement).  The scan form needs AttnRes off (AttnRes keeps every
+    earlier layer's delta live by construction, so it is intractable at 64K
+    anyway — module docstring, limit 3), a whole number of four-layer units, at
+    least one scanned unit, one shared MLA mode across them and no pool
+    published inside the scan; anything else falls back to the reference form.
+    Either way the arithmetic is the same and, compiled, so is the result.
+    """
+    resolved = capture_form(params, cfg, input_ids, use_attnres=use_attnres, form=form)
+    if resolved == "loop":
+        return _capture_forward_loop(
+            params, cfg, input_ids, use_attnres=use_attnres, chunk_size=chunk_size
+        )
+    scanned = _scanned_units(cfg, use_attnres)
+    if scanned is None:  # ``capture_form`` cannot return "scan" here; belt and braces
+        return _capture_forward_loop(
+            params, cfg, input_ids, use_attnres=use_attnres, chunk_size=chunk_size
+        )
+    first_unit, mode = scanned
+    return _capture_forward_scan(
+        params, cfg, input_ids, chunk_size=chunk_size, first_unit=first_unit, mode=mode
+    )
 
 
 def _params_with_head_slice(
@@ -472,12 +786,13 @@ def capture_leg(
     *,
     use_attnres: bool,
     chunk_size: int = 64,
+    form: str = "auto",
     label: str = "",
     verbose: bool = True,
 ) -> tuple[jnp.ndarray, tuple[jnp.ndarray, ...]]:
     """One jitted 64K forward of the real model, returning the MLA layer inputs."""
     fn = jax.jit(lambda p, x: capture_forward(p, cfg, x, use_attnres=use_attnres,
-                                              chunk_size=chunk_size))
+                                              chunk_size=chunk_size, form=form))
     t0 = time.perf_counter()
     out = fn(params, ids)
     jax.block_until_ready(out)
@@ -949,13 +1264,26 @@ def run(args: argparse.Namespace) -> dict:
     ids = sequence.token_ids[None, :]
     if int(ids.max()) >= args.head_vocab:
         raise SystemExit(f"token id {int(ids.max())} exceeds the head slice {args.head_vocab}")
+    form = capture_form(model_params, active_cfg, ids, use_attnres=bool(args.attnres),
+                        form=args.capture_form)
+    need = _reference_form_bytes(active_cfg, length, int(model_params.embedding.dtype.itemsize))
+    budget = _device_budget_bytes()
+    budget_text = f"{budget / 2 ** 30:.1f} GiB" if budget else "unreported"
+    print(f"[bench] capture form: {form} (reference form would need ~{need / 2 ** 30:.1f} GiB, "
+          f"device budget {budget_text})", flush=True)
+    if form == "loop" and need > 8 * 2 ** 30:
+        print(f"[bench] WARNING: the reference form is not the memory-safe one at this length "
+              f"(~{need / 2 ** 30:.1f} GiB); --capture-form scan forces the other form",
+              flush=True)
     with declared_switch(False, block):
         captures: dict[str, tuple] = {"off": capture_leg(
-            active_cfg, model_params, ids, use_attnres=bool(args.attnres), label="flag off")}
+            active_cfg, model_params, ids, use_attnres=bool(args.attnres), form=form,
+            label="flag off")}
     if args.recall_source == "e2e":
         with declared_switch(True, block):
             captures["on"] = capture_leg(active_cfg, model_params, ids,
-                                         use_attnres=bool(args.attnres), label="flag on")
+                                         use_attnres=bool(args.attnres), form=form,
+                                         label="flag on")
     else:
         captures["on"] = captures["off"]
 
@@ -996,6 +1324,23 @@ def run(args: argparse.Namespace) -> dict:
             "mla_layer_modes": list(cfg.mla_layer_modes),
         },
         "bounds": {
+            "capture_form": form,
+            "capture_form_requested": args.capture_form,
+            "capture_form_reference_need_gib": round(need / 2 ** 30, 2),
+            "capture_form_device_budget_gib": (round(budget / 2 ** 30, 2) if budget else None),
+            "capture_form_why": (
+                "the capture is the model's forward either way; the form is a memory choice. "
+                "'loop' is the model's layer-by-layer form, bit-equal to model.forward both "
+                "eagerly and compiled, and the only form AttnRes can use; its traced chain "
+                "keeps ~3.4 activation copies per layer live, so at 64K it needs ~15.3 GiB and "
+                "dies on a 16 GB card (measured: XLA remat 'only reduced to 20.27GiB'). 'scan' "
+                "runs the repeated four-layer units in one lax.scan (18 KDA layers: 247 KB/rec "
+                "in the python chain vs 38 KB/rec in one scan) and fits; it is compiled by "
+                "construction, so it is bit-equal to model.forward compiled, not eager — a "
+                "compiled body lowers the RMSNorm reduction in a different association order "
+                "than op-by-op. The bench consumes the capture compiled (capture_leg), so the "
+                "numbers are on the model's own activations."
+            ),
             "attn_dense_reference": False,
             "attnres": bool(args.attnres),
             "head_vocab": int(args.head_vocab),
@@ -1063,6 +1408,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--skip-recall", action="store_true")
     ap.add_argument("--skip-cost", action="store_true")
     ap.add_argument("--dtype", choices=("bf16", "fp32"), default="bf16")
+    ap.add_argument("--capture-form", choices=("auto", "loop", "scan"), default="auto",
+                    help="which capture form to run: 'auto' picks the reference (loop) form "
+                         "when its estimated live set fits the device budget, else the scan "
+                         "form; 'loop' forces the model's layer-by-layer form (needs ~15.3 GiB "
+                         "at 64K), 'scan' forces the lax.scan form (memory-safe, compiled)")
     ap.add_argument("--out", type=str, default=str(DEFAULT_OUT))
     ap.add_argument("--smoke", action="store_true",
                     help="small length and few rounds — a dry run of the whole path")

@@ -799,6 +799,385 @@ def pack_batch(
 
 
 # ---------------------------------------------------------------------------
+# 6-бис. Читатель претокенизированного корпуса (``tools/pretokenize.py``)
+# ---------------------------------------------------------------------------
+#
+# Поток ``.jsonl.zst`` (``PretrainMixLoader`` выше) токенизирует документы на
+# каждом шаге; претокенизированный корпус — это уже готовые id, упакованные в
+# записи ``T`` (AD-004: токенизация делается один раз локально и уезжает на
+# аренду как данные).  Различие только в источнике токенов, поэтому читатель
+# отдаёт луп **тот же** контракт: ``(B, T) int32`` с BOS в позиции 0, где
+# ``compute_loss`` сдвигает сам.  Никакой арифметики границ здесь нет — границы
+# записи лежат в файле, и их раскладка сверяется с манифестом при открытии.
+
+
+#: Схема манифеста претокенизированного шард-набора (``tools/pretokenize.py``).
+PACKED_MANIFEST_SCHEMA = "axiom-pretrain-tokens/1"
+
+#: Раскладка записи ``.bin``, которую ждёт читатель (сверяется с манифестом).
+#: Запись = ``[bos] + (seq_len - 1) токенов потока``: строка модели целиком.
+PACKED_RECORD_LAYOUT = "bos + (seq_len-1) токенов потока"
+
+#: Сколько записей читать за один заход (512 × 8192 × 4 Б ≈ 16 МиБ).
+PACKED_READ_BLOCK = 512
+
+
+@dataclass(frozen=True)
+class PackedShardEntry:
+    """Один ``.bin`` шард из манифеста претокенизации."""
+
+    file: str
+    path: Path
+    source: str
+    source_sha256: str
+    records: int
+    slots: int
+    stream_tokens: int
+    pad_tokens: int
+    bytes: int
+    sha256: str
+
+
+@dataclass(frozen=True)
+class PackedShardSet:
+    """Шард-набор готовых токенов (W или C): манифест + его ``.bin``.
+
+    Два счётчика токенов различаются осознанно и не взаимозаменяемы:
+
+    * ``total_slots`` — столько id отдаст читатель (``records × seq_len``):
+      сюда входят служебные BOS (по одному на запись) и PAD хвоста;
+    * ``total_stream_tokens`` — токены самого потока (документы + EOS + кодовые
+      префиксы).  Именно он сопоставим с ``ShardSet.total_tokens`` шард-набора
+      jsonl, поэтому смета и пропорции микса считаются по нему.
+    """
+
+    name: str
+    manifest_path: Path
+    seq_len: int
+    entries: tuple[PackedShardEntry, ...]
+    tokenizer_hash: str
+    source: dict
+
+    @property
+    def total_records(self) -> int:
+        return sum(entry.records for entry in self.entries)
+
+    @property
+    def total_slots(self) -> int:
+        return sum(entry.slots for entry in self.entries)
+
+    @property
+    def total_stream_tokens(self) -> int:
+        return sum(entry.stream_tokens for entry in self.entries)
+
+
+def packed_manifest_path(tokens_root: str | Path, stream: str) -> Path:
+    """Путь манифеста претокенизированного набора (``tokens/W/manifest-w.json``)."""
+    return Path(tokens_root) / stream / f"manifest-{stream.lower()}.json"
+
+
+def load_packed_shard_set(
+    manifest_path: str | Path, *, allowed: Sequence[str] = SHARD_NAMES
+) -> PackedShardSet:
+    """Прочитать манифест претокенизации и вернуть набор ``.bin`` шардов.
+
+    Манифест — такой же контракт данных, как ``manifest-{w,c}.json`` (AD-4):
+    имя шарда, файлы, их sha256 и раскладка записи.  Неизвестное имя шарда,
+    пустой список, чужая схема или **другая раскладка записи** — отказ: читатель,
+    который «догадается» про границы, вернёт молча сдвинутый поток, и это
+    вылезло бы только на лоссе.
+    """
+    manifest_path = Path(manifest_path)
+    try:
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise PretrainDataError(f"манифест tokens не читается: {manifest_path}: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise PretrainDataError(f"манифест tokens не разбирается: {manifest_path}: {exc}") from exc
+
+    if data.get("version") != PACKED_MANIFEST_SCHEMA:
+        raise PretrainDataError(
+            f"схема манифеста tokens {data.get('version')!r} != {PACKED_MANIFEST_SCHEMA!r}: "
+            f"{manifest_path}"
+        )
+    name = data.get("shard")
+    if name not in allowed:
+        raise PretrainDataError(
+            f"шард {name!r} не из объявленного набора {tuple(allowed)}: {manifest_path}"
+        )
+    seq_len = int(data.get("seq_len") or 0)
+    if seq_len < 3:
+        raise PretrainDataError(f"seq_len манифеста не объявлен или мал: {seq_len}")
+    layout = data.get("record_layout")
+    if layout != PACKED_RECORD_LAYOUT:
+        raise PretrainDataError(
+            f"раскладка записи {layout!r} != ожидаемой {PACKED_RECORD_LAYOUT!r}: {manifest_path}"
+        )
+    if data.get("dtype") != "uint32":
+        raise PretrainDataError(f"dtype {data.get('dtype')!r} != 'uint32': {manifest_path}")
+    # Специальные токены обязаны совпасть с константами лупа: id запечены в файл,
+    # и разошедшийся BOS — это сдвиг всей последовательности, а не косметика.
+    for key, expected in (("bos_id", BOS_ID), ("eos_id", EOS_ID), ("pad_id", PAD_ID)):
+        actual = int(data.get(key, expected))
+        if actual != expected:
+            raise PretrainDataError(
+                f"{key} манифеста {actual} != {expected} (net.data.pack_sequence): {manifest_path}"
+            )
+    files = data.get("shards") or []
+    if not files:
+        raise PretrainDataError(f"манифест без шардов: {manifest_path}")
+    entries = []
+    for item in files:
+        path = manifest_path.parent / item["file"]
+        if not path.is_file():
+            raise PretrainDataError(f"шард готовых токенов отсутствует: {path}")
+        records = int(item.get("records", 0))
+        if records <= 0:
+            raise PretrainDataError(f"шард без записей: {path}")
+        entries.append(
+            PackedShardEntry(
+                file=item["file"],
+                path=path,
+                source=str(item.get("source", "")),
+                source_sha256=str(item.get("source_sha256", "")),
+                records=records,
+                slots=int(item.get("tokens", records * seq_len)),
+                stream_tokens=int(item.get("stream_tokens", 0)),
+                pad_tokens=int(item.get("pad_tokens", 0)),
+                bytes=int(item.get("bytes", path.stat().st_size)),
+                sha256=str(item.get("sha256", "")),
+            )
+        )
+    return PackedShardSet(
+        name=name,
+        manifest_path=manifest_path,
+        seq_len=seq_len,
+        entries=tuple(entries),
+        tokenizer_hash=str(data.get("tokenizer_hash", "")),
+        source=dict(data.get("tokenizer") or {}),
+    )
+
+
+class PackedShardReader:
+    """Ленивый поток записей одного ``.bin``: ``(seq_len,) int32`` за шаг.
+
+    Проверки при открытии — не формальность: длина файла обязана быть кратна
+    записи (иначе последняя запись битая), а число записей — совпасть с
+    манифестом (иначе файл от другой ревизии).  Недосчитанный шард читается как
+    ошибка, а не как «на один батч меньше»: укороченный поток незаметно меняет
+    эпоху.
+    """
+
+    def __init__(self, entry: PackedShardEntry, seq_len: int):
+        self.entry = entry
+        self.seq_len = int(seq_len)
+        self.record_bytes = self.seq_len * 4  # uint32
+        # Поля инициализируются до проверок: отказ в __init__ оставляет объект
+        # без ``_handle``, и ``__del__`` не должен падать вторым исключением.
+        self._handle = None
+        self._block: np.ndarray | None = None
+        self._index = 0
+        self._emitted = 0
+        size = entry.path.stat().st_size
+        if size % self.record_bytes != 0:
+            raise PretrainDataError(
+                f"размер {entry.path} ({size} Б) не кратен записи {self.record_bytes} Б"
+            )
+        on_disk = size // self.record_bytes
+        if entry.records and on_disk != entry.records:
+            raise PretrainDataError(
+                f"{entry.path}: записей на диске {on_disk}, а в манифесте {entry.records}"
+            )
+        self.records = on_disk
+
+    def __iter__(self) -> "PackedShardReader":
+        return self
+
+    def _fill(self) -> bool:
+        if self._handle is None:
+            self._handle = open(self.entry.path, "rb")
+        count = min(PACKED_READ_BLOCK, self.records - self._emitted)
+        if count <= 0:
+            return False
+        raw = self._handle.read(count * self.record_bytes)
+        if len(raw) != count * self.record_bytes:
+            raise PretrainDataError(f"{self.entry.path}: файл кончился раньше манифеста")
+        self._block = np.frombuffer(raw, dtype=np.uint32).reshape(count, self.seq_len)
+        self._emitted += count
+        self._index = 0
+        return True
+
+    def __next__(self) -> np.ndarray:
+        """Следующая запись как ``(seq_len,) int32`` (id < vocab, старший бит пуст)."""
+        if self._block is None or self._index >= self._block.shape[0]:
+            if not self._fill():
+                raise StopIteration
+        row = self._block[self._index]
+        self._index += 1
+        return row.astype(np.int32, copy=False)
+
+    def close(self) -> None:
+        if self._handle is not None:
+            try:
+                self._handle.close()
+            except Exception:  # закрытие не должно ронять прогон
+                pass
+        self._handle = None
+
+    def __del__(self) -> None:
+        self.close()
+
+
+class PackedTokenLoader:
+    """Батчи ``(B, T) int32`` из готовых ``.bin`` — пара к ``PretrainMixLoader``.
+
+    Пропорция микса держится на **гранулярности батча**: поток выбирается по
+    максимальному дефициту ``weight * emitted - emitted_stream`` (то же правило,
+    что у ``PretrainMixLoader``), а внутри потока шарды идут по порядку манифеста.
+    Окно шаффла к готовым токенам не применяется осознанно: документы уже упакованы
+    в записи, и «шаффлить» их значило бы перемешивать фиксированные окна контекста.
+    Эпоха заканчивается на первом исчерпании потока — по той же причине, что и в
+    ``PretrainMixLoader._fill_pending``: удержать объявленную пропорцию дальше нельзя.
+    """
+
+    def __init__(
+        self,
+        *,
+        tokens_root: str | Path,
+        streams: Sequence[str] = SHARD_NAMES,
+        seq_len: int,
+        batch_size: int = 1,
+        mix: Mapping[str, float] | None = None,
+    ):
+        if not streams:
+            raise PretrainDataError("не объявлено ни одного потока шардов")
+        if seq_len < 3:
+            raise ValueError("seq_len должен быть >= 3")
+        if batch_size < 1:
+            raise ValueError("batch_size должен быть >= 1")
+        self.tokens_root = Path(tokens_root)
+        self.seq_len = int(seq_len)
+        self.batch_size = int(batch_size)
+        weights = dict(mix) if mix else {name: 1.0 for name in streams}
+        missing = [name for name in streams if name not in weights]
+        if missing:
+            raise PretrainDataError(f"для потоков {missing} не объявлены веса микса")
+        if any(weight < 0 for weight in weights.values()):
+            raise PretrainDataError("веса микса не могут быть отрицательными")
+        if sum(weights[name] for name in streams) <= 0:
+            raise PretrainDataError("сумма весов микса должна быть > 0")
+        self.weights = {name: float(weights[name]) for name in streams}
+        self._sets: dict[str, PackedShardSet] = {}
+        self._readers: dict[str, PackedShardReader] = {}
+        self._shard_index = {name: 0 for name in streams}
+        self._emitted = {name: 0 for name in streams}
+        self._dropped_tail = {name: 0 for name in streams}
+        self._exhausted: set[str] = set()
+        for name in streams:
+            shard_set = load_packed_shard_set(
+                packed_manifest_path(self.tokens_root, name), allowed=tuple(streams)
+            )
+            if shard_set.seq_len != self.seq_len:
+                raise PretrainDataError(
+                    f"seq_len манифеста {name} ({shard_set.seq_len}) != заказанного {self.seq_len}"
+                )
+            self._sets[name] = shard_set
+            self._readers[name] = PackedShardReader(shard_set.entries[0], self.seq_len)
+        self.step = 0
+
+    def __iter__(self) -> "PackedTokenLoader":
+        return self
+
+    def __next__(self) -> np.ndarray:
+        """Следующий батч ``(B, T)``.
+
+        Батч всегда полный: у лупа фиксированная форма ``(B, T)`` (JAX-граф
+        компилируется под неё), поэтому недобранный хвост потока — это конец
+        эпохи, а не батч другого размера.  Добор идёт **сквозь** границу шарда,
+        так что на стыке ``.bin`` теряются не записи, а только хвост потока
+        (``≤ B-1`` записей за эпоху, счётчик — в ``stats()``).
+        """
+        name = self._pick_stream()
+        if name is None:
+            raise StopIteration
+        rows: list[np.ndarray] = []
+        while len(rows) < self.batch_size:
+            try:
+                rows.append(next(self._readers[name]))
+            except StopIteration:
+                if self._advance_shard(name):
+                    continue
+                self._exhausted.add(name)
+                break
+        if len(rows) < self.batch_size:
+            self._dropped_tail[name] += len(rows)
+            raise StopIteration
+        batch = np.stack(rows, axis=0)
+        self._emitted[name] += batch.size
+        self.step += 1
+        return batch
+
+    def _pick_stream(self) -> str | None:
+        """Поток с максимальным дефицитом против объявленной пропорции."""
+        live = [name for name in self._sets if name not in self._exhausted]
+        if not live:
+            return None
+        total = sum(self._emitted.values())
+        best_name, best_deficit = None, None
+        for name in live:
+            deficit = self.weights[name] * total - self._emitted[name]
+            if best_deficit is None or deficit > best_deficit:
+                best_name, best_deficit = name, deficit
+        return best_name
+
+    def _advance_shard(self, name: str) -> bool:
+        """Перейти к следующему ``.bin`` потока; ``False`` — поток кончился."""
+        reader = self._readers[name]
+        reader.close()
+        entries = self._sets[name].entries
+        index = self._shard_index[name] + 1
+        while index < len(entries):
+            next_reader = PackedShardReader(entries[index], self.seq_len)
+            if next_reader.records > 0:
+                self._readers[name] = next_reader
+                self._shard_index[name] = index
+                return True
+            index += 1
+        return False
+
+    # -- след ---------------------------------------------------------------
+
+    def stats(self) -> dict[str, Any]:
+        total = sum(self._emitted.values())
+        return {
+            "step": self.step,
+            "batch_size": self.batch_size,
+            "seq_len": self.seq_len,
+            "slots_total": total,
+            "token_share": {
+                name: (emitted / total if total else 0.0)
+                for name, emitted in self._emitted.items()
+            },
+            "dropped_tail_records": dict(self._dropped_tail),
+            "streams": {
+                name: {
+                    "shard_index": self._shard_index[name],
+                    "shards": len(self._sets[name].entries),
+                    "slots": self._emitted[name],
+                    "stream_tokens": self._sets[name].total_stream_tokens,
+                    "exhausted": name in self._exhausted,
+                    "tokenizer_hash": self._sets[name].tokenizer_hash,
+                }
+                for name in self._sets
+            },
+        }
+
+    def close(self) -> None:
+        for reader in self._readers.values():
+            reader.close()
+
+
+# ---------------------------------------------------------------------------
 # 7. Стоп-правило AD-8: смета до запуска, превышение останавливает прогон
 # ---------------------------------------------------------------------------
 

@@ -1,0 +1,1440 @@
+"""Претрейн-луп скелета L3 (V-4) — потоковый даталоадер, цикл, resume, стоп.
+
+Модуль реализует главный кодовый блок до старта 20B: прогон претрейна по
+шард-файлам W/C (ADR-021) существующим скелетом сети (``net/model.py``,
+``net/optimizer.py``, ``net/checkpoint.py``).  Разделение ответственности:
+
+* **данные** — :class:`PretrainMixLoader`: потоковое чтение ``*.jsonl.zst``
+  шардов W/C по манифестам, микс ~85/15 по токенам (ADR-021), детерминированный
+  шаффл по сиду, токенизация и упаковка в T-последовательности.  Корпус в
+  память не поднимается: живое окно — ``shuffle_window`` документов плюс
+  недобранные токены одной последовательности;
+* **курсор** — :class:`MixCursor`: манифест-курсор (шаг, документы, токены,
+  остаток токенов).  Resume из него даёт **тот же** поток, что продолжил бы
+  непрерывный прогон: без потерь и дублей (проверяется тестом L-6);
+* **цикл** — :func:`train`: loss и оптимизатор берутся из ``net/`` без правок,
+  bf16-параметры с fp32-мастером, опциональный grad-checkpointing (обязателен
+  для ``l3-full`` — урок OOM 956 ГиБ), WSD-расписание (warmup-stable-decay);
+* **след** — метрики jsonl (loss / ток-в-с / MFU) и журнал остановки.
+
+Что модуль **не** делает: не пишет в ``evidence/``, не трогает конфиг сети и не
+подменяет стоп-правило AD-8 — смета читается из ``evidence/budget/<run_ref>.json``
+(или из явно указанного файла) и её отсутствие блокирует запуск.
+
+Запуск — через CLI ``tools/pretrain_run.py``.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import io
+import json
+import math
+import random
+import time
+from collections import deque
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence
+
+import numpy as np
+
+#: Допустимые имена шардов претрейн-микса (ADR-021: W — веб, C — код).
+SHARD_NAMES = ("W", "C")
+
+#: Версия контракта курсора (манифест resume).
+CURSOR_SCHEMA = "pretrain-cursor/v1"
+
+#: Идентификаторы специальных токенов — те же, что у ``net.data.pack_sequence``.
+PAD_ID = 0
+BOS_ID = 1
+EOS_ID = 2
+
+
+class PretrainDataError(RuntimeError):
+    """Данные претрейна не соответствуют контракту (шард, манифест, курсор)."""
+
+
+# ---------------------------------------------------------------------------
+# 1. Расписание LR: WSD (warmup — stable — decay)
+# ---------------------------------------------------------------------------
+
+
+def wsd_schedule(
+    peak_lr: float,
+    total_steps: int,
+    *,
+    warmup_ratio: float = 0.01,
+    decay_ratio: float = 0.05,
+    min_ratio: float = 0.0,
+) -> Callable[[float], float]:
+    """WSD: линейный warmup → стабильное плато → decay последние ``decay_ratio``.
+
+    Отличие от ``net/optimizer.cosine_schedule`` (косинус на всём прогоне):
+    стабильная фаза держит LR на пике, а decay приходит только в конце — это
+    расписание фазы претрейна ADR-021 (~19B на W+C, затем ~1B на decay-шарде Q).
+    Доля decay отсчитывается от **общего** числа шагов (дефолт 5%).
+    """
+    if total_steps <= 0:
+        raise ValueError("total_steps должен быть > 0")
+    if not 0.0 <= min_ratio <= 1.0:
+        raise ValueError("min_ratio должен быть в [0, 1]")
+    warmup_steps = max(1, int(round(total_steps * warmup_ratio)))
+    decay_steps = max(0, int(round(total_steps * decay_ratio)))
+    decay_start = max(warmup_steps, total_steps - decay_steps)
+    # Прогон исполняет шаги ``0..total_steps-1``: decay приходит к минимуму на
+    # последнем исполненном шаге, а не на «шаге total_steps», которого не будет.
+    last_step = total_steps - 1
+
+    def lr_at(step: float) -> float:
+        step = float(step)
+        if step < warmup_steps:
+            return peak_lr * (step / warmup_steps)
+        if step >= decay_start and last_step > decay_start:
+            progress = (step - decay_start) / (last_step - decay_start)
+            progress = min(max(progress, 0.0), 1.0)
+            shape = 0.5 * (1.0 + math.cos(math.pi * progress))
+            return peak_lr * (min_ratio + (1.0 - min_ratio) * shape)
+        return peak_lr
+
+    return lr_at
+
+
+# ---------------------------------------------------------------------------
+# 2. Манифест шард-набора
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ShardEntry:
+    """Один шард-файл из манифеста (контракт ``tools/prep_pretrain``)."""
+
+    file: str
+    path: Path
+    bytes: int
+    sha256: str
+    approx_tokens: int
+    records: int
+
+
+@dataclass(frozen=True)
+class ShardSet:
+    """Шард-набор (W или C): манифест + его шарды."""
+
+    name: str
+    manifest_path: Path
+    entries: tuple[ShardEntry, ...]
+    source: dict
+
+    @property
+    def total_tokens(self) -> int:
+        return sum(entry.approx_tokens for entry in self.entries)
+
+    @property
+    def total_records(self) -> int:
+        return sum(entry.records for entry in self.entries)
+
+
+def load_shard_set(
+    manifest_path: str | Path, *, allowed: Sequence[str] = SHARD_NAMES
+) -> ShardSet:
+    """Прочитать ``manifest-{w,c}.json`` и вернуть набор шардов.
+
+    Манифест — это контракт данных (ADR-004/ADR-021): имя шарда, файлы, их
+    sha256 и ``records``.  Неизвестное имя шарда или пустой список файлов —
+    отказ: молчаливая подстановка другого набора запрещена (иначе прогон
+    уехал бы по данным, не тем, что запиннены карточкой).
+    """
+    manifest_path = Path(manifest_path)
+    try:
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise PretrainDataError(f"манифест не читается: {manifest_path}: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise PretrainDataError(f"манифест не разбирается: {manifest_path}: {exc}") from exc
+
+    name = data.get("shard")
+    if name not in allowed:
+        raise PretrainDataError(
+            f"шард {name!r} не из объявленного набора {tuple(allowed)}: {manifest_path}"
+        )
+    files = data.get("shards") or []
+    if not files:
+        raise PretrainDataError(f"манифест без шардов: {manifest_path}")
+    entries = []
+    for item in files:
+        entry_path = manifest_path.parent / item["file"]
+        if not entry_path.is_file():
+            raise PretrainDataError(f"шард из манифеста отсутствует: {entry_path}")
+        entries.append(
+            ShardEntry(
+                file=item["file"],
+                path=entry_path,
+                bytes=int(item.get("bytes", entry_path.stat().st_size)),
+                sha256=str(item.get("sha256", "")),
+                approx_tokens=int(item.get("approx_tokens", 0)),
+                records=int(item.get("records", 0)),
+            )
+        )
+    return ShardSet(
+        name=name,
+        manifest_path=manifest_path,
+        entries=tuple(entries),
+        source=dict(data.get("source") or {}),
+    )
+
+
+# ---------------------------------------------------------------------------
+# 3. Потоковое чтение шарда
+# ---------------------------------------------------------------------------
+
+
+class ShardDocStream:
+    """Ленивый поток документов одного ``.jsonl.zst`` (одна строка в памяти).
+
+    Курсор resume (``skip``) проматывает строки **без** их разбора: на границе
+    окна достаточно перечитать окно, а не токенизировать пролог шарда заново.
+    """
+
+    def __init__(self, path: str | Path, *, skip: int = 0):
+        self.path = Path(path)
+        self.skip = int(skip)
+        self.documents_read = 0
+        self._iterator: Iterator[str] | None = None
+        self._handle = None
+        self._reader = None
+        self._text = None
+
+    def __iter__(self) -> "ShardDocStream":
+        return self
+
+    def _open(self) -> Iterator[str]:
+        import zstandard as zstd
+
+        self._handle = open(self.path, "rb")
+        self._reader = zstd.ZstdDecompressor().stream_reader(self._handle)
+        self._text = io.TextIOWrapper(self._reader, encoding="utf-8", newline="\n")
+        skipped = 0
+        for line in self._text:
+            if skipped < self.skip:
+                skipped += 1
+                continue
+            stripped = line.strip()
+            if not stripped:
+                continue
+            yield stripped
+
+    def __next__(self) -> str:
+        if self._iterator is None:
+            self._iterator = self._open()
+        line = next(self._iterator)
+        self.documents_read += 1
+        return line
+
+    def close(self) -> None:
+        for handle in (self._text, self._reader, self._handle):
+            if handle is not None:
+                try:
+                    handle.close()
+                except Exception:  # закрытие потока не должно ронять прогон
+                    pass
+        self._text = self._reader = self._handle = None
+        self._iterator = None
+
+    def __del__(self) -> None:
+        self.close()
+
+
+def iter_shard_docs(path: str | Path, *, skip: int = 0) -> ShardDocStream:
+    """Поток документов шарда (``skip`` — сколько строк промахнуть на resume)."""
+    return ShardDocStream(path, skip=skip)
+
+
+# ---------------------------------------------------------------------------
+# 4. Детерминированный шаффл окна
+# ---------------------------------------------------------------------------
+
+
+def window_permutation(
+    *,
+    seed: int,
+    stream: str,
+    shard_index: int,
+    epoch: int,
+    window_index: int,
+    size: int,
+) -> list[int]:
+    """Перестановка окна ``size`` документов, детерминированная по сиду.
+
+    Сид разворачивается в целое через SHA-256 от строкового ключа: ``random``
+    хеширует кортежи через ``hash()``, который зависит от ``PYTHONHASHSEED``, —
+    этот путь дал бы разный шаффл в разных процессах (AD-11 требует
+    воспроизводимости от прогона к прогону, а не от процесса к процессу).
+    """
+    if size < 0:
+        raise ValueError("size должен быть >= 0")
+    key = f"{seed}|{stream}|{shard_index}|{epoch}|{window_index}|{size}".encode("utf-8")
+    int_seed = int.from_bytes(hashlib.sha256(key).digest()[:8], "big")
+    order = list(range(size))
+    random.Random(int_seed).shuffle(order)
+    return order
+
+
+# ---------------------------------------------------------------------------
+# 5. Курсор resume
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class StreamCursor:
+    """Позиция одного потока-шарда в курсоре."""
+
+    name: str
+    shard_index: int
+    shard_doc_offset: int
+    docs: int
+    tokens: int
+    epoch: int
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "shard_index": self.shard_index,
+            "shard_doc_offset": self.shard_doc_offset,
+            "docs": self.docs,
+            "tokens": self.tokens,
+            "epoch": self.epoch,
+        }
+
+    @classmethod
+    def from_json(cls, data: Mapping[str, Any]) -> "StreamCursor":
+        return cls(
+            name=str(data["name"]),
+            shard_index=int(data["shard_index"]),
+            shard_doc_offset=int(data["shard_doc_offset"]),
+            docs=int(data.get("docs", 0)),
+            tokens=int(data.get("tokens", 0)),
+            epoch=int(data.get("epoch", 0)),
+        )
+
+
+@dataclass(frozen=True)
+class MixCursor:
+    """Манифест-курсор прогона: где поток стоит и что осталось не упаковано.
+
+    ``pending_tokens`` — токены, уже извлечённые из документов, но не добравшие
+    до последовательности.  Без них resume потерял бы хвост (или подсунул его
+    дважды), поэтому остаток хранится в курсоре явно.
+    """
+
+    step: int
+    tokens_total: int
+    streams: tuple[StreamCursor, ...]
+    pending_tokens: tuple[int, ...]
+    schema: str = CURSOR_SCHEMA
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "schema": self.schema,
+            "step": self.step,
+            "tokens_total": self.tokens_total,
+            "streams": [item.to_json() for item in self.streams],
+            "pending_tokens": list(self.pending_tokens),
+        }
+
+    @classmethod
+    def from_json(cls, data: Mapping[str, Any]) -> "MixCursor":
+        schema = str(data.get("schema", CURSOR_SCHEMA))
+        if schema != CURSOR_SCHEMA:
+            raise PretrainDataError(
+                f"курсор схемы {schema!r} не поддерживается (ожидается {CURSOR_SCHEMA})"
+            )
+        return cls(
+            step=int(data.get("step", 0)),
+            tokens_total=int(data.get("tokens_total", 0)),
+            streams=tuple(StreamCursor.from_json(item) for item in data.get("streams", [])),
+            pending_tokens=tuple(int(token) for token in data.get("pending_tokens", [])),
+        )
+
+
+# ---------------------------------------------------------------------------
+# 6. Потоковый микс W/C
+# ---------------------------------------------------------------------------
+
+
+class _StreamIterator:
+    """Поток одного шард-набора: окна документов + позиция курсора."""
+
+    def __init__(self, shard_set: ShardSet, *, window: int, seed: int, cursor: StreamCursor | None = None):
+        self.shard_set = shard_set
+        self.name = shard_set.name
+        self.window = int(window)
+        self.seed = int(seed)
+        self.shard_index = cursor.shard_index if cursor else 0
+        self.shard_doc_offset = cursor.shard_doc_offset if cursor else 0
+        self.docs = cursor.docs if cursor else 0
+        self.tokens = cursor.tokens if cursor else 0
+        self.epoch = cursor.epoch if cursor else 0
+        self._buffer: deque[str] = deque()
+        self._reader: ShardDocStream | None = None
+        self._shard_exhausted = False
+        self.exhausted = False
+
+    # -- позиция -----------------------------------------------------------
+
+    @property
+    def entry(self) -> ShardEntry:
+        return self.shard_set.entries[self.shard_index]
+
+    def cursor(self) -> StreamCursor:
+        return StreamCursor(
+            name=self.name,
+            shard_index=self.shard_index,
+            shard_doc_offset=self.shard_doc_offset,
+            docs=self.docs,
+            tokens=self.tokens,
+            epoch=self.epoch,
+        )
+
+    # -- окна --------------------------------------------------------------
+
+    def _fill(self) -> bool:
+        """Набрать следующее окно; False — шард исчерпан."""
+        if self._shard_exhausted or self.shard_index >= len(self.shard_set.entries):
+            return False
+        start = (self.shard_doc_offset // self.window) * self.window
+        if self._reader is None:
+            self._reader = iter_shard_docs(self.entry.path, skip=start)
+        docs = []
+        for _ in range(self.window):
+            try:
+                docs.append(next(self._reader))
+            except StopIteration:
+                break
+        if not docs:
+            self._reader.close()
+            self._reader = None
+            self._shard_exhausted = True
+            return False
+        order = window_permutation(
+            seed=self.seed,
+            stream=self.name,
+            shard_index=self.shard_index,
+            epoch=self.epoch,
+            window_index=start // self.window,
+            size=len(docs),
+        )
+        self._buffer.extend(docs[index] for index in order)
+        # уже выданная часть окна (resume внутри окна) не выдаётся повторно
+        for _ in range(self.shard_doc_offset - start):
+            self._buffer.popleft()
+        if len(docs) < self.window:
+            self._shard_exhausted = True
+        return True
+
+    def _advance_shard(self) -> bool:
+        self.shard_index += 1
+        self.shard_doc_offset = 0
+        self._shard_exhausted = False
+        if self._reader is not None:
+            self._reader.close()
+            self._reader = None
+        if self.shard_index >= len(self.shard_set.entries):
+            # эпоха исчерпана: микс W/C рассчитан на один проход (17B/3B)
+            self.exhausted = True
+            return False
+        return True
+
+    def next_document(self) -> str:
+        """Следующий документ потока или ``StopIteration`` при исчерпании."""
+        if self.exhausted:
+            raise StopIteration
+        while not self._buffer:
+            if not self._fill():
+                if not self._advance_shard():
+                    raise StopIteration
+                continue
+        document = self._buffer.popleft()
+        self.shard_doc_offset += 1
+        self.docs += 1
+        return document
+
+
+class PretrainMixLoader:
+    """Потоковый даталоадер претрейн-микса: батчи ``(B, T)`` id-токенов.
+
+    Микс задаётся весами по токенам (ADR-021: ~85/15).  Выбор потока на каждом
+    документе — по максимальному дефициту ``weight_i * emitted_total - emitted_i``:
+    правило детерминировано и восстанавливается из курсора, потому что опирается
+    только на накопленные счётчики токенов.
+
+    Корпус не поднимается в память: живое окно — ``shuffle_window`` документов
+    на поток плюс ``pending``-токены одной недобранной последовательности.
+    """
+
+    def __init__(
+        self,
+        *,
+        shard_root: str | Path,
+        streams: Sequence[str] = SHARD_NAMES,
+        encode: Callable[[str], Sequence[int]],
+        seq_len: int,
+        batch_size: int = 1,
+        seed: int = 0,
+        mix: Mapping[str, float] | None = None,
+        shuffle_window: int = 1000,
+        cursor: MixCursor | None = None,
+        max_doc_tokens: int | None = None,
+        bos_id: int = BOS_ID,
+        eos_id: int = EOS_ID,
+        pad_id: int = PAD_ID,
+        text_key: str = "text",
+    ):
+        if not streams:
+            raise PretrainDataError("не объявлено ни одного потока шардов")
+        if seq_len < 3:
+            raise ValueError("seq_len должен быть >= 3 (bos + eos + минимум один токен)")
+        if batch_size < 1:
+            raise ValueError("batch_size должен быть >= 1")
+        if shuffle_window < 1:
+            raise ValueError("shuffle_window должен быть >= 1")
+
+        self.shard_root = Path(shard_root)
+        self.seq_len = int(seq_len)
+        self.batch_size = int(batch_size)
+        self.seed = int(seed)
+        self.shuffle_window = int(shuffle_window)
+        self.encode = encode
+        self.max_doc_tokens = max_doc_tokens
+        self.bos_id, self.eos_id, self.pad_id = bos_id, eos_id, pad_id
+        self.text_key = text_key
+        self.step = cursor.step if cursor else 0
+        self._pending: deque[int] = deque(cursor.pending_tokens if cursor else ())
+
+        weights = dict(mix) if mix else {name: 1.0 for name in streams}
+        missing = [name for name in streams if name not in weights]
+        if missing:
+            raise PretrainDataError(f"для потоков {missing} не объявлены веса микса")
+        if any(weight < 0 for weight in weights.values()):
+            raise PretrainDataError("веса микса не могут быть отрицательными")
+        if sum(weights[name] for name in streams) <= 0:
+            raise PretrainDataError("сумма весов микса должна быть > 0")
+        self.weights = {name: float(weights[name]) for name in streams}
+
+        cursor_streams = {item.name: item for item in (cursor.streams if cursor else ())}
+        self._streams: dict[str, _StreamIterator] = {}
+        for name in streams:
+            manifest = self.shard_root / name / f"manifest-{name.lower()}.json"
+            shard_set = load_shard_set(manifest, allowed=tuple(streams))
+            self._streams[name] = _StreamIterator(
+                shard_set,
+                window=self.shuffle_window,
+                seed=self.seed,
+                cursor=cursor_streams.get(name),
+            )
+
+        self._documents_read = 0
+        self._dropped_empty = 0
+        self._truncated = 0
+        self._exhausted = False
+
+    # -- контракт итератора ------------------------------------------------
+
+    def __iter__(self) -> "PretrainMixLoader":
+        return self
+
+    def __next__(self) -> np.ndarray:
+        if self._exhausted:
+            raise StopIteration
+        needed = self.seq_len * self.batch_size
+        while len(self._pending) < needed:
+            if not self._fill_pending():
+                self._exhausted = True
+                raise StopIteration
+        chunk = [self._pending.popleft() for _ in range(needed)]
+        self.step += 1
+        return pack_batch(chunk, self.seq_len, self.bos_id, self.eos_id, self.pad_id)
+
+    def _fill_pending(self) -> bool:
+        """Добрать pending-токены; False — микс исчерпан.
+
+        Эпоха заканчивается на **первом** исчерпании потока: микс W/C объявлен
+        как один проход по 17B/3B (ADR-021), и когда один шард кончился, удержать
+        объявленную пропорцию уже нельзя — продолжать значит молча уехать по
+        другой пропорции, чем запиннена в карточке.
+        """
+        name = self._pick_stream()
+        if name is None:
+            return False
+        stream = self._streams[name]
+        try:
+            raw = stream.next_document()
+        except StopIteration:
+            stream.exhausted = True
+            return False
+        self._documents_read += 1
+        text = ""
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                text = str(parsed.get(self.text_key) or "")
+        except json.JSONDecodeError:
+            text = ""
+        tokens = list(self.encode(text)) if text else []
+        if self.max_doc_tokens is not None and len(tokens) > self.max_doc_tokens:
+            self._truncated += 1
+            tokens = tokens[: self.max_doc_tokens]
+        if not tokens:
+            self._dropped_empty += 1
+            return True
+        self._pending.extend(tokens)
+        stream.tokens += len(tokens)
+        return True
+
+    def _pick_stream(self) -> str | None:
+        """Поток с максимальным дефицитом против объявленной пропорции.
+
+        Дефицит считается от накопленных счётчиков токенов, поэтому после resume
+        выбор продолжается ровно там, где остановился непрерывный прогон.
+        """
+        live = [name for name in self._streams if not self._streams[name].exhausted]
+        if not live:
+            return None
+        emitted = {name: self._streams[name].tokens for name in self._streams}
+        total = sum(emitted.values())
+        best_name, best_deficit = None, None
+        for name in live:
+            deficit = self.weights[name] * total - emitted[name]
+            if best_deficit is None or deficit > best_deficit:
+                best_name, best_deficit = name, deficit
+        return best_name
+
+    # -- след и курсор -----------------------------------------------------
+
+    def cursor(self, *, step: int | None = None) -> MixCursor:
+        streams = tuple(self._streams[name].cursor() for name in self._streams)
+        return MixCursor(
+            step=self.step if step is None else int(step),
+            tokens_total=sum(item.tokens for item in streams),
+            streams=streams,
+            pending_tokens=tuple(self._pending),
+        )
+
+    def stats(self) -> dict[str, Any]:
+        streams = {name: self._streams[name].cursor() for name in self._streams}
+        total_tokens = sum(item.tokens for item in streams.values())
+        share = {
+            name: (item.tokens / total_tokens if total_tokens else 0.0)
+            for name, item in streams.items()
+        }
+        return {
+            "documents_read": self._documents_read,
+            "documents_dropped_empty": self._dropped_empty,
+            "documents_truncated": self._truncated,
+            "tokens_total": total_tokens,
+            "token_share": share,
+            "pending_tokens": len(self._pending),
+            "streams": {
+                name: {
+                    "shard_index": item.shard_index,
+                    "shard_doc_offset": item.shard_doc_offset,
+                    "docs": item.docs,
+                    "tokens": item.tokens,
+                    "epoch": item.epoch,
+                }
+                for name, item in streams.items()
+            },
+        }
+
+
+def pack_batch(
+    tokens: Sequence[int],
+    seq_len: int,
+    bos_id: int = BOS_ID,
+    eos_id: int = EOS_ID,
+    pad_id: int = PAD_ID,
+) -> np.ndarray:
+    """Упаковать поток токенов в ``(B, T)`` через ``net.data.pack_sequence``.
+
+    ``pack_sequence`` возвращает ``(inputs, labels)`` длины ``T-1`` одной и той
+    же последовательности ``[bos] + tokens[:T-2] + [eos]``; склейка
+    ``inputs || labels[-1:]`` восстанавливает её ровно — без потери последнего
+    токена и без второго (лишнего) сдвига, который модель делает сама
+    (``compute_loss`` сдвигает внутри).
+    """
+    from net.data import pack_sequence
+
+    if len(tokens) % seq_len != 0:
+        raise ValueError("длина потока токенов должна быть кратна seq_len")
+    rows = []
+    for start in range(0, len(tokens), seq_len):
+        chunk = tokens[start : start + seq_len]
+        inputs, labels = pack_sequence(list(chunk), seq_len, pad_id, bos_id, eos_id)
+        rows.append(
+            np.concatenate([np.asarray(inputs, dtype=np.int32), np.asarray(labels, dtype=np.int32)[-1:]])
+        )
+    return np.stack(rows, axis=0).astype(np.int32)
+
+
+# ---------------------------------------------------------------------------
+# 7. Стоп-правило AD-8: смета до запуска, превышение останавливает прогон
+# ---------------------------------------------------------------------------
+
+
+class PretrainBudgetError(RuntimeError):
+    """Смета отсутствует или непригодна — запуск блокирован (AD-8)."""
+
+
+@dataclass(frozen=True)
+class Budget:
+    """Смета прогона (AD-8/C-041) + поле ``target_tokens`` претрейна.
+
+    ``target_tokens`` — объём корпуса, на который рассчитан прогон; вместе с
+    ``gpu_hours_estimate``/``limit_usd`` он образует стоп-правило: превышение
+    любого из трёх останавливает прогон (после ближайшего чекпойнта).
+    """
+
+    run_ref: str
+    path: Path
+    present: bool
+    target_tokens: int | None = None
+    gpu_hours_estimate: float | None = None
+    usd_estimate: float | None = None
+    limit_usd: float | None = None
+    budget_method: str = ""
+    stop_rule: str = ""
+    approved_by: str = ""
+    raw: dict = field(default_factory=dict)
+
+    def with_explicit_limit(self, limit_usd: float) -> "Budget":
+        return dataclass_replace(self, limit_usd=float(limit_usd))
+
+
+def dataclass_replace(instance: Any, **changes: Any) -> Any:
+    """``dataclasses.replace`` без импорта на уровне модуля (мелочь, но явно)."""
+    import dataclasses
+
+    return dataclasses.replace(instance, **changes)
+
+
+def load_budget(path: str | Path) -> Budget:
+    """Прочитать смету прогона; отсутствующий файл — факт ``present=False``."""
+    path = Path(path)
+    raw: dict[str, Any] = {}
+    present = path.is_file()
+    if present:
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise PretrainBudgetError(f"смета не читается: {path}: {exc}") from exc
+
+    def _number(key: str) -> float | None:
+        value = raw.get(key)
+        return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+    target = raw.get("target_tokens")
+    return Budget(
+        run_ref=str(raw.get("run_ref") or path.stem),
+        path=path,
+        present=present,
+        target_tokens=int(target) if isinstance(target, int) and not isinstance(target, bool) else None,
+        gpu_hours_estimate=_number("gpu_hours_estimate"),
+        usd_estimate=_number("usd_estimate"),
+        limit_usd=_number("limit_usd"),
+        budget_method=str(raw.get("budget_method") or ""),
+        stop_rule=str(raw.get("stop_rule") or ""),
+        approved_by=str(raw.get("approved_by") or ""),
+        raw=raw,
+    )
+
+
+def require_budget(budget: Budget, *, explicit_limit_usd: float | None = None) -> Budget:
+    """Пропустить прогон к старту или отказать.
+
+    AD-8: «отсутствие сметы — блокирующее условие запуска».  Явный лимит
+    (смоук-режим) снимает блокировку, но не выдаёт себя за смету: ``present``
+    остаётся ``False`` и попадает в журнал как факт.
+    """
+    if budget.present:
+        return budget
+    if explicit_limit_usd is not None:
+        return budget.with_explicit_limit(explicit_limit_usd)
+    raise PretrainBudgetError(
+        f"смета отсутствует: {budget.path} — запуск блокирован (AD-8); "
+        "для смоука укажите явный --budget-limit-usd"
+    )
+
+
+def budget_breach(
+    budget: Budget, *, tokens_seen: int, gpu_hours: float, usd_spent: float
+) -> str | None:
+    """Причина остановки или ``None``, если прогон в пределах сметы.
+
+    Проверяются все три границы сметы по отдельности — причина называет ту,
+    что сработала, чтобы журнал читался как план работ, а не как «что-то упало».
+    """
+    if budget.target_tokens is not None and tokens_seen > budget.target_tokens:
+        return (
+            f"target_tokens: пройдено {tokens_seen} токенов при цели "
+            f"{budget.target_tokens} (AD-8)"
+        )
+    if budget.gpu_hours_estimate is not None and gpu_hours > budget.gpu_hours_estimate:
+        return (
+            f"gpu_hours: израсходовано {gpu_hours:.4f} ч при оценке "
+            f"{budget.gpu_hours_estimate} ч (AD-8)"
+        )
+    if budget.limit_usd is not None and usd_spent > budget.limit_usd:
+        return (
+            f"limit_usd: израсходовано {usd_spent:.4f} USD при лимите "
+            f"{budget.limit_usd} USD (AD-8)"
+        )
+    return None
+
+
+# ---------------------------------------------------------------------------
+# 8. Чекпойнты: Orbax + tree_hash, ретенция keep_last, курсор-манифест
+# ---------------------------------------------------------------------------
+
+#: Имя манифеста-курсора прогона в каталоге чекпойнтов.
+CURSOR_MANIFEST_NAME = "cursor.json"
+
+
+@dataclass(frozen=True)
+class CheckpointRecord:
+    """Запись о чекпойнте: шаг, каталог, tree_hash и курсор данных."""
+
+    step: int
+    path: Path
+    tree_hash: str
+    cursor: dict
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "step": self.step,
+            "path": self.path.name,
+            "tree_hash": self.tree_hash,
+            "cursor": self.cursor,
+        }
+
+    @classmethod
+    def from_json(cls, data: Mapping[str, Any], directory: Path) -> "CheckpointRecord":
+        return cls(
+            step=int(data["step"]),
+            path=directory / str(data["path"]),
+            tree_hash=str(data["tree_hash"]),
+            cursor=dict(data.get("cursor") or {}),
+        )
+
+
+class CheckpointManager:
+    """Orbax-чекпойнты стадии претрейна с ретенцией и курсором resume.
+
+    Раскладка::
+
+        <directory>/cursor.json          — манифест-курсор: последний шаг + курсор данных
+        <directory>/step-00000010/       — orbax-дерево {params, opt_state} + manifest.json
+
+    ``tree_hash`` считается ``net/checkpoint.tree_hash`` — той же функцией, что
+    в стадии SFT, поэтому хеш чекпойнта сопоставим между стадиями конвейера.
+    """
+
+    def __init__(self, directory: str | Path, *, keep_last: int = 2, prefix: str = "step-"):
+        if keep_last < 1:
+            raise ValueError("keep_last должен быть >= 1")
+        self.directory = Path(directory)
+        self.keep_last = int(keep_last)
+        self.prefix = prefix
+
+    @property
+    def cursor_path(self) -> Path:
+        return self.directory / CURSOR_MANIFEST_NAME
+
+    def step_dir(self, step: int) -> Path:
+        return self.directory / f"{self.prefix}{step:08d}"
+
+    def save(
+        self,
+        *,
+        step: int,
+        params: Any,
+        optimizer_state: Any,
+        cursor: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Сохранить чекпойнт, обновить курсор-манифест и применить ретенцию.
+
+        Параметры и состояние оптимизатора лежат в **отдельных** orbax-деревьях
+        (``<step>/params``, ``<step>/opt_state``), а не в одном словаре: так
+        ``tree_hash`` записи — это хеш дерева параметров, той же формы и той же
+        функцией, что в стадии SFT, и хеши стадий сопоставимы.  Хеш словаря с
+        путями ``['params', ...]`` дал бы другое число для тех же весов.
+        """
+        from net import checkpoint as checkpoint_mod
+
+        target = self.step_dir(step)
+        target.mkdir(parents=True, exist_ok=True)
+        digest = checkpoint_mod.save_checkpoint(params, target / "params")
+        state_digest = checkpoint_mod.save_checkpoint(optimizer_state, target / "opt_state")
+        meta = {
+            "step": int(step),
+            "tree_hash": digest,
+            "optimizer_state_hash": state_digest,
+            "format": "orbax",
+        }
+        (target / "meta.json").write_text(
+            json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8"
+        )
+        record = CheckpointRecord(
+            step=int(step), path=target, tree_hash=digest, cursor=dict(cursor)
+        )
+        self._write_cursor(record)
+        self.prune()
+        return {
+            "step": record.step,
+            "path": str(record.path),
+            "tree_hash": digest,
+            "optimizer_state_hash": state_digest,
+        }
+
+    def _write_cursor(self, record: CheckpointRecord) -> None:
+        payload = {"schema": CURSOR_SCHEMA, **record.to_json()}
+        tmp = self.cursor_path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
+        tmp.replace(self.cursor_path)
+
+    def _checkpoint_dirs(self) -> list[tuple[int, Path]]:
+        if not self.directory.is_dir():
+            return []
+        found = []
+        for path in self.directory.iterdir():
+            if path.is_dir() and path.name.startswith(self.prefix):
+                suffix = path.name[len(self.prefix) :]
+                if suffix.isdigit():
+                    found.append((int(suffix), path))
+        return sorted(found)
+
+    def list(self) -> list[CheckpointRecord]:
+        """Все наличные чекпойнты, по возрастанию шага."""
+        records = []
+        for step, path in self._checkpoint_dirs():
+            meta = path / "meta.json"
+            digest = ""
+            if meta.is_file():
+                try:
+                    digest = str(json.loads(meta.read_text(encoding="utf-8")).get("tree_hash", ""))
+                except (OSError, json.JSONDecodeError):
+                    digest = ""
+            records.append(CheckpointRecord(step=step, path=path, tree_hash=digest, cursor={}))
+        return records
+
+    def latest(self) -> dict[str, Any] | None:
+        """Запись курсора-манифеста (шаг, каталог, tree_hash, курсор данных)."""
+        if not self.cursor_path.is_file():
+            return None
+        try:
+            payload = json.loads(self.cursor_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        record = CheckpointRecord.from_json(payload, self.directory)
+        return {
+            "step": record.step,
+            "path": str(record.path),
+            "tree_hash": record.tree_hash,
+            "cursor": record.cursor,
+        }
+
+    def resume(self, *, target_params: Any, target_state: Any):
+        """Восстановить последний чекпойнт: (params, opt_state, курсор данных)."""
+        from net import checkpoint as checkpoint_mod
+
+        latest = self.latest()
+        if latest is None:
+            raise PretrainDataError(
+                f"курсор-манифест не найден: {self.cursor_path} — resume невозможен"
+            )
+        directory = Path(latest["path"])
+        if not directory.is_dir():
+            raise PretrainDataError(f"каталог чекпойнта отсутствует: {directory}")
+        restored_params = checkpoint_mod.load_checkpoint(directory / "params", target=target_params)
+        restored_state = checkpoint_mod.load_checkpoint(
+            directory / "opt_state", target=target_state
+        )
+        digest = checkpoint_mod.tree_hash(restored_params)
+        if latest["tree_hash"] and digest != latest["tree_hash"]:
+            raise PretrainDataError(
+                f"round-trip чекпойнта не совпал по tree_hash: {digest} != {latest['tree_hash']}"
+            )
+        return restored_params, restored_state, latest["cursor"]
+
+    def prune(self) -> list[int]:
+        """Оставить ``keep_last`` последних чекпойнтов; вернуть удалённые шаги."""
+        import shutil
+
+        dirs = self._checkpoint_dirs()
+        removed = []
+        for step, path in dirs[: max(0, len(dirs) - self.keep_last)]:
+            shutil.rmtree(path)
+            removed.append(step)
+        return removed
+
+
+# ---------------------------------------------------------------------------
+# 9. Метрики прогона: loss / ток-в-с / MFU
+# ---------------------------------------------------------------------------
+
+#: Схема строки метрик прогона.
+METRICS_SCHEMA = "pretrain-metrics/v1"
+
+
+class MetricsWriter:
+    """Построчный jsonl-журнал метрик: одна строка на шаг, дописывается сразу."""
+
+    def __init__(self, path: str | Path, *, schema: str = METRICS_SCHEMA):
+        self.path = Path(path)
+        self.schema = schema
+
+    def log(self, record: Mapping[str, Any]) -> None:
+        payload = {"schema": self.schema, **dict(record)}
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.path, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
+    @staticmethod
+    def read(path: str | Path) -> list[dict]:
+        path = Path(path)
+        if not path.is_file():
+            return []
+        rows = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if stripped:
+                rows.append(json.loads(stripped))
+        return rows
+
+
+def step_flops(active_params: int, tokens: int, *, factor: float = 6.0) -> float:
+    """FLOPs шага обучения: ``factor · N_active · tokens`` (forward+backward).
+
+    Оценка по числу **активных** параметров (``net.model.active_param_count``)
+    и только по параметрической части: вклад внимания (квадратичный по T) сюда
+    не входит и в журнале помечается явно (``mfu_params_only``), чтобы MFU не
+    выдавал себя за полный замер.
+    """
+    return float(factor) * float(active_params) * float(tokens)
+
+
+def tflops_achieved(flops: float, *, seconds: float) -> float | None:
+    """Достигнутые TFLOP/s — измерение, не зависящее от объявленного пика."""
+    if seconds <= 0:
+        return None
+    return flops / seconds / 1e12
+
+
+def mfu(flops: float, *, seconds: float, peak_tflops: float | None) -> float | None:
+    """Model FLOPs Utilization: достигнутые TFLOP/s против объявленного пика.
+
+    Без объявленного пика (или при нулевом времени шага) возвращается ``None``:
+    необъявленный пик не даёт права ни на число, ни на вердикт.
+    """
+    if peak_tflops is None or peak_tflops <= 0 or seconds <= 0:
+        return None
+    achieved_tflops = flops / seconds / 1e12
+    return achieved_tflops / float(peak_tflops)
+
+
+# ---------------------------------------------------------------------------
+# 10. Цикл претрейна
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class TrainConfig:
+    """Параметры цикла претрейна.
+
+    ``steps`` — сколько шагов исполняет **эта нога**; ``total_steps`` — горизонт
+    расписания (по умолчанию равен ``steps``).  Разделение нужно для resume:
+    продолжение обязано идти по тому же LR, что непрерывный прогон, а не
+    растягивать warmup/decay на длину ноги.
+    """
+
+    steps: int = 1
+    total_steps: int | None = None
+    lr: float = 1e-2
+    schedule: str = "cosine"  # cosine | wsd
+    warmup_ratio: float = 0.01
+    decay_ratio: float = 0.05
+    seed: int = 0
+    chunk_size: int = 64
+    #: ``True`` — remat графа: память активаций падает ценой пересчёта.
+    grad_checkpointing: bool = False
+    #: ``full`` (nothing_saveable) | ``selective`` (dots без batch-осей).
+    grad_checkpointing_policy: str = "full"
+    #: ``float32`` — прямая точность (parity со старым тренером);
+    #: ``bfloat16`` — bf16-параметры при fp32-мастере.
+    param_dtype: str = "float32"
+    checkpoint_every: int = 0  # 0 — чекпойнты выключены
+    keep_last: int = 2
+    ckpt_dir: Path | None = None
+    metrics_path: Path | None = None
+    #: Пик железа для MFU; не объявлен — MFU не выдумывается (None).
+    peak_tflops: float | None = None
+    peak_tflops_source: str = ""
+    #: Ставка аренды: без неё стоп-правило по USD не оценивается (и это видно).
+    usd_per_gpu_hour: float | None = None
+    log_every: int = 0
+
+
+@dataclass
+class TrainResult:
+    """Итог ноги прогона: шаги, лоссы, веса, чекпойнт и причина остановки."""
+
+    losses: list[float]
+    steps_done: int
+    start_step: int
+    tokens_seen: int
+    params: Any
+    master_params: Any
+    #: Хеш обслуживаемых весов (``params``) — сопоставим со стадией SFT.
+    tree_hash: str
+    #: Хеш fp32-мастера — ровно то, что лежит в чекпойнте.
+    master_tree_hash: str
+    lr_history: list[float]
+    stop_reason: str | None
+    stopped_by_budget: bool
+    timings: dict
+    checkpoint: dict | None
+    metrics_path: str | None
+    budget_report: dict
+    grad_checkpointing: bool
+    param_dtype: str
+
+
+def _checkpoint_policy(name: str):
+    """Политика remat по имени: ``full`` — не сохранять ничего."""
+    import jax
+
+    if name == "full":
+        return jax.checkpoint_policies.nothing_saveable
+    if name == "selective":
+        return jax.checkpoint_policies.dots_with_no_batch_dims_saveable
+    raise ValueError(f"неизвестная политика grad-checkpointing: {name!r}")
+
+
+def train(
+    cfg,
+    batches: Iterable[Any],
+    *,
+    train_config: TrainConfig,
+    budget: Budget,
+    resume_from: CheckpointManager | None = None,
+    loader: PretrainMixLoader | None = None,
+) -> TrainResult:
+    """Нога претрейна: шаги оптимизатора по потоку батчей.
+
+    ``budget`` обязателен и не имеет значения по умолчанию: AD-8 объявляет
+    отсутствие сметы блокирующим условием запуска, поэтому «забыть» про смету
+    нельзя — только предъявить её (пусть и безлимитную в смоуке).
+
+    ``loader`` нужен только для курсора resume: он отдаёт позицию потока данных
+    на момент чекпойнта.  Без него чекпойнт восстанавливает веса, но не данные.
+    """
+    import jax
+    import jax.numpy as jnp
+
+    from net import checkpoint as checkpoint_mod
+    from net import model, optimizer
+
+    budget = require_budget(budget)
+    if train_config.schedule not in ("cosine", "wsd"):
+        raise ValueError(f"неизвестное расписание: {train_config.schedule!r}")
+    if train_config.param_dtype not in ("float32", "bfloat16"):
+        raise ValueError(f"неизвестная точность параметров: {train_config.param_dtype!r}")
+
+    manager = resume_from
+    start_step = 0
+    total_steps = train_config.total_steps or train_config.steps
+    cursor_data: dict[str, Any] = {}
+
+    master = model.init_params(jax.random.PRNGKey(train_config.seed), cfg)
+    state = optimizer.init_state(master)
+    if manager is not None:
+        latest = manager.latest()
+        if latest is None:
+            raise PretrainDataError(
+                f"resume: чекпойнтов нет в {manager.directory} — нечего продолжать"
+            )
+        master, state, cursor_data = manager.resume(target_params=master, target_state=state)
+        # Абсолютный шаг берётся из записи чекпойнта, а не из полезной нагрузки
+        # курсора: без загрузчика данных в курсоре нет поля ``step``, и нога
+        # молча поехала бы с нуля по расписанию.
+        start_step = int(latest["step"])
+        if train_config.total_steps is None:
+            total_steps = int(cursor_data.get("run", {}).get("total_steps") or total_steps)
+    elif train_config.total_steps is None:
+        total_steps = train_config.steps
+
+    _validate_schedule_horizon(start_step, total_steps, train_config)
+
+    def lr_at(step: int) -> float:
+        if train_config.schedule == "wsd":
+            schedule = wsd_schedule(
+                train_config.lr,
+                total_steps,
+                warmup_ratio=train_config.warmup_ratio,
+                decay_ratio=train_config.decay_ratio,
+            )
+        else:
+            schedule = optimizer.cosine_schedule(
+                train_config.lr, total_steps, train_config.warmup_ratio
+            )
+        return float(schedule(step))
+
+    def loss_fn(params, batch):
+        return model.compute_loss(params, cfg, batch, chunk_size=train_config.chunk_size)
+
+    if train_config.grad_checkpointing:
+        policy = _checkpoint_policy(train_config.grad_checkpointing_policy)
+        loss_fn = jax.checkpoint(loss_fn, policy=policy)
+
+    grad_fn = jax.jit(jax.value_and_grad(loss_fn))
+    step_fn = optimizer.make_step(cfg)
+
+    use_bf16 = train_config.param_dtype == "bfloat16"
+
+    def working_params(fp32_params):
+        return jax.tree_util.tree_map(lambda leaf: leaf.astype(jnp.bfloat16), fp32_params) if use_bf16 else fp32_params
+
+    params = working_params(master)
+    active_params = model.active_param_count(cfg)
+    metrics = MetricsWriter(train_config.metrics_path) if train_config.metrics_path else None
+    if train_config.ckpt_dir is not None:
+        manager = CheckpointManager(train_config.ckpt_dir, keep_last=train_config.keep_last)
+
+    iterator = iter(batches)
+    losses: list[float] = []
+    lr_history: list[float] = []
+    step_seconds: list[float] = []
+    tokens_seen = 0
+    stop_reason: str | None = None
+    stopped_by_budget = False
+    checkpoint_record: dict | None = None
+    first_tick = 0.0
+    started = time.time()
+    usd_rate = train_config.usd_per_gpu_hour
+    usd_spent = 0.0
+
+    for index in range(train_config.steps):
+        absolute = start_step + index + 1
+        try:
+            batch = next(iterator)
+        except StopIteration:
+            stop_reason = (
+                f"data exhausted: поток батчей кончился на шаге {absolute - 1}"
+                f" из {start_step + train_config.steps}"
+            )
+            break
+        batch_tokens = int(np.prod(np.shape(batch)))
+        tick = time.time()
+        loss, grads = grad_fn(params, batch)
+        if use_bf16:
+            grads = jax.tree_util.tree_map(lambda leaf: leaf.astype(jnp.float32), grads)
+        master, state = step_fn(master, grads, state, lr_at(absolute - 1))
+        params = working_params(master)
+        elapsed = time.time() - tick
+        if index == 0:
+            first_tick = elapsed
+
+        # хост-синхронизация: числа метрик берутся с устройства явно
+        loss_value = float(jax.device_get(loss))
+        losses.append(loss_value)
+        lr_history.append(lr_at(absolute - 1))
+        step_seconds.append(elapsed)
+        tokens_seen += batch_tokens
+        gpu_hours = (time.time() - started) / 3600.0
+        if usd_rate is not None:
+            usd_spent = gpu_hours * float(usd_rate)
+
+        if metrics is not None:
+            metrics.log(
+                {
+                    "step": absolute,
+                    "loss": loss_value,
+                    "lr": lr_history[-1],
+                    "tokens": batch_tokens,
+                    "tokens_seen": tokens_seen,
+                    "step_seconds": elapsed,
+                    "tokens_per_sec": batch_tokens / elapsed if elapsed > 0 else None,
+                    "tflops_achieved": tflops_achieved(
+                        step_flops(active_params, batch_tokens), seconds=elapsed
+                    ),
+                    "mfu": mfu(
+                        step_flops(active_params, batch_tokens),
+                        seconds=elapsed,
+                        peak_tflops=train_config.peak_tflops,
+                    ),
+                    "mfu_params_only": True,
+                    "gpu_hours": gpu_hours,
+                }
+            )
+        if train_config.log_every and (
+            index == 0 or absolute % train_config.log_every == 0
+        ):
+            print(
+                f"[pretrain] шаг {absolute}: loss={loss_value:.4f} "
+                f"lr={lr_history[-1]:.3e} {elapsed:.2f} с/шаг",
+                flush=True,
+            )
+
+        if train_config.ckpt_dir is not None and train_config.checkpoint_every:
+            if absolute % train_config.checkpoint_every == 0:
+                checkpoint_record = _save_checkpoint(
+                    manager, absolute, master, state, loader, train_config, total_steps
+                )
+
+        reason = budget_breach(
+            budget, tokens_seen=tokens_seen, gpu_hours=gpu_hours, usd_spent=usd_spent
+        )
+        if reason is not None:
+            stop_reason = reason
+            stopped_by_budget = True
+            # AD-8: остановка после ближайшего чекпойнта — фиксируем состояние,
+            # чтобы лимит не стоил потерянных шагов.
+            if manager is not None:
+                checkpoint_record = _save_checkpoint(
+                    manager, absolute, master, state, loader, train_config, total_steps
+                )
+            break
+
+    if (
+        manager is not None
+        and stop_reason is not None
+        and (checkpoint_record is None or checkpoint_record["step"] != start_step + len(losses))
+    ):
+        checkpoint_record = _save_checkpoint(
+            manager, start_step + len(losses), master, state, loader, train_config, total_steps
+        )
+
+    gpu_hours = (time.time() - started) / 3600.0
+    if usd_rate is not None:
+        usd_spent = gpu_hours * float(usd_rate)
+    if stop_reason is None:
+        stop_reason = (
+            None if len(losses) >= train_config.steps else "остановка без причины: батчи кончились"
+        )
+
+    return TrainResult(
+        losses=losses,
+        steps_done=len(losses),
+        start_step=start_step,
+        tokens_seen=tokens_seen,
+        params=params,
+        master_params=master,
+        tree_hash=checkpoint_mod.tree_hash(params),
+        master_tree_hash=checkpoint_mod.tree_hash(master),
+        lr_history=lr_history,
+        stop_reason=stop_reason,
+        stopped_by_budget=stopped_by_budget,
+        timings={
+            "first_step_seconds": round(first_tick, 4),
+            "step_seconds_mean_tail": round(
+                sum(step_seconds[1:]) / max(len(step_seconds) - 1, 1), 6
+            ),
+            "wall_seconds": round(time.time() - started, 3),
+        },
+        checkpoint=checkpoint_record,
+        metrics_path=str(train_config.metrics_path) if train_config.metrics_path else None,
+        budget_report={
+            "run_ref": budget.run_ref,
+            "estimate_present": budget.present,
+            "estimate_path": str(budget.path),
+            "target_tokens": budget.target_tokens,
+            "gpu_hours_estimate": budget.gpu_hours_estimate,
+            "limit_usd": budget.limit_usd,
+            "gpu_hours_actual": round(gpu_hours, 6),
+            "usd_spent": round(usd_spent, 6),
+            "usd_rate_declared": usd_rate is not None,
+            "stop_reason": stop_reason,
+        },
+        grad_checkpointing=bool(train_config.grad_checkpointing),
+        param_dtype=train_config.param_dtype,
+    )
+
+
+def _validate_schedule_horizon(start_step: int, total_steps: int, train_config: TrainConfig) -> None:
+    """Горизонт расписания обязан накрывать ногу — иначе LR поедет молча."""
+    if total_steps <= 0:
+        raise ValueError("total_steps должен быть > 0")
+    if start_step >= total_steps:
+        raise ValueError(
+            f"resume с шага {start_step} при горизонте расписания {total_steps}: "
+            "нога не накрыта расписанием (укажите --total-steps больше)"
+        )
+
+
+def _save_checkpoint(
+    manager: CheckpointManager,
+    step: int,
+    master: Any,
+    state: Any,
+    loader: PretrainMixLoader | None,
+    train_config: TrainConfig,
+    total_steps: int,
+) -> dict:
+    """Сохранить чекпойнт шага вместе с курсором данных и параметрами прогона."""
+    cursor: dict[str, Any] = {}
+    if loader is not None:
+        cursor = loader.cursor(step=step).to_json()
+    elif manager.latest() is not None:
+        cursor = manager.latest().get("cursor") or {}
+    record = manager.save(
+        step=step,
+        params=master,
+        optimizer_state=state,
+        cursor={
+            **cursor,
+            "run": {
+                "seed": train_config.seed,
+                "total_steps": total_steps,
+                "lr": train_config.lr,
+                "schedule": train_config.schedule,
+                "param_dtype": train_config.param_dtype,
+            },
+        },
+    )
+    return record
+
+
+__all__ = [
+    "BOS_ID",
+    "CURSOR_MANIFEST_NAME",
+    "CURSOR_SCHEMA",
+    "EOS_ID",
+    "METRICS_SCHEMA",
+    "Budget",
+    "CheckpointManager",
+    "CheckpointRecord",
+    "MetricsWriter",
+    "MixCursor",
+    "PAD_ID",
+    "PretrainBudgetError",
+    "PretrainDataError",
+    "PretrainMixLoader",
+    "SHARD_NAMES",
+    "ShardDocStream",
+    "ShardEntry",
+    "ShardSet",
+    "StreamCursor",
+    "TrainConfig",
+    "TrainResult",
+    "budget_breach",
+    "iter_shard_docs",
+    "load_budget",
+    "load_shard_set",
+    "mfu",
+    "pack_batch",
+    "require_budget",
+    "step_flops",
+    "tflops_achieved",
+    "train",
+    "window_permutation",
+    "wsd_schedule",
+]

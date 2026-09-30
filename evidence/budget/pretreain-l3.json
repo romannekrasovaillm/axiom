@@ -1,0 +1,11 @@
+{
+ "run_ref": "pretreain-l3",
+ "gpu_type": "аренда H800 (343 TFLOP/s эфф., калибровка arXiv 2412.19437)",
+ "gpu_hours_estimate": 131,
+ "usd_estimate": 270,
+ "limit_usd": 350,
+ "budget_method": "FLOPs = 6*N*D*k: N_total=1.0096e9 (declared, vocab 160k), N_active=502.4M (замер bench 26.09), D=20e9 токенов (W 17B + C 3B), k=1.33 recompute grad-checkpointing. Пессимистичная граница по dense-total: 130 ч / $269; номинальная по MoE-active: 65 ч / $134. Смета по пессимистичной (MoE-экономия — плюс к лимиту, не обещание). Q-decay 1B входит в те же 20B (последние 5% шагов).",
+ "stop_rule": "остановка после ближайшего чекпойнта при превышении target_tokens ИЛИ limit_usd; стоп-файл проверяется лупом каждые N шагов (AD-8)",
+ "created_at": "2026-09-30T16:10:00+03:00",
+ "approved_by": "architect"
+}

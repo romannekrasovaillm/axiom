@@ -1,7 +1,8 @@
-"""CLI подготовки претрейн-датасета L3 (ADR-021): шарды W (веб) и C (код).
+"""CLI подготовки претрейн-датасета L3 (ADR-021): шарды W (веб), C (код), Q (decay).
 
     python -m prep_pretrain.build prepare-w --target-tokens 17e9
     python -m prep_pretrain.build prepare-c --target-tokens 3e9 --source stack-dedup-v1
+    python -m prep_pretrain.build prepare-q --target-tokens 1e9
     python -m prep_pretrain.build probe --limit-mb 200
     python -m prep_pretrain.build sources
     python -m prep_pretrain.build verify-manifest --manifest <путь>
@@ -10,8 +11,9 @@
 повторный запуск продолжает с последнего целого шарда (``--restart`` начинает
 заново). Отчёты числовые: счётчики, байты, хеши, скорости, пиковый RSS.
 
-Полная загрузка (17B+3B) этим CLI не запускается автоматически — только проба
-на малом объёме; боевой прогон запускается владельцем отдельно.
+Полная загрузка (17B+3B+1B) этим CLI не запускается автоматически — только проба
+на малом объёме (``prepare-q --limit-mb 50``); боевой прогон запускается владельцем
+отдельно.
 """
 
 from __future__ import annotations
@@ -72,6 +74,16 @@ def shard_kwargs(args: argparse.Namespace) -> dict:
         "progress": args.progress,
         "allow_any_out": args.allow_any_out,
     }
+
+
+def probe_limits(args: argparse.Namespace) -> dict:
+    """Предохранители пробы (``--limit-mb`` / ``--max-minutes``), если заданы."""
+    limits: dict = {}
+    if getattr(args, "limit_mb", None):
+        limits["max_output_bytes"] = int(args.limit_mb * MB)
+    if getattr(args, "max_minutes", None):
+        limits["max_seconds"] = args.max_minutes * 60
+    return limits
 
 
 def parse_tokens(value: str) -> int:
@@ -182,6 +194,83 @@ def cmd_prepare_c(args: argparse.Namespace) -> int:
     print(f"  длина файла   : {rules['min_file_bytes']}..{rules['max_file_bytes']} Б")
     print(f"  по языкам     : {rules['kept_by_language']}")
     print(f"  причины отбоя : {report['counters'].get('dropped_by_rule', {})}")
+    print(f"  манифест      : {report['manifest']}")
+    print(f"  отчёт         : {report['report']}")
+    return 0
+
+
+def cmd_prepare_q(args: argparse.Namespace) -> int:
+    """Шард Q: сужёный W + код с тестами, дедуп против W/C (decay ADR-021)."""
+    code_spec: dict
+    if args.source_c == "auto":
+        # Для Q годен только публичный источник: гейтед bigcode без выданного
+        # доступа роняет поток до первого документа (см. README шарда C).
+        public = next(
+            (name for name in stack.AUTO_ORDER if not stack.SOURCES[name].gated),
+            stack.DEFAULT_SOURCE_NAME,
+        )
+        code_spec = {"kind": "stack", "name": public}
+    elif args.source_c in stack.SOURCES:
+        code_spec = {"kind": "stack", "name": args.source_c}
+    elif ":" in args.source_c:
+        code_spec = common.parse_source_spec(args.source_c)
+    else:
+        print(f"неизвестный источник кода {args.source_c!r}; доступные: "
+              f"{sorted(stack.SOURCES)} либо local:<glob>/hf:<repo>", file=sys.stderr)
+        return 2
+
+    prior_dirs = args.prior_dir or [common.DATASET_ROOT]
+    if args.no_prior_dedup:
+        print("ВНИМАНИЕ: дедуп Q против записей W/C отключён явно (--no-prior-dedup): "
+              "отчёт фиксирует prior.enabled=false", file=sys.stderr)
+
+    report = fineweb.prepare_q(
+        out_dir=args.out,
+        target_tokens=args.target_tokens,
+        web_spec=common.parse_source_spec(args.source_w),
+        code_spec=code_spec,
+        code_share=args.code_share,
+        web_yield=args.web_yield,
+        code_yield=args.code_yield,
+        min_int_score=args.min_int_score or None,
+        min_chars=args.min_chars or None,
+        max_chars=args.max_chars or None,
+        languages=args.languages,
+        prior_dirs=prior_dirs,
+        prior_max_records=args.prior_max_records,
+        prior_threshold=args.prior_threshold,
+        prior_enabled=not args.no_prior_dedup,
+        manifest_path=args.manifest,
+        report_path=args.report,
+        **shard_kwargs(args),
+        **probe_limits(args),
+    )
+    echo_report(report, "шард Q (decay: сужёный веб + код с тестами)")
+    rules = report["rules"]
+    print(f"  веб-фильтр    : int_score >= {rules['components']['web']['min_int_score']}, "
+          f"длина {rules['components']['web']['min_chars']}..{rules['components']['web']['max_chars']} символов")
+    print(f"  код-фильтр    : {rules['components']['code']['source']}, "
+          f"языки {', '.join(rules['components']['code']['languages'])}, "
+          f"маркеры тестов {', '.join(rules['components']['code']['test_markers'])}")
+    print(f"  причины отбоя : {report['counters'].get('dropped_by_rule', {})}")
+    prior = report["prior"]
+    if prior.get("enabled"):
+        print(f"  опора W/C     : {prior['reference_records']} записей из "
+              f"{prior['files_read']} файлов ({prior['chars'] / 1e6:.1f}M символов, "
+              f"индекс {prior['seconds']} с), порог Jaccard {prior['threshold']}")
+        print(f"  дедуп W/C     : проверено {prior['checked']} кандидатов, "
+              f"дублей точных {prior['dropped_exact']} + near {prior['dropped_near']} "
+              f"({prior['check_seconds']} с, {prior['check_ms_per_record']} мс/запись)")
+    else:
+        print("  опора W/C     : ВЫКЛЮЧЕНА (--no-prior-dedup)")
+    mix = report["mix"]
+    print(f"  микс          : цель кода {mix['code_share_target']:.1%}, "
+          f"факт {mix['code_share']:.2%} ({mix['code_share_deviation_pp']:+.2f} п.п.)")
+    print(f"                  веб {mix['web']['tokens']} токенов / {mix['web']['records']} записей, "
+          f"код {mix['code']['tokens']} токенов / {mix['code']['records']} записей")
+    print(f"                  источники исчерпаны: {mix['source_exhausted']}")
+    if mix.get("recommended_code_yield"):
+        print(f"                  рекомендация: --code-yield {mix['recommended_code_yield']}")
     print(f"  манифест      : {report['manifest']}")
     print(f"  отчёт         : {report['report']}")
     return 0
@@ -385,6 +474,41 @@ def build_parser() -> argparse.ArgumentParser:
                    help="сколько записей источника прогнать через фильтры при проверке")
     add_shard_args(c, os.path.join(common.DATASET_ROOT, stack.SHARD))
     c.set_defaults(func=cmd_prepare_c)
+
+    q = sub.add_parser("prepare-q", help="шард Q: decay-микс (сужёный W + код с тестами), ~1B")
+    q.add_argument("--target-tokens", type=parse_tokens, default=fineweb.DEFAULT_TARGET_TOKENS_Q)
+    q.add_argument("--source-w", default="hf:HuggingFaceFW/fineweb-edu:sample-100BT",
+                   help="источник веб-части (тот же, что у шарда W)")
+    q.add_argument("--source-c", default="codeparrot-clean",
+                   help=f"источник кода: имя из реестра, auto либо local:<glob>; есть: {sorted(stack.SOURCES)}")
+    q.add_argument("--languages", nargs="+", default=["python"],
+                   help="языки кодовой части (codeparrot-clean одноязычный — python)")
+    q.add_argument("--code-share", type=float, default=fineweb.DEFAULT_CODE_SHARE,
+                   help="целевая доля кодовых примеров в Q (по approx-токенам, 0.15)")
+    q.add_argument("--web-yield", type=float, default=fineweb.DEFAULT_WEB_YIELD,
+                   help="ожидаемых approx-токенов на символ веб-источника (калибровка микса)")
+    q.add_argument("--code-yield", type=float, default=fineweb.DEFAULT_CODE_YIELD,
+                   help="ожидаемых approx-токенов на символ кодового источника (калибровка микса)")
+    q.add_argument("--min-int-score", type=int, default=fineweb.DEFAULT_Q_MIN_INT_SCORE,
+                   help="сужёный edu-порог веб-части (по умолчанию 4; 0 — порог выключен)")
+    q.add_argument("--min-chars", type=int, default=fineweb.DEFAULT_Q_MIN_CHARS,
+                   help="нижняя граница длины веб-документа, символов")
+    q.add_argument("--max-chars", type=int, default=fineweb.DEFAULT_Q_MAX_CHARS,
+                   help="верхняя граница длины веб-документа, символов")
+    q.add_argument("--prior-dir", action="append", default=None,
+                   help=f"каталог(и) опорных шардов W/C (по умолчанию {common.DATASET_ROOT})")
+    q.add_argument("--prior-max-records", type=int, default=fineweb.DEFAULT_PRIOR_MAX_RECORDS,
+                   help="сколько записей W/C индексируется как опора near-dup (память ∝ числу)")
+    q.add_argument("--prior-threshold", type=float, default=None,
+                   help="порог Jaccard near-dup (по умолчанию — порог axiom_ds.dedup, 0.8)")
+    q.add_argument("--no-prior-dedup", action="store_true",
+                   help="явно отключить дедуп против W/C (в отчёте prior.enabled=false)")
+    q.add_argument("--limit-mb", type=float, default=0.0,
+                   help="бюджет выхода, МБ (проба: 50); 0 — без ограничения")
+    q.add_argument("--max-minutes", type=float, default=0.0,
+                   help="предохранитель по времени, минут (0 — без ограничения)")
+    add_shard_args(q, os.path.join(common.DATASET_ROOT, fineweb.SHARD_Q))
+    q.set_defaults(func=cmd_prepare_q)
 
     probe = sub.add_parser("probe", help="проба на малом объёме в /tmp (без боевой загрузки)")
     probe.add_argument("--limit-mb", type=float, default=200.0, help="бюджет выхода на шард, МБ")

@@ -37,13 +37,18 @@
   "vit_mlp": 1536,
   "image_size": 224,
   "pretrain_dtype": "bf16",
-  "context_curriculum": [8192, 65536],
-  "curriculum_split": [0.90, 0.10],
+  "context_curriculum": [
+    8192,
+    65536
+  ],
+  "curriculum_split": [
+    0.9,
+    0.1
+  ],
   "weight_decay": 0.1,
   "warmup_ratio": 0.01,
   "lr_schedule": "cosine",
   "qat_enabled": false,
-
   "swa_window": 128,
   "swa_share_kda_projections": true,
   "mla_top_k": 512,
@@ -54,23 +59,42 @@
   "indexer_seed": 0,
   "attn_fused_assembly": true,
   "attn_topk_exact": false,
-
   "mla_pool_block": 64,
   "mla_pool_size": 16,
-  "mla_layer_modes": ["full", "reindex", "reindex", "reindex", "reindex", "reindex"],
-
-  "mla_block_merge": {"enabled": false, "block": 16},
-
+  "mla_layer_modes": [
+    "full",
+    "reindex",
+    "reindex",
+    "reindex",
+    "reindex",
+    "reindex"
+  ],
+  "mla_block_merge": {
+    "enabled": true,
+    "block": 16
+  },
   "actual_param_count": 1009632913,
-  "param_budget": [900000000, 1200000000],
+  "param_budget": [
+    900000000,
+    1200000000
+  ],
   "active_params_per_token": 502399236,
   "active_params_definition": "Backbone per-token compute parameters: all attention (including the delta v1.5 Mla indexer and the SWA branch, whose dedicated MLA K/V projections are per-token compute; the KDA window adds no matrix parameters because it shares the delta-rule q/k/v) + dense layer-0 MLP + per LatentMoE layer (latent projections, router, top-2 routed experts, all shared experts) + norms and AttnRes. Excludes the tied embedding (a lookup, not per-token compute), the ViT (active on image tokens only) and the MTP auxiliary head (training-only, dropped at inference).",
-  "layer_composition": {"kda": 18, "mla": 6, "ratio": "3:1"},
-  "moe_composition": {"dense": 1, "latent_moe": 23, "routed": 12, "shared": 2, "top_k": 2, "latent_dim": 768},
-
+  "layer_composition": {
+    "kda": 18,
+    "mla": 6,
+    "ratio": "3:1"
+  },
+  "moe_composition": {
+    "dense": 1,
+    "latent_moe": 23,
+    "routed": 12,
+    "shared": 2,
+    "top_k": 2,
+    "latent_dim": 768
+  },
   "tokenizer_vocab": 160000,
   "tokenizer_hash": "9f8d03091c4a44fa8e7c08f57f7d9f4f97b69e8fde622bb9f6ab613da3565857",
-
   "deviations": [
     "LatentMoE expert counts and sizes are ours (scale-down): 12 routed + 2 shared with top-2 dispatch, latent 768 (0.5 x hidden, as the base's 3584/7168), expert intermediate 384; the base runs 896 routed experts with 16 active (kda-formulas.md :421-424), so only the qualitative proportions carry over (MODEL-L3-SKELETON.md section 1).",
     "QB (Eq. 14, kda-formulas.md :578-583) required interpretation: the per-token cutoff alpha_i^{(t)} — 'cutoff from Top-(k+1) routing' (:558-561) — is taken as the (k+1)-th largest dispatch score s_i + b of token i, and the quantile runs over the raw sigmoid scores s_{:,j} - alpha exactly as written; the update replaces b every step (no momentum or damping is disclosed). The histogram over all-reduced marginals (:592-598) is replaced by an exact batch quantile at skeleton scale.",

@@ -21,6 +21,9 @@
 подменяет стоп-правило AD-8 — смета читается из ``evidence/budget/<run_ref>.json``
 (или из явно указанного файла) и её отсутствие блокирует запуск.
 
+Отдельно: **явно объявленный бэкенд** (``NET_JAX_BACKEND=cpu|gpu``, ADR-010)
+держится уже на импорте этого модуля — см. :func:`apply_declared_backend_pinning`.
+
 Запуск — через CLI ``tools/pretrain_run.py``.
 """
 
@@ -30,7 +33,9 @@ import hashlib
 import io
 import json
 import math
+import os
 import random
+import sys
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -53,6 +58,123 @@ EOS_ID = 2
 
 class PretrainDataError(RuntimeError):
     """Данные претрейна не соответствуют контракту (шард, манифест, курсор)."""
+
+
+class PretrainBackendError(RuntimeError):
+    """Объявленный бэкенд (ADR-010) не применён — прогон не стартует."""
+
+
+# ---------------------------------------------------------------------------
+# 0. Пиннинг бэкенда (ADR-010): до первого импорта jax
+# ---------------------------------------------------------------------------
+
+#: Переменная явного выбора бэкенда (ADR-010): ``auto`` (дефолт) | ``gpu`` | ``cpu``.
+BACKEND_ENV = "NET_JAX_BACKEND"
+
+#: Значения ``NET_JAX_BACKEND``, означающие **явный** выбор (``auto``/пусто — не выбор).
+DECLARED_BACKENDS = ("cpu", "gpu")
+
+#: Единая точка пиннинга (ADR-010) — приёмочный conftest сети: ``JAX_PLATFORMS``,
+#: политика точности, при гейтовом профиле — ``XLA_FLAGS`` детерминизма (ADR-013).
+ACCEPTANCE_CONFTEST = Path(__file__).resolve().parent / "tests" / "conftest.py"
+
+
+def declared_backend() -> str | None:
+    """Явно объявленный бэкенд или ``None`` (режим ``auto``: выбор за jax)."""
+    value = (os.environ.get(BACKEND_ENV) or "").strip().lower()
+    return value if value in DECLARED_BACKENDS else None
+
+
+def _load_acceptance_pinning() -> Any:
+    """Загрузить ``net/tests/conftest.py`` — единую точку пиннинга (ADR-010).
+
+    Пиннинг применяется телом модуля: сначала ``select_backend()`` (объявленный
+    ``NET_JAX_BACKEND=cpu`` ставит ``JAX_PLATFORMS=cpu``), затем политика
+    точности матмулов.  Дублировать это здесь значило бы завести вторую точку
+    пиннинга — тот же довод, что у ``run_sft_smoke._load_acceptance_conftest``.
+    """
+    import importlib.util
+
+    if not ACCEPTANCE_CONFTEST.is_file():  # pragma: no cover — сломанная установка
+        raise PretrainBackendError(
+            f"объявлен {BACKEND_ENV}={declared_backend()}, но точка пиннинга "
+            f"отсутствует: {ACCEPTANCE_CONFTEST} (ADR-010)"
+        )
+    spec = importlib.util.spec_from_file_location(
+        "net_tests_conftest_for_pretrain", ACCEPTANCE_CONFTEST
+    )
+    if spec is None or spec.loader is None:  # pragma: no cover — сломанная установка
+        raise PretrainBackendError(
+            f"точка пиннинга не загружается: {ACCEPTANCE_CONFTEST} (ADR-010)"
+        )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def apply_declared_backend_pinning() -> dict[str, Any]:
+    """Применить явно объявленный бэкенд (ADR-010) до инициализации jax.
+
+    ``JAX_PLATFORMS`` читается jax при **импорте** и дальше не перечитывается:
+    выбор, применённый позже, молча теряется (замер: ``JAX_PLATFORMS=cpu``,
+    выставленный после ``import jax``, оставляет массивы на ``CudaDevice``).
+    Поэтому тест претрейн-лупа пинует себя ``NET_JAX_BACKEND=cpu`` до первого
+    импорта jax, а модуль, который тест импортирует первым, обязан пиннинг
+    применить — иначе объявленный выбор не держится, и численные проверки
+    выполняются не на том бэкенде, на каком объявлены.
+
+    Почему это не косметика: на GPU XLA не гарантирует побитового совпадения
+    ядер между **раздельно** скомпилированными программами (ADR-013), поэтому
+    требование T-L10 «шаг лупа побитово равен тренеру скелета» на GPU
+    выполнимо только под ``--xla_gpu_deterministic_ops`` (замер: без флага два
+    раздельно скомпилированных шага расходятся на 1 ULP градиента embedding —
+    5,96e-08 на масштабе 0,63; под флагом — ноль расхождений).  На CPU шаг
+    точен, и объявленный ``cpu`` — тот бэкенд, где проверка имеет смысл.
+
+    Если jax уже импортирован, ``JAX_PLATFORMS`` переигрывается через
+    ``config.jax_platforms`` (действует, пока не создан клиент) и результат
+    проверяется: пиннинг, который не применился, не выдаёт себя за применённый
+    (ADR-011) — расхождение объявленного и фактического бэкенда даёт warning.
+
+    Возвращается запись для журнала: ``declared``, ``platforms``, ``applied``.
+    При ``auto`` (переменная не выставлена) модуль не трогает ни jax, ни
+    окружение — возвращается ``{"declared": None, "applied": False}``.
+    """
+    declared = declared_backend()
+    if declared is None:
+        return {"declared": None, "platforms": None, "applied": False}
+
+    if "jax" not in sys.modules:
+        # Штатный путь (тесты и стейджи): пиннинг применяется телом conftest до
+        # первого импорта jax — тогда JAX_PLATFORMS читается уже пиннутым, и
+        # заодно применяется политика точности матмулов (ADR-010).
+        _load_acceptance_pinning()
+        return {"declared": declared, "platforms": [declared], "applied": True}
+
+    # jax импортирован раньше (например, общей сессией тестов): переменную он
+    # уже прочитал, поэтому выбор переигрывается конфигом — это действует, пока
+    # не создан клиент.  Факт проверяется, а не предполагается (ADR-011):
+    # несостоявшийся пиннинг обязан быть виден, а не выглядеть применённым.
+    import jax
+
+    jax.config.update("jax_platforms", declared)
+    platforms = sorted({device.platform for device in jax.devices()})
+    if declared not in platforms:
+        import warnings
+
+        warnings.warn(
+            f"объявлен {BACKEND_ENV}={declared}, а вычисления идут на {platforms}: "
+            "пиннинг бэкенда не применён (ADR-010) — выбор читается jax при "
+            "импорте, поэтому net.train_loop должен быть импортирован раньше jax",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return {"declared": declared, "platforms": platforms, "applied": False}
+    return {"declared": declared, "platforms": platforms, "applied": True}
+
+
+#: Факт пиннинга бэкенда на импорте модуля (ADR-010) — до первого импорта jax.
+ACCEPTANCE_PINNING = apply_declared_backend_pinning()
 
 
 # ---------------------------------------------------------------------------
@@ -1404,9 +1526,13 @@ def _save_checkpoint(
 
 
 __all__ = [
+    "ACCEPTANCE_CONFTEST",
+    "ACCEPTANCE_PINNING",
+    "BACKEND_ENV",
     "BOS_ID",
     "CURSOR_MANIFEST_NAME",
     "CURSOR_SCHEMA",
+    "DECLARED_BACKENDS",
     "EOS_ID",
     "METRICS_SCHEMA",
     "Budget",
@@ -1415,6 +1541,7 @@ __all__ = [
     "MetricsWriter",
     "MixCursor",
     "PAD_ID",
+    "PretrainBackendError",
     "PretrainBudgetError",
     "PretrainDataError",
     "PretrainMixLoader",
@@ -1425,7 +1552,9 @@ __all__ = [
     "StreamCursor",
     "TrainConfig",
     "TrainResult",
+    "apply_declared_backend_pinning",
     "budget_breach",
+    "declared_backend",
     "iter_shard_docs",
     "load_budget",
     "load_shard_set",

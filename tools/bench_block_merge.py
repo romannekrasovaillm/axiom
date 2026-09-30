@@ -1056,6 +1056,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     help="run the forward with AttnRes (only tractable at a small --length)")
     ap.add_argument("--skip-recall", action="store_true")
     ap.add_argument("--skip-cost", action="store_true")
+    ap.add_argument("--dtype", choices=("bf16", "fp32"), default="bf16")
     ap.add_argument("--out", type=str, default=str(DEFAULT_OUT))
     ap.add_argument("--smoke", action="store_true",
                     help="small length and few rounds — a dry run of the whole path")

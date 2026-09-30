@@ -151,6 +151,18 @@ def cmd_prepare_c(args: argparse.Namespace) -> int:
               file=sys.stderr)
         return 2
 
+    spec = stack.SOURCES.get(source_name)
+    if spec is not None and spec.license_preselected:
+        # Выключенный лицензионный фильтр — не деталь реализации, а свойство
+        # корпуса: предупреждение печатается всегда, чтобы прогон не выглядел
+        # «разрешённым по умолчанию». Распределение лицензий — в отчёте.
+        print(
+            f"ВНИМАНИЕ: у источника {source_name} лицензионный фильтр выключен "
+            f"(license_preselected) — в шард попадут файлы с любыми лицензиями; "
+            f"распределение лицензий смотрите в отчёте (rules.licenses_seen)",
+            file=sys.stderr,
+        )
+
     report = stack.prepare_c(
         out_dir=args.out,
         target_tokens=args.target_tokens,

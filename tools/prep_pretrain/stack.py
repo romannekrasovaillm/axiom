@@ -1,6 +1,7 @@
 """Шард C: код (ADR-021, ~3B токенов) — The Stack, лицензионный фильтр.
 
-Языки: python, rust, go, javascript, shell.
+Языки: python, rust, go, javascript, shell (у ``codeparrot-clean`` — только
+python, это свойство источника, см. ``assumed_language``).
 Лицензии: mit, apache-2.0, bsd-3-clause, bsd-2-clause, isc, 0bsd.
 Длина файла: 256 Б ≤ len ≤ 100 КБ (микробные выбрасываются, длинные усекаются).
 
@@ -9,10 +10,37 @@
 * ``stack-v2-dedup`` — приоритет ADR-021 (``bigcode/the-stack-v2-dedup``).
   Конфиги по языкам ровно те, что нужны (``Python``/``Rust``/``Go``/
   ``JavaScript``/``Shell``) — стриминг по языку структурно осуществим;
+  на практике контент лежит blob-ссылками (замер 28.09.2026: 150 118 722
+  прочитанных записей — все ``dropped_empty_text``), раскрытие требует S3
+  BigCode — отклонено владельцем;
 * ``stack-dedup-v1`` — фолбэк (``bigcode/the-stack-dedup``): контенты файлов
   и поля ``lang``/``license``/``size`` лежат прямо в строке;
-* ``common-pile-stackv2`` и ``codeparrot-clean`` — публичные НЕ-gated
-  источники: нужны, когда доступ к bigcode не выдан (см. отчёт пробы).
+* ``stack-smol-xl`` — публичный срез Stack v1: объём мал (замер: 0,079B
+  токенов при цели 3B), годится на приёмку пайплайна, не на боевую загрузку;
+* ``common-pile-stackv2`` — публичный, но объявленных языков в потоке почти
+  нет (язык — детектированный формат): нулевой выход замерен;
+* ``codeparrot-clean`` — **план B ADR-021** (``codeparrot/codeparrot-clean``):
+  публичный НЕ-gated, только python, 54 ``json.gz`` ≈ 12,8 ГБ сжатых
+  (≈ 50 ГБ текста, 5 361 373 файла) — единственный публичный источник,
+  которого хватает на цель 3B токенов. Поля: ``content`` (текст),
+  ``license``/``path``/``repo_name`` (справка). Пометка в манифесте —
+  ``python-only fallback (ADR-021 план B)``.
+
+  **Лицензионный фильтр к нему НЕ применяется** (``license_preselected``) —
+  так заявлено в задаче дельты. Замер 30.09.2026 её основание не подтвердил:
+  карточка датасета фильтрации по лицензиям не заявляет (её шаги чистки —
+  дедуп, длина строк, доля букв, отсев автогенерации), а поле ``license``
+  (лицензия репозитория, унаследованная файлом) на 20 000 записей даёт
+  apache-2.0 21,9 %, gpl-3.0 17,9 %, mit 17,4 %, bsd-3-clause 16,6 %,
+  agpl-3.0 9,5 %, gpl-2.0 9,4 %, остальное ~7 % — то есть **copyleft ≈ 41 %**.
+
+  Белый список на том же замере пропускает 57,8 % записей (57,6 % символов),
+  и этого хватает с запасом: ≈ 28,8 ГБ текста → **7,19B токенов** при цели 3B.
+  Политика выбрана архитектором; ниже — факт, а не рекомендация: с выключенным
+  фильтром в шард C попадает ~41 % copyleft-кода, и это видно в отчёте
+  (``rules.licenses_seen`` — распределение) и в предупреждении CLI. Если
+  архитектор выберет белый список — снять ``license_preselected`` у источника
+  и перезапустить прогон (шарды привязаны к политике: другой manifest).
 
 Оба bigcode-датасета закрыты гейтом (``gated: auto``): без выданного доступа
 итератор падает с внятной ошибкой до первого документа — пайплайн не
@@ -22,9 +50,11 @@
 from __future__ import annotations
 
 import ast
+import json
 import os
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Iterator, Sequence
 
 from . import common
@@ -71,6 +101,14 @@ class SourceSpec:
     #: по построению (codeparrot-clean — только python). Это свойство источника,
     #: а не догадка о записи; в мете записи оно фиксируется как факт источника.
     assumed_language: str | None = None
+    #: True — лицензионный фильтр пайплайна к источнику НЕ применяется
+    #: (codeparrot-clean, политика дельты). Выключение фильтра — это изменение
+    #: состава корпуса, поэтому оно именовано, видно в манифесте
+    #: (``license_filter: preselected``) и в отчёте — с измеренным
+    #: распределением лицензий (``rules.licenses_seen``), а не умалчивается.
+    license_preselected: bool = False
+    #: Оговорка источника для манифеста — чем он ограничен по факту.
+    manifest_note: str | None = None
 
     def config_for(self, language: str) -> str | None:
         if not self.per_language_configs:
@@ -78,7 +116,24 @@ class SourceSpec:
         return self.configs.get(language, language)
 
     def spec(self, languages: Sequence[str] = LANGUAGES) -> dict:
-        return {"kind": "stack", "name": self.name, "languages": list(languages)}
+        """Спецификация источника для манифеста: имя, языки и оговорки.
+
+        Ограничения источника фиксируются здесь — в самом манифесте, а не
+        постфактум в отчёте: одноязычный корпус сужает список языков до своего
+        (манифест не должен обещать языки, которых в источнике нет), политика
+        лицензий и оговорка идут отдельными полями.
+        """
+        langs = list(languages)
+        if self.assumed_language:
+            langs = [lang for lang in langs if lang == self.assumed_language] or [
+                self.assumed_language
+            ]
+        payload: dict = {"kind": "stack", "name": self.name, "languages": langs}
+        if self.manifest_note:
+            payload["note"] = self.manifest_note
+        if self.license_preselected:
+            payload["license_filter"] = "preselected"
+        return payload
 
 
 SOURCES: dict[str, SourceSpec] = {
@@ -130,7 +185,8 @@ SOURCES: dict[str, SourceSpec] = {
         note=(
             "публичный НЕ-gated срез The Stack v1 ПО ЯЗЫКАМ (data/<язык>/data.json): "
             "те же поля, что у the-stack-dedup — lang и список лицензий на файл; "
-            "объём мал (~0.6 ГБ на 5 языков) — годится для пробы и приёмки, не для 3B"
+            "объём мал (замер: 50 000 записей → 0,079B токенов при цели 3B) — "
+            "годится для пробы и приёмки пайплайна, не для боевой загрузки"
         ),
         gated=False,
         text_fields=("content",),
@@ -169,9 +225,12 @@ SOURCES: dict[str, SourceSpec] = {
         name="codeparrot-clean",
         repo="codeparrot/codeparrot-clean",
         note=(
-            "публичный НЕ-gated фолбэк (только python): поля content/license/size, "
+            "план B ADR-021: публичный НЕ-gated фолбэк (только python), 54 json.gz "
+            "≈ 12,8 ГБ сжатых ≈ 50 ГБ текста — на цель 3B хватает; поле content, "
             "поля языка в записи НЕТ — корпус одноязычный по построению "
-            "(assumed_language=python); объём мал для 3B, годится для проверки"
+            "(assumed_language=python); лицензионный фильтр НЕ применяется "
+            "(license_preselected) — политика дельты; распределение лицензий "
+            "измеряется в отчёте (замер 30.09.2026: copyleft ≈ 41 %)"
         ),
         gated=False,
         text_fields=("content", "text"),
@@ -182,6 +241,8 @@ SOURCES: dict[str, SourceSpec] = {
         configs={"*": None},
         per_language_configs=False,
         assumed_language="python",
+        license_preselected=True,
+        manifest_note="python-only fallback (ADR-021 план B)",
     ),
 }
 
@@ -189,11 +250,14 @@ DEFAULT_SOURCE_NAME = "stack-dedup-v1"
 
 #: Порядок перебора для ``--source auto``: приоритет ADR-021, затем фолбэк,
 #: затем публичные источники (нужны, пока доступ к bigcode не выдан).
+#: ``codeparrot-clean`` стоит ВПЕРЕД ``stack-smol-xl``: оба публичные, но
+#: у среза Stack v1 измеренный потолок 0,079B при цели 3B — авто-выбор не
+#: должен приводить к источнику, которого на цель заведомо не хватает.
 AUTO_ORDER: tuple[str, ...] = (
     "stack-v2-dedup",
     "stack-dedup-v1",
-    "stack-smol-xl",
     "codeparrot-clean",
+    "stack-smol-xl",
     "common-pile-stackv2",
 )
 
@@ -336,6 +400,12 @@ class StackFiles:
 
     Порядок фильтров: язык → длина (микробные отбрасываются, длинные усекаются)
     → лицензия. Причины отбраковки копятся в ``stats`` и идут в отчёт.
+
+    Лицензионный шаг выключается свойством источника
+    (``license_preselected``, codeparrot-clean): датасет уже отфильтрован по
+    лицензиям на стороне источника, и повторный белый список отбраковал бы
+    годный текст по полю-справке. Для остальных источников белый список
+    действует без изменений.
     """
 
     def __init__(
@@ -351,6 +421,12 @@ class StackFiles:
         self.min_bytes = min_bytes
         self.max_bytes = max_bytes
         self.source_name = source_name
+        source = SOURCES.get(source_name)
+        self.license_preselected = bool(source and source.license_preselected)
+        #: Политика лицензий — свойство нормализатора: шаг выключен, если
+        #: у источника фильтр снят политикой. Отчёт обязан нести это фактом, а
+        #: не умалчивать: ``rules["license_filter"]`` + распределение лицензий.
+        self.licenses_seen: dict[str, int] = {}
         self.stats: dict[str, int] = {
             "dropped_language": 0,
             "dropped_too_small": 0,
@@ -394,11 +470,19 @@ class StackFiles:
             text = truncate_bytes(text, self.max_bytes)
 
         raw_license = common.hm_get(record, *license_fields)
-        if not licenses_allowed(raw_license, self.allowed_licenses):
+        if not self.license_preselected and not licenses_allowed(
+            raw_license, self.allowed_licenses
+        ):
             self.stats["dropped_license"] += 1
             return None
 
         licenses = normalize_licenses(raw_license)
+        if self.license_preselected:
+            # Политика фильтра выключена — распределение лицензий всё равно
+            # измеряется: иначе шард уходит в корпус «разрешённым по умолчанию».
+            for value in licenses or ("<нет поля>",):
+                if value in self.licenses_seen or len(self.licenses_seen) < 64:
+                    self.licenses_seen[value] = self.licenses_seen.get(value, 0) + 1
         meta = {
             "source": record.get("_source_repo") or self.source_name,
             "lang": language,
@@ -442,6 +526,9 @@ def check_source(
         "repo": spec.repo,
         "gated": spec.gated,
         "note": spec.note,
+        # Политика лицензий — свойство источника: у codeparrot-clean фильтр
+        # снят (license_preselected), у остальных — белый список.
+        "license_filter": "preselected" if spec.license_preselected else "whitelist",
     }
     try:
         langs = tuple(languages or LANGUAGES)
@@ -487,6 +574,56 @@ def check_source(
     return outcome
 
 
+def _manifest_state(path: str | os.PathLike[str]) -> dict:
+    """Что уже лежит в манифесте прошлого прогона (пусто — манифеста нет)."""
+    try:
+        data = json.loads(
+            Path(os.path.expanduser(os.fspath(path))).read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError):
+        return {}
+    source = data.get("source")
+    return {
+        "source": source.get("name") if isinstance(source, dict) else None,
+        "shards": len(data.get("shards") or []),
+        "source_records": int(data.get("source_records") or 0),
+    }
+
+
+def _source_change_guard(
+    manifest: str | os.PathLike[str],
+    requested: str | None,
+    restart: bool,
+) -> dict | None:
+    """Курсор манифеста принадлежит прежнему источнику — чужой resume опасен.
+
+    ``source_records`` — позиция в потоке КОНКРЕТНОГО источника. Если в том же
+    манифесте запускается другой источник, проматывание чужого диапазона даёт
+    либо тихий ``source_exhausted`` на живом датасете, либо пропуск куска
+    корпуса. Пустой манифест (прошлый прогон не дал шардов) лечится сбросом
+    курсора; непустой — смешивать шарды разных источников нельзя, нужен свой
+    ``--out``/``--manifest`` или явный ``--restart``.
+    """
+    state = _manifest_state(manifest)
+    previous = state.get("source")
+    if previous is None or requested is None or previous == requested or restart:
+        return None
+    if state["shards"]:
+        raise ValueError(
+            f"манифест {manifest} собран источником {previous!r} "
+            f"({state['shards']} шардов), а запрошен {requested!r}: шарды разных "
+            f"источников в одном каталоге смешивать нельзя. Задайте отдельный "
+            f"--out/--manifest либо --restart, если прежние шарды не нужны"
+        )
+    return {
+        "previous_source": previous,
+        "current_source": requested,
+        "previous_source_records": state["source_records"],
+        "previous_shards": state["shards"],
+        "reason": "манифест прошлого прогона принадлежит другому источнику — курсор сброшен",
+    }
+
+
 def prepare_c(
     out_dir: str | os.PathLike[str] | None = None,
     target_tokens: int = DEFAULT_TARGET_TOKENS,
@@ -501,7 +638,24 @@ def prepare_c(
     root = out_dir or os.path.join(common.DATASET_ROOT, SHARD)
     manifest = manifest_path or os.path.join(root, "manifest-c.json")
     report = report_path or os.path.join(root, "report-c.json")
-    spec = dict(source_spec or SOURCES[source_name].spec(languages))
+    if source_spec is None:
+        if source_name not in SOURCES:
+            raise ValueError(
+                f"неизвестный источник кода: {source_name!r} (есть: {sorted(SOURCES)})"
+            )
+        spec = dict(SOURCES[source_name].spec(languages))
+        # Источник может сузить языки (одноязычный корпус): фильтры обязаны
+        # судиться по тому же списку, что обещан манифестом.
+        languages = tuple(spec["languages"])
+    else:
+        spec = dict(source_spec)
+
+    source_reset = _source_change_guard(
+        manifest, spec.get("name"), bool(kwargs.get("restart"))
+    )
+    if source_reset is not None:
+        kwargs["restart"] = True
+
     normalizer = StackFiles(
         languages=languages,
         source_name=source_name if spec.get("kind") == "stack" else DEFAULT_SOURCE_NAME,
@@ -517,12 +671,30 @@ def prepare_c(
         source_iterators=STACK_ITERATORS,
         **kwargs,
     )
+    if source_reset is not None:
+        result["manifest_source_reset"] = source_reset
     result["rules"] = {
         "languages": list(languages),
         "allowed_licenses": sorted(ALLOWED_LICENSES),
+        "license_filter": "preselected" if normalizer.license_preselected else "whitelist",
+        "license_filter_note": (
+            f"не применяется (license_preselected) у {spec.get('name')}: фильтр "
+            f"снят политикой источника, состав шарда по лицензиям измерен в "
+            f"licenses_seen (карточка codeparrot-clean фильтрации по лицензиям "
+            f"не заявляет: её чистка — дедуп, длина строк, доля букв, отсев "
+            f"автогенерации)"
+            if normalizer.license_preselected
+            else "белый список: файл проходит, если ВСЕ заявленные лицензии разрешены"
+        ),
         "min_file_bytes": MIN_FILE_BYTES,
         "max_file_bytes": MAX_FILE_BYTES,
         "kept_by_language": normalizer.by_language,
     }
+    if normalizer.license_preselected:
+        # Фильтр выключен политикой источника: распределение лицензий в шарде
+        # измерено и положено в отчёт (иначе «разрешённый корпус» — допущение).
+        result["rules"]["licenses_seen"] = dict(
+            sorted(normalizer.licenses_seen.items(), key=lambda kv: -kv[1])
+        )
     result["report"] = str(common.write_report(report, result))
     return result

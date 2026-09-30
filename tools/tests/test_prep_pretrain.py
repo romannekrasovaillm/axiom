@@ -10,6 +10,9 @@
   (микробные выбрасываются, длинные усекаются);
 * **T-p4** — approx-счётчик `max(1, len(text)//4)` и его сумма в манифесте;
 * **T-d1** — страховочный документный дедуп с ограниченным окном (LRU);
+* **T-c-source / T-c-lic / T-c-resume** — источник ``codeparrot-clean`` (план B
+  ADR-021): поле ``content`` из streaming-потока доходит до шарда, лицензионный
+  фильтр к нему не применяется, чужой курсор манифеста не наследуется;
 * плюс границы: запрет вывода вне gb10-shared/tmp и снятие socks-прокси.
 
 Все фикстуры синтетические (локальные jsonl), сеть не нужна.
@@ -429,6 +432,204 @@ def test_t_p3_source_registry_declares_stack_priority() -> None:
     # Языковые конфиги v2 — ровно те, что нужны шарду C.
     assert stack.SOURCES["stack-v2-dedup"].config_for("python") == "Python"
     assert stack.SOURCES["stack-v2-dedup"].config_for("shell") == "Shell"
+
+
+# --------------------------------------------------------------------------- #
+# T-c: источник codeparrot-clean (план B ADR-021, python-only)
+# --------------------------------------------------------------------------- #
+
+CODEPARROT_REPO = "codeparrot/codeparrot-clean"
+CODEPARROT_NOTE = "python-only fallback (ADR-021 план B)"
+
+
+def codeparrot_record(index: int, *, license: object = "mit", bytes_size: int = 600) -> dict:
+    """Запись codeparrot-clean: поле ``content``, поля языка НЕТ (корпус python)."""
+    return {
+        "content": f"# file {index}\n" + "x = 1\n" * (bytes_size // 6),
+        "license": license,
+        "size": bytes_size,
+        "repo_name": f"owner/repo{index}",
+        "path": f"src/mod{index}.py",
+        "hash": f"sha{index}",
+    }
+
+
+class FakeHfStream:
+    """Синтетический streaming-источник: тот же путь кода, что у HF-потока.
+
+    Подменяет ``common.iter_hf_stream`` — точка, из которой ``stack`` берёт
+    настоящий ``datasets``-поток (сеть в тестах не нужна, вызов виден).
+    """
+
+    def __init__(self, records: list[dict]) -> None:
+        self.records = records
+        self.calls: list[dict] = []
+
+    def __call__(self, repo, config=None, split="train", data_files=None, **_):
+        self.calls.append(
+            {"repo": repo, "config": config, "split": split, "data_files": data_files}
+        )
+        return iter([dict(record) for record in self.records])
+
+    @property
+    def last_call(self) -> dict:
+        assert self.calls, "поток источника не запрашивался"
+        return self.calls[-1]
+
+
+def test_t_c_source_streams_content_into_shards(tmp_path: Path, monkeypatch) -> None:
+    """T-c-source: streaming-датасет с полем ``content`` → записи шарда C.
+
+    Проверяется весь путь: реестр → ``iter_stack_documents`` → HF-поток →
+    фильтры → jsonl-шард + манифест с оговоркой источника.
+    """
+    records = [codeparrot_record(i) for i in range(30)]
+    stream = FakeHfStream(records)
+    monkeypatch.setattr(common, "iter_hf_stream", stream)
+
+    out = tmp_path / "C-cp"
+    report = stack.prepare_c(
+        out_dir=out,
+        target_tokens=0,
+        source_name="codeparrot-clean",
+        shard_bytes=64 * 1024,
+        level=1,
+        dedup_window=1000,
+        manifest_path=out / "manifest-c.json",
+        report_path=out / "report-c.json",
+    )
+
+    # Поток запрошен у правильного датасета: конфиг default, split train.
+    assert stream.last_call["repo"] == CODEPARROT_REPO
+    assert stream.last_call["config"] is None, "конфиг default"
+    assert stream.last_call["split"] == "train"
+
+    # Поле content → text: записи дошли до шарда, ничего не потеряно.
+    assert report["totals"]["records"] == len(records)
+    assert report["stop_reason"] == "source_exhausted"
+    stored = [
+        record for entry in report["shards"] for record in read_shard(out / entry["file"])
+    ]
+    assert len(stored) == len(records)
+    assert all(record["text"].startswith("# file ") for record in stored)
+    assert {record["meta"]["lang"] for record in stored} == {"python"}
+    assert all(record["meta"]["source"] == CODEPARROT_REPO for record in stored)
+    assert stored[0]["meta"]["path"] == "src/mod0.py"
+    assert stored[0]["meta"]["repo"] == "owner/repo0"
+    assert report["counters"]["dropped_by_rule"]["dropped_empty_text"] == 0
+
+    # Манифест: имя источника, python-only и оговорка плана B.
+    manifest = json.loads((out / "manifest-c.json").read_text(encoding="utf-8"))
+    assert manifest["source"]["name"] == "codeparrot-clean"
+    assert manifest["source"]["note"] == CODEPARROT_NOTE
+    assert manifest["source"]["languages"] == ["python"]
+    assert manifest["source"]["license_filter"] == "preselected"
+    assert report["source"]["note"] == CODEPARROT_NOTE
+    assert report["rules"]["languages"] == ["python"], "языки сужены до фактических"
+    assert report["rules"]["license_filter"] == "preselected"
+    assert report["rules"]["kept_by_language"] == {"python": len(records)}
+    # Фильтр выключен — значит распределение лицензий обязано быть измерено
+    # и лежать в отчёте: корпус не «разрешён по умолчанию».
+    assert report["rules"]["licenses_seen"] == {"mit": len(records)}
+    assert common.verify_manifest(manifest, out)["bad"] == []
+
+
+def test_t_c_source_resume_continues_same_source(tmp_path: Path, monkeypatch) -> None:
+    """Resume того же источника работает как раньше (курсор не сбрасывается)."""
+    stream = FakeHfStream([codeparrot_record(i) for i in range(30)])
+    monkeypatch.setattr(common, "iter_hf_stream", stream)
+    out = tmp_path / "C-cp"
+    kwargs = dict(
+        out_dir=out,
+        target_tokens=0,
+        source_name="codeparrot-clean",
+        shard_bytes=64 * 1024,
+        level=1,
+        manifest_path=out / "manifest-c.json",
+        report_path=out / "report-c.json",
+    )
+    first = stack.prepare_c(max_records=10, **kwargs)
+    assert first["totals"]["records"] == 10
+    assert first["stop_reason"] == "max_records"
+
+    second = stack.prepare_c(**kwargs)
+    assert "manifest_source_reset" not in second
+    assert second["source_records_skipped_on_resume"] == first["source_records_consumed"]
+    assert second["totals"]["records"] == 30, "тот же источник — потерь и дублей нет"
+
+
+def test_t_c_lic_license_filter_skipped_for_codeparrot() -> None:
+    """T-c-lic: у codeparrot-clean лицензионный фильтр не применяется (не поле).
+
+    Датасет отфильтрован по лицензиям на своей стороне, ``license`` в записи —
+    справка о происхождении. Белый список к нему не применяется: запись без
+    поля лицензии и запись с лицензией вне списка остаются в корпусе.
+    """
+    preselected = stack.StackFiles(languages=("python",), source_name="codeparrot-clean")
+    assert preselected.license_preselected is True
+    assert preselected({"content": "y" * 400}) is not None, "нет поля license — не причина отбоя"
+    assert preselected({"content": "y" * 400, "license": "gpl-3.0"}) is not None
+    assert preselected.stats["dropped_license"] == 0, "фильтр выключен политикой источника"
+    # Язык и длина при этом работают: выключен ровно один шаг.
+    assert preselected({"content": "y" * 400, "lang": "rust"}) is None
+    assert preselected.stats["dropped_language"] == 1
+    assert preselected({"content": "y" * 10}) is None
+    assert preselected.stats["dropped_too_small"] == 1
+
+    # Контроль: у источника с белым списком те же записи отбраковываются.
+    control = stack.StackFiles(languages=("python",), source_name="stack-dedup-v1")
+    assert control.license_preselected is False
+    assert control({"content": "y" * 400, "lang": "python"}) is None
+    assert control({"content": "y" * 400, "lang": "python", "license": "gpl-3.0"}) is None
+    assert control.stats["dropped_license"] == 2
+    assert stack.SOURCES["codeparrot-clean"].license_preselected is True
+    assert all(
+        not spec.license_preselected
+        for name, spec in stack.SOURCES.items()
+        if name != "codeparrot-clean"
+    ), "выключение фильтра — свойство одного источника, а не реестра"
+
+
+def test_t_c_resume_foreign_cursor_is_not_inherited(tmp_path: Path, monkeypatch) -> None:
+    """Курсор манифеста принадлежит прежнему источнику — наследовать нельзя.
+
+    Пустой манифест (прошлый прогон не дал шардов) лечится сбросом курсора;
+    непустой — отказ, потому что шарды разных источников смешивать нельзя.
+    """
+    out = tmp_path / "C"
+    tiny = FakeHfStream([{"content": "x", "lang": "python", "license": "mit"}])
+    monkeypatch.setattr(common, "iter_hf_stream", tiny)
+    first = stack.prepare_c(
+        out_dir=out,
+        target_tokens=0,
+        source_name="stack-dedup-v1",
+        manifest_path=out / "manifest-c.json",
+        report_path=out / "report-c.json",
+        level=1,
+    )
+    assert first["totals"]["records"] == 0 and first["shards"] == []
+    assert first["source_records_consumed"] > 0, "курсор чужого источника продвинулся"
+
+    stream = FakeHfStream([codeparrot_record(i) for i in range(5)])
+    monkeypatch.setattr(common, "iter_hf_stream", stream)
+    kwargs = dict(
+        out_dir=out,
+        target_tokens=0,
+        source_name="codeparrot-clean",
+        manifest_path=out / "manifest-c.json",
+        report_path=out / "report-c.json",
+        level=1,
+    )
+    second = stack.prepare_c(**kwargs)
+    reset = second["manifest_source_reset"]
+    assert reset["previous_source"] == "stack-dedup-v1"
+    assert reset["current_source"] == "codeparrot-clean"
+    assert second["source_records_skipped_on_resume"] == 0, "чужой курсор не промотал поток"
+    assert second["totals"]["records"] == 5, "живой датасет не «исчерпан» чужим курсором"
+
+    # Шарды уже есть: смена источника — отказ, а не тихая мешанина.
+    with pytest.raises(ValueError, match="разных источников"):
+        stack.prepare_c(**{**kwargs, "source_name": "stack-smol-xl"})
 
 
 # --------------------------------------------------------------------------- #

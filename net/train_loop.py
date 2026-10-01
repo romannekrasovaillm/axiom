@@ -1644,7 +1644,9 @@ def train(
     from net import checkpoint as checkpoint_mod
     from net import model, optimizer
 
-    budget = require_budget(budget)
+    # Повторный гейт внутри цикла: лимит уже мог быть выдан смоук-режимом
+    # (pretrain_run.py: explicit_limit_usd -> Budget.limit_usd), не требуем его снова.
+    budget = require_budget(budget, explicit_limit_usd=getattr(budget, "limit_usd", None))
     if train_config.schedule not in ("cosine", "wsd"):
         raise ValueError(f"неизвестное расписание: {train_config.schedule!r}")
     if train_config.param_dtype not in ("float32", "bfloat16"):

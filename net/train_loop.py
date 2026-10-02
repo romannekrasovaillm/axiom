@@ -374,13 +374,18 @@ class ShardDocStream:
         self._handle = open(self.path, "rb")
         self._reader = zstd.ZstdDecompressor().stream_reader(self._handle)
         self._text = io.TextIOWrapper(self._reader, encoding="utf-8", newline="\n")
+        # H6: ``skip`` отсчитывает **непустые** строки — ту же единицу, в которой
+        # измеряется ``shard_doc_offset``.  Раньше проматывались все строки подряд,
+        # и пустая строка в шарде сдвигала позицию: resume внутри окна переигрывал
+        # или терял документы.  Пропуск считается до фильтра пустых, чтобы нумерация
+        # «документ N» оставалась согласованной с курсором.
         skipped = 0
         for line in self._text:
-            if skipped < self.skip:
-                skipped += 1
-                continue
             stripped = line.strip()
             if not stripped:
+                continue
+            if skipped < self.skip:
+                skipped += 1
                 continue
             yield stripped
 
@@ -791,7 +796,10 @@ class PretrainMixLoader:
             raise StopIteration
         phase = self._phase_for_batch(self.step + 1)
         pending = self._pending[phase]
-        needed = self.seq_len * self.batch_size
+        # Запись = [BOS] + (T-1) токенов потока (H3): T-1, а не T, потому что BOS
+        # занимает слот записи и не является токеном потока.  Так запись совпадает
+        # с раскладкой претокенизированного ``.bin`` (``PACKED_RECORD_LAYOUT``).
+        needed = (self.seq_len - 1) * self.batch_size
         while len(pending) < needed:
             if not self._fill_pending(phase):
                 self._exhausted = True
@@ -835,7 +843,16 @@ class PretrainMixLoader:
         return True
 
     def _document_tokens(self, raw: str) -> list[int]:
-        """Токены одной строки шарда (общий путь фаз stable и decay)."""
+        """Токены одной строки шарда + закрывающий EOS (общий путь фаз).
+
+        H3: документы в потоке разделяются **EOS** — ровно так же, как их упаковывает
+        претокенизация (``tools/pretokenize.py``: между двумя EOS лежит один документ).
+        Без разделителя склейка учила бы модель продолжать чужой документ, а граница
+        оставалась ненаблюдаемой.  EOS — разделитель стыка, а не «конец записи»:
+        запись режется по ``T-1`` (:func:`pack_batch`) без вставки фальшивого EOS на
+        разрезе, поэтому длинный документ, переехавший на границу записи, своего
+        настоящего EOS не теряет и чужого не получает.
+        """
         text = ""
         try:
             parsed = json.loads(raw)
@@ -849,6 +866,8 @@ class PretrainMixLoader:
             tokens = tokens[: self.max_doc_tokens]
         if not tokens:
             self._dropped_empty += 1
+            return []
+        tokens.append(self.eos_id)
         return tokens
 
     def _pick_stream(self) -> str | None:
@@ -856,15 +875,25 @@ class PretrainMixLoader:
 
         Дефицит считается от накопленных счётчиков токенов, поэтому после resume
         выбор продолжается ровно там, где остановился непрерывный прогон.
+
+        H2: при исчерпании потока его вес и счётчик **исключаются** из расчёта, а
+        веса оставшихся перенормируются.  Иначе хвост эпохи шёл бы «соло»: мёртвый
+        поток продолжал тянуть долю на себя в ``total`` и ``weights``, дефицит
+        живого искажался, и остаток корпуса съедал один поток.  Перенормировка
+        держит объявленную **относительную** пропорцию оставшихся (для двух и
+        более живых потоков), а один живой — это неизбежное соло последнего
+        потока, а не молчаливое искажение микса.
         """
         live = [name for name in self._streams if not self._streams[name].exhausted]
         if not live:
             return None
         emitted = {name: self._streams[name].tokens for name in self._streams}
-        total = sum(emitted.values())
+        total = sum(emitted[name] for name in live)
+        weight_sum = sum(self.weights[name] for name in live)
         best_name, best_deficit = None, None
         for name in live:
-            deficit = self.weights[name] * total - emitted[name]
+            share = self.weights[name] / weight_sum if weight_sum > 0 else 1.0 / len(live)
+            deficit = share * total - emitted[name]
             if best_deficit is None or deficit > best_deficit:
                 best_name, best_deficit = name, deficit
         return best_name
@@ -921,28 +950,34 @@ def pack_batch(
     tokens: Sequence[int],
     seq_len: int,
     bos_id: int = BOS_ID,
-    eos_id: int = EOS_ID,
-    pad_id: int = PAD_ID,
+    eos_id: int = EOS_ID,  # noqa: ARG001 — аргумент сохранён для совместимости вызова
+    pad_id: int = PAD_ID,  # noqa: ARG001 — EOS/PAD сюда не вставляются (см. ниже)
 ) -> np.ndarray:
-    """Упаковать поток токенов в ``(B, T)`` через ``net.data.pack_sequence``.
+    """Упаковать непрерывный поток токенов в ``(B, T)`` без фальшивых EOS (H3).
 
-    ``pack_sequence`` возвращает ``(inputs, labels)`` длины ``T-1`` одной и той
-    же последовательности ``[bos] + tokens[:T-2] + [eos]``; склейка
-    ``inputs || labels[-1:]`` восстанавливает её ровно — без потери последнего
-    токена и без второго (лишнего) сдвига, который модель делает сама
-    (``compute_loss`` сдвигает внутри).
+    Запись — ровно ``[BOS] + (T-1) токенов потока``: та же раскладка, что у
+    претокенизированного ``.bin`` (``PACKED_RECORD_LAYOUT``), поэтому raw-путь и
+    packed-путь дают модели один и тот же вид строки.  Прежний путь через
+    ``net.data.pack_sequence`` брал ``tokens[:T-2]`` и дописывал ``[eos]``: на
+    каждом разрезе записи рождался **фальшивый EOS** (документ не кончался, его
+    просто разрезала граница записи), а два последних токена окна терялись.
+    Настоящие границы документов ставит поток (``_document_tokens`` добавляет EOS
+    к каждому документу), а не упаковщик — упаковщик только режет по ``T-1``.
+
+    ``eos_id``/``pad_id`` принимаются для совместимости сигнатуры и не
+    используются: вставлять их здесь значило бы вернуть тот самый фальшивый EOS.
     """
-    from net.data import pack_sequence
-
-    if len(tokens) % seq_len != 0:
-        raise ValueError("длина потока токенов должна быть кратна seq_len")
+    body = int(seq_len) - 1
+    if body < 2:
+        raise ValueError("seq_len должен быть >= 3 (bos + минимум два токена потока)")
+    if len(tokens) % body != 0:
+        raise ValueError("длина потока токенов должна быть кратна seq_len - 1")
     rows = []
-    for start in range(0, len(tokens), seq_len):
-        chunk = tokens[start : start + seq_len]
-        inputs, labels = pack_sequence(list(chunk), seq_len, pad_id, bos_id, eos_id)
-        rows.append(
-            np.concatenate([np.asarray(inputs, dtype=np.int32), np.asarray(labels, dtype=np.int32)[-1:]])
-        )
+    for start in range(0, len(tokens), body):
+        row = np.empty(seq_len, dtype=np.int32)
+        row[0] = bos_id
+        row[1:] = np.asarray(tokens[start : start + body], dtype=np.int32)
+        rows.append(row)
     return np.stack(rows, axis=0).astype(np.int32)
 
 
@@ -1730,6 +1765,12 @@ class TrainConfig:
     #: Ставка аренды: без неё стоп-правило по USD не оценивается (и это видно).
     usd_per_gpu_hour: float | None = None
     log_every: int = 0
+    #: К5: файл-стоп (килл-свитч ватчдога).  Существование файла останавливает
+    #: прогон на ближайшем чекпойнте — независимо от того, дошло ли дело до
+    #: бюджетного порога.  Путь разрешает CLI (argv → env STOP_FILE → курсор).
+    stop_file: Path | None = None
+    #: Как часто проверять ``stop_file`` (в шагах); 1 — каждый шаг.
+    stop_check_every: int = 1
 
 
 @dataclass
@@ -1820,6 +1861,14 @@ def train(
         start_step = int(latest["step"])
         if train_config.total_steps is None:
             total_steps = int(cursor_data.get("run", {}).get("total_steps") or total_steps)
+
+    # К3: бюджетные счётчики — накопительные по прогону, а не по ноге.  Без этого
+    # resume обнулял ``tokens_seen``/``gpu_hours``, и пороги сметы ($225/$260)
+    # становились недостижимы: каждая нога выходила «в пределах лимита».  База
+    # приходит из курсора предыдущей ноги (``run``), к ней добавляется текущая.
+    resume_run = dict(cursor_data.get("run") or {})
+    tokens_seen = int(resume_run.get("tokens_seen_total") or 0)
+    gpu_hours_base = float(resume_run.get("gpu_hours_total") or 0.0)
     elif train_config.total_steps is None:
         total_steps = train_config.steps
 

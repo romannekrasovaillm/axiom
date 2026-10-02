@@ -11,6 +11,15 @@
 - сети ≥ 1 Гбит (загрузить 71 ГБ бинов за разумное время);
 - образ: PyTorch/JAX CUDA 12.x docker-template.
 
+## 0.5. Окружение инстанса (R4, ревью 01.10)
+
+```bash
+# venv + jax[cuda12] на инстансе — RS-шаблона нет, собираем:
+python3 -m venv /root/venv && /root/venv/bin/pip install -U "jax[cuda12]" ormsgats 2>/dev/null || /root/venv/bin/pip install -U "jax[cuda12]"
+/root/venv/bin/pip install zstandard datasets
+# проверка: /root/venv/bin/python -c "import jax; print(jax.devices())" → CudaDevice(id=0)
+```
+
 ## 1. Подготовка (хост → инстанс)
 
 ```bash
@@ -30,7 +39,8 @@ export XLA_PYTHON_CLIENT_MEM_FRACTION=0.85   # на инстансе мы одн
 export NET_GATE_PROFILE=1                    # детерминизм ADR-013 запиннен
 nohup python3 tools/pretrain_run.py --model-preset l3-full --grad-checkpointing \
   --run-ref pretreain-l3 --shard-root /root/data --metrics /root/run/metrics.jsonl \
-  --ckpt-dir /root/run/ckpt > /root/run/pretrain.log 2>&1 &
+  --ckpt-dir /root/run/ckpt --journal /root/run/journal.json > /root/run/pretrain.log 2>&1 &
+# ВАЖНО (R1): --journal явно — дефолт путя C-032 (~/gb10-shared) на инстансе отсутствует
 ```
 
 Первые 2 часа — замер фактического tok/s: если прогноз `20B-прогон` по фактической скорости выходит за 225 USD compute — **стоп-файл и пересмотр** (потеря ≤$10, не всего прогона).
@@ -53,6 +63,17 @@ nohup python3 tools/vast_watchdog.py --instance-id <id> \
 - $225 (compute-лимит) → **stop-файл** — луп остановится сам на ближайшем чекпойнте;
 - $260 (полный лимит) → **vast stop** жёстко;
 - баланс < $20 → stop — vast при нуле кредитов без карты **удаляет инстанс и данные** (docs: pricing → Billing Basics).
+
+## 4.5. Возврат артефактов (R2, ревью 01.10 — pull-модель)
+
+Инстанс vast может исчезнуть с диском в любой момент → **не push с инстанса, а pull с домашнего хоста** (cron каждые 30 мин):
+
+```bash
+# cron на домашнем хосте (инстанс имеет публичный IP+ssh-порт):
+*/30 * * * * rsync -a --timeout 300 root@<IP>:/root/run/ckpt/ ~/gb10-shared/runs/pretreain-l3/ckpt/ ;   rsync -a root@<IP>:/root/run/{metrics.jsonl,journal.json,pretrain.log} ~/gb10-shared/runs/pretreain-l3/
+```
+
+Приёмка каждого чекпойнта: сверка tree_hash с журналом (побитовая целостность, как A5). Последний чекпойнт после завершения — той же командой; инстанс destroy только после сверки.
 
 ## 5. Финал
 

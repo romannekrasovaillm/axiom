@@ -94,7 +94,7 @@
     "latent_dim": 768
   },
   "tokenizer_vocab": 160000,
-  "tokenizer_hash": "9f8d03091c4a44fa8e7c08f57f7d9f4f97b69e8fde622bb9f6ab613da3565857",
+  "tokenizer_hash": "500f80237b3bd0fb",
   "deviations": [
     "LatentMoE expert counts and sizes are ours (scale-down): 12 routed + 2 shared with top-2 dispatch, latent 768 (0.5 x hidden, as the base's 3584/7168), expert intermediate 384; the base runs 896 routed experts with 16 active (kda-formulas.md :421-424), so only the qualitative proportions carry over (MODEL-L3-SKELETON.md section 1).",
     "QB (Eq. 14, kda-formulas.md :578-583) required interpretation: the per-token cutoff alpha_i^{(t)} — 'cutoff from Top-(k+1) routing' (:558-561) — is taken as the (k+1)-th largest dispatch score s_i + b of token i, and the quantile runs over the raw sigmoid scores s_{:,j} - alpha exactly as written; the update replaces b every step (no momentum or damping is disclosed). The histogram over all-reduced marginals (:592-598) is replaced by an exact batch quantile at skeleton scale.",

@@ -8,7 +8,9 @@
   шардов W/C по манифестам, микс ~85/15 по токенам (ADR-021), детерминированный
   шаффл по сиду, токенизация и упаковка в T-последовательности.  Корпус в
   память не поднимается: живое окно — ``shuffle_window`` документов плюс
-  недобранные токены одной последовательности;
+  недобранные токены одной последовательности.  На последних ``decay_ratio``
+  шагах (граница — :func:`decay_start_step`) микс замещается decay-шардом Q тем
+  же читателем;
 * **курсор** — :class:`MixCursor`: манифест-курсор (шаг, документы, токены,
   остаток токенов).  Resume из него даёт **тот же** поток, что продолжил бы
   непрерывный прогон: без потерь и дублей (проверяется тестом L-6);
@@ -45,7 +47,17 @@ from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence
 import numpy as np
 
 #: Допустимые имена шардов претрейн-микса (ADR-021: W — веб, C — код).
+#: Стабильная фаза: микс W/C.  Decay-шард объявлен отдельно (``DECAY_SHARD``):
+#: он не входит в микс, а замещает его на последних ``decay_ratio`` шагах.
 SHARD_NAMES = ("W", "C")
+
+#: Шард decay-фазы (ADR-021): сужёный высококачественный микс ~1B токенов.
+DECAY_SHARD = "Q"
+
+#: Фазы данных прогона: ``stable`` (микс W/C ~85/15) и ``decay`` (шард Q).
+PHASE_STABLE = "stable"
+PHASE_DECAY = "decay"
+PHASES = (PHASE_STABLE, PHASE_DECAY)
 
 #: Версия контракта курсора (манифест resume).
 CURSOR_SCHEMA = "pretrain-cursor/v1"
@@ -182,6 +194,30 @@ ACCEPTANCE_PINNING = apply_declared_backend_pinning()
 # ---------------------------------------------------------------------------
 
 
+def decay_start_step(
+    total_steps: int, *, warmup_ratio: float = 0.01, decay_ratio: float = 0.05
+) -> int:
+    """Первый 0-based шаг decay-фазы (граница LR **и** данных).
+
+    По ADR-021 последние ``decay_ratio`` шагов прогона идут по decay-шарду Q,
+    и граница данных обязана совпасть с границей LR: иначе Q кормился бы на
+    стабильном LR (или наоборот), и «decay-фаза» была бы объявлением, а не
+    фактом.  Поэтому и :func:`wsd_schedule`, и даталоадер читают **одну** формулу
+    ``total_steps - round(total_steps · decay_ratio)`` с клампом по warmup, а не
+    каждая свою копию.
+
+    Возвращается 0-based индекс: для ``total_steps=100, decay_ratio=0.05``
+    граница равна 95, то есть decay-фаза — шаги 95..99 (последние 5%).
+    """
+    if total_steps <= 0:
+        raise ValueError("total_steps должен быть > 0")
+    if not 0.0 <= decay_ratio <= 1.0:
+        raise ValueError("decay_ratio должен быть в [0, 1]")
+    warmup_steps = max(1, int(round(total_steps * warmup_ratio)))
+    decay_steps = max(0, int(round(total_steps * decay_ratio)))
+    return max(warmup_steps, total_steps - decay_steps)
+
+
 def wsd_schedule(
     peak_lr: float,
     total_steps: int,
@@ -195,15 +231,17 @@ def wsd_schedule(
     Отличие от ``net/optimizer.cosine_schedule`` (косинус на всём прогоне):
     стабильная фаза держит LR на пике, а decay приходит только в конце — это
     расписание фазы претрейна ADR-021 (~19B на W+C, затем ~1B на decay-шарде Q).
-    Доля decay отсчитывается от **общего** числа шагов (дефолт 5%).
+    Доля decay отсчитывается от **общего** числа шагов (дефолт 5%), граница — та
+    же, что у данных (:func:`decay_start_step`).
     """
     if total_steps <= 0:
         raise ValueError("total_steps должен быть > 0")
     if not 0.0 <= min_ratio <= 1.0:
         raise ValueError("min_ratio должен быть в [0, 1]")
     warmup_steps = max(1, int(round(total_steps * warmup_ratio)))
-    decay_steps = max(0, int(round(total_steps * decay_ratio)))
-    decay_start = max(warmup_steps, total_steps - decay_steps)
+    decay_start = decay_start_step(
+        total_steps, warmup_ratio=warmup_ratio, decay_ratio=decay_ratio
+    )
     # Прогон исполняет шаги ``0..total_steps-1``: decay приходит к минимуму на
     # последнем исполненном шаге, а не на «шаге total_steps», которого не будет.
     last_step = total_steps - 1
@@ -446,7 +484,9 @@ class MixCursor:
 
     ``pending_tokens`` — токены, уже извлечённые из документов, но не добравшие
     до последовательности.  Без них resume потерял бы хвост (или подсунул его
-    дважды), поэтому остаток хранится в курсоре явно.
+    дважды), поэтому остаток хранится в курсоре явно.  ``phase`` называет фазу-
+    владельца хвоста: при resume на границе фаз остаток стабильной фазы не должен
+    утечь в Q-поток.
     """
 
     step: int
@@ -454,6 +494,10 @@ class MixCursor:
     streams: tuple[StreamCursor, ...]
     pending_tokens: tuple[int, ...]
     schema: str = CURSOR_SCHEMA
+    #: Фаза, которой принадлежат ``pending_tokens`` (владелец хвоста): stable|decay.
+    #: Нужна для корректного resume на границе фаз — хвост стабильной фазы не
+    #: должен попасть в Q-поток, а позиция Q должна восстановиться со своего места.
+    phase: str = PHASE_STABLE
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -462,6 +506,7 @@ class MixCursor:
             "tokens_total": self.tokens_total,
             "streams": [item.to_json() for item in self.streams],
             "pending_tokens": list(self.pending_tokens),
+            "phase": self.phase,
         }
 
     @classmethod
@@ -471,11 +516,15 @@ class MixCursor:
             raise PretrainDataError(
                 f"курсор схемы {schema!r} не поддерживается (ожидается {CURSOR_SCHEMA})"
             )
+        phase = str(data.get("phase", PHASE_STABLE))
+        if phase not in PHASES:
+            raise PretrainDataError(f"фаза курсора {phase!r} не из {PHASES}")
         return cls(
             step=int(data.get("step", 0)),
             tokens_total=int(data.get("tokens_total", 0)),
             streams=tuple(StreamCursor.from_json(item) for item in data.get("streams", [])),
             pending_tokens=tuple(int(token) for token in data.get("pending_tokens", [])),
+            phase=phase,
         )
 
 
@@ -592,6 +641,13 @@ class PretrainMixLoader:
 
     Корпус не поднимается в память: живое окно — ``shuffle_window`` документов
     на поток плюс ``pending``-токены одной недобранной последовательности.
+
+    **Decay-фаза (ADR-021).**  Если объявлен ``decay_stream`` (Q), даталоадер
+    двухфазный: до шага ``decay_start`` идёт микс ``streams`` (stable), с шага
+    ``decay_start`` — только ``decay_stream`` (decay).  ``decay_stream`` читается
+    **тем же** читателем шардов, что W/C (тот же ``_StreamIterator``), со своим
+    сидом шаффла; дедуп не нужен — Q фильтрован при сборке шарда.  Границу фаз
+    считает :func:`decay_start_step`, чтобы данные и WSD-LR шли в ногу.
     """
 
     def __init__(
@@ -611,6 +667,10 @@ class PretrainMixLoader:
         eos_id: int = EOS_ID,
         pad_id: int = PAD_ID,
         text_key: str = "text",
+        decay_stream: str | None = None,
+        decay_start: int | None = None,
+        decay_shard_root: str | Path | None = None,
+        decay_seed: int | None = None,
     ):
         if not streams:
             raise PretrainDataError("не объявлено ни одного потока шардов")
@@ -620,6 +680,26 @@ class PretrainMixLoader:
             raise ValueError("batch_size должен быть >= 1")
         if shuffle_window < 1:
             raise ValueError("shuffle_window должен быть >= 1")
+        decay_enabled = decay_stream is not None
+        if decay_enabled and decay_start is None:
+            raise PretrainDataError(
+                f"decay-шард {decay_stream!r} объявлен без decay_start: "
+                "граница фаз неизвестна (см. decay_start_step)"
+            )
+        if decay_start is not None and not decay_enabled:
+            raise PretrainDataError(
+                "decay_start объявлен без decay_stream: неясно, чем питать decay-фазу"
+            )
+        if decay_enabled and decay_stream in streams:
+            raise PretrainDataError(
+                f"decay-шард {decay_stream!r} не может входить в стабильный микс "
+                f"{tuple(streams)}: иначе он подмешивался бы всё время (ADR-021)"
+            )
+        if cursor is not None and cursor.phase == PHASE_DECAY and not decay_enabled:
+            raise PretrainDataError(
+                "курсор снят в decay-фазе, а decay-шард не объявлен: resume без него "
+                "потерял бы Q-поток — объявите decay_stream/decay_start"
+            )
 
         self.shard_root = Path(shard_root)
         self.seq_len = int(seq_len)
@@ -631,7 +711,14 @@ class PretrainMixLoader:
         self.bos_id, self.eos_id, self.pad_id = bos_id, eos_id, pad_id
         self.text_key = text_key
         self.step = cursor.step if cursor else 0
-        self._pending: deque[int] = deque(cursor.pending_tokens if cursor else ())
+        self.decay_stream = decay_stream
+        self.decay_shard_root = (
+            Path(decay_shard_root) if decay_shard_root is not None else None
+        )
+        #: Первый 0-based шаг decay-фазы; ``None`` — фаза выключена (микс всё время).
+        self.decay_start = int(decay_start) if decay_start is not None else None
+        #: Сид шаффла decay-шарда: свой порядок, отдельный от стабильного микса.
+        self.decay_seed = int(decay_seed) if decay_seed is not None else self.seed
 
         weights = dict(mix) if mix else {name: 1.0 for name in streams}
         missing = [name for name in streams if name not in weights]
@@ -655,6 +742,29 @@ class PretrainMixLoader:
                 cursor=cursor_streams.get(name),
             )
 
+        self._q_stream: _StreamIterator | None = None
+        if decay_enabled:
+            q_root = self.decay_shard_root or self.shard_root
+            q_manifest = q_root / decay_stream / f"manifest-{decay_stream.lower()}.json"
+            q_set = load_shard_set(q_manifest, allowed=(decay_stream,))
+            self._q_stream = _StreamIterator(
+                q_set,
+                window=self.shuffle_window,
+                seed=self.decay_seed,
+                cursor=cursor_streams.get(decay_stream),
+            )
+
+        # pending разделён по фазам: хвост стабильной фазы не должен утечь в Q и
+        # наоборот.  Восстанавливается в фазу-владельца, названную курсором.
+        owner = cursor.phase if cursor else PHASE_STABLE
+        self._pending: dict[str, deque[int]] = {
+            PHASE_STABLE: deque(),
+            PHASE_DECAY: deque(),
+        }
+        if cursor and cursor.pending_tokens:
+            self._pending[owner].extend(cursor.pending_tokens)
+        self._last_phase = owner
+
         self._documents_read = 0
         self._dropped_empty = 0
         self._truncated = 0
@@ -665,36 +775,67 @@ class PretrainMixLoader:
     def __iter__(self) -> "PretrainMixLoader":
         return self
 
+    def _phase_for_batch(self, step: int) -> str:
+        """Фаза батча с абсолютным номером ``step`` (1-based)."""
+        if self.decay_start is None:
+            return PHASE_STABLE
+        return PHASE_DECAY if (step - 1) >= self.decay_start else PHASE_STABLE
+
+    @property
+    def phase(self) -> str:
+        """Фаза последнего выданного батча (stable до первого — ``stable``)."""
+        return self._last_phase
+
     def __next__(self) -> np.ndarray:
         if self._exhausted:
             raise StopIteration
+        phase = self._phase_for_batch(self.step + 1)
+        pending = self._pending[phase]
         needed = self.seq_len * self.batch_size
-        while len(self._pending) < needed:
-            if not self._fill_pending():
+        while len(pending) < needed:
+            if not self._fill_pending(phase):
                 self._exhausted = True
                 raise StopIteration
-        chunk = [self._pending.popleft() for _ in range(needed)]
+        chunk = [pending.popleft() for _ in range(needed)]
         self.step += 1
+        self._last_phase = phase
         return pack_batch(chunk, self.seq_len, self.bos_id, self.eos_id, self.pad_id)
 
-    def _fill_pending(self) -> bool:
-        """Добрать pending-токены; False — микс исчерпан.
+    def _fill_pending(self, phase: str) -> bool:
+        """Добрать pending текущей фазы; False — фаза исчерпана.
 
-        Эпоха заканчивается на **первом** исчерпании потока: микс W/C объявлен
-        как один проход по 17B/3B (ADR-021), и когда один шард кончился, удержать
-        объявленную пропорцию уже нельзя — продолжать значит молча уехать по
-        другой пропорции, чем запиннена в карточке.
+        Эпоха заканчивается на **первом** исчерпании активной фазы: микс W/C
+        объявлен как один проход по 17B/3B (ADR-021), и когда один шард кончился,
+        удержать объявленную пропорцию уже нельзя — продолжать значит молча уехать
+        по другой пропорции, чем запиннена в карточке.  То же и для decay: Q —
+        один проход ~1B, кончился — эпоха кончилась.
         """
+        if phase == PHASE_DECAY:
+            stream = self._q_stream
+            if stream is None or stream.exhausted:
+                return False
+            return self._absorb_document(stream, PHASE_DECAY)
         name = self._pick_stream()
         if name is None:
             return False
-        stream = self._streams[name]
+        return self._absorb_document(self._streams[name], PHASE_STABLE)
+
+    def _absorb_document(self, stream: _StreamIterator, phase: str) -> bool:
         try:
             raw = stream.next_document()
         except StopIteration:
             stream.exhausted = True
             return False
         self._documents_read += 1
+        tokens = self._document_tokens(raw)
+        if not tokens:
+            return True
+        self._pending[phase].extend(tokens)
+        stream.tokens += len(tokens)
+        return True
+
+    def _document_tokens(self, raw: str) -> list[int]:
+        """Токены одной строки шарда (общий путь фаз stable и decay)."""
         text = ""
         try:
             parsed = json.loads(raw)
@@ -708,10 +849,7 @@ class PretrainMixLoader:
             tokens = tokens[: self.max_doc_tokens]
         if not tokens:
             self._dropped_empty += 1
-            return True
-        self._pending.extend(tokens)
-        stream.tokens += len(tokens)
-        return True
+        return tokens
 
     def _pick_stream(self) -> str | None:
         """Поток с максимальным дефицитом против объявленной пропорции.
@@ -733,17 +871,24 @@ class PretrainMixLoader:
 
     # -- след и курсор -----------------------------------------------------
 
+    def _all_streams(self) -> dict[str, _StreamIterator]:
+        streams = dict(self._streams)
+        if self._q_stream is not None and self.decay_stream is not None:
+            streams[self.decay_stream] = self._q_stream
+        return streams
+
     def cursor(self, *, step: int | None = None) -> MixCursor:
-        streams = tuple(self._streams[name].cursor() for name in self._streams)
+        streams = tuple(item.cursor() for item in self._all_streams().values())
         return MixCursor(
             step=self.step if step is None else int(step),
             tokens_total=sum(item.tokens for item in streams),
             streams=streams,
-            pending_tokens=tuple(self._pending),
+            pending_tokens=tuple(self._pending[self._last_phase]),
+            phase=self._last_phase,
         )
 
     def stats(self) -> dict[str, Any]:
-        streams = {name: self._streams[name].cursor() for name in self._streams}
+        streams = {name: item.cursor() for name, item in self._all_streams().items()}
         total_tokens = sum(item.tokens for item in streams.values())
         share = {
             name: (item.tokens / total_tokens if total_tokens else 0.0)
@@ -755,7 +900,10 @@ class PretrainMixLoader:
             "documents_truncated": self._truncated,
             "tokens_total": total_tokens,
             "token_share": share,
-            "pending_tokens": len(self._pending),
+            "pending_tokens": len(self._pending[self._last_phase]),
+            "phase": self._last_phase,
+            "decay_stream": self.decay_stream,
+            "decay_start": self.decay_start,
             "streams": {
                 name: {
                     "shard_index": item.shard_index,
@@ -1720,6 +1868,10 @@ def train(
     stop_reason: str | None = None
     stopped_by_budget = False
     checkpoint_record: dict | None = None
+    # Граница decay-фазы берётся у даталоадера (единственный источник истины):
+    # метрика ``phase`` обязана называть ту же фазу, которой питался шаг, иначе
+    # журнал разошёлся бы с данными.  Без даталоадера (тесты проводки) — stable.
+    data_decay_start = getattr(loader, "decay_start", None) if loader is not None else None
     first_tick = 0.0
     started = time.time()
     usd_rate = train_config.usd_per_gpu_hour
@@ -1756,12 +1908,18 @@ def train(
         if usd_rate is not None:
             usd_spent = gpu_hours * float(usd_rate)
 
+        phase = (
+            PHASE_DECAY
+            if data_decay_start is not None and (absolute - 1) >= data_decay_start
+            else PHASE_STABLE
+        )
         if metrics is not None:
             metrics.log(
                 {
                     "step": absolute,
                     "loss": loss_value,
                     "lr": lr_history[-1],
+                    "phase": phase,
                     "tokens": batch_tokens,
                     "tokens_seen": tokens_seen,
                     "step_seconds": elapsed,
@@ -1913,6 +2071,7 @@ __all__ = [
     "BOS_ID",
     "CURSOR_MANIFEST_NAME",
     "CURSOR_SCHEMA",
+    "DECAY_SHARD",
     "DECLARED_BACKENDS",
     "EOS_ID",
     "METRICS_SCHEMA",
@@ -1922,6 +2081,9 @@ __all__ = [
     "MetricsWriter",
     "MixCursor",
     "PAD_ID",
+    "PHASES",
+    "PHASE_DECAY",
+    "PHASE_STABLE",
     "PretrainBackendError",
     "PretrainBudgetError",
     "PretrainDataError",
@@ -1936,6 +2098,7 @@ __all__ = [
     "apply_declared_backend_pinning",
     "budget_breach",
     "declared_backend",
+    "decay_start_step",
     "iter_shard_docs",
     "load_budget",
     "load_shard_set",

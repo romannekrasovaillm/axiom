@@ -95,6 +95,13 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     parser.add_argument("--streams", default="W,C", help="потоки шардов через запятую")
     parser.add_argument("--mix", default=None,
                         help="веса микса, напр. W=0.85,C=0.15 (по умолчанию — ADR-021)")
+    parser.add_argument("--decay-stream", default=None,
+                        help="decay-шард (ADR-021: Q) на последних --decay-ratio шагах; "
+                             "по умолчанию фаза выключена (только микс W/C)")
+    parser.add_argument("--decay-shard-root", default=None,
+                        help="каталог decay-шарда (по умолчанию --shard-root)")
+    parser.add_argument("--decay-seed", type=int, default=None,
+                        help="сид шаффла decay-шарда (по умолчанию --seed)")
     parser.add_argument("--model-preset", choices=sft_stage.SMOKE_PRESETS + (sft_stage.L3_FULL_PRESET,),
                         default="small")
     parser.add_argument("--steps", type=int, default=30, help="шагов в этой ноге")
@@ -150,6 +157,9 @@ def resolve_paths(args: argparse.Namespace) -> dict[str, Any]:
     """Пути прогона: шарды и результаты — на каноническом диске (C-032/C-033)."""
     shared = sft_stage.shared_root()
     shard_root = Path(args.shard_root) if args.shard_root else shared / DEFAULT_SHARD_SUBDIR
+    decay_shard_root = (
+        Path(args.decay_shard_root) if args.decay_shard_root else shard_root
+    )
     out_dir = Path(args.out) if args.out else shared / DEFAULT_RUN_SUBDIR / args.run_ref
     ckpt_dir = Path(args.ckpt_dir) if args.ckpt_dir else out_dir / "checkpoints"
     metrics_path = Path(args.metrics) if args.metrics else out_dir / "metrics.jsonl"
@@ -160,6 +170,7 @@ def resolve_paths(args: argparse.Namespace) -> dict[str, Any]:
     )
     return {
         "shard_root": shard_root,
+        "decay_shard_root": decay_shard_root,
         "out_dir": out_dir,
         "ckpt_dir": ckpt_dir,
         "metrics_path": metrics_path,
@@ -401,6 +412,22 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
             "from_step": ckpt_manager.latest()["step"],
             "cursor_restored": data_cursor is not None,
         }
+
+    # Граница decay-фазы (ADR-021): та же формула, что у WSD-LR (decay_start_step).
+    # На resume горизонт берётся из курсора прогона, если --total-steps не задан
+    # явно: иначе вторая нога считала бы границу от длины ноги — та же ошибка,
+    # что и с LR по обрезанному горизонту.
+    horizon = args.total_steps or args.steps
+    if args.resume and args.total_steps is None:
+        cursor_run = ((ckpt_manager.latest() or {}).get("cursor") or {}).get("run") or {}
+        horizon = int(cursor_run.get("total_steps") or horizon)
+    decay_start = (
+        tl.decay_start_step(
+            horizon, warmup_ratio=args.warmup_ratio, decay_ratio=args.decay_ratio
+        )
+        if args.decay_stream
+        else None
+    )
     try:
         loader = tl.PretrainMixLoader(
             shard_root=paths["shard_root"],
@@ -413,6 +440,10 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
             shuffle_window=args.shuffle_window,
             max_doc_tokens=args.max_doc_tokens,
             cursor=data_cursor,
+            decay_stream=args.decay_stream,
+            decay_start=decay_start,
+            decay_shard_root=paths["decay_shard_root"] if args.decay_stream else None,
+            decay_seed=args.decay_seed,
         )
     except tl.PretrainDataError as exc:
         journal["refusal"] = f"данные: {exc}"
@@ -428,6 +459,18 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
         "streaming": True,
         "seq_len": args.seq_len,
         "batch_size": args.batch_size,
+        "decay": (
+            {
+                "stream": args.decay_stream,
+                "start_step": decay_start,
+                "horizon_steps": horizon,
+                "shard_root": sft_stage.repo_rel(paths["decay_shard_root"], repo_root),
+                "seed": args.decay_seed if args.decay_seed is not None else args.seed,
+                "shards": describe_shards(loader._q_stream.shard_set, repo_root),
+            }
+            if args.decay_stream
+            else None
+        ),
     }
 
     # --- grad-checkpointing: для l3-full обязателен ------------------------
@@ -475,6 +518,8 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
         "lr": args.lr,
         "warmup_ratio": args.warmup_ratio,
         "decay_ratio": args.decay_ratio,
+        "decay_stream": args.decay_stream,
+        "decay_start": decay_start,
         "grad_checkpointing": bool(grad_checkpointing),
         "grad_checkpointing_policy": args.grad_checkpointing_policy,
         "param_dtype": args.param_dtype,
@@ -536,6 +581,8 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
                 "tokens_total": stats["tokens_total"],
                 "token_share": stats["token_share"],
                 "pending_tokens": stats["pending_tokens"],
+                "phase": stats.get("phase"),
+                "decay_start": stats.get("decay_start"),
                 "peak_rss_mb": peak_rss_mb(),
                 "streams": stats["streams"],
             },

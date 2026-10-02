@@ -951,3 +951,223 @@ def test_l11_resume_cursor_restored_from_checkpoint(tmp_path: Path, corpus: Path
     assert cli.resume_cursor(None) is None
     empty = tl.CheckpointManager(tmp_path / "пусто", keep_last=1)
     assert cli.resume_cursor(empty) is None
+
+
+# ---------------------------------------------------------------------------
+# L-12 — decay-фаза (ADR-021): третий поток Q, переключение по шагу, resume
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def corpus_with_q(tmp_path: Path) -> Path:
+    """Мини-корпус с decay-шардом Q: W (3 шарда), C (1), Q (1)."""
+    root = tmp_path / "axiom-pretrain-l3-q"
+    write_shard_set(root, "W", synthetic_docs("w", 60, 12), shards=3)
+    write_shard_set(root, "C", synthetic_docs("c", 30, 12), shards=1)
+    write_shard_set(root, "Q", synthetic_docs("q", 40, 12), shards=1)
+    return root
+
+
+def make_q_loader(corpus_root: Path, *, decay_start: int, **overrides):
+    """Даталоадер с decay-фазой: микс W/C, а с шага ``decay_start`` — шард Q."""
+    params = dict(
+        shard_root=corpus_root,
+        streams=("W", "C"),
+        encode=word_encoder,
+        seq_len=16,
+        batch_size=2,
+        seed=7,
+        mix={"W": 0.85, "C": 0.15},
+        shuffle_window=8,
+        decay_stream="Q",
+        decay_start=decay_start,
+    )
+    params.update(overrides)
+    return tl.PretrainMixLoader(**params)
+
+
+def test_l12_decay_start_step_matches_wsd_boundary():
+    """Граница данных = граница LR WSD (одна формула, не две копии)."""
+    assert tl.decay_start_step(100, warmup_ratio=0.01, decay_ratio=0.05) == 95
+    assert tl.decay_start_step(1000, warmup_ratio=0.01, decay_ratio=0.05) == 950
+    assert tl.decay_start_step(100, warmup_ratio=0.10, decay_ratio=0.05) == 95
+    # decay_ratio=0 — decay-фазы нет (граница за последним шагом)
+    assert tl.decay_start_step(50, decay_ratio=0.0) == 50
+
+
+def test_l12_phase_switches_at_the_boundary(corpus_with_q: Path):
+    """Фаза stable на первых ``decay_start`` батчах, decay — начиная со следующего."""
+    loader = make_q_loader(corpus_with_q, decay_start=3)
+    seen = []
+    for _ in loader:
+        seen.append(loader.phase)
+    assert seen[:3] == [tl.PHASE_STABLE] * 3, seen
+    assert seen[3:] and all(phase == tl.PHASE_DECAY for phase in seen[3:]), seen
+    assert "phase" in loader.stats() and loader.stats()["decay_start"] == 3
+
+
+def test_l12_decay_phase_feeds_only_q_stream(corpus_with_q: Path):
+    """После границы W/C заморожены, растёт только Q — микс не подмешивается."""
+    loader = make_q_loader(corpus_with_q, decay_start=3)
+    for _ in range(3):
+        next(loader)
+    frozen = loader.stats()["streams"]
+    stable_w, stable_c, stable_q = (
+        frozen["W"]["tokens"],
+        frozen["C"]["tokens"],
+        frozen["Q"]["tokens"],
+    )
+    assert stable_q == 0, "Q не должен течь в стабильной фазе"
+    for _ in range(3):
+        next(loader)
+    after = loader.stats()["streams"]
+    assert after["W"]["tokens"] == stable_w, "W подмешался в decay-фазу"
+    assert after["C"]["tokens"] == stable_c, "C подмешался в decay-фазу"
+    assert after["Q"]["tokens"] > stable_q, "Q не питает decay-фазу"
+    # доля Q растёт только за счёт decay-шагов (W/C заморожены)
+    assert loader.stats()["token_share"]["Q"] > 0.0
+
+
+def test_l12_decay_batches_equal_q_only_reader(corpus_with_q: Path):
+    """Decay-поток — тот же reader и сид, что у Q-only набора (свой порядок)."""
+    loader = make_q_loader(corpus_with_q, decay_start=3)
+    for _ in range(3):
+        next(loader)
+    decay_batches = [np.asarray(next(loader)) for _ in range(3)]
+
+    q_only = tl.PretrainMixLoader(
+        shard_root=corpus_with_q,
+        streams=("Q",),
+        encode=word_encoder,
+        seq_len=16,
+        batch_size=2,
+        seed=7,
+        mix={"Q": 1.0},
+        shuffle_window=8,
+    )
+    expected = [np.asarray(next(q_only)) for _ in range(3)]
+    for index, (mine, reference) in enumerate(zip(decay_batches, expected)):
+        assert np.array_equal(mine, reference), f"Q-поток расходится на батче {index}"
+
+
+def test_l12_cursor_carries_phase_and_roundtrips(corpus_with_q: Path):
+    """Курсор несёт фазу-владельца хвоста и переживает json без потерь."""
+    loader = make_q_loader(corpus_with_q, decay_start=2)
+    for _ in range(3):
+        next(loader)
+    cursor = loader.cursor(step=3)
+    assert cursor.phase == tl.PHASE_DECAY
+    restored = tl.MixCursor.from_json(json.loads(json.dumps(cursor.to_json())))
+    assert restored == cursor
+
+
+def test_l12_resume_across_phase_boundary_matches_continuous(corpus_with_q: Path):
+    """Resume ровно на границе фаз воспроизводит непрерывный прогон."""
+    continuous = [np.asarray(batch) for batch in make_q_loader(corpus_with_q, decay_start=3)]
+
+    leg = make_q_loader(corpus_with_q, decay_start=3)
+    for _ in range(3):
+        next(leg)
+    cursor = leg.cursor(step=3)  # снимок на последнем stable-шаге
+    assert cursor.phase == tl.PHASE_STABLE
+
+    resumed = make_q_loader(corpus_with_q, decay_start=3, cursor=cursor)
+    tail = [np.asarray(batch) for batch in resumed]
+    assert len(tail) == len(continuous) - 3
+    for index, batch in enumerate(tail):
+        assert np.array_equal(batch, continuous[3 + index]), f"расхождение на батче {index}"
+
+
+def test_l12_resume_inside_decay_matches_continuous(corpus_with_q: Path):
+    """Resume внутри decay-фазы воспроизводит хвост Q-потока без потерь."""
+    continuous = [np.asarray(batch) for batch in make_q_loader(corpus_with_q, decay_start=3)]
+
+    leg = make_q_loader(corpus_with_q, decay_start=3)
+    for _ in range(5):
+        next(leg)
+    cursor = leg.cursor(step=5)
+    assert cursor.phase == tl.PHASE_DECAY
+
+    resumed = make_q_loader(corpus_with_q, decay_start=3, cursor=cursor)
+    tail = [np.asarray(batch) for batch in resumed]
+    assert len(tail) == len(continuous) - 5
+    for index, batch in enumerate(tail):
+        assert np.array_equal(batch, continuous[5 + index])
+
+
+def test_l12_decay_requires_boundary_and_distinct_stream(corpus_with_q: Path):
+    """Некорректная конфигурация decay-фазы — отказ, а не тихий микс."""
+    with pytest.raises(tl.PretrainDataError):
+        make_q_loader(corpus_with_q, decay_start=None)  # type: ignore[arg-type]
+    with pytest.raises(tl.PretrainDataError):
+        tl.PretrainMixLoader(
+            shard_root=corpus_with_q,
+            streams=("W", "C", "Q"),
+            encode=word_encoder,
+            seq_len=16,
+            mix={"W": 0.7, "C": 0.15, "Q": 0.15},
+            decay_stream="Q",
+            decay_start=2,
+        )
+
+
+def test_l12_metrics_record_phase(tmp_path: Path):
+    """jsonl метрик несёт фазу шага: stable до границы, decay после."""
+    cfg, pool = parity_setup(steps=4)
+
+    class StubLoader:
+        decay_start = 2
+
+    metrics = tmp_path / "metrics.jsonl"
+    tl.train(
+        cfg,
+        batched(pool),
+        train_config=tl.TrainConfig(steps=4, lr=1e-2, seed=7, metrics_path=metrics),
+        budget=free_budget(),
+        loader=StubLoader(),
+    )
+    rows = tl.MetricsWriter.read(metrics)
+    assert [row["phase"] for row in rows] == [
+        tl.PHASE_STABLE,
+        tl.PHASE_STABLE,
+        tl.PHASE_DECAY,
+        tl.PHASE_DECAY,
+    ]
+
+
+def test_l12_metrics_without_decay_are_stable(tmp_path: Path):
+    """Без decay-шарда метрика phase стабильна — фаза не выдумывается."""
+    cfg, pool = parity_setup(steps=3)
+    metrics = tmp_path / "metrics.jsonl"
+    tl.train(
+        cfg,
+        batched(pool),
+        train_config=tl.TrainConfig(steps=3, lr=1e-2, seed=7, metrics_path=metrics),
+        budget=free_budget(),
+    )
+    rows = tl.MetricsWriter.read(metrics)
+    assert [row["phase"] for row in rows] == [tl.PHASE_STABLE] * 3
+
+
+def test_l12_cli_decay_flags_and_paths(tmp_path: Path):
+    """CLI принимает decay-флаги, не ломая прежние, и резолвит путь шарда Q."""
+    cli = pretrain_cli()
+    args = cli.parse_args(["--shard-root", str(tmp_path / "ds"), "--decay-stream", "Q"])
+    assert args.decay_stream == "Q"
+    assert args.decay_seed is None
+    paths = cli.resolve_paths(args)
+    assert paths["decay_shard_root"] == tmp_path / "ds"
+
+    off = cli.parse_args([])
+    assert off.decay_stream is None, "decay-фаза не должна включаться молча"
+    assert isinstance(cli.resolve_paths(off)["decay_shard_root"], Path)
+
+
+def test_l12_resume_in_decay_requires_decay_stream(corpus_with_q: Path):
+    """Resume decay-курсора без объявленного Q-шарда — отказ, а не потеря потока."""
+    loader = make_q_loader(corpus_with_q, decay_start=2)
+    for _ in range(3):
+        next(loader)
+    cursor = loader.cursor(step=3)
+    with pytest.raises(tl.PretrainDataError):
+        make_loader(corpus_with_q, cursor=cursor)

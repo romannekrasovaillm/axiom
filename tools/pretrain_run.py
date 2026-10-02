@@ -17,8 +17,12 @@ bf16-параметры при fp32-мастере, grad-checkpointing для ``
    ADR-4): подмена токенизатора молча запрещена.  Размер словаря модели выводится
    из фактически испускаемых id, а не берётся из пресета — иначе модель читала бы
    embedding по чужим индексам.
-3. **Данные.**  Манифесты шардов читаются как контракт (файлы, sha256, records);
-   их пиннутые хеши уезжают в журнал — это evidence AD-4 без пересчёта 26 ГБ.
+3. **Данные.**  По умолчанию — претокенизированные ``tokens/{W,C,Q}/*.bin``
+   (``PackedTokenLoader``), если манифесты на месте; иначе — сырые
+   ``manifest-*.jsonl.zst`` (``PretrainMixLoader``, fallback).  Оба пути читают
+   манифесты как контракт (файлы, sha256, records), их пиннутые хеши уезжают в
+   журнал — это evidence AD-4 без пересчёта 26 ГБ.  Для packed vocab модели
+   выводится из манифеста (id в ``.bin``), а не из диапазона id канонического BPE.
 4. **Цикл.**  ``net.train_loop.train``: WSD-расписание (warmup — stable — decay
    последние 5%), стоп-правило по смете, метрики и чекпойнты.
 5. **След.**  ``<out>/journal.json`` + ``<out>/metrics.jsonl``: пути ТОЛЬКО
@@ -90,8 +94,19 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     parser.add_argument("--run-ref", default="pretrain-l3", help="имя прогона (смета и журнал)")
     parser.add_argument("--shard-root", default=None,
                         help=f"каталог шард-наборов (по умолчанию ~/gb10-shared/{DEFAULT_SHARD_SUBDIR})")
+    parser.add_argument("--tokens-root", default=None,
+                        help="каталог претокенизированных .bin (tokens/{W,C}/manifest-*.json); "
+                             "по умолчанию <shard-root>/tokens")
+    parser.add_argument("--packed", dest="packed", action="store_true", default=None,
+                        help="читать готовые токены PackedTokenLoader-ом; по умолчанию — "
+                             "включено, если манифесты tokens/ на месте")
+    parser.add_argument("--no-packed", dest="packed", action="store_false",
+                        help="форсировать raw-манифесты jsonl (fallback)")
     parser.add_argument("--out", default=None,
                         help=f"каталог журнала (по умолчанию ~/gb10-shared/{DEFAULT_RUN_SUBDIR}/<run-ref>)")
+    parser.add_argument("--journal", default=None,
+                        help="файл журнала (по умолчанию <out>/journal.json); на аренде "
+                             "задаётся явно — дефолтный путь C-032 там отсутствует (R1)")
     parser.add_argument("--streams", default="W,C", help="потоки шардов через запятую")
     parser.add_argument("--mix", default=None,
                         help="веса микса, напр. W=0.85,C=0.15 (по умолчанию — ADR-021)")
@@ -116,7 +131,9 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     parser.add_argument("--lr", type=float, default=1e-2, help="пиковый LR")
     parser.add_argument("--schedule", choices=("wsd", "cosine"), default="wsd")
     parser.add_argument("--warmup-ratio", type=float, default=0.01)
-    parser.add_argument("--decay-ratio", type=float, default=0.05)
+    parser.add_argument("--decay-ratio", type=float, default=None,
+                        help="доля шагов decay (по умолчанию 0.05); явное значение "
+                             "запрещает авто-уменьшение под объём Q (H1)")
     parser.add_argument("--seed", type=int, default=1337)
     parser.add_argument("--chunk-size", type=int, default=64)
     parser.add_argument("--param-dtype", choices=("bfloat16", "float32"), default="bfloat16",
@@ -129,6 +146,13 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     parser.add_argument("--grad-checkpointing-policy", choices=("full", "selective"), default="full")
     parser.add_argument("--checkpoint-every", type=int, default=0,
                         help="шагов между чекпойнтами (0 — выключено)")
+    parser.add_argument("--ckpt-every-min", type=float, default=None,
+                        help="минут между чекпойнтами (риск-каденс аренды, runbook §3: 30)")
+    parser.add_argument("--stop-file", default=None,
+                        help="файл-стоп килл-свитча (по умолчанию env STOP_FILE или путь "
+                             "из курсора чекпойнта); существование останавливает прогон")
+    parser.add_argument("--stop-check-every", type=int, default=1,
+                        help="как часто проверять --stop-file (в шагах)")
     parser.add_argument("--keep-last", type=int, default=2, help="сколько чекпойнтов хранить")
     parser.add_argument("--ckpt-dir", default=None, help="каталог чекпойнтов (по умолчанию <out>/checkpoints)")
     parser.add_argument("--resume", action="store_true", help="продолжить с последнего чекпойнта")
@@ -163,6 +187,10 @@ def resolve_paths(args: argparse.Namespace) -> dict[str, Any]:
     out_dir = Path(args.out) if args.out else shared / DEFAULT_RUN_SUBDIR / args.run_ref
     ckpt_dir = Path(args.ckpt_dir) if args.ckpt_dir else out_dir / "checkpoints"
     metrics_path = Path(args.metrics) if args.metrics else out_dir / "metrics.jsonl"
+    # К2: претокенизированные бины лежат рядом с сырыми шардами (runbook §1:
+    # ``rm -a tokens/ ... /root/data/tokens/`` при ``--shard-root /root/data``).
+    tokens_root = Path(args.tokens_root) if args.tokens_root else shard_root / "tokens"
+    journal_path = Path(args.journal) if args.journal else out_dir / "journal.json"
     budget_path = (
         Path(args.budget_file)
         if args.budget_file
@@ -171,9 +199,11 @@ def resolve_paths(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "shard_root": shard_root,
         "decay_shard_root": decay_shard_root,
+        "tokens_root": tokens_root,
         "out_dir": out_dir,
         "ckpt_dir": ckpt_dir,
         "metrics_path": metrics_path,
+        "journal_path": journal_path,
         "budget_path": budget_path,
     }
 
@@ -298,6 +328,210 @@ def describe_shards(shard_set, repo_root: Optional[Path]) -> dict[str, Any]:
     }
 
 
+def describe_packed_shards(shard_set, repo_root: Optional[Path]) -> dict[str, Any]:
+    """Пиннутые хеши претокенизированного набора (К2): records/slots/stream_tokens."""
+    return {
+        "name": shard_set.name,
+        "kind": "packed",
+        "manifest": sft_stage.repo_rel(shard_set.manifest_path, repo_root),
+        "source": shard_set.source,
+        "shards": len(shard_set.entries),
+        "records": shard_set.total_records,
+        "slots": shard_set.total_slots,
+        "stream_tokens": shard_set.total_stream_tokens,
+        "seq_len": shard_set.seq_len,
+        "tokenizer_hash": shard_set.tokenizer_hash,
+        "pinned": [
+            {
+                "file": entry.file,
+                "source": entry.source,
+                "source_sha256": entry.source_sha256,
+                "records": entry.records,
+                "sha256": entry.sha256,
+                "tokenizer_hash": shard_set.tokenizer_hash,
+            }
+            for entry in shard_set.entries
+        ],
+    }
+
+
+def describe_loader(loader, streams, repo_root: Optional[Path]) -> list[dict[str, Any]]:
+    """Описание шард-наборов активного пути (packed или raw)."""
+    from net import train_loop as tl
+
+    if isinstance(loader, tl.PackedTokenLoader):
+        return [describe_packed_shards(loader._sets[name], repo_root) for name in streams]
+    return [describe_shards(loader._streams[name].shard_set, repo_root) for name in streams]
+
+
+def describe_stream(loader, name: str, repo_root: Optional[Path]) -> dict[str, Any]:
+    """Описание одного потока (для decay-шарда Q) на активном пути."""
+    from net import train_loop as tl
+
+    if isinstance(loader, tl.PackedTokenLoader):
+        return describe_packed_shards(loader._sets[name], repo_root)
+    if name == loader.decay_stream and loader._q_stream is not None:
+        return describe_shards(loader._q_stream.shard_set, repo_root)
+    return describe_shards(loader._streams[name].shard_set, repo_root)
+
+
+def data_consumed_block(stats: dict, data_kind: str) -> dict[str, Any]:
+    """Секция ``data_consumed`` журнала: у packed и raw разные счётчики."""
+    common = {
+        "kind": data_kind,
+        "token_share": stats.get("token_share"),
+        "phase": stats.get("phase"),
+        "decay_start": stats.get("decay_start"),
+        "peak_rss_mb": peak_rss_mb(),
+        "streams": stats.get("streams"),
+    }
+    if data_kind == "packed":
+        common.update(
+            {
+                "records_total": stats.get("records_total"),
+                "slots_total": stats.get("slots_total"),
+                "dropped_tail_records": stats.get("dropped_tail_records"),
+            }
+        )
+        return common
+    common.update(
+        {
+            "documents_read": stats.get("documents_read"),
+            "documents_dropped_empty": stats.get("documents_dropped_empty"),
+            "documents_truncated": stats.get("documents_truncated"),
+            "tokens_total": stats.get("tokens_total"),
+            "pending_tokens": stats.get("pending_tokens"),
+        }
+    )
+    return common
+
+
+def _packed_tokenizer_pin(
+    tl, tokens_root: Path, streams: tuple[str, ...], decay_stream: Optional[str]
+) -> dict[str, Any]:
+    """Токенизатор packed-данных: хеш и словарь из манифестов tokens/ (К2).
+
+    Все потоки (включая decay-шард) обязаны быть собраны **одним** токенизатором:
+    разошедшиеся хеши означают, что id разных потоков лежат в разных словарях, и
+    модель читала бы их по общим индексам — это отказ контракта данных, а не
+    предупреждение.  ``vocab_size`` берётся максимальным по потокам: он и
+    покрывает все фактические id.
+    """
+    names = list(streams) + ([decay_stream] if decay_stream else [])
+    hashes: set[str] = set()
+    vocab = 0
+    for name in names:
+        allowed = tuple(streams) if name in streams else (name,)
+        shard_set = tl.load_packed_shard_set(
+            tl.packed_manifest_path(tokens_root, name), allowed=allowed
+        )
+        hashes.add(shard_set.tokenizer_hash)
+        vocab = max(vocab, int((shard_set.source or {}).get("vocab_size") or 0))
+    if len(hashes) != 1:
+        raise tl.PretrainDataError(
+            "потоки packed-данных собраны разными токенизаторами: "
+            + ", ".join(sorted(h[:16] for h in hashes))
+        )
+    if vocab < 3:
+        raise tl.PretrainDataError("манифест tokens не объявляет vocab_size токенизатора")
+    return {"hash": hashes.pop(), "vocab_size": vocab, "streams": names}
+
+
+def resolve_packed(args: argparse.Namespace, tokens_root: Path, streams: tuple[str, ...]) -> bool:
+    """К2: включён ли packed-путь.  Явный флаг сильнее авто-детекта.
+
+    Авто-детект (``--packed`` не задан): packed включается, если для **всех**
+    потоков микса есть манифест ``tokens/<S>/manifest-<s>.json``.  Отсутствие
+    манифеста — не ошибка, а повод пойти raw-путём (fallback): сырые шарды лежат
+    там же.  Битый манифест при этом не прячется — его отвергнет конструктор.
+    """
+    from net import train_loop as tl
+
+    if args.packed is not None:
+        return bool(args.packed)
+    return all(tl.packed_manifest_path(tokens_root, name).is_file() for name in streams)
+
+
+def _pinned_run(run: dict[str, Any]) -> dict[str, Any]:
+    """Срез запинненных параметров прогона для журнала resume (H4)."""
+    keys = ("seed", "total_steps", "warmup_ratio", "decay_ratio", "param_dtype", "data_kind")
+    return {key: run.get(key) for key in keys if key in run}
+
+
+def validate_resume_pins(
+    run: dict[str, Any],
+    *,
+    seed: int,
+    warmup_ratio: float,
+    decay_ratio: float,
+    data_kind: str,
+    enabled: bool,
+) -> list[str]:
+    """H4: сверить argv с запинненными в курсоре параметрами; список расхождений.
+
+    Resume обязан продолжать **ту же** траекторию: другой seed — другой шаффл и
+    другая инициализация, другая доля decay — другая граница фаз, другой источник —
+    чужая позиция потока.  Молча продолжить с новыми параметрами значило бы выдать
+    иную траекторию за продолжение прежней, поэтому расхождение — отказ с перечнем
+    (а не warning: предупреждение в логе не защищает от подмены).
+    """
+    if not enabled or not run:
+        return []
+    mismatches: list[str] = []
+
+    def check(key: str, expected: Any) -> None:
+        if key not in run or run[key] is None:
+            return
+        actual = run[key]
+        if isinstance(expected, float):
+            try:
+                ok = abs(float(actual) - expected) <= 1e-12
+            except (TypeError, ValueError):
+                ok = False
+        else:
+            ok = actual == expected
+        if not ok:
+            mismatches.append(f"{key}: курсор {actual!r} ≠ argv {expected!r}")
+
+    check("seed", int(seed))
+    check("warmup_ratio", float(warmup_ratio))
+    check("decay_ratio", float(decay_ratio))
+    check("data_kind", data_kind)
+    return mismatches
+
+
+def _decay_available_tokens(
+    tl, paths: dict[str, Any], args: argparse.Namespace, streams, packed: bool, repo_root
+) -> Optional[int]:
+    """Объём decay-шарда Q (в токенах потока) для проверки окна H1; None — неизвестен."""
+    try:
+        if packed:
+            shard_set = tl.load_packed_shard_set(
+                tl.packed_manifest_path(paths["tokens_root"], args.decay_stream),
+                allowed=(args.decay_stream,),
+            )
+            return int(shard_set.total_stream_tokens)
+        manifest = (
+            paths["decay_shard_root"]
+            / args.decay_stream
+            / f"manifest-{args.decay_stream.lower()}.json"
+        )
+        return int(tl.load_shard_set(manifest, allowed=(args.decay_stream,)).total_tokens)
+    except tl.PretrainDataError:
+        return None
+
+
+def resolve_stop_file(args: argparse.Namespace, cursor_run: dict[str, Any]) -> Optional[Path]:
+    """К5: путь stop-файла — argv → env ``STOP_FILE`` → курсор предыдущей ноги."""
+    if args.stop_file:
+        return Path(args.stop_file)
+    env = os.environ.get("STOP_FILE")
+    if env:
+        return Path(env)
+    pinned = cursor_run.get("stop_file")
+    return Path(pinned) if pinned else None
+
+
 def metrics_summary(rows: list[dict], path: Path, repo_root: Optional[Path]) -> dict[str, Any]:
     """Свод метрик прогона: лосс, ток/с, MFU — медианы, а не один удачный шаг."""
     if not rows:
@@ -336,6 +570,14 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
     streams = tuple(name.strip() for name in args.streams.split(",") if name.strip())
     out_dir = paths["out_dir"]
     out_dir.mkdir(parents=True, exist_ok=True)
+    journal_path = paths["journal_path"]
+    # К2 решается до сборки модели: vocab модели обязан покрыть id из .bin (см. ниже).
+    packed = resolve_packed(args, paths["tokens_root"], streams)
+
+    # H1: явный --decay-ratio запрещает авто-уменьшение под объём Q; дефолт (0.05)
+    # может быть уменьшен, если decay-окно шире шарда (иначе Q исчерпается на финише).
+    decay_ratio = args.decay_ratio if args.decay_ratio is not None else 0.05
+    decay_ratio_explicit = args.decay_ratio is not None
 
     journal: dict[str, Any] = {
         "schema": JOURNAL_SCHEMA,
@@ -347,9 +589,11 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
         "seed": args.seed,
         "paths": {
             "shard_root": sft_stage.repo_rel(paths["shard_root"], repo_root),
+            "tokens_root": sft_stage.repo_rel(paths["tokens_root"], repo_root),
             "out_dir": sft_stage.repo_rel(out_dir, repo_root),
             "checkpoints": sft_stage.repo_rel(paths["ckpt_dir"], repo_root),
             "metrics": sft_stage.repo_rel(paths["metrics_path"], repo_root),
+            "journal": sft_stage.repo_rel(journal_path, repo_root),
         },
     }
 
@@ -357,9 +601,49 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
         tokenizer, cfg, tokenizer_info = build_tokenizer_and_config(args)
     except Exception as exc:  # токенизатор не собрался — прогон не начат
         journal["refusal"] = f"токенизатор/конфиг: {exc}"
-        _write_journal(journal, out_dir)
+        _write_journal(journal, out_dir, journal_path=journal_path)
         print(f"[pretrain] ОТКАЗ: {exc}", file=sys.stderr, flush=True)
         return journal, False
+
+    # К2: packed-данные собраны **токенизатором корпуса**, чей словарь может быть
+    # шире диапазона id канонического BPE.  Модель обязана покрыть фактические id
+    # в .bin (иначе embedding читается по чужим индексам — наблюдался NaN лосса).
+    # Поэтому при packed vocab берётся из манифеста tokens/, а расхождение с пином
+    # net/config.json фиксируется громко, а не прячется.
+    if packed:
+        try:
+            pin = _packed_tokenizer_pin(tl, paths["tokens_root"], streams, args.decay_stream)
+        except tl.PretrainDataError as exc:
+            journal["refusal"] = f"данные: {exc}"
+            _write_journal(journal, out_dir, journal_path=journal_path)
+            print(f"[pretrain] ОТКАЗ данных: {exc}", file=sys.stderr, flush=True)
+            return journal, False
+        canonical_hash = tokenizer_info["hash"]
+        cfg = sft_stage.build_model_config(pin["vocab_size"], args.model_preset, qat_weights=False)
+        tokenizer_info = {
+            "hash": pin["hash"],
+            "source": "packed manifest tokens/ (токенизатор, которым собраны .bin)",
+            "vocab_size": pin["vocab_size"],
+            "model_vocab_size": int(cfg.vocab_size),
+            "canonical_hash": canonical_hash,
+            "matches_canonical": pin["hash"] == canonical_hash,
+            "streams": pin["streams"],
+            "note": (
+                "model_vocab_size выведен из манифеста tokens/ — покрывает фактические "
+                "id в .bin, а не диапазон id канонического BPE (иначе embedding по чужим "
+                "индексам). matches_canonical=false — данные собраны не тем же "
+                "токенизатором, что пин net/config.json: это расхождение контракта данных"
+            ),
+        }
+        if not tokenizer_info["matches_canonical"]:
+            print(
+                "[pretrain] ВНИМАНИЕ: токенизатор packed-данных "
+                f"{pin['hash'][:16]}… ≠ канонического пина {canonical_hash[:16]}… "
+                "(net/config.json) — прогон идёт на словаре корпуса, расхождение "
+                "зафиксировано в журнале (tokenizer.matches_canonical=false)",
+                file=sys.stderr,
+                flush=True,
+            )
 
     journal["tokenizer"] = tokenizer_info
     journal["model"] = {
@@ -372,6 +656,8 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
     }
 
     journal["backend"] = backend_block(tokenizer, cfg, repo_root)
+    # Хеш токенизатора в блоке бэкенда обязан называть тот, чем размечены данные.
+    journal["backend"]["tokenizer_hash"] = tokenizer_info["hash"]
     if not journal["backend"].get("determinism_pinned"):
         print(
             "[pretrain] ВНИМАНИЕ: детерминизм XLA не запиннен (NET_GATE_PROFILE=1) — "
@@ -392,7 +678,7 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
             "verdict": str(exc),
         }
         journal["refusal"] = str(exc)
-        _write_journal(journal, out_dir)
+        _write_journal(journal, out_dir, journal_path=journal_path)
         print(f"[pretrain] ОТКАЗ сметы: {exc}", file=sys.stderr, flush=True)
         return journal, False
 
@@ -402,16 +688,33 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
     if args.resume and ckpt_manager.latest() is None:
         reason = f"--resume: в {sft_stage.repo_rel(paths['ckpt_dir'], repo_root)} нет чекпойнтов"
         journal["refusal"] = reason
-        _write_journal(journal, out_dir)
+        _write_journal(journal, out_dir, journal_path=journal_path)
         print(f"[pretrain] ОТКАЗ: {reason}", file=sys.stderr, flush=True)
         return journal, False
 
     data_cursor = resume_cursor(ckpt_manager) if args.resume else None
+    cursor_run = ((ckpt_manager.latest() or {}).get("cursor") or {}).get("run") or {}
     if args.resume:
         journal["resume"] = {
             "from_step": ckpt_manager.latest()["step"],
             "cursor_restored": data_cursor is not None,
+            "run_pinned": _pinned_run(cursor_run),
         }
+
+    # --- К2: выбор пути данных (packed основной, raw fallback) -------------
+    if packed and args.decay_stream:
+        q_manifest = tl.packed_manifest_path(paths["tokens_root"], args.decay_stream)
+        if not q_manifest.is_file():
+            reason = (
+                f"packed-путь: нет манифеста decay-шарда {args.decay_stream} "
+                f"({sft_stage.repo_rel(q_manifest, repo_root)}) — decay-фаза не разложена "
+                "в .bin; пересоберите tokens или запустите с --no-packed"
+            )
+            journal["refusal"] = reason
+            _write_journal(journal, out_dir, journal_path=journal_path)
+            print(f"[pretrain] ОТКАЗ данных: {reason}", file=sys.stderr, flush=True)
+            return journal, False
+    data_kind = "packed" if packed else "raw"
 
     # Граница decay-фазы (ADR-021): та же формула, что у WSD-LR (decay_start_step).
     # На resume горизонт берётся из курсора прогона, если --total-steps не задан
@@ -419,43 +722,106 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
     # что и с LR по обрезанному горизонту.
     horizon = args.total_steps or args.steps
     if args.resume and args.total_steps is None:
-        cursor_run = ((ckpt_manager.latest() or {}).get("cursor") or {}).get("run") or {}
         horizon = int(cursor_run.get("total_steps") or horizon)
+
+    # --- H4: resume пиннит параметры прогона -------------------------------
+    mismatch = validate_resume_pins(
+        cursor_run,
+        seed=args.seed,
+        warmup_ratio=args.warmup_ratio,
+        decay_ratio=decay_ratio,
+        data_kind=data_kind,
+        enabled=bool(args.resume),
+    )
+    if mismatch:
+        reason = (
+            "--resume: параметры не совпали с запинненными в курсоре — "
+            + "; ".join(mismatch)
+            + ". Продолжать другим сидом/долей/источником значило бы выдать другую "
+            "траекторию за ту же (H4)"
+        )
+        journal["refusal"] = reason
+        _write_journal(journal, out_dir, journal_path=journal_path)
+        print(f"[pretrain] ОТКАЗ resume: {reason}", file=sys.stderr, flush=True)
+        return journal, False
+
+    # --- H1: decay-окно против объёма Q ------------------------------------
+    decay_plan = None
+    if args.decay_stream:
+        available_q = _decay_available_tokens(tl, paths, args, streams, packed, repo_root)
+        decay_plan = tl.decay_window_plan(
+            total_steps=horizon,
+            decay_ratio=decay_ratio,
+            batch_size=args.batch_size,
+            seq_len=args.seq_len,
+            available_tokens=available_q,
+        )
+        if decay_plan.adjusted:
+            if decay_ratio_explicit:
+                reason = (
+                    f"явный --decay-ratio {decay_ratio} не влезает в Q: {decay_plan.reason}. "
+                    "Уменьшите --decay-ratio или возьмите шард Q больше (H1)"
+                )
+                journal["refusal"] = reason
+                _write_journal(journal, out_dir, journal_path=journal_path)
+                print(f"[pretrain] ОТКАЗ данных: {reason}", file=sys.stderr, flush=True)
+                return journal, False
+            decay_ratio = decay_plan.decay_ratio
+            print(f"[pretrain] H1: {decay_plan.reason}", file=sys.stderr, flush=True)
     decay_start = (
         tl.decay_start_step(
-            horizon, warmup_ratio=args.warmup_ratio, decay_ratio=args.decay_ratio
+            horizon, warmup_ratio=args.warmup_ratio, decay_ratio=decay_ratio
         )
         if args.decay_stream
         else None
     )
+
+    # --- К5: файл-стоп килл-свитча (argv → env STOP_FILE → курсор) ---------
+    stop_file = resolve_stop_file(args, cursor_run)
+
     try:
-        loader = tl.PretrainMixLoader(
-            shard_root=paths["shard_root"],
-            streams=streams,
-            encode=tokenizer.encode,
-            seq_len=args.seq_len,
-            batch_size=args.batch_size,
-            seed=args.seed,
-            mix=mix,
-            shuffle_window=args.shuffle_window,
-            max_doc_tokens=args.max_doc_tokens,
-            cursor=data_cursor,
-            decay_stream=args.decay_stream,
-            decay_start=decay_start,
-            decay_shard_root=paths["decay_shard_root"] if args.decay_stream else None,
-            decay_seed=args.decay_seed,
-        )
+        if packed:
+            loader = tl.PackedTokenLoader(
+                tokens_root=paths["tokens_root"],
+                streams=streams,
+                seq_len=args.seq_len,
+                batch_size=args.batch_size,
+                mix=mix,
+                cursor=data_cursor,
+                decay_stream=args.decay_stream,
+                decay_start=decay_start,
+                decay_shard_root=paths["tokens_root"] if args.decay_stream else None,
+            )
+        else:
+            loader = tl.PretrainMixLoader(
+                shard_root=paths["shard_root"],
+                streams=streams,
+                encode=tokenizer.encode,
+                seq_len=args.seq_len,
+                batch_size=args.batch_size,
+                seed=args.seed,
+                mix=mix,
+                shuffle_window=args.shuffle_window,
+                max_doc_tokens=args.max_doc_tokens,
+                cursor=data_cursor,
+                decay_stream=args.decay_stream,
+                decay_start=decay_start,
+                decay_shard_root=paths["decay_shard_root"] if args.decay_stream else None,
+                decay_seed=args.decay_seed,
+            )
     except tl.PretrainDataError as exc:
         journal["refusal"] = f"данные: {exc}"
-        _write_journal(journal, out_dir)
+        _write_journal(journal, out_dir, journal_path=journal_path)
         print(f"[pretrain] ОТКАЗ данных: {exc}", file=sys.stderr, flush=True)
         return journal, False
 
     journal["data"] = {
+        "kind": data_kind,
         "shard_root": sft_stage.repo_rel(paths["shard_root"], repo_root),
-        "streams": [describe_shards(loader._streams[name].shard_set, repo_root) for name in streams],
+        "tokens_root": sft_stage.repo_rel(paths["tokens_root"], repo_root),
+        "streams": describe_loader(loader, streams, repo_root),
         "mix_declared": mix,
-        "shuffle_window": args.shuffle_window,
+        "shuffle_window": args.shuffle_window if not packed else None,
         "streaming": True,
         "seq_len": args.seq_len,
         "batch_size": args.batch_size,
@@ -464,9 +830,24 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
                 "stream": args.decay_stream,
                 "start_step": decay_start,
                 "horizon_steps": horizon,
-                "shard_root": sft_stage.repo_rel(paths["decay_shard_root"], repo_root),
+                "ratio": decay_ratio,
+                "ratio_explicit": decay_ratio_explicit,
+                "window_plan": (
+                    {
+                        "adjusted": decay_plan.adjusted,
+                        "decay_steps": decay_plan.decay_steps,
+                        "window_tokens": decay_plan.window_tokens,
+                        "available_tokens": decay_plan.available_tokens,
+                        "reason": decay_plan.reason,
+                    }
+                    if decay_plan is not None
+                    else None
+                ),
+                "shard_root": sft_stage.repo_rel(
+                    paths["decay_shard_root"], repo_root
+                ),
                 "seed": args.decay_seed if args.decay_seed is not None else args.seed,
-                "shards": describe_shards(loader._q_stream.shard_set, repo_root),
+                "shards": describe_stream(loader, args.decay_stream, repo_root),
             }
             if args.decay_stream
             else None
@@ -484,7 +865,7 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
             "Явное --no-grad-checkpointing для l3-full запрещено."
         )
         journal["refusal"] = reason
-        _write_journal(journal, out_dir)
+        _write_journal(journal, out_dir, journal_path=journal_path)
         print(f"[pretrain] ОТКАЗ: {reason}", file=sys.stderr, flush=True)
         return journal, False
 
@@ -496,13 +877,14 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
         lr=args.lr,
         schedule=args.schedule,
         warmup_ratio=args.warmup_ratio,
-        decay_ratio=args.decay_ratio,
+        decay_ratio=decay_ratio,
         seed=args.seed,
         chunk_size=args.chunk_size,
         grad_checkpointing=bool(grad_checkpointing),
         grad_checkpointing_policy=args.grad_checkpointing_policy,
         param_dtype=args.param_dtype,
         checkpoint_every=args.checkpoint_every,
+        checkpoint_every_min=args.ckpt_every_min,
         keep_last=args.keep_last,
         ckpt_dir=paths["ckpt_dir"],
         metrics_path=paths["metrics_path"],
@@ -510,20 +892,29 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
         peak_tflops_source=args.peak_tflops_source,
         usd_per_gpu_hour=args.usd_per_gpu_hour,
         log_every=args.log_every,
+        stop_file=stop_file,
+        stop_check_every=args.stop_check_every,
+        data_kind=data_kind,
     )
     journal["loop"] = {
         "steps_requested": args.steps,
-        "total_steps": args.total_steps or args.steps,
+        "total_steps": horizon,
         "schedule": args.schedule,
         "lr": args.lr,
         "warmup_ratio": args.warmup_ratio,
-        "decay_ratio": args.decay_ratio,
+        "decay_ratio": decay_ratio,
+        "decay_ratio_requested": args.decay_ratio,
+        "decay_ratio_explicit": decay_ratio_explicit,
         "decay_stream": args.decay_stream,
         "decay_start": decay_start,
         "grad_checkpointing": bool(grad_checkpointing),
         "grad_checkpointing_policy": args.grad_checkpointing_policy,
         "param_dtype": args.param_dtype,
+        "checkpoint_every": args.checkpoint_every,
+        "checkpoint_every_min": args.ckpt_every_min,
+        "stop_file": sft_stage.repo_rel(stop_file, repo_root) if stop_file else None,
         "resume": bool(args.resume),
+        "data_kind": data_kind,
     }
     journal["gpu"] = {
         "peak_tflops": args.peak_tflops,
@@ -549,7 +940,7 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
         )
     except Exception as exc:  # прогон не состоялся — причина в журнал
         journal["refusal"] = f"цикл: {type(exc).__name__}: {exc}"
-        _write_journal(journal, out_dir)
+        _write_journal(journal, out_dir, journal_path=journal_path)
         print(f"[pretrain] ОШИБКА цикла: {exc}", file=sys.stderr, flush=True)
         return journal, False
 
@@ -574,18 +965,7 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
             ),
             "timings": result.timings,
             "wall_clock_s": round(time.time() - started, 3),
-            "data_consumed": {
-                "documents_read": stats["documents_read"],
-                "documents_dropped_empty": stats["documents_dropped_empty"],
-                "documents_truncated": stats["documents_truncated"],
-                "tokens_total": stats["tokens_total"],
-                "token_share": stats["token_share"],
-                "pending_tokens": stats["pending_tokens"],
-                "phase": stats.get("phase"),
-                "decay_start": stats.get("decay_start"),
-                "peak_rss_mb": peak_rss_mb(),
-                "streams": stats["streams"],
-            },
+            "data_consumed": data_consumed_block(stats, data_kind),
             "budget": result.budget_report,
             "checkpoint": (
                 {**result.checkpoint, "path": sft_stage.repo_rel(Path(result.checkpoint["path"]), repo_root)}
@@ -598,16 +978,24 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
             },
         }
     )
-    journal["metrics_summary"] = metrics_summary(
-        tl.MetricsWriter.read(paths["metrics_path"]), paths["metrics_path"], repo_root
-    )
+    # H5: чтение метрик — в try: битая/оборванная преемпшном строка не должна
+    # обнулять уже сформированный журнал (он важнее сводки).
+    try:
+        journal["metrics_summary"] = metrics_summary(
+            tl.MetricsWriter.read(paths["metrics_path"]), paths["metrics_path"], repo_root
+        )
+    except Exception as exc:  # сводка вторична — сам журнал не теряем
+        journal["metrics_summary"] = {"error": f"{type(exc).__name__}: {exc}"}
     journal["notes"] = [
-        "mfu_params_only: MFU по параметрической части, вклад внимания не входит",
+        "mfu_params_only: MFU по параметрической части (6·N_active·tokens), вклад "
+        "внимания не входит; N для MFU — active_param_count, не N_total",
         "mfu: доля от ОБЪЯВЛЕННОГО пика; на смоуке с крошечной моделью число мало "
-        "по построению и не является замером эффективности железа",
-        "token_share: фактическая доля потоков в израсходованном окне корпуса",
+        "по построению и не является замером эффективности железа (на H800 "
+        "калибровка ~35% — ожидаемый порядок, не гарантия)",
+        "token_share: фактическая доля потоков в израсходованном окне корпуса; "
+        "для packed — по слотам записей",
     ]
-    _write_journal(journal, out_dir)
+    _write_journal(journal, out_dir, journal_path=journal_path)
 
     print(
         f"[pretrain] шагов {result.steps_done}, токенов {result.tokens_seen}, "
@@ -679,15 +1067,17 @@ def absolute_path_leaks(journal: dict[str, Any]) -> list[str]:
     return leaks
 
 
-def _write_journal(journal: dict[str, Any], out_dir: Path) -> Path:
+def _write_journal(
+    journal: dict[str, Any], out_dir: Path, *, journal_path: Path | None = None
+) -> Path:
     """Записать журнал, сняв абсолютные пути; утечка после снятия — дефект."""
     repo_root = sft_stage.detect_repo_root()
     journal = portable_paths(journal, repo_root)
     leaks = absolute_path_leaks(journal)
     if leaks:
         journal["path_leaks"] = leaks
-    out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / "journal.json"
+    path = Path(journal_path) if journal_path is not None else out_dir / "journal.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(journal, ensure_ascii=False, indent=1), encoding="utf-8")
     tmp.replace(path)

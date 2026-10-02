@@ -1171,3 +1171,362 @@ def test_l12_resume_in_decay_requires_decay_stream(corpus_with_q: Path):
     cursor = loader.cursor(step=3)
     with pytest.raises(tl.PretrainDataError):
         make_loader(corpus_with_q, cursor=cursor)
+
+
+# ---------------------------------------------------------------------------
+# К3 — бюджетные счётчики накопительны по прогону (resume не обнуляет)
+# ---------------------------------------------------------------------------
+
+
+def test_k3_resume_accumulates_tokens_and_gpu_hours(tmp_path: Path):
+    """Resume складывает tokens_seen/gpu_hours ног, а не начинает с нуля.
+
+    Без этого пороги сметы ($225/$260) недостижимы: каждая нога выходила «в
+    пределах лимита», spend считался только от последней ноги.
+    """
+    cfg, pool = parity_setup(steps=4)
+    first = tl.train(
+        cfg,
+        batched(pool[:2]),
+        train_config=tl.TrainConfig(
+            steps=2,
+            total_steps=4,
+            lr=1e-2,
+            seed=7,
+            ckpt_dir=tmp_path / "ckpt",
+            checkpoint_every=2,
+            metrics_path=tmp_path / "metrics.jsonl",
+        ),
+        budget=free_budget(),
+    )
+    assert first.tokens_seen > 0
+
+    manager = tl.CheckpointManager(tmp_path / "ckpt", keep_last=2)
+    second = tl.train(
+        cfg,
+        batched(pool[2:]),
+        train_config=tl.TrainConfig(steps=2, total_steps=4, lr=1e-2, seed=7),
+        resume_from=manager,
+        budget=free_budget(),
+    )
+    assert second.tokens_seen == first.tokens_seen * 2, "tokens_seen не накопился"
+    assert second.budget_report["tokens_seen_resumed_base"] == first.tokens_seen
+    assert second.budget_report["gpu_hours_actual"] >= second.budget_report["gpu_hours_resumed_base"]
+
+
+# ---------------------------------------------------------------------------
+# К5 — stop-файл останавливает луп (килл-свитч ватчдога)
+# ---------------------------------------------------------------------------
+
+
+def test_k5_stop_file_halts_the_loop(tmp_path: Path):
+    """Существование stop-файла останавливает прогон с причиной в результате."""
+    cfg, pool = parity_setup(steps=5)
+    stop_file = tmp_path / "stop"
+    stop_file.write_text("spend $225 >= cap $225", encoding="utf-8")
+    result = tl.train(
+        cfg,
+        batched(pool),
+        train_config=tl.TrainConfig(steps=5, seed=7, stop_file=stop_file),
+        budget=free_budget(),
+    )
+    assert result.steps_done == 1, "луп не встал на первом же шаге"
+    assert result.stop_reason is not None and result.stop_reason.startswith("stop-file")
+    assert result.stopped_by_budget is True
+    assert "spend $225" in result.stop_reason
+
+
+def test_k5_absent_stop_file_does_not_stop(tmp_path: Path):
+    """Пока stop-файла нет, луп идёт по плану (стоп-файл не выдумывается)."""
+    cfg, pool = parity_setup(steps=2)
+    result = tl.train(
+        cfg,
+        batched(pool),
+        train_config=tl.TrainConfig(steps=2, seed=7, stop_file=tmp_path / "нет-файла"),
+        budget=free_budget(),
+    )
+    assert result.steps_done == 2 and result.stop_reason is None
+
+
+# ---------------------------------------------------------------------------
+# H1 — decay-окно против объёма Q
+# ---------------------------------------------------------------------------
+
+
+def test_h1_decay_window_fits_inside_q():
+    """Окно decay внутри Q — доля сохраняется."""
+    plan = tl.decay_window_plan(
+        total_steps=100, decay_ratio=0.05, batch_size=1, seq_len=8192,
+        available_tokens=5 * 8192,
+    )
+    assert plan.adjusted is False
+    assert plan.decay_steps == 5
+    assert plan.decay_ratio == 0.05
+
+
+def test_h1_decay_window_reduced_when_q_smaller():
+    """Q меньше окна — доля уменьшается до влезающей (граница: ровно 3 шага)."""
+    plan = tl.decay_window_plan(
+        total_steps=100, decay_ratio=0.05, batch_size=1, seq_len=8192,
+        available_tokens=3 * 8192,
+    )
+    assert plan.adjusted is True
+    assert plan.decay_steps == 3
+    assert plan.decay_ratio == pytest.approx(0.03)
+    assert plan.window_tokens <= plan.available_tokens
+
+
+def test_h1_exact_fit_is_not_adjusted():
+    """Ровно влезает (window == Q) — не уменьшаем: граница включительна."""
+    plan = tl.decay_window_plan(
+        total_steps=100, decay_ratio=0.05, batch_size=1, seq_len=8192,
+        available_tokens=5 * 8192,
+    )
+    assert plan.adjusted is False and plan.decay_steps == 5
+
+
+def test_h1_unknown_q_is_not_assumed_to_fit():
+    """Неизвестный объём Q — проверка не выполняется, доля не выдумывается."""
+    plan = tl.decay_window_plan(
+        total_steps=100, decay_ratio=0.05, batch_size=1, seq_len=8192,
+        available_tokens=None,
+    )
+    assert plan.adjusted is False
+    assert "неизвестен" in plan.reason
+
+
+# ---------------------------------------------------------------------------
+# H4 — resume пиннит seed/ratios/data_kind
+# ---------------------------------------------------------------------------
+
+
+def test_h4_resume_seed_mismatch_is_refused(tmp_path: Path, corpus: Path):
+    """Продолжение другим сидом — отказ, а не молча другая траектория."""
+    cli = pretrain_cli()
+    params, state = tiny_params()
+    manager = tl.CheckpointManager(tmp_path / "ckpt", keep_last=1)
+    manager.save(
+        step=2,
+        params=params,
+        optimizer_state=state,
+        cursor={
+            "schema": tl.CURSOR_SCHEMA,
+            "step": 2,
+            "tokens_total": 0,
+            "streams": [],
+            "pending_tokens": [],
+            "phase": tl.PHASE_STABLE,
+            "run": {
+                "seed": 4242,
+                "total_steps": 4,
+                "warmup_ratio": 0.01,
+                "decay_ratio": 0.05,
+                "data_kind": "raw",
+            },
+        },
+    )
+    out_dir = tmp_path / "out"
+    code = cli.main(
+        [
+            "--run-ref", "pretrain-h4",
+            "--resume",
+            "--seed", "1337",
+            "--shard-root", str(corpus),
+            "--out", str(out_dir),
+            "--ckpt-dir", str(tmp_path / "ckpt"),
+            "--steps", "1",
+            "--budget-limit-usd", "5",
+        ]
+    )
+    assert code == 1
+    journal = json.loads((out_dir / "journal.json").read_text(encoding="utf-8"))
+    assert "seed" in journal["refusal"], journal["refusal"]
+
+
+def test_h4_validate_resume_pins_matches_and_mismatches():
+    """Сверка пинов: совпадение молчит, расхождение называет поле."""
+    run = {"seed": 7, "warmup_ratio": 0.01, "decay_ratio": 0.05, "data_kind": "raw"}
+    assert cli_validate(run, seed=7, warmup=0.01, decay=0.05, kind="raw") == []
+    bad = cli_validate(run, seed=7, warmup=0.02, decay=0.05, kind="raw")
+    assert bad and "warmup_ratio" in bad[0]
+
+
+def cli_validate(run, *, seed, warmup, decay, kind):
+    cli = pretrain_cli()
+    return cli.validate_resume_pins(
+        run, seed=seed, warmup_ratio=warmup, decay_ratio=decay, data_kind=kind, enabled=True
+    )
+
+
+# ---------------------------------------------------------------------------
+# H2/H3/H5/H6 — точечные дефекты данных и следов
+# ---------------------------------------------------------------------------
+
+
+def test_h2_pick_stream_renormalizes_over_live(tmp_path: Path):
+    """При исчерпании потока оставшиеся миксуются по перенормированным долям (H2).
+
+    Сценарий, где старое правило (вес и счётчик мёртвого потока остаются в расчёте)
+    выбирает соло-поток B, а перенормировка — C: A израсходован (weight 0.8,
+    1000 токенов), B — 100, C — 0.  Старое: deficitB = 0.15·1100 − 100 = 65 >
+    deficitC = 0.05·1100 = 55 → B (соло).  Новое: live-доли 0.75/0.25 → deficitC =
+    25 > deficitB = −25 → C.
+    """
+    root = tmp_path / "ds3"
+    write_shard_set(root, "A", synthetic_docs("a", 40, 8))
+    write_shard_set(root, "B", synthetic_docs("b", 40, 8))
+    write_shard_set(root, "C", synthetic_docs("c", 40, 8))
+    loader = tl.PretrainMixLoader(
+        shard_root=root,
+        streams=("A", "B", "C"),
+        encode=word_encoder,
+        seq_len=16,
+        batch_size=1,
+        seed=3,
+        mix={"A": 0.8, "B": 0.15, "C": 0.05},
+        shuffle_window=8,
+    )
+    loader._streams["A"].exhausted = True
+    loader._streams["A"].tokens = 1000
+    loader._streams["B"].tokens = 100
+    loader._streams["C"].tokens = 0
+    assert loader._pick_stream() == "C", "дефицит считается по мёртвому потоку (соло-хвост)"
+
+
+def test_h3_pack_batch_does_not_insert_fake_eos():
+    """Упаковка не вставляет EOS на разрезе записи и не теряет токены (H3)."""
+    tokens = list(range(10, 10 + 2 * 3))  # две записи по T-1=3
+    batch = tl.pack_batch(tokens, 4)
+    assert batch.shape == (2, 4)
+    assert np.all(batch[:, 0] == tl.BOS_ID)
+    assert batch[:, 1:].reshape(-1).tolist() == tokens, "поток искажён упаковкой"
+    assert tl.EOS_ID not in batch[:, 1:].tolist(), "фальшивый EOS на разрезе записи"
+
+
+def test_h3_documents_are_joined_by_eos_without_breaks(corpus: Path):
+    """Документ не разрезается фальшивым EOS: между EOS — ровно один документ."""
+    loader = make_loader(corpus, streams=("W",), mix={"W": 1.0}, seq_len=8, batch_size=1)
+    stream: list[int] = []
+    for batch in loader:
+        for row in batch:
+            stream.extend(int(token) for token in row[1:])
+    segments: list[list[int]] = []
+    current: list[int] = []
+    for token in stream:
+        if token == tl.EOS_ID:
+            segments.append(current)
+            current = []
+        else:
+            current.append(token)
+    expected = [word_encoder(text) for text in synthetic_docs("w", 60, 12)]
+    assert segments, "поток не содержит закрытых документов"
+    for index, segment in enumerate(segments):
+        assert segment in expected, f"сегмент {index} — не целый документ (документ разрезан)"
+
+
+def test_h5_metrics_read_skips_broken_lines(tmp_path: Path):
+    """Оборванная строка metrics.jsonl не роняет чтение всего журнала (H5)."""
+    path = tmp_path / "metrics.jsonl"
+    path.write_text(
+        json.dumps({"schema": tl.METRICS_SCHEMA, "step": 1, "loss": 9.0}) + "\n"
+        + '{"schema": "pretrain-metrics/v1", "step": 2, "lo'  # обрыв преемпшна
+        + "\n"
+        + json.dumps({"schema": tl.METRICS_SCHEMA, "step": 3, "loss": 7.0}) + "\n",
+        encoding="utf-8",
+    )
+    rows = tl.MetricsWriter.read(path)
+    assert [row["step"] for row in rows] == [1, 3]
+
+
+def test_h6_blank_lines_do_not_shift_resume_offset(tmp_path: Path):
+    """Пустые строки шарда не сдвигают позицию документов при resume (H6)."""
+    import zstandard as zstd
+
+    path = tmp_path / "shard-00000.jsonl.zst"
+    payload = (
+        json.dumps({"text": "doc0"}) + "\n"
+        + "\n"
+        + json.dumps({"text": "doc1"}) + "\n"
+        + "   \n"
+        + json.dumps({"text": "doc2"}) + "\n"
+    ).encode("utf-8")
+    path.write_bytes(zstd.ZstdCompressor(level=3).compress(payload))
+
+    stream = tl.iter_shard_docs(path, skip=1)
+    assert json.loads(next(stream))["text"] == "doc1", "skip=1 перескочил документ из-за пустой строки"
+    assert json.loads(next(stream))["text"] == "doc2"
+
+
+def test_k2_resolve_packed_autodetects_manifests(tmp_path: Path):
+    """--packed авто-включается, если манифесты tokens/ на месте (К2)."""
+    cli = pretrain_cli()
+    shard_root = tmp_path / "ds"
+    args = cli.parse_args(["--shard-root", str(shard_root)])
+    assert cli.resolve_packed(args, shard_root / "tokens", ("W", "C")) is False
+    tokens_root = shard_root / "tokens"
+    for name in ("W", "C"):
+        (tokens_root / name).mkdir(parents=True, exist_ok=True)
+        (tokens_root / name / f"manifest-{name.lower()}.json").write_text("{}", encoding="utf-8")
+    assert cli.resolve_packed(args, tokens_root, ("W", "C")) is True
+    forced = cli.parse_args(["--no-packed"])
+    assert cli.resolve_packed(forced, tokens_root, ("W", "C")) is False
+
+
+def write_packed_set(root: Path, name: str, *, vocab_size: int, tokenizer_hash: str, records: int = 4, seq_len: int = 16):
+    """Синтетический packed-набор: .bin + манифест контракта tokens/ (К2)."""
+    tokens_root = root / "tokens"
+    out_dir = tokens_root / name
+    out_dir.mkdir(parents=True, exist_ok=True)
+    rows = np.zeros((records, seq_len), dtype=np.uint32)
+    rows[:, 0] = tl.BOS_ID
+    rows[:, 1:] = np.arange(3, 3 + seq_len - 1, dtype=np.uint32)
+    path = out_dir / f"{name}-00000.bin"
+    path.write_bytes(rows.tobytes(order="C"))
+    manifest = {
+        "version": "axiom-pretrain-tokens/1",
+        "shard": name,
+        "seq_len": seq_len,
+        "dtype": "uint32",
+        "record_layout": "bos + (seq_len-1) токенов потока",
+        "bos_id": tl.BOS_ID,
+        "eos_id": tl.EOS_ID,
+        "pad_id": tl.PAD_ID,
+        "tokenizer_hash": tokenizer_hash,
+        "tokenizer": {"file": "tokenizer.model", "vocab_size": vocab_size, "tokenizer_hash": tokenizer_hash},
+        "shards": [
+            {
+                "file": path.name,
+                "source": f"{name}-00000.jsonl.zst",
+                "source_sha256": "0" * 64,
+                "records": records,
+                "tokens": records * seq_len,
+                "stream_tokens": records * (seq_len - 1),
+                "pad_tokens": 0,
+                "bytes": path.stat().st_size,
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            }
+        ],
+    }
+    (out_dir / f"manifest-{name.lower()}.json").write_text(
+        json.dumps(manifest, ensure_ascii=False), encoding="utf-8"
+    )
+    return tokens_root
+
+
+def test_k2_packed_tokenizer_pin_reads_manifest_vocab(tmp_path: Path):
+    """Vocab модели берётся из манифеста packed (id в .bin покрыты), хеш сверяется (К2)."""
+    cli = pretrain_cli()
+    tokens_root = write_packed_set(tmp_path / "ds", "W", vocab_size=160000, tokenizer_hash="a" * 64)
+    write_packed_set(tmp_path / "ds", "C", vocab_size=160000, tokenizer_hash="a" * 64)
+    pin = cli._packed_tokenizer_pin(tl, tokens_root, ("W", "C"), None)
+    assert pin["vocab_size"] == 160000
+    assert pin["hash"] == "a" * 64
+
+
+def test_k2_packed_tokenizer_pin_refuses_mixed_tokenizers(tmp_path: Path):
+    """Разные токенизаторы в потоках — отказ контракта данных, не молчаливый микс."""
+    cli = pretrain_cli()
+    tokens_root = write_packed_set(tmp_path / "ds", "W", vocab_size=160000, tokenizer_hash="a" * 64)
+    write_packed_set(tmp_path / "ds", "C", vocab_size=160000, tokenizer_hash="b" * 64)
+    with pytest.raises(tl.PretrainDataError):
+        cli._packed_tokenizer_pin(tl, tokens_root, ("W", "C"), None)

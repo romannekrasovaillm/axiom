@@ -218,6 +218,82 @@ def decay_start_step(
     return max(warmup_steps, total_steps - decay_steps)
 
 
+@dataclass(frozen=True)
+class DecayWindowPlan:
+    """План decay-фазы по объёму шарда Q (H1): хватает ли окна."""
+
+    decay_ratio: float
+    decay_steps: int
+    window_tokens: int
+    available_tokens: int
+    adjusted: bool
+    reason: str
+
+
+def decay_window_plan(
+    *,
+    total_steps: int,
+    decay_ratio: float,
+    batch_size: int,
+    seq_len: int,
+    available_tokens: int | None,
+) -> DecayWindowPlan:
+    """Сверить decay-окно ``decay_steps·B·T`` с объёмом Q и уменьшить долю при нехватке (H1).
+
+    Decay-фаза питается шардом Q за один проход; если окно шире Q, лоадер
+    исчерпает Q **до конца прогона** и последние шаги упадут в
+    ``data exhausted`` — финиш прогона теряется.  Поэтому до старта считается
+    окно ``round(total_steps·decay_ratio)·B·T`` и сравнивается с доступным объёмом
+    Q: при нехватке ``decay_ratio`` уменьшается до влезающего (окно = Q), а причина
+    возвращается для журнала.  ``available_tokens is None`` (Q не объявлен или
+    объём неизвестен) — проверка не выполняется, доля не меняется: неизвестность
+    не выдаётся за «влезает».
+    """
+    if total_steps <= 0:
+        raise ValueError("total_steps должен быть > 0")
+    if not 0.0 <= decay_ratio <= 1.0:
+        raise ValueError("decay_ratio должен быть в [0, 1]")
+    requested = max(0, int(round(total_steps * decay_ratio)))
+    per_step = int(batch_size) * int(seq_len)
+    if available_tokens is None or per_step <= 0:
+        return DecayWindowPlan(
+            decay_ratio=decay_ratio,
+            decay_steps=requested,
+            window_tokens=requested * per_step,
+            available_tokens=-1 if available_tokens is None else int(available_tokens),
+            adjusted=False,
+            reason="объём decay-шарда неизвестен — проверка не выполнялась",
+        )
+    window = requested * per_step
+    available = int(available_tokens)
+    if window <= available:
+        return DecayWindowPlan(
+            decay_ratio=decay_ratio,
+            decay_steps=requested,
+            window_tokens=window,
+            available_tokens=available,
+            adjusted=False,
+            reason=f"окно {window} ≤ Q {available} — доля сохранена",
+        )
+    # Сколько шагов влезает в Q.  Максимум — запрошенные шаги, минимум — 0
+    # (0 означает «decay-фазы нет»: пустой Q кормить нечем, честнее не объявлять
+    # фазу, чем упасть на исчерпании).
+    fits = min(requested, available // per_step)
+    adjusted_ratio = fits / total_steps if total_steps else 0.0
+    return DecayWindowPlan(
+        decay_ratio=adjusted_ratio,
+        decay_steps=fits,
+        window_tokens=fits * per_step,
+        available_tokens=available,
+        adjusted=True,
+        reason=(
+            f"окно {window} > Q {available}: decay_ratio уменьшен "
+            f"{decay_ratio:.4f} → {adjusted_ratio:.4f} ({fits} шагов), "
+            "иначе Q исчерпается до конца прогона (H1)"
+        ),
+    )
+
+
 def wsd_schedule(
     peak_lr: float,
     total_steps: int,
@@ -1151,7 +1227,7 @@ class PackedShardReader:
     эпоху.
     """
 
-    def __init__(self, entry: PackedShardEntry, seq_len: int):
+    def __init__(self, entry: PackedShardEntry, seq_len: int, *, skip: int = 0):
         self.entry = entry
         self.seq_len = int(seq_len)
         self.record_bytes = self.seq_len * 4  # uint32
@@ -1160,7 +1236,7 @@ class PackedShardReader:
         self._handle = None
         self._block: np.ndarray | None = None
         self._index = 0
-        self._emitted = 0
+        self._emitted = int(skip)
         size = entry.path.stat().st_size
         if size % self.record_bytes != 0:
             raise PretrainDataError(
@@ -1171,7 +1247,13 @@ class PackedShardReader:
             raise PretrainDataError(
                 f"{entry.path}: записей на диске {on_disk}, а в манифесте {entry.records}"
             )
+        if skip < 0 or skip > on_disk:
+            raise PretrainDataError(
+                f"{entry.path}: смещение resume {skip} вне [0, {on_disk}] записей"
+            )
         self.records = on_disk
+        #: Сколько записей шарда уже пройдено — позиция для курсора resume.
+        self.offset = int(skip)
 
     def __iter__(self) -> "PackedShardReader":
         return self
@@ -1179,6 +1261,10 @@ class PackedShardReader:
     def _fill(self) -> bool:
         if self._handle is None:
             self._handle = open(self.entry.path, "rb")
+            # Resume: пропущенное смещение не читается блоками, а перематывается
+            # указателем — это O(1), а не O(skip) записей.
+            if self._emitted:
+                self._handle.seek(self._emitted * self.record_bytes)
         count = min(PACKED_READ_BLOCK, self.records - self._emitted)
         if count <= 0:
             return False
@@ -1197,6 +1283,7 @@ class PackedShardReader:
                 raise StopIteration
         row = self._block[self._index]
         self._index += 1
+        self.offset = self._emitted - (self._block.shape[0] - self._index)
         return row.astype(np.int32, copy=False)
 
     def close(self) -> None:
@@ -1219,8 +1306,13 @@ class PackedTokenLoader:
     что у ``PretrainMixLoader``), а внутри потока шарды идут по порядку манифеста.
     Окно шаффла к готовым токенам не применяется осознанно: документы уже упакованы
     в записи, и «шаффлить» их значило бы перемешивать фиксированные окна контекста.
-    Эпоха заканчивается на первом исчерпании потока — по той же причине, что и в
-    ``PretrainMixLoader._fill_pending``: удержать объявленную пропорцию дальше нельзя.
+
+    Как и ``PretrainMixLoader``, читатель поддерживает **resume из курсора** (К2/К3):
+    ``cursor()`` отдаёт ``MixCursor`` той же формы, а конструктор принимает его
+    обратно — позиция потока (шард + смещение записей в нём) восстанавливается без
+    потерь и дублей, поэтому аренда interruptible переживает преемпшн.  Decay-фаза
+    (ADR-021) поддержана тем же способом: с шага ``decay_start`` батчи берутся
+    только из шарда Q.
     """
 
     def __init__(
@@ -1231,6 +1323,10 @@ class PackedTokenLoader:
         seq_len: int,
         batch_size: int = 1,
         mix: Mapping[str, float] | None = None,
+        cursor: MixCursor | None = None,
+        decay_stream: str | None = None,
+        decay_start: int | None = None,
+        decay_shard_root: str | Path | None = None,
     ):
         if not streams:
             raise PretrainDataError("не объявлено ни одного потока шардов")
@@ -1238,7 +1334,26 @@ class PackedTokenLoader:
             raise ValueError("seq_len должен быть >= 3")
         if batch_size < 1:
             raise ValueError("batch_size должен быть >= 1")
+        decay_enabled = decay_stream is not None
+        if decay_enabled and decay_start is None:
+            raise PretrainDataError(
+                f"decay-шард {decay_stream!r} объявлен без decay_start: граница фаз неизвестна"
+            )
+        if decay_start is not None and not decay_enabled:
+            raise PretrainDataError("decay_start объявлен без decay_stream")
+        if decay_enabled and decay_stream in streams:
+            raise PretrainDataError(
+                f"decay-шард {decay_stream!r} не может входить в стабильный микс {tuple(streams)}"
+            )
+        if cursor is not None and cursor.phase == PHASE_DECAY and not decay_enabled:
+            raise PretrainDataError(
+                "курсор снят в decay-фазе, а decay-шард не объявлен: resume потерял бы Q-поток"
+            )
+
         self.tokens_root = Path(tokens_root)
+        self.decay_shard_root = (
+            Path(decay_shard_root) if decay_shard_root is not None else self.tokens_root
+        )
         self.seq_len = int(seq_len)
         self.batch_size = int(batch_size)
         weights = dict(mix) if mix else {name: 1.0 for name in streams}
@@ -1250,12 +1365,19 @@ class PackedTokenLoader:
         if sum(weights[name] for name in streams) <= 0:
             raise PretrainDataError("сумма весов микса должна быть > 0")
         self.weights = {name: float(weights[name]) for name in streams}
+        self.decay_stream = decay_stream
+        self.decay_start = int(decay_start) if decay_start is not None else None
+
+        cursor_streams = {item.name: item for item in (cursor.streams if cursor else ())}
         self._sets: dict[str, PackedShardSet] = {}
         self._readers: dict[str, PackedShardReader] = {}
-        self._shard_index = {name: 0 for name in streams}
-        self._emitted = {name: 0 for name in streams}
-        self._dropped_tail = {name: 0 for name in streams}
+        self._shard_index: dict[str, int] = {}
+        self._offset: dict[str, int] = {}          # записей выдано из текущего шарда
+        self._records: dict[str, int] = {}         # записей выдано из потока всего
+        self._emitted: dict[str, int] = {}         # слотов (records×T) выдано из потока
+        self._dropped_tail: dict[str, int] = {}
         self._exhausted: set[str] = set()
+
         for name in streams:
             shard_set = load_packed_shard_set(
                 packed_manifest_path(self.tokens_root, name), allowed=tuple(streams)
@@ -1265,11 +1387,65 @@ class PackedTokenLoader:
                     f"seq_len манифеста {name} ({shard_set.seq_len}) != заказанного {self.seq_len}"
                 )
             self._sets[name] = shard_set
-            self._readers[name] = PackedShardReader(shard_set.entries[0], self.seq_len)
-        self.step = 0
+            self._open_stream(name, shard_set, cursor_streams.get(name))
+
+        self._q_stream: str | None = None
+        if decay_enabled:
+            assert decay_stream is not None
+            q_set = load_packed_shard_set(
+                packed_manifest_path(self.decay_shard_root, decay_stream),
+                allowed=(decay_stream,),
+            )
+            if q_set.seq_len != self.seq_len:
+                raise PretrainDataError(
+                    f"seq_len манифеста {decay_stream} ({q_set.seq_len}) != {self.seq_len}"
+                )
+            self._sets[decay_stream] = q_set
+            self._open_stream(decay_stream, q_set, cursor_streams.get(decay_stream))
+            self._q_stream = decay_stream
+
+        self.step = cursor.step if cursor else 0
+        self._last_phase = cursor.phase if cursor else PHASE_STABLE
+
+    def _open_stream(
+        self, name: str, shard_set: PackedShardSet, cursor: StreamCursor | None
+    ) -> None:
+        """Открыть поток на позиции курсора (или с начала) и восстановить счётчики."""
+        shard_index = int(cursor.shard_index) if cursor else 0
+        offset = int(cursor.shard_doc_offset) if cursor else 0
+        if shard_index >= len(shard_set.entries):
+            raise PretrainDataError(
+                f"курсор {name} указывает на шард {shard_index}, а их {len(shard_set.entries)}"
+            )
+        entry = shard_set.entries[shard_index]
+        if offset > entry.records:
+            raise PretrainDataError(
+                f"курсор {name}: смещение {offset} больше записей шарда {entry.records}"
+            )
+        self._shard_index[name] = shard_index
+        self._offset[name] = offset
+        if cursor is not None:
+            self._records[name] = int(cursor.docs)
+            self._emitted[name] = int(cursor.tokens)
+        else:
+            self._records[name] = 0
+            self._emitted[name] = 0
+        self._dropped_tail[name] = 0
+        self._readers[name] = PackedShardReader(entry, self.seq_len, skip=offset)
 
     def __iter__(self) -> "PackedTokenLoader":
         return self
+
+    def _phase_for_batch(self, step: int) -> str:
+        """Фаза батча с абсолютным номером ``step`` (1-based)."""
+        if self.decay_start is None:
+            return PHASE_STABLE
+        return PHASE_DECAY if (step - 1) >= self.decay_start else PHASE_STABLE
+
+    @property
+    def phase(self) -> str:
+        """Фаза последнего выданного батча (stable до первого)."""
+        return self._last_phase
 
     def __next__(self) -> np.ndarray:
         """Следующий батч ``(B, T)``.
@@ -1280,7 +1456,8 @@ class PackedTokenLoader:
         так что на стыке ``.bin`` теряются не записи, а только хвост потока
         (``≤ B-1`` записей за эпоху, счётчик — в ``stats()``).
         """
-        name = self._pick_stream()
+        phase = self._phase_for_batch(self.step + 1)
+        name = self._q_stream if phase == PHASE_DECAY else self._pick_stream()
         if name is None:
             raise StopIteration
         rows: list[np.ndarray] = []
@@ -1297,18 +1474,31 @@ class PackedTokenLoader:
             raise StopIteration
         batch = np.stack(rows, axis=0)
         self._emitted[name] += batch.size
+        self._records[name] += len(rows)
+        self._offset[name] = self._readers[name].offset
         self.step += 1
+        self._last_phase = phase
         return batch
 
     def _pick_stream(self) -> str | None:
-        """Поток с максимальным дефицитом против объявленной пропорции."""
-        live = [name for name in self._sets if name not in self._exhausted]
+        """Поток с максимальным дефицитом против объявленной пропорции.
+
+        H2: мёртвые потоки исключаются из расчёта, веса оставшихся перенормируются —
+        иначе хвост эпохи шёл бы «соло» с искажённым дефицитом.
+
+        Итерируем по ``self.weights`` (потоки стабильного микса), а не по
+        ``self._sets``: в ``_sets`` лежит ещё и decay-шард Q, у которого веса в
+        миксе нет — выбор его здесь сломал бы как пропорцию, так и индекс весов.
+        """
+        live = [name for name in self.weights if name not in self._exhausted]
         if not live:
             return None
-        total = sum(self._emitted.values())
+        total = sum(self._emitted[name] for name in live)
+        weight_sum = sum(self.weights[name] for name in live)
         best_name, best_deficit = None, None
         for name in live:
-            deficit = self.weights[name] * total - self._emitted[name]
+            share = self.weights[name] / weight_sum if weight_sum > 0 else 1.0 / len(live)
+            deficit = share * total - self._emitted[name]
             if best_deficit is None or deficit > best_deficit:
                 best_name, best_deficit = name, deficit
         return best_name
@@ -1324,11 +1514,34 @@ class PackedTokenLoader:
             if next_reader.records > 0:
                 self._readers[name] = next_reader
                 self._shard_index[name] = index
+                self._offset[name] = 0
                 return True
             index += 1
         return False
 
     # -- след ---------------------------------------------------------------
+
+    def cursor(self, *, step: int | None = None) -> MixCursor:
+        """Курсор потока в форме ``MixCursor`` — контракт resume, общий с raw-путём."""
+        streams = []
+        for name in self._sets:
+            streams.append(
+                StreamCursor(
+                    name=name,
+                    shard_index=self._shard_index[name],
+                    shard_doc_offset=self._offset[name],
+                    docs=self._records[name],
+                    tokens=self._emitted[name],
+                    epoch=0,
+                )
+            )
+        return MixCursor(
+            step=self.step if step is None else int(step),
+            tokens_total=sum(self._emitted.values()),
+            streams=tuple(streams),
+            pending_tokens=(),
+            phase=self._last_phase,
+        )
 
     def stats(self) -> dict[str, Any]:
         total = sum(self._emitted.values())
@@ -1342,11 +1555,16 @@ class PackedTokenLoader:
                 for name, emitted in self._emitted.items()
             },
             "dropped_tail_records": dict(self._dropped_tail),
+            "phase": self._last_phase,
+            "decay_stream": self.decay_stream,
+            "decay_start": self.decay_start,
+            "records_total": sum(self._records.values()),
             "streams": {
                 name: {
                     "shard_index": self._shard_index[name],
                     "shards": len(self._sets[name].entries),
                     "slots": self._emitted[name],
+                    "records": self._records[name],
                     "stream_tokens": self._sets[name].total_stream_tokens,
                     "exhausted": name in self._exhausted,
                     "tokenizer_hash": self._sets[name].tokenizer_hash,
@@ -1684,14 +1902,28 @@ class MetricsWriter:
 
     @staticmethod
     def read(path: str | Path) -> list[dict]:
+        """Прочитать метрики построчно, устойчиво к обрыву записи (H5).
+
+        jsonl дописывается на живой машине и может быть оборван преемпшном на
+        середине строки: без построчного ``try`` одно битое окончание роняло
+        чтение **всего** журнала.  Битую строку пропускаем — она не метрика, но и
+        не повод потерять всё остальное (диагностика преемпшна особенно ценна
+        именно тогда, когда файл оборван).
+        """
         path = Path(path)
         if not path.is_file():
             return []
         rows = []
-        for line in path.read_text(encoding="utf-8").splitlines():
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
             stripped = line.strip()
-            if stripped:
-                rows.append(json.loads(stripped))
+            if not stripped:
+                continue
+            try:
+                parsed = json.loads(stripped)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(parsed, dict):
+                rows.append(parsed)
         return rows
 
 
@@ -1755,7 +1987,12 @@ class TrainConfig:
     #: ``float32`` — прямая точность (parity со старым тренером);
     #: ``bfloat16`` — bf16-параметры при fp32-мастере.
     param_dtype: str = "float32"
-    checkpoint_every: int = 0  # 0 — чекпойнты выключены
+    checkpoint_every: int = 0  # 0 — чекпойнты по числу шагов выключены
+    #: К1 (runbook §3): каденс чекпойнтов по **минутам**, а не шагам.  Нужен на
+    #: аренде: длительность шага плавает (преемпшн, соседи по железу), и «30 минут»
+    #: — риск-метрика потери, тогда как «N шагов» — нет.  Обе настройки складываются
+    #: по ИЛИ: что наступит раньше, то и сохраняет.
+    checkpoint_every_min: float | None = None
     keep_last: int = 2
     ckpt_dir: Path | None = None
     metrics_path: Path | None = None
@@ -1771,6 +2008,10 @@ class TrainConfig:
     stop_file: Path | None = None
     #: Как часто проверять ``stop_file`` (в шагах); 1 — каждый шаг.
     stop_check_every: int = 1
+    #: Вид источника данных (``raw`` | ``packed``): попадает в курсор и сверяется
+    #: при resume (H4) — продолжать packed-прогон raw-курсором значило бы молча
+    #: поставить поток на чужую позицию.
+    data_kind: str = "raw"
 
 
 @dataclass
@@ -1861,6 +2102,8 @@ def train(
         start_step = int(latest["step"])
         if train_config.total_steps is None:
             total_steps = int(cursor_data.get("run", {}).get("total_steps") or total_steps)
+    elif train_config.total_steps is None:
+        total_steps = train_config.steps
 
     # К3: бюджетные счётчики — накопительные по прогону, а не по ноге.  Без этого
     # resume обнулял ``tokens_seen``/``gpu_hours``, и пороги сметы ($225/$260)
@@ -1869,8 +2112,6 @@ def train(
     resume_run = dict(cursor_data.get("run") or {})
     tokens_seen = int(resume_run.get("tokens_seen_total") or 0)
     gpu_hours_base = float(resume_run.get("gpu_hours_total") or 0.0)
-    elif train_config.total_steps is None:
-        total_steps = train_config.steps
 
     _validate_schedule_horizon(start_step, total_steps, train_config)
 
@@ -1913,7 +2154,6 @@ def train(
     losses: list[float] = []
     lr_history: list[float] = []
     step_seconds: list[float] = []
-    tokens_seen = 0
     stop_reason: str | None = None
     stopped_by_budget = False
     checkpoint_record: dict | None = None
@@ -1923,8 +2163,12 @@ def train(
     data_decay_start = getattr(loader, "decay_start", None) if loader is not None else None
     first_tick = 0.0
     started = time.time()
+    stop_path = Path(train_config.stop_file) if train_config.stop_file is not None else None
+    stop_check_every = max(1, int(train_config.stop_check_every))
+    last_checkpoint_at = started
     usd_rate = train_config.usd_per_gpu_hour
     usd_spent = 0.0
+    gpu_hours = gpu_hours_base
 
     for index in range(train_config.steps):
         absolute = start_step + index + 1
@@ -1953,7 +2197,8 @@ def train(
         lr_history.append(lr_at(absolute - 1))
         step_seconds.append(elapsed)
         tokens_seen += batch_tokens
-        gpu_hours = (time.time() - started) / 3600.0
+        # Накопительные счётчики: база прошлых ног + текущая нога (К3).
+        gpu_hours = gpu_hours_base + (time.time() - started) / 3600.0
         if usd_rate is not None:
             usd_spent = gpu_hours * float(usd_rate)
 
@@ -1994,11 +2239,51 @@ def train(
                 flush=True,
             )
 
-        if train_config.ckpt_dir is not None and train_config.checkpoint_every:
-            if absolute % train_config.checkpoint_every == 0:
+        if train_config.ckpt_dir is not None:
+            by_steps = bool(train_config.checkpoint_every) and (
+                absolute % train_config.checkpoint_every == 0
+            )
+            by_time = bool(train_config.checkpoint_every_min) and (
+                time.time() - last_checkpoint_at >= float(train_config.checkpoint_every_min) * 60.0
+            )
+            if by_steps or by_time:
                 checkpoint_record = _save_checkpoint(
-                    manager, absolute, master, state, loader, train_config, total_steps
+                    manager,
+                    absolute,
+                    master,
+                    state,
+                    loader,
+                    train_config,
+                    total_steps,
+                    tokens_seen=tokens_seen,
+                    gpu_hours=gpu_hours,
                 )
+                last_checkpoint_at = time.time()
+
+        # К5: стоп-файл — килл-свитч ватчдога, независимый от бюджетного порога.
+        # Проверяется рядом с budget_breach (та же точка «пора остановиться») каждые
+        # stop_check_every шагов: файл создаётся на хосте/инстансе и синхронизируется,
+        # поэтому луп обязан его видеть, иначе «стоп-файл» остаётся обещанием в смете.
+        if stop_path is not None and index % stop_check_every == 0 and stop_path.is_file():
+            try:
+                detail = stop_path.read_text(encoding="utf-8").strip()
+            except OSError:
+                detail = ""
+            stop_reason = f"stop-file: {stop_path.name}" + (f" ({detail})" if detail else "")
+            stopped_by_budget = True
+            if manager is not None:
+                checkpoint_record = _save_checkpoint(
+                    manager,
+                    absolute,
+                    master,
+                    state,
+                    loader,
+                    train_config,
+                    total_steps,
+                    tokens_seen=tokens_seen,
+                    gpu_hours=gpu_hours,
+                )
+            break
 
         reason = budget_breach(
             budget, tokens_seen=tokens_seen, gpu_hours=gpu_hours, usd_spent=usd_spent
@@ -2010,7 +2295,15 @@ def train(
             # чтобы лимит не стоил потерянных шагов.
             if manager is not None:
                 checkpoint_record = _save_checkpoint(
-                    manager, absolute, master, state, loader, train_config, total_steps
+                    manager,
+                    absolute,
+                    master,
+                    state,
+                    loader,
+                    train_config,
+                    total_steps,
+                    tokens_seen=tokens_seen,
+                    gpu_hours=gpu_hours,
                 )
             break
 
@@ -2020,10 +2313,18 @@ def train(
         and (checkpoint_record is None or checkpoint_record["step"] != start_step + len(losses))
     ):
         checkpoint_record = _save_checkpoint(
-            manager, start_step + len(losses), master, state, loader, train_config, total_steps
+            manager,
+            start_step + len(losses),
+            master,
+            state,
+            loader,
+            train_config,
+            total_steps,
+            tokens_seen=tokens_seen,
+            gpu_hours=gpu_hours,
         )
 
-    gpu_hours = (time.time() - started) / 3600.0
+    gpu_hours = gpu_hours_base + (time.time() - started) / 3600.0
     if usd_rate is not None:
         usd_spent = gpu_hours * float(usd_rate)
     if stop_reason is None:
@@ -2059,7 +2360,14 @@ def train(
             "target_tokens": budget.target_tokens,
             "gpu_hours_estimate": budget.gpu_hours_estimate,
             "limit_usd": budget.limit_usd,
+            # ``gpu_hours_actual`` — накопительный счётчик прогона (сумма ног), он же
+            # вход стоп-правила AD-8.  Для диагностики рядом лежат база из курсора и
+            # длительность текущей ноги: видно, что «факт» не сбрасывался на resume.
             "gpu_hours_actual": round(gpu_hours, 6),
+            "gpu_hours_leg": round((time.time() - started) / 3600.0, 6),
+            "gpu_hours_resumed_base": round(gpu_hours_base, 6),
+            "tokens_seen_total": tokens_seen,
+            "tokens_seen_resumed_base": int(resume_run.get("tokens_seen_total") or 0),
             "usd_spent": round(usd_spent, 6),
             "usd_rate_declared": usd_rate is not None,
             "stop_reason": stop_reason,
@@ -2085,11 +2393,20 @@ def _save_checkpoint(
     step: int,
     master: Any,
     state: Any,
-    loader: PretrainMixLoader | None,
+    loader: Any,
     train_config: TrainConfig,
     total_steps: int,
+    *,
+    tokens_seen: int = 0,
+    gpu_hours: float = 0.0,
 ) -> dict:
-    """Сохранить чекпойнт шага вместе с курсором данных и параметрами прогона."""
+    """Сохранить чекпойнт шага вместе с курсором данных и параметрами прогона.
+
+    В блок ``run`` кладутся не только параметры расписания, но и **накопительные**
+    бюджетные счётчики (К3) и пути-опоры resume: ``stop_file`` (К5).  Блок ``run``
+    — контракт resume: CLI сверяет по нему seed/ratios/горизонт с argv (H4), а
+    ``train`` дочитывает из него базу счётчиков, чтобы нога не «обнуляла» смету.
+    """
     cursor: dict[str, Any] = {}
     if loader is not None:
         cursor = loader.cursor(step=step).to_json()
@@ -2106,7 +2423,13 @@ def _save_checkpoint(
                 "total_steps": total_steps,
                 "lr": train_config.lr,
                 "schedule": train_config.schedule,
+                "warmup_ratio": train_config.warmup_ratio,
+                "decay_ratio": train_config.decay_ratio,
                 "param_dtype": train_config.param_dtype,
+                "data_kind": train_config.data_kind,
+                "tokens_seen_total": int(tokens_seen),
+                "gpu_hours_total": round(float(gpu_hours), 6),
+                "stop_file": str(train_config.stop_file) if train_config.stop_file else None,
             },
         },
     )
@@ -2127,8 +2450,13 @@ __all__ = [
     "Budget",
     "CheckpointManager",
     "CheckpointRecord",
+    "DecayWindowPlan",
     "MetricsWriter",
     "MixCursor",
+    "PackedShardEntry",
+    "PackedShardReader",
+    "PackedShardSet",
+    "PackedTokenLoader",
     "PAD_ID",
     "PHASES",
     "PHASE_DECAY",
@@ -2148,10 +2476,13 @@ __all__ = [
     "budget_breach",
     "declared_backend",
     "decay_start_step",
+    "decay_window_plan",
     "iter_shard_docs",
     "load_budget",
+    "load_packed_shard_set",
     "load_shard_set",
     "mfu",
+    "packed_manifest_path",
     "pack_batch",
     "require_budget",
     "step_flops",

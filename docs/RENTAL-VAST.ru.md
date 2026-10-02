@@ -15,35 +15,91 @@
 
 ```bash
 # venv + jax[cuda12] на инстансе — RS-шаблона нет, собираем:
-python3 -m venv /root/venv && /root/venv/bin/pip install -U "jax[cuda12]" ormsgats 2>/dev/null || /root/venv/bin/pip install -U "jax[cuda12]"
+python3 -m venv /root/venv && /root/venv/bin/pip install -U "jax[cuda12]"
 /root/venv/bin/pip install zstandard datasets
 # проверка: /root/venv/bin/python -c "import jax; print(jax.devices())" → CudaDevice(id=0)
 ```
+
+Пакет `ormsgats` (опечатка в предыдущей редакции) не нужен и удалён: лупу
+достаточно `zstandard` (чтение `.jsonl.zst`) и `datasets`; лишний пакет в
+requirements аренды — лишняя поверхность установки.
 
 ## 1. Подготовка (хост → инстанс)
 
 ```bash
 # после create: ssh-адрес в панели vast
-rsync -a --exclude .git --exclude .arch-handoff ~/axiom/ root@<IP>:/root/axiom/
+rsync -a --partial --timeout 300 --exclude .git --exclude .arch-handoff ~/axiom/ root@<IP>:/root/axiom/
 # бины претокенизации (71 ГБ) — только tokens/, сырые шарды не нужны
-rsync -a ~/gb10-shared/datasets/axiom-pretrain-l3/tokens/ root@<IP>:/root/data/tokens/
-rsync -a ~/gb10-shared/datasets/axiom-pretrain-l3/tokenizer/ root@<IP>:/root/data/tokenizer/
+rsync -a --partial --timeout 300 ~/gb10-shared/datasets/axiom-pretrain-l3/tokens/ root@<IP>:/root/data/tokens/
+rsync -a --partial --timeout 300 ~/gb10-shared/datasets/axiom-pretrain-l3/tokenizer/ root@<IP>:/root/data/tokenizer/
 ```
 
+`--partial` — докачка оборванного 71-ГБ переноса вместо перезапуска с нуля
+(канал до арендованного хоста рвётся; `--timeout 300` не даёт rsync висеть на
+мёртвом соединении).
+
 ## 2. Старт лупа (смета уже в реестре — порядок AD-8 соблюдён)
+
+Все флаги ниже существуют в CLI (`tools/pretrain_run.py --help`); команда
+прогоняется как есть, подставляются только `<ШАГИ>`/`<ПИК>` и адреса хоста.
 
 ```bash
 cd /root/axiom
 export LD_LIBRARY_PATH=$(echo /usr/local/lib/python3*/dist-packages/nvidia/*/lib | tr ' ' ':')
 export XLA_PYTHON_CLIENT_MEM_FRACTION=0.85   # на инстансе мы одни — но лимит явный
 export NET_GATE_PROFILE=1                    # детерминизм ADR-013 запиннен
+export STOP_FILE=/root/run/stop              # тот же путь, что у ватчдога (К5)
 nohup python3 tools/pretrain_run.py --model-preset l3-full --grad-checkpointing \
-  --run-ref pretreain-l3 --shard-root /root/data --metrics /root/run/metrics.jsonl \
-  --ckpt-dir /root/run/ckpt --journal /root/run/journal.json > /root/run/pretrain.log 2>&1 &
-# ВАЖНО (R1): --journal явно — дефолт путя C-032 (~/gb10-shared) на инстансе отсутствует
+  --run-ref pretreain-l3 --shard-root /root/data --tokens-root /root/data/tokens \
+  --steps <ШАГИ> --total-steps <ШАГИ> \
+  --decay-stream Q --decay-shard-root /root/data \
+  --metrics /root/run/metrics.jsonl --ckpt-dir /root/run/ckpt \
+  --ckpt-every-min 30 --journal /root/run/journal.json \
+  --stop-file /root/run/stop \
+  --usd-per-gpu-hour 1.1 \
+  > /root/run/pretrain.log 2>&1 &
+# ВАЖНО (R1): --journal явно — дефолт путя C-032 (~/gb10-shared) на инстансе отсутствует.
+# --ckpt-every-min 30 — риск-каденс (рунбук §3); --stop-file читается лупом каждые
+# --stop-check-every шагов (по умолчанию 1), поэтому стоп-файл ватчдога реально тормозит прогон.
+# --peak-tflops/--peak-tflops-source — если нужен MFU; без объявленного пика MFU = None
+# (не выдумывается). MFU считается по N_active (active_param_count), а не по N_total.
 ```
 
-Первые 2 часа — замер фактического tok/s: если прогноз `20B-прогон` по фактической скорости выходит за 225 USD compute — **стоп-файл и пересмотр** (потеря ≤$10, не всего прогона).
+`--tokens-root` включает packed-путь (готовые `.bin` из §1) — по умолчанию
+включён, если манифесты `tokens/` на месте; сырые `manifest-*.json` остаются
+fallback-ом (`--no-packed` форсирует его). Перед стартом CLI сверяет decay-окно
+с объёмом Q (H1) и при нехватке либо уменьшает `--decay-ratio` (запись в журнал),
+либо отказывает, если доля задана явно.
+
+### 2.5. Dry-run команды старта (обязателен до аренды)
+
+На локальной 4080 те же флаги на малом пресете — команда обязана исполниться
+до того, как платить за аренду (прогнано 02.10.2026, exit 0, `status=executed`,
+3 шага, `kind=packed`, чекпойнт шага 3):
+
+```bash
+export LD_LIBRARY_PATH=$(ls -d ~/venv-axiom/lib/python3.11/site-packages/nvidia/*/lib | tr '\n' ':')
+~/venv-axiom/bin/python tools/pretrain_run.py --model-preset small \
+  --run-ref pretrain-dryrun --shard-root <корпус> --tokens-root <корпус>/tokens \
+  --steps 3 --seq-len 64 --batch-size 1 --ckpt-every-min 30 --checkpoint-every 3 \
+  --decay-stream Q --decay-shard-root <корпус> \
+  --budget-limit-usd 5 --out ~/gb10-shared/runs/pretrain-dryrun \
+  --stop-file ~/tmp/pretrain-dryrun-stop --json
+```
+
+Почему `--seq-len 64`, а не боевые 8192: на 4080 (16 ГБ) при словаре корпуса
+160K лог-проекция `B·T·V` для `T=8192` не влезает (наблюдался OOM 21,5 ГиБ) —
+это ограничение локальной карты, а не путей. Боевой `T=8192` считается на H800
+(80 ГБ). Боевой runbook-старт (§2) гоняет **те же** флаги; dry-run меняет только
+пресет и `T`, поэтому проверяет именно тот CLI, что пойдёт на аренду.
+
+Dry-run обязан также проверить vocab: модель берёт словарь из манифеста `tokens/`
+(фактические id в `.bin`), а не диапазон id канонического BPE — иначе embedding
+читается по чужим индексам и лосс становится `NaN`.
+
+Первые 2 часа боевого прогона — замер фактического tok/s: если прогноз по
+фактической скорости выходит за 225 USD compute — **стоп-файл и пересмотр**
+(потеря ≤$10, не всего прогона).
 
 ## 3. Против преемпшна (главный риск interruptible)
 
@@ -55,14 +111,30 @@ nohup python3 tools/pretrain_run.py --model-preset l3-full --grad-checkpointing 
 
 ## 4. Watchdog (слой №4, независим от лупа)
 
+Два сторожа, две роли (D4: ключ vast — только на домашнем хосте):
+
 ```bash
+# (а) на ИНСТАНСЕ — только stop-файл из локальных метрик, ключ vast не нужен:
 nohup python3 tools/vast_watchdog.py --instance-id <id> \
+  --metrics /root/run/metrics.jsonl --usd-per-gpu-hour 1.1 \
+  --spend-cap 225 --stop-file /root/run/stop > /root/run/watchdog.log 2>&1 &
+# (б) на ДОМАШНЕМ ХОСТЕ — жёсткие границы через vast CLI (синхр. копия метрик §4.5):
+nohup python3 tools/vast_watchdog.py --host --instance-id <id> \
+  --metrics ~/gb10-shared/runs/pretreain-l3/metrics.jsonl \
   --spend-cap 225 --hard-cap 260 --balance-min 20 > /tmp/watchdog.log 2>&1 &
 ```
 
-- $225 (compute-лимит) → **stop-файл** — луп остановится сам на ближайшем чекпойнте;
-- $260 (полный лимит) → **vast stop** жёстко;
-- баланс < $20 → stop — vast при нуле кредитов без карты **удаляет инстанс и данные** (docs: pricing → Billing Basics).
+- $225 (compute-лимит) → **stop-файл** — луп остановится сам на ближайшем чекпойнте
+  (луп читает тот же `--stop-file`/`STOP_FILE`, см. §2 — без совпадения путей стоп-файл не сработает);
+- $260 (полный лимит) → **vast stop** жёстко (хост, режим `--host`);
+- баланс < $20 → stop — vast при нуле кредитов без карты **удаляет инстанс и данные** (docs: pricing → Billing Basics);
+- инстанс исчез из `vastai show instances` (id сменился после пересоздания) → ватчдог
+  **кричит STALE и выходит с кодом 4**: сторожить нечего, молчаливый «ноль spend» был
+  бы ложным зелёным вердиктом. Метрики читаются **синхронизированной копией** (путь
+  аргументом `--metrics`), а не путём на инстансе: хост не видит файловую систему инстанса.
+
+`gpu_hours` в метриках лупа накопительный по прогону (К3: сумма ног при resume),
+поэтому spend не «сбрасывается» на каждом перезапуске после преемпшна.
 
 ## 4.5. Возврат артефактов (R2, ревью 01.10 — pull-модель)
 
@@ -70,8 +142,12 @@ nohup python3 tools/vast_watchdog.py --instance-id <id> \
 
 ```bash
 # cron на домашнем хосте (инстанс имеет публичный IP+ssh-порт):
-*/30 * * * * rsync -a --timeout 300 root@<IP>:/root/run/ckpt/ ~/gb10-shared/runs/pretreain-l3/ckpt/ ;   rsync -a root@<IP>:/root/run/{metrics.jsonl,journal.json,pretrain.log} ~/gb10-shared/runs/pretreain-l3/
+*/30 * * * * rsync -a --partial --timeout 300 root@<IP>:/root/run/ckpt/ ~/gb10-shared/runs/pretreain-l3/ckpt/ ;   rsync -a --partial --timeout 300 root@<IP>:/root/run/{metrics.jsonl,journal.json,pretrain.log} ~/gb10-shared/runs/pretreain-l3/
 ```
+
+`--partial` докачивает оборванную копию чекпойнта/метрик (инстанс может
+преемптнуться во время pull), `--timeout 300` не даёт rsync висеть на мёртвом соединении.
+Именно эта копия `metrics.jsonl` — вход хост-ватчдога (§4): spend считается от неё.
 
 Приёмка каждого чекпойнта: сверка tree_hash с журналом (побитовая целостность, как A5). Последний чекпойнт после завершения — той же командой; инстанс destroy только после сверки.
 

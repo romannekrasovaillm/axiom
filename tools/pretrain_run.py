@@ -696,6 +696,7 @@ def metrics_summary(rows: list[dict], path: Path, repo_root: Optional[Path]) -> 
 def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
     """Исполнить прогон; вернуть (журнал, успех).  Журнал пишется всегда."""
     from net import train_loop as tl
+    from net.model import loss_impl as _loss_impl
 
     started = time.time()
     repo_root = sft_stage.detect_repo_root()
@@ -1068,6 +1069,8 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
         "grad_checkpointing": bool(grad_checkpointing),
         "grad_checkpointing_policy": args.grad_checkpointing_policy,
         "grad_ckpt_policy": getattr(cfg, "grad_ckpt_policy", None),
+        "ce_chunk_tokens": getattr(cfg, "ce_chunk_tokens", None),
+        "loss_impl": _loss_impl(cfg),
         "param_dtype": args.param_dtype,
         "checkpoint_every": args.checkpoint_every,
         "checkpoint_every_min": args.ckpt_every_min,

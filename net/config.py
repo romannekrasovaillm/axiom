@@ -181,6 +181,23 @@ class ModelConfig:
     # config built in code (tests, smokes) keeps the pre-D-8 graph.
     grad_ckpt_policy: str = "none"
 
+    # --- chunked cross-entropy width (D-8 remainder; spine AD-9/C-035 form) --
+    # ``compute_loss`` builds ``(B, T, V)`` logits for the NTP and MTP heads; at
+    # V=262144 (the ``l3-full`` power-of-2 padded vocabulary), T=8192 that
+    # tensor is 8.6 GiB and the autodiff graph retains ~14 copies of it — a ~69+
+    # GiB constant floor that keeps ``l3-full@8192`` out of GB10's 76.8 GiB pool
+    # even with per-layer remat (D-8, results note of 03.10).  ``compute_loss``
+    # slices the T axis into chunks of ``ce_chunk_tokens`` *rows*, builds the
+    # chunk logits and reduces them with a global sum / global count (not a
+    # mean-of-means), each chunk branch wrapped in ``jax.checkpoint`` so the
+    # backward pass recomputes one chunk's logits at a time (~1 GiB at
+    # 1024 x 262144 fp32) instead of retaining the whole-vocabulary tensor.
+    # ``0`` disables the mechanism and builds the pre-delta graph bit-for-bit
+    # (the schema default, so a config built in code keeps the naive path);
+    # ``net/config.json`` declares the pretrain value.  Read by ``net/model.py``
+    # (``compute_loss`` -> ``forward``/``mtp_loss``).
+    ce_chunk_tokens: int = 0
+
     def as_dict(self) -> dict:
         return dataclasses.asdict(self)
 
@@ -219,6 +236,15 @@ def validate_config(cfg: ModelConfig) -> None:
     assert cfg.grad_ckpt_policy in ("none", "per_layer"), (
         "grad_ckpt_policy must be none|per_layer, got "
         f"{cfg.grad_ckpt_policy!r}"
+    )
+
+    # Chunked cross-entropy width (D-8 remainder): ``0`` disables the mechanism
+    # (the pre-delta path), a positive integer is the T-chunk width in rows.  A
+    # negative value has no meaning and would silently become a no-op loop, so
+    # reject it here rather than at the first chunk boundary.
+    assert isinstance(cfg.ce_chunk_tokens, int) and cfg.ce_chunk_tokens >= 0, (
+        "ce_chunk_tokens must be a non-negative integer (0 disables chunking), "
+        f"got {cfg.ce_chunk_tokens!r}"
     )
 
     # Hierarchical pool (ADR-012): the modes are declared, and a consumer

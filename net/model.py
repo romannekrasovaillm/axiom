@@ -160,12 +160,20 @@ def forward(
     return_hidden: bool = False,
     collect_qb: bool = False,
     grad_ckpt_policy: str = "none",
+    emit_logits: bool = True,
 ) -> jnp.ndarray | tuple:
     """Next-token logits for ``input_ids`` of shape (B, T).
 
     Returns ``(B, T, vocab)`` logits; ``return_hidden`` appends the backbone's
     final hidden state (used for MTP) and ``collect_qb`` appends the mean QB
     auxiliary loss over the LatentMoE layers (ours — see ``net/moe.py``).
+
+    ``emit_logits=False`` skips the ``h @ embedding.T`` projection and returns
+    only the requested extras — the chunked cross-entropy path of
+    :func:`compute_loss` reads the hidden state and builds vocabulary-sized
+    logits itself, one ``ce_chunk_tokens`` slice at a time, so the full
+    ``(B, T, vocab)`` tensor is never materialised (D-8 remainder).  The
+    default ``True`` keeps the projection exactly as before (bit-for-bit).
 
     ``grad_ckpt_policy`` (``none`` | ``per_layer``, see ``GRAD_CKPT_POLICIES``)
     selects the remat granularity of the backbone loop.  ``per_layer`` wraps
@@ -239,8 +247,9 @@ def forward(
             qb_losses.append(qb)
         layer_deltas.append(delta)
     h = rms_norm(h, params.norm_final)
-    logits = h @ params.embedding.T
-    out: list = [logits]
+    out: list = []
+    if emit_logits:
+        out.append(h @ params.embedding.T)
     if return_hidden:
         out.append(h)
     if collect_qb:
@@ -255,24 +264,103 @@ def _cross_entropy(logits: jnp.ndarray, targets: jnp.ndarray) -> jnp.ndarray:
     return -nll.mean()
 
 
+def _chunked_cross_entropy(
+    features: jnp.ndarray,
+    targets: jnp.ndarray,
+    embedding: jnp.ndarray,
+    ce_chunk_tokens: int,
+    loss_mask: jnp.ndarray | None = None,
+) -> jnp.ndarray:
+    """Cross-entropy over vocabulary-sized logits built one T-slice at a time.
+
+    ``features`` is (B, T', hidden) — the rows the tied output head is applied
+    to (the backbone hidden state for NTP, the MTP output for the auxiliary
+    head) — and ``embedding`` the (vocab, hidden) matrix, so a row's logits are
+    ``f @ embedding.T``.  The naive :func:`_cross_entropy` materialises the
+    whole (B, T', vocab) tensor; here it is built ``ce_chunk_tokens`` rows at a
+    time and reduced as a global **sum** of per-token NLL over a global
+    **count** of predicted tokens.  The global reduction is what keeps the
+    value equal to the naive mean: a per-chunk mean of means would weight a
+    short trailing chunk as much as a full one (the classic chunking bug).
+
+    Each chunk's logits + NLL is wrapped in ``jax.checkpoint``, so the backward
+    pass recomputes one chunk's ``(chunk, vocab)`` logits instead of retaining
+    every chunk's; the live tensor is a single chunk's logits (~1 GiB at
+    1024 x 262144 fp32) plus the (B, T', hidden) rows.
+
+    ``loss_mask`` (B, T') excludes padding from numerator *and* denominator
+    (its sum is the global count of non-pad tokens); ``None`` counts every row,
+    matching the unmasked naive path.
+    """
+    _, total_rows = targets.shape
+    if total_rows == 0 or ce_chunk_tokens <= 0:
+        raise ValueError(
+            "ce_chunk_tokens must be > 0 and targets non-empty for the chunked "
+            f"path (got ce_chunk_tokens={ce_chunk_tokens!r}, rows={total_rows})"
+        )
+    n_chunks = -(-total_rows // ce_chunk_tokens)  # ceil
+
+    def chunk_sum(f, t, emb, mask):
+        logits = f @ emb.T
+        logp = jax.nn.log_softmax(logits, axis=-1)
+        nll = -jnp.take_along_axis(logp, t[..., None], axis=-1)[..., 0]  # (b, chunk)
+        if mask is None:
+            return jnp.sum(nll), jnp.array(nll.size, jnp.float32)
+        m = mask.astype(nll.dtype)
+        return jnp.sum(nll * m), jnp.sum(m)
+
+    total_sum = jnp.zeros(())
+    total_count = jnp.zeros(())
+    for c in range(n_chunks):
+        start = c * ce_chunk_tokens
+        end = min(start + ce_chunk_tokens, total_rows)
+        mask = None if loss_mask is None else loss_mask[:, start:end]
+        part_sum, part_count = jax.checkpoint(chunk_sum)(
+            features[:, start:end], targets[:, start:end], embedding, mask
+        )
+        total_sum = total_sum + part_sum
+        total_count = total_count + part_count
+    return total_sum / total_count
+
+
 def mtp_loss(
     params: ModelParams,
     cfg: ModelConfig,
     hidden: jnp.ndarray,
     input_ids: jnp.ndarray,
     chunk_size: int,
+    ce_chunk_tokens: int = 0,
 ) -> jnp.ndarray:
     """Auxiliary MTP loss (predict token t+2 from position t, DeepSeek pattern).
 
     ``hidden`` is the backbone final hidden state (B, T, hidden); ``input_ids``
     (B, T) supplies the shifted next-token embeddings.  Returns a scalar CE.
+
+    ``ce_chunk_tokens > 0`` reduces the ``(B, T-2, vocab)`` head the same way
+    as :func:`compute_loss` reduces the NTP head: the MTP projection stays full
+    (its KDA recurrence is causal, so slicing its *input* T would change the
+    result), only the vocabulary-sized output head is chunked.
     """
     next_emb = params.embedding[input_ids[:, 1:-1]]  # (B, T-2, hidden) — token at t+1
     h = hidden[:, :-2]  # (B, T-2, hidden)
     mtp_out = mtp_mod.apply(params.mtp, cfg, h, next_emb, chunk_size)  # (B, T-2, hidden)
-    logits = mtp_out @ params.embedding.T  # (B, T-2, vocab)
     targets = input_ids[:, 2:]  # (B, T-2)
+    if ce_chunk_tokens and ce_chunk_tokens > 0:
+        return _chunked_cross_entropy(
+            mtp_out, targets, params.embedding, ce_chunk_tokens
+        )
+    logits = mtp_out @ params.embedding.T  # (B, T-2, vocab)
     return _cross_entropy(logits, targets)
+
+
+def loss_impl(cfg: ModelConfig) -> str:
+    """Name of the cross-entropy implementation the config selects.
+
+    ``chunked_ce`` when ``ce_chunk_tokens > 0`` (the memory-cut path),
+    ``naive_ce`` otherwise (the whole-vocabulary mean).  Journaled by the run
+    so a metrics file records which reduction produced the loss.
+    """
+    return "chunked_ce" if int(cfg.ce_chunk_tokens) > 0 else "naive_ce"
 
 
 def compute_loss(
@@ -295,15 +383,33 @@ def compute_loss(
     per-layer checkpoint lives inside the layer loop of :func:`forward`,
     because a coarse wrap of this whole function does not reduce the
     activation request (D-8).
+
+    The cross-entropy reduction is selected by ``cfg.ce_chunk_tokens`` (also
+    declared in ``net/config.json``): ``0`` keeps the naive whole-vocabulary
+    :func:`_cross_entropy`; a positive value routes both heads through
+    :func:`_chunked_cross_entropy`, so the ``(B, T, vocab)`` logits are never
+    materialised.  Both paths reduce to the same mean up to floating-point
+    reduction order.
     """
     policy = cfg.grad_ckpt_policy if grad_ckpt_policy is None else grad_ckpt_policy
-    logits, hidden, qb = forward(
-        params, cfg, input_ids, chunk_size, use_attnres,
-        return_hidden=True, collect_qb=True,
-        grad_ckpt_policy=policy,
-    )
-    ntp = _cross_entropy(logits[:, :-1], input_ids[:, 1:])
-    aux = mtp_loss(params, cfg, hidden, input_ids, chunk_size)
+    ce_tokens = int(cfg.ce_chunk_tokens)
+    if ce_tokens > 0:
+        hidden, qb = forward(
+            params, cfg, input_ids, chunk_size, use_attnres,
+            return_hidden=True, collect_qb=True,
+            grad_ckpt_policy=policy, emit_logits=False,
+        )
+        ntp = _chunked_cross_entropy(
+            hidden[:, :-1], input_ids[:, 1:], params.embedding, ce_tokens
+        )
+    else:
+        logits, hidden, qb = forward(
+            params, cfg, input_ids, chunk_size, use_attnres,
+            return_hidden=True, collect_qb=True,
+            grad_ckpt_policy=policy,
+        )
+        ntp = _cross_entropy(logits[:, :-1], input_ids[:, 1:])
+    aux = mtp_loss(params, cfg, hidden, input_ids, chunk_size, ce_chunk_tokens=ce_tokens)
     return ntp + cfg.mtp_loss_weight * aux + cfg.qb_weight * qb
 
 

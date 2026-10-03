@@ -1,0 +1,169 @@
+# План флота — дельта ADR-014, волны 2–3 (узлы n1/n2 уже в main: 0f61b27, 2242097).
+# Волна 2 — независимые авторы тестов (не те, кто писал код).
+# Волна 3 — сквозная интеграция и доказательство ожидаемого красного.
+id = "axiom-a4-manifest-w23"
+package = "axiom"
+# repo не задаётся: корень прогона передаётся аргументом --repo
+
+pattern = "dag"
+order = ["n3-tests-manifest", "n4-tests-pipeline", "n5-verify"]
+
+[[edges]]
+from = "n3-tests-manifest"
+to = "n5-verify"
+
+[[edges]]
+from = "n4-tests-pipeline"
+to = "n5-verify"
+
+[policy]
+max_parallel = 2
+stop_on_gate_fail = true
+autonomy = "R2"
+merge_gate = "owner"
+require_worktree = true
+
+[policy.budget]
+max_node_secs = 3600
+max_attempts = 1
+
+[defaults]
+route = "standard"
+timeout_from_manifest = true
+on_fail = "block"
+
+[[defaults.gates]]
+
+[defaults.gates.contract]
+allow = ["complete"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WAVE 2 — тесты контракта. Пишут НЕ авторы кода: код n1/n2 уже в main.
+# ─────────────────────────────────────────────────────────────────────────────
+[[nodes]]
+id = "n3-tests-manifest"
+group = "wave2-tests"
+route = "standard"
+effort = 1
+domain = "tooling"
+required_skills = ["python", "pytest", "cli"]
+depends_on = []
+on_fail = "block"
+spec_files = [
+  "docs/adr/ADR-014-manifest-progona-a4-nesyot-sostav-stadiy-konveyera-chastichnyy-progon-geyt-ne-zakryvaet.md",
+  "docs/specs/A4-RUN.delta.md",
+]
+outputs = ["tools/tests/test_a4_manifest.py"]
+spec = """
+Ты — независимый автор тестов узла n3 флота по кейсу axiom. Код генератора написан ДРУГИМ исполнителем (узел n1, коммит 0f61b27) и уже в main. Источник истины — спека §3, §4, §5.1, §6 и ADR-014, а НЕ код. Тесты пиши от контракта.
+
+ВЛАДЕЕШЬ ФАЙЛОМ (только он): tools/tests/test_a4_manifest.py.
+ЗАПРЕЩЕНО трогать: tools/a4_manifest.py (нашёл дефект — фиксируй в blockers с командой воспроизведения, НЕ правь), tools/run_a4_pipeline.py, net/**, env/**, evidence/**, ARCHITECTURE-SPINE.md, docs/**, model/**, CONSTRAINTS.yaml.
+
+ВАЖНО ПРО ИСХОДНОЕ СОСТОЯНИЕ. Файл СУЩЕСТВУЕТ (коммит 6fa96ea, тесты схемы v1). После перехода на v2 три теста красные: test_verify_empty_hash_fails, test_verify_garbage_hash_fails, test_verify_valid_manifest_passes — они строят фикстуры v1. Твоя работа: (1) переписать эти тесты под схему v2, сохранив их смысл (пустой хеш → отказ; мусорный хеш → отказ; валидный манифест → PASS, но теперь это фикстура v2 с полным покрытием); (2) добавить контрактные тесты ниже. Остальные 12 тестов файла сейчас проходят — не сломай их.
+
+ДОБАВИТЬ (все — вызов CLI подпроцессом, sys.executable + путь к скрипту; фикстуры в tmp_path; evidence/ не трогать):
+- K1: манифеста нет → --verify код 1 и сообщение «манифест не найден».
+- K2: генерация без --weights-hash / без --dataset-hash / без --run-ref (три случая) → код 1, выходной файл не создан.
+- K3: частичное покрытие → манифест создан, pipeline_complete=false, --verify код 1 с «покрытие частично:» и поимённым списком.
+- K4: фикстура полного покрытия (пять стадий executed с непустым evidence, pipeline_complete=true, схема v2) → --verify код 0.
+- K5: в генерацию передан pipeline_complete=true при неполных стадиях → в ЗАПИСАННОМ файле pipeline_complete=false (поле вычисляется).
+- K6: фикстура схемы v1 → --verify код 1 и сообщение про ожидаемую v2.
+- K7: --run-ref на несуществующий путь И на пустой файл → код 1, манифест не создан.
+- Контракт §3: в записанном манифесте ровно пять имён stage_set v1; отсутствие --stage даёт статус absent; неизвестное имя стадии → код 1 без записи.
+
+КРИТЕРИИ ПРИЁМКИ УЗЛА:
+- pytest tools/tests/test_a4_manifest.py -q — ЗЕЛЁНЫЙ ВЕСЬ ФАЙЛ (было 3 failed, 12 passed).
+- Падающий тест — сигнал, что КОД расходится с контрактом: фиксируй в blockers, тест НЕ подгоняй.
+
+ФИНАЛИЗАЦИЯ: git-коммит только tools/tests/test_a4_manifest.py, сообщение `test(tools): тесты манифеста A4 v2 — существующие переведены на v2 + K1-K7`.
+
+ФОРМАТ ФИНАЛЬНОГО ОТВЕТА (обязателен, иначе гейт узла не пропустит — именно на этом упал узел n1):
+заверши ответ fenced-блоком ровно с одним JSON-объектом, без плейсхолдеров и без текста внутри блока:
+```json
+{"status": "complete", "summary": "три строки-пять о сделанном", "evidence": ["pytest tools/tests/test_a4_manifest.py -q -> 0 failed", "файл:строка"], "next_steps": [], "blockers": []}
+```
+Значения status выбирай ТОЛЬКО из: complete | blocked. При неполной работе — blocked и перечисление в blockers. Никаких «complete|blocked» внутри блока.
+"""
+
+[[nodes]]
+id = "n4-tests-pipeline"
+group = "wave2-tests"
+route = "standard"
+effort = 1
+domain = "tooling"
+required_skills = ["python", "pytest", "jax"]
+depends_on = []
+on_fail = "block"
+spec_files = [
+  "docs/adr/ADR-014-manifest-progona-a4-nesyot-sostav-stadiy-konveyera-chastichnyy-progon-geyt-ne-zakryvaet.md",
+  "docs/specs/A4-RUN.delta.md",
+]
+outputs = ["tools/tests/test_a4_pipeline.py"]
+spec = """
+Ты — независимый автор тестов узла n4 флота по кейсу axiom. Код оркестратора написан ДРУГИМ исполнителем (узел n2, коммит 2242097) и уже в main. Источник истины — спека §5.2 и §6, а НЕ код.
+
+ВЛАДЕЕШЬ ФАЙЛОМ (только он): tools/tests/test_a4_pipeline.py (создаёшь с нуля).
+ЗАПРЕЩЕНО трогать: tools/run_a4_pipeline.py (дефект — в blockers, не правь), tools/a4_manifest.py, tools/tests/test_a4_manifest.py (владение n3), net/**, env/**, evidence/**, ARCHITECTURE-SPINE.md, docs/**, model/**, CONSTRAINTS.yaml.
+
+ЧТО СДЕЛАТЬ (pytest; фикстуры в tmp_path; малые --steps 1 --tasks 2; помечай медленные тесты и держи их в разумном времени):
+- K3: wire-прогон оркестратора → в --out есть непустой журнал прогона (run_ref), манифест создан, pipeline_complete=false, `--verify` даёт код 1 и сообщение с непокрытыми стадиями (sft, rl_base_scheme, spark_inference).
+- K8: два прогона с одним --seed дают одинаковый model_weights_sha256 (детерминизм).
+- Контракт §5.2: stdout содержит JSON-сводку {run_ref, model_weights_sha256, dataset_sha256, stages, pipeline_complete}; стадия spark_inference НЕ имеет статуса executed (подмена стенда запрещена); код 0 при частичном покрытии.
+- Окружение: JAX; при отсутствии CUDA-библиотек тесты обязаны работать на CPU-платформе (JAX_PLATFORMS=cpu) или скипаться с явной причиной, а не падать. Веса/датасеты — симлинки на ~/gb10-shared (C-032/C-033), ничего тяжёлого не качать.
+
+КРИТЕРИИ ПРИЁМКИ УЗЛА:
+- pytest tools/tests/test_a4_pipeline.py -q — зелёный (или явные skip с причиной; прогонные тесты допустимо пометить как медленные).
+- Расхождение кода с контрактом — в blockers с командой воспроизведения, без подгонки теста.
+
+ФИНАЛИЗАЦИЯ: git-коммит только tools/tests/test_a4_pipeline.py, сообщение `test(tools): контрактные тесты оркестратора A4 (K3, K8)`.
+
+ФОРМАТ ФИНАЛЬНОГО ОТВЕТА (обязателен): заверши ответ fenced-блоком ровно с одним JSON-объектом, без плейсхолдеров:
+```json
+{"status": "complete", "summary": "три строки-пять о сделанном", "evidence": ["pytest tools/tests/test_a4_pipeline.py -q -> N passed", "файл:строка"], "next_steps": [], "blockers": []}
+```
+status ТОЛЬКО из: complete | blocked.
+"""
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WAVE 3 — интеграция: сквозной wire-прогон + защита от ложного зелёного.
+# ─────────────────────────────────────────────────────────────────────────────
+[[nodes]]
+id = "n5-verify"
+group = "wave3-integration"
+route = "standard"
+effort = 2
+domain = "ml-jax"
+required_skills = ["python", "jax", "pytest", "git"]
+depends_on = ["n3-tests-manifest", "n4-tests-pipeline"]
+on_fail = "block"
+spec_files = [
+  "docs/adr/ADR-014-manifest-progona-a4-nesyot-sostav-stadiy-konveyera-chastichnyy-progon-geyt-ne-zakryvaet.md",
+  "docs/specs/A4-RUN.delta.md",
+]
+outputs = ["evidence/a4-skeleton-run-manifest.json", "evidence/a4-run-wire/manifest.json", "evidence/a4-run-wire/run.log"]
+spec = """
+Ты — исполнитель интеграционного узла n5 флота по кейсу axiom. Код дельты (tools/a4_manifest.py, tools/run_a4_pipeline.py) и контрактные тесты уже в твоей ветке. Твоя задача — сквозная проверка и честная фиксация итога.
+
+ВЛАДЕЕШЬ: evidence/a4-skeleton-run-manifest.json и каталог evidence/a4-run-wire/ (журнал прогона).
+Код в tools/** НЕ правишь: нашёл дефект — стоп и blocked, а не правка за автором.
+ЗАПРЕЩЕНО трогать: ARCHITECTURE-SPINE.md, docs/**, model/**, CONSTRAINTS.yaml, evidence/README.md, net/**, tools/tests/**.
+
+ЧТО СДЕЛАТЬ:
+1. pytest tools/tests -q — весь набор зелёный (K1–K8 и старые тесты манифеста).
+2. Сквозной wire-прогон: `python3 tools/run_a4_pipeline.py --seed 0 --steps 1 --tasks 10 --out evidence/a4-run-wire/` в окружении ~/venv-kk (CPU-платформа JAX допустима). Код 0 обязателен; манифест схемы v2 с pipeline_complete=false.
+3. Ожидаемое красное: `python3 tools/a4_manifest.py --verify` → код 1 с сообщением «покрытие частично: …» (НЕ «манифест не найден»). Приведи точный текст.
+4. `python3 -m pytest net/tests -q` — состояние не хуже исходного (01–16; в 06 ровно один xfail; GPU-тесты скипаются с причиной; известные медленные — терпимо).
+5. `arch-ml control check . --constraints CONSTRAINTS.yaml` — красный РОВНО по C-038, новых нарушений нет.
+6. ЗАЩИТА ОТ ЛОЖНОГО ЗЕЛЁНОГО (обязательно): собери фикстуры во временном файле — (а) все пять стадий executed с evidence → --verify код 0; (б) ровно одна стадия absent/skipped → код 1 с её именем; (в) подделка pipeline_complete=true при неполных стадиях → в файле false. Любой ложный зелёный — ДЕФЕКТ: статус blocked и подробный отчёт.
+
+ОТЧЁТ (обязательные пункты): числа K1–K10 из спеки §6; точный текст сообщения --verify; счёт pytest (зелёные/скипы/xfail); вывод control check; явная констатация «A4 НЕ закрыт: pipeline_complete=false, непокрытые стадии — sft, rl_base_scheme, spark_inference»; git-хэш.
+
+ФИНАЛИЗАЦИЯ: git-коммит только evidence/a4-skeleton-run-manifest.json и evidence/a4-run-wire/**, сообщение `evidence(axiom): wire-прогон A4 — манифест v2 с частичным покрытием (ADR-014)`.
+
+ФОРМАТ ФИНАЛЬНОГО ОТВЕТА (обязателен): заверши ответ fenced-блоком ровно с одним JSON-объектом, без плейсхолдеров:
+```json
+{"status": "complete", "summary": "три строки-пять о сделанном", "evidence": ["tools/a4_manifest.py --verify -> покрытие частично: ...", "pytest net/tests -q -> ..."], "next_steps": [], "blockers": []}
+```
+status ТОЛЬКО из: complete | blocked. complete — только если wire-прогон состоялся и красный по C-038 объяснён частичным покрытием; при ложном зелёном — blocked.
+"""

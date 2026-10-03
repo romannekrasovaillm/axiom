@@ -1,0 +1,135 @@
+# План флота — дельта ADR-014: починка чужого теста-блокера + сквозная портируемость (n4).
+# Состояние до запуска (main 80a568f):
+#   - наша дельта: n1 (пути в генераторе), n2 (пути в оркестраторе), n3 (тесты K11/K12) — в main;
+#   - pytest tools/tests = 113 passed, 8 skipped, 1 FAILED — test_check_constraints_meta
+#     (жёсткий список AD-1..AD-10 не знает AD-11, добавленного параллельными потоками);
+#   - kimi-code исчерпал недельную квоту (403) — узлы исполняет claude-code.
+id = "axiom-a4-portable-paths-w2"
+package = "axiom"
+
+pattern = "dag"
+order = ["n0-meta-test-ad-list", "n4-verify-paths"]
+
+[[edges]]
+from = "n0-meta-test-ad-list"
+to = "n4-verify-paths"
+
+[policy]
+max_parallel = 1
+stop_on_gate_fail = true
+autonomy = "R2"
+merge_gate = "owner"
+require_worktree = true
+
+[policy.budget]
+max_node_secs = 3600
+max_attempts = 1
+
+[defaults]
+route = "standard"
+timeout_from_manifest = true
+on_fail = "block"
+
+[[defaults.gates]]
+
+[defaults.gates.contract]
+allow = ["complete"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WAVE 1 — снять блокер общего гейта кейса (чужой дефект теста, не предмет дельты).
+# ─────────────────────────────────────────────────────────────────────────────
+[[nodes]]
+id = "n0-meta-test-ad-list"
+group = "wave1-blocker"
+route = "standard"
+effort = 1
+agent = "claude-code"
+domain = "tooling"
+required_skills = ["python", "pytest"]
+depends_on = []
+on_fail = "block"
+spec_files = [
+  "docs/specs/A4-RUN.delta.md",
+]
+outputs = ["tools/tests/test_check_constraints_meta.py"]
+spec = """
+Ты — исполнитель узла n0 флота по кейсу axiom. Это НЕ предмет дельты ADR-014: ты снимаешь блокер общего гейта кейса — дефект теста, внесённый чужим потоком.
+
+ВЛАДЕЕШЬ ФАЙЛОМ (только он): tools/tests/test_check_constraints_meta.py.
+ЗАПРЕЩЕНО трогать: tools/a4_manifest.py, tools/run_a4_pipeline.py, tools/tests/test_a4_manifest.py, tools/tests/test_a4_pipeline.py, net/**, env/**, evidence/**, ARCHITECTURE-SPINE.md, docs/**, model/**, CONSTRAINTS.yaml.
+
+ПРОБЛЕМА (воспроизведи первым делом): `pytest tools/tests/test_check_constraints_meta.py -q` → FAILED test_case_ruleset_is_fully_classified_and_prints_all_ads:
+    assert {row.ad_id for row in report.rows} == {f"AD-{n}" for n in range(1, 11)}
+    Extra items in the left set: 'AD-11'
+В спайне кейса (`ARCHITECTURE-SPINE.md`) появился AD-11 (вердикт не зависит от окружения), добавленный параллельным потоком; тест держит жёсткий литерал AD-1..AD-10 и потому ломается на каждом новом инварианте. Это дефект теста, а не инвариантов.
+
+ЧТО СДЕЛАТЬ:
+1. Заменить жёсткий список на динамический: ожидаемый набор AD брать из `ARCHITECTURE-SPINE.md` (заголовки вида `## AD-NNN:`), разбором строк с префиксом `## AD-` и извлечением номера (например `line.split()` / `re.match(r'^##[ ]+AD-([0-9]+)', line)` — вставь экранирование как нужно, чтобы файл остался валидным Python). Тест обязан проходить при любом числе инвариантов и по-прежнему падать, если мета-валидатор пропустил AD или вывел лишний.
+2. Сохранить смысл теста: сверка множества отчёта с множеством инвариантов спайна + проверка полноты классификации правил.
+3. Не ослабляй проверку: если раньше тест требовал ровно 10 AD, теперь он требует ровно столько, сколько объявлено в спайне.
+
+КРИТЕРИИ ПРИЁМКИ УЗЛА:
+- `pytest tools/tests -q` → ЗЕЛЁНЫЙ ВЕСЬ КАТАЛОГ (до правки: 1 failed, 113 passed, 8 skipped; после: 0 failed).
+- `pytest tools/tests/test_check_constraints_meta.py -q` → зелёный.
+- Тест остаётся чувствительным: если искусственно удалить один AD из копии спайна во временном файле — тест должен упасть (проверь это вручную на копии в tmp_path и приведи вывод).
+
+ФИНАЛИЗАЦИЯ: git-коммит только tools/tests/test_check_constraints_meta.py, сообщение `test(tools): список инвариантов в мета-тесте берётся из спайна, а не литералом`.
+
+ФОРМАТ ФИНАЛЬНОГО ОТВЕТА (обязателен): заверши ответ fenced-блоком ровно с одним JSON-объектом, без плейсхолдеров:
+```json
+{"status": "complete", "summary": "что сделано, 3-5 строк", "evidence": ["pytest tools/tests -q -> 0 failed", "file:line"], "next_steps": [], "blockers": []}
+```
+status ТОЛЬКО из: complete | blocked.
+"""
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WAVE 2 — сквозная портируемость: перегенерация манифеста реальным прогоном.
+# ─────────────────────────────────────────────────────────────────────────────
+[[nodes]]
+id = "n4-verify-paths"
+group = "wave2-integration"
+route = "standard"
+effort = 2
+agent = "claude-code"
+domain = "ml-jax"
+required_skills = ["python", "jax", "pytest", "git"]
+depends_on = ["n0-meta-test-ad-list"]
+on_fail = "block"
+spec_files = [
+  "docs/adr/ADR-014-manifest-progona-a4-nesyot-sostav-stadiy-konveyera-chastichnyy-progon-geyt-ne-zakryvaet.md",
+  "docs/specs/A4-RUN.delta.md",
+]
+outputs = ["evidence/a4-skeleton-run-manifest.json", "evidence/a4-run-wire/manifest.json", "evidence/a4-run-wire/run-journal.json"]
+spec = """
+Ты — исполнитель интеграционного узла n4 флота по кейсу axiom. Узлы n1–n3 (пути в генераторе, оркестраторе и тесты K11/K12) уже в main; узел n0 снял блокер общего pytest. Задача — перегенерировать манифест с портируемыми путями и доказать это.
+
+ВЛАДЕЕШЬ: evidence/a4-skeleton-run-manifest.json и каталог evidence/a4-run-wire/**.
+Код в tools/** НЕ правишь: дефект — стоп и blocked.
+ЗАПРЕЩЕНО трогать: ARCHITECTURE-SPINE.md, docs/**, model/**, CONSTRAINTS.yaml, evidence/README.md, net/**, tools/tests/**.
+
+ПРЕДЫСТОРИЯ (почему это нужно): предыдущий манифест записал в run_ref и stages[].evidence абсолютные пути worktree флота, удалённого после мержа. Манифест непортируем, A5-прогон по нему невозможен, в артефакте личные пути. Узлы n1–n3 это вылечили в коде — теперь надо перегенерировать артефакт и доказать.
+
+ЧТО СДЕЛАТЬ:
+1. `pytest tools/tests -q` — весь каталог зелёный (0 failed; медленные — skip с причиной).
+2. ПЕРЕГЕНЕРИРОВАТЬ манифест реальным прогоном из корня репозитория:
+   `python3 tools/run_a4_pipeline.py --seed 0 --steps 1 --tasks 10 --out evidence/a4-run-wire/`
+   в окружении ~/venv-kk (JAX_PLATFORMS=cpu допустима). Старый манифест с абсолютными путями перезаписывается.
+3. ДОКАЗАТЬ ПОРТИРУЕМОСТЬ:
+   - в манифесте НЕТ ни одной строки, начинающейся с '/', ни в run_ref, ни в stages[].evidence — проверь рекурсивным скриптом по всем строковым значениям JSON и приведи вывод (счётчик абсолютных путей = 0);
+   - `python3 tools/a4_manifest.py --verify` → код 1 с «покрытие частично: …» (НЕ «журнал не найден» и НЕ «абсолютный путь запрещён»);
+   - run_ref резолвится от корня репозитория, файл существует и непуст;
+   - независимость от cwd: запусти `--verify` из /tmp, указав абсолютные пути к скрипту и манифесту — вердикт тот же (частичное покрытие);
+   - `grep -rn "/home/" evidence/a4-skeleton-run-manifest.json evidence/a4-run-wire/run-journal.json` — совпадений быть не должно.
+   - Полный `git clone` в другой каталог НЕ обязателен (репозиторий большой) — отметь отложенной проверкой в отчёте.
+4. `arch-ml control check . --constraints CONSTRAINTS.yaml` — красный РОВНО по C-038 (частичное покрытие), новых нарушений нет.
+
+ОТЧЁТ (обязательные пункты): счётчик абсолютных путей (0), точный текст --verify, счёт pytest, вывод control check, время прогона, явная фраза «A4 по-прежнему не закрыт: pipeline_complete=false, непокрытые стадии — sft, rl_base_scheme, spark_inference», git-хэш.
+
+ФИНАЛИЗАЦИЯ: git-коммит только evidence/a4-skeleton-run-manifest.json и evidence/a4-run-wire/**, сообщение `fix(evidence): манифест A4 перегенерирован с относительными путями (K11-K12)`.
+
+ФОРМАТ ФИНАЛЬНОГО ОТВЕТА (обязателен): заверши ответ fenced-блоком ровно с одним JSON-объектом, без плейсхолдеров:
+```json
+{"status": "complete", "summary": "перегенерация + портируемость доказана; A4 не закрыт", "evidence": ["абсолютных путей -> 0", "tools/a4_manifest.py --verify -> покрытие частично: ..."], "next_steps": [], "blockers": []}
+```
+status ТОЛЬКО из: complete | blocked. complete — только если манифест перегенерирован и абсолютных путей нет; иначе blocked.
+"""

@@ -1,0 +1,278 @@
+# План флота — дельта ADR-014: манифест прогона A4 схемы v2 + оркестратор стадий.
+# Декомпозиция по владению файлами: узлы одной волны не пересекаются файлами.
+# Интерфейс между узлами зафиксирован ДО запуска: docs/specs/A4-RUN.delta.md §5.1 (генератор)
+# и §5.2 (оркестратор). Вызов генератора из оркестратора — только через подпроцесс CLI,
+# импорт модуля генератора запрещён (иначе волна 1 перестаёт быть независимой).
+id = "axiom-a4-manifest"
+package = "axiom"
+# repo не задаётся: корень прогона передаётся аргументом --repo (fleet run --repo <корень> --plan <файл>)
+
+pattern = "dag"
+order = ["n1-manifest", "n2-pipeline", "n3-tests-manifest", "n4-tests-pipeline", "n5-verify"]
+
+[[edges]]
+from = "n1-manifest"
+to = "n3-tests-manifest"
+
+[[edges]]
+from = "n2-pipeline"
+to = "n4-tests-pipeline"
+
+[[edges]]
+from = "n1-manifest"
+to = "n5-verify"
+
+[[edges]]
+from = "n2-pipeline"
+to = "n5-verify"
+
+[[edges]]
+from = "n3-tests-manifest"
+to = "n5-verify"
+
+[[edges]]
+from = "n4-tests-pipeline"
+to = "n5-verify"
+
+[policy]
+max_parallel = 2
+stop_on_gate_fail = true
+autonomy = "R2"
+merge_gate = "owner"
+require_worktree = true
+
+[policy.budget]
+max_node_secs = 3600
+max_attempts = 1
+
+[defaults]
+route = "standard"
+timeout_from_manifest = true
+on_fail = "block"
+
+[[defaults.gates]]
+
+[defaults.gates.contract]
+allow = ["complete"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WAVE 1 — два независимых узла (разные файлы, интерфейс зафиксирован спекой §5.1/§5.2).
+# ─────────────────────────────────────────────────────────────────────────────
+[[nodes]]
+id = "n1-manifest"
+group = "wave1-parallel"
+route = "standard"
+effort = 2
+domain = "tooling"
+required_skills = ["python", "cli", "json-schema", "pytest"]
+depends_on = []
+on_fail = "block"
+spec_files = [
+  "docs/adr/ADR-014-manifest-progona-a4-nesyot-sostav-stadiy-konveyera-chastichnyy-progon-geyt-ne-zakryvaet.md",
+  "docs/specs/A4-RUN.delta.md",
+]
+outputs = ["tools/a4_manifest.py"]
+spec = """
+Ты — исполнитель узла n1 флота по кейсу axiom. Источник требований: ADR-014 и docs/specs/A4-RUN.delta.md (разделы 3, 4, 5.1, 6), они в spec_files.
+
+ЦЕЛЬ: перевести генератор/верификатор манифеста прогона A4 на схему `a4-skeleton-run-manifest/v2` и усилить проверку так, чтобы частичный прогон НЕ давал зелёный гейт.
+
+ВЛАДЕЕШЬ ФАЙЛАМИ (только они): tools/a4_manifest.py, tools/tests/test_a4_manifest.py.
+ЗАПРЕЩЕНО трогать: tools/run_a4_pipeline.py (владеет узел n2), net/**, env/**, ARCHITECTURE-SPINE.md, docs/**, model/**, CONSTRAINTS.yaml, evidence/** — это чужие узлы или зона архитектора.
+
+ЧТО СДЕЛАТЬ (полный контракт — спека §3, §5.1):
+1. Схема v2: сохранить обязательные поля пиннинга v1 (model_weights_sha256, dataset_sha256, environment_version, harness_version, git_commit, run_date, run_ref) и автодетект (версия среды из docs/specs/ENVIRONMENT-V1.md, версия харнесса `arch-ml --version`, git-коммит, дата). Добавить: `stage_set_version`, `backend` {platform, device_kind, jax_version, matmul_precision} (детект из окружения; при отсутствии jax — platform/value из sys.platform и пометка в evidence, без падения), `stages` (пять стадий stage_set v1, каждая {name, status, evidence}), `pipeline_complete`.
+2. `pipeline_complete` ВЫЧИСЛЯЕТСЯ: true ⇔ все пять стадий `executed` и у каждой непустой evidence. Значение из аргумента/окружения игнорируется.
+3. `--stage <name>=<status>[:<evidence>]` — повторяемый флаг; evidence-строка, несколько следов через `;`. Непереданная стадия = `absent`. Неизвестное имя стадии или недопустимый статус — ошибка (код 1, без записи).
+4. Атомарная запись (temp + os.replace) сохраняется. Отказ без записи при: отсутствии --weights-hash/--dataset-hash/--run-ref; run_ref на несуществующий или ПУСТОЙ путь (файл нулевого размера или каталог без файлов). Диагностика — в stderr.
+5. `--verify [--manifest PATH]`: код 0 ⇔ схема v2 ∧ состав стадий совпадает со stage_set_version ∧ все стадии executed с непустым evidence ∧ pipeline_complete=true. Иначе код 1 и КЛАССИФИЦИРОВАННОЕ сообщение: «манифест не найден» | «покрытие частично: <поимённый список непокрытых стадий>» | «схема v1 не поддерживается (ожидается v2)» | прочие нарушения схемы — списком полей.
+6. Обратная совместимость CLI: старые флаги продолжают приниматься; повторный вызов не ломает уже созданный файл при ошибке.
+
+ТЕСТЫ ПИШЕТ ДРУГОЙ УЗЕЛ. tools/tests/test_a4_manifest.py — владение узла n3 (независимый автор тестов, запускается после тебя). Твоя обязанность — точное соблюдение контракта §5.1 и §3 спеки; проверь себя вручную командами из критериев приёмки ниже и приведи их вывод в evidence.
+
+КРИТЕРИИ ПРИЁМКИ УЗЛА (механические):
+- python3 tools/a4_manifest.py --verify на чистом дереве — код 1 с сообщением «манифест не найден».
+- python3 tools/a4_manifest.py (без флагов) — код 1, evidence/a4-skeleton-run-manifest.json не появляется.
+- Ручная проверка K4/K5/K6/K7 из спеки §6 на временных файлах в /tmp (не в evidence/): фикстура полного покрытия → код 0; подделка pipeline_complete=true → в файле false; фикстура v1 → код 1 с сообщением про v2; run_ref на пустой путь → код 1 без записи.
+- Существующие тесты net/tests не затронуты (ты их не меняешь).
+
+ОКРУЖЕНИЕ: python3 системный достаточен (JAX для этого узла не нужен). Если нужен jax для детекта backend — детект обязан быть необязательным (graceful).
+
+ФИНАЛИЗАЦИЯ: git-коммит только tools/a4_manifest.py и tools/tests/test_a4_manifest.py, сообщение `feat(tools): манифест A4 схема v2 — стадии и вычисляемая полнота (ADR-014)`.
+
+ФОРМАТ ФИНАЛЬНОГО ОТВЕТА (обязателен, иначе гейт узла не пропустит):
+заверши ответ fenced-блоком ```json: {"status": "complete|blocked", "summary": "<3-5 строк>", "evidence": ["<файл:строка | команда | число>", "..."], "next_steps": ["..."], "blockers": ["..."]}
+status=complete только при выполненной работе; иначе blocked с перечислением в blockers. Если спека кажется неполной — остановись и запиши вопрос, не додумывай.
+"""
+
+[[nodes]]
+id = "n2-pipeline"
+group = "wave1-parallel"
+route = "standard"
+effort = 3
+domain = "ml-jax"
+required_skills = ["python", "jax", "pytest", "cli"]
+depends_on = []
+on_fail = "block"
+spec_files = [
+  "docs/adr/ADR-014-manifest-progona-a4-nesyot-sostav-stadiy-konveyera-chastichnyy-progon-geyt-ne-zakryvaet.md",
+  "docs/specs/A4-RUN.delta.md",
+]
+outputs = ["tools/run_a4_pipeline.py"]
+spec = """
+Ты — исполнитель узла n2 флота по кейсу axiom. Источник требований: ADR-014 и docs/specs/A4-RUN.delta.md (разделы 2, 5, 5.2, 6), они в spec_files.
+
+ЦЕЛЬ: построить оркестратор прогонного пути A4, который честно исполняет ДОСТУПНЫЕ стадии конвейера и пишет журнал прогона, а недоступные помечает как absent/skipped с причиной. Никакой подмены: прогон покрывает часть конвейера и это фиксируется, а не маскируется.
+
+ВЛАДЕЕШЬ ФАЙЛАМИ (только они): tools/run_a4_pipeline.py, tools/tests/test_a4_pipeline.py.
+ЗАПРЕЩЕНО трогать: tools/a4_manifest.py (владеет узел n1), net/** (кроме чтения/импорта), env/** (кроме импорта), ARCHITECTURE-SPINE.md, docs/**, model/**, CONSTRAINTS.yaml, evidence/** — это чужие узлы или зона архитектора.
+ВАЖНО: НЕ импортируй tools/a4_manifest.py как модуль — вызывай его ТОЛЬКО подпроцессом по CLI-контракту спеки §5.1 (это то, что делает волну 1 независимой). Если генератор в твоём worktree ещё старой версии — реализуй вызов по контракту и отметь это допущением; интеграционную проверку делает узел n5.
+
+ЧТО СДЕЛАТЬ (контракт — спека §5.2):
+1. CLI: `python3 tools/run_a4_pipeline.py --seed 0 --steps 1 --tasks 10 --out <каталог> [--manifest-out PATH]`.
+2. Стадия `pretrain_checkpoint`: инициализировать веса сети с нуля (seed-пиннинг; net/model.py), исполнить ≥1 шаг оптимизации (если минимальный шаг требует кода, которого нет, — сделай честный минимальный шаг по существующему optimizer.py; если это невозможно, поставь стадии `absent` с причиной в evidence и запиши допущение), сохранить Orbax-чекпойнт (net/checkpoint.py), получить хеш весов через tree_hash.
+3. Стадия `rl_environment`: взять тот же чекпойнт и прогнать ≥`--tasks` задач через env/net_executor.py (по образцу net/tests/test_13_integration.py), собрать механические вердикты и Run Manifest среды.
+4. Инференс: детерминированный прогон через net/infer.py на том же чекпойнте → журнал.
+5. Стадии `spark_inference`, `sft`, `rl_base_scheme`: статус `absent` (нет кода) или `skipped` с причиной. ПОДМЕНА СТЕНДА ЗАПРЕЩЕНА: прогон на локальной GPU (RTX 4080) не может дать `spark_inference=executed`.
+6. Записать журнал прогона в `--out` (он же run_ref; непустой), затем вызвать генератор манифеста подпроцессом с --weights-hash, --dataset-hash, --run-ref и по одному --stage на стадию. Датасет-хеш: взять из существующего дата-пайплайна (net/data.py — карточка+хеш) на синтетическом/доступном шарде; если реального шарда нет — посчитать хеш того, что реально использовано, и записать это в evidence (никаких выдуманных хешей).
+7. stdout: JSON-сводка {run_ref, model_weights_sha256, dataset_sha256, stages, pipeline_complete}. Код 0 — доступные стадии исполнены (независимо от полноты), ненулевой — сбой исполненной стадии.
+8. Повторяемость: тот же seed ⇒ те же model_weights_sha256 и те же вердикты среды.
+
+ТЕСТЫ ПИШЕТ ДРУГОЙ УЗЕЛ. tools/tests/test_a4_pipeline.py — владение узла n4 (независимый автор тестов, запускается после тебя). Твоя обязанность — точное соблюдение контракта §5.2; проверь себя вручную и приведи вывод в evidence.
+
+КРИТЕРИИ ПРИЁМКИ УЗЛА (механические):
+- pytest tools/tests/test_a4_pipeline.py -q — зелёные (GPU-зависимые проверки скипаются с явной причиной).
+- wire-прогон `--seed 0 --steps 1 --tasks 10 --out <tmp>` в окружении ~/venv-kk (CPU-платформа JAX допустима) завершается кодом 0 и печатает сводку с pipeline_complete=false.
+- Существующие тесты net/tests 01–16 не деградировали: pytest net/tests -q — прежнее состояние (в 06 ровно один xfail).
+- Изменение численного поведения сети запрещено: если для прогонного пути нужна правка в net/**, она минимальна и не меняет формулы; при сомнении — не правь, а запиши вопрос.
+
+ОКРУЖЕНИЕ: ~/venv-kk/bin/python (JAX). CUDA-плагин без LD_LIBRARY_PATH падает (cusparse) — работай на CPU-платформе JAX (JAX_PLATFORMS=cpu) или выставь LD_LIBRARY_PATH по net/README.md. Веса/датасеты — только симлинки на ~/gb10-shared (C-032/C-033), ничего тяжёлого не скачивать.
+
+ФИНАЛИЗАЦИЯ: git-коммит только tools/run_a4_pipeline.py и tools/tests/test_a4_pipeline.py, сообщение `feat(tools): оркестратор прогона A4 — доступные стадии и честный журнал (ADR-014)`.
+
+ФОРМАТ ФИНАЛЬНОГО ОТВЕТА (обязателен):
+заверши ответ fenced-блоком ```json: {"status": "complete|blocked", "summary": "<3-5 строк>", "evidence": ["<файл:строка | команда | число>", "..."], "next_steps": ["..."], "blockers": ["..."]}
+status=complete только при выполненной работе; иначе blocked. Спека кажется неполной — остановись и запиши вопрос в отчёт.
+"""
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WAVE 2 — независимые авторы тестов (не те, кто писал код): проверяют контракт
+# спеки как чёрный ящик, а не подтверждают собственные решения.
+# ─────────────────────────────────────────────────────────────────────────────
+[[nodes]]
+id = "n3-tests-manifest"
+group = "wave2-tests"
+route = "standard"
+effort = 1
+domain = "tooling"
+required_skills = ["python", "pytest", "cli"]
+depends_on = ["n1-manifest"]
+on_fail = "block"
+spec_files = [
+  "docs/adr/ADR-014-manifest-progona-a4-nesyot-sostav-stadiy-konveyera-chastichnyy-progon-geyt-ne-zakryvaet.md",
+  "docs/specs/A4-RUN.delta.md",
+]
+outputs = ["tools/tests/test_a4_manifest.py"]
+spec = """
+Ты — независимый автор тестов узла n3 флота по кейсу axiom. Код генератора написал ДРУГОЙ исполнитель (узел n1) — твоя задача проверить его по контракту спеки, а не подтвердить его решения. Читай спеку §3, §4, §5.1, §6 и ADR-014 как источник истины; в код заглядывай только чтобы понять фактический CLI, но тесты пиши ОТ КОНТРАКТА.
+
+ВЛАДЕЕШЬ ФАЙЛОМ (только он): tools/tests/test_a4_manifest.py.
+ЗАПРЕЩЕНО трогать: tools/a4_manifest.py (нашёл дефект — фиксируй в blockers/отчёте, НЕ правь), tools/run_a4_pipeline.py, net/**, env/**, evidence/**, ARCHITECTURE-SPINE.md, docs/**, model/**, CONSTRAINTS.yaml.
+
+ЧТО СДЕЛАТЬ: pytest-тесты, вызывающие CLI подпроцессом (sys.executable + путь к скрипту), все фикстуры в tmp_path, evidence/ не трогать:
+- K1: манифеста нет → --verify код 1, в stderr/stdout есть «манифест не найден».
+- K2: генерация без --weights-hash / без --dataset-hash / без --run-ref (три случая) → код 1, выходной файл не создан.
+- K4: фикстура полного покрытия (все пять стадий executed с непустым evidence, pipeline_complete=true, схема v2) → --verify код 0.
+- K5: в генерацию передан pipeline_complete=true при неполных стадиях → в ЗАПИСАННОМ файле pipeline_complete=false (поле вычисляется).
+- K6: фикстура схемы v1 (нет stage_set_version/stages) → --verify код 1 и сообщение про ожидаемую v2.
+- K7: --run-ref на несуществующий путь и на пустой файл → код 1, манифест не создан.
+- Дополнительно (контракт §3): в записанном манифесте есть ровно пять имён stage_set v1; отсутствие --stage даёт статус absent; неизвестное имя стадии → код 1 без записи.
+
+КРИТЕРИИ ПРИЁМКИ УЗЛА:
+- pytest tools/tests/test_a4_manifest.py -q — все тесты зелёные на коде узла n1.
+- Если тест падает — НЕ подгоняй тест под код: зафиксируй расхождение кода с контрактом в blockers с командой воспроизведения.
+
+ФИНАЛИЗАЦИЯ: git-коммит только tools/tests/test_a4_manifest.py, сообщение `test(tools): контрактные тесты манифеста A4 v2 (K1,K2,K4-K7)`.
+
+ФОРМАТ ФИНАЛЬНОГО ОТВЕТА (обязателен):
+заверши ответ fenced-блоком ```json: {"status": "complete|blocked", "summary": "<3-5 строк>", "evidence": ["<команда | число>", "..."], "next_steps": ["..."], "blockers": ["..."]}
+"""
+
+[[nodes]]
+id = "n4-tests-pipeline"
+group = "wave2-tests"
+route = "standard"
+effort = 1
+domain = "tooling"
+required_skills = ["python", "pytest", "jax"]
+depends_on = ["n2-pipeline"]
+on_fail = "block"
+spec_files = [
+  "docs/adr/ADR-014-manifest-progona-a4-nesyot-sostav-stadiy-konveyera-chastichnyy-progon-geyt-ne-zakryvaet.md",
+  "docs/specs/A4-RUN.delta.md",
+]
+outputs = ["tools/tests/test_a4_pipeline.py"]
+spec = """
+Ты — независимый автор тестов узла n4 флота по кейсу axiom. Код оркестратора написал ДРУГОЙ исполнитель (узел n2). Источник истины — спека §5.2 и §6, не код.
+
+ВЛАДЕЕШЬ ФАЙЛОМ (только он): tools/tests/test_a4_pipeline.py.
+ЗАПРЕЩЕНО трогать: tools/run_a4_pipeline.py (дефект — в blockers, не правь), tools/a4_manifest.py, net/**, env/**, evidence/**, ARCHITECTURE-SPINE.md, docs/**, model/**, CONSTRAINTS.yaml.
+
+ЧТО СДЕЛАТЬ (pytest, фикстуры в tmp_path, малые --steps 1 --tasks 2):
+- K3: wire-прогон оркестратора → в --out есть непустой журнал прогона (run_ref), манифест создан, pipeline_complete=false, `--verify` даёт код 1 и сообщение с поимённым списком непокрытых стадий (sft, rl_base_scheme, spark_inference).
+- K8: два прогона с одним --seed дают одинаковый model_weights_sha256 (детерминизм).
+- Контракт §5.2: stdout завершается JSON-сводкой {run_ref, model_weights_sha256, dataset_sha256, stages, pipeline_complete}; `spark_inference` НЕ имеет статуса executed (подмена стенда запрещена); код 0 при частичном покрытии.
+- GPU/CUDA недоступны — тесты обязаны работать на CPU-платформе JAX (JAX_PLATFORMS=cpu) или скипаться с явной причиной, а не падать.
+
+КРИТЕРИИ ПРИЁМКИ УЗЛА:
+- pytest tools/tests/test_a4_pipeline.py -q — зелёные (или явные skip с причиной).
+- Расхождение кода с контрактом — в blockers с командой воспроизведения, без подгонки теста.
+
+ОКРУЖЕНИЕ: ~/venv-kk/bin/python (JAX). Веса/датасеты — симлинки на ~/gb10-shared (C-032/C-033).
+
+ФИНАЛИЗАЦИЯ: git-коммит только tools/tests/test_a4_pipeline.py, сообщение `test(tools): контрактные тесты оркестратора A4 (K3, K8)`.
+
+ФОРМАТ ФИНАЛЬНОГО ОТВЕТА (обязателен):
+заверши ответ fenced-блоком ```json: {"status": "complete|blocked", "summary": "<3-5 строк>", "evidence": ["<команда | число>", "..."], "next_steps": ["..."], "blockers": ["..."]}
+"""
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WAVE 3 — интеграция: сквозной wire-прогон, доказательство ожидаемого красного
+# и защита от ложного зелёного.
+# ─────────────────────────────────────────────────────────────────────────────
+[[nodes]]
+id = "n5-verify"
+group = "wave3-integration"
+route = "standard"
+effort = 2
+domain = "ml-jax"
+required_skills = ["python", "jax", "pytest", "git"]
+depends_on = ["n1-manifest", "n2-pipeline", "n3-tests-manifest", "n4-tests-pipeline"]
+on_fail = "block"
+spec_files = [
+  "docs/adr/ADR-014-manifest-progona-a4-nesyot-sostav-stadiy-konveyera-chastichnyy-progon-geyt-ne-zakryvaet.md",
+  "docs/specs/A4-RUN.delta.md",
+]
+outputs = ["evidence/a4-skeleton-run-manifest.json", "evidence/a4-run-wire/manifest.json", "evidence/a4-run-wire/run.log"]
+spec = """
+Ты — исполнитель интеграционного узла n5 флота по кейсу axiom. Узлы n1–n4 уже смержены в твою ветку. Твоя задача — сквозная проверка дельты ADR-014 и честная фиксация итога.
+
+ВЛАДЕЕШЬ: evidence/a4-skeleton-run-manifest.json, каталог evidence/a4-run-wire/ (журнал прогона). Код в tools/** НЕ правишь: нашёл дефект — стоп и отчёт (blocked), а не правка за автором.
+ЗАПРЕЩЕНО трогать: ARCHITECTURE-SPINE.md, docs/**, model/**, CONSTRAINTS.yaml, evidence/README.md, net/**, существующие тесты.
+
+ЧТО СДЕЛАТЬ:
+1. pytest tools/tests -q — все контрактные тесты (K1–K8) зелёные.
+2. Сквозной wire-прогон: `python3 tools/run_a4_pipeline.py --seed 0 --steps 1 --tasks 10 --out evidence/a4-run-wire/` в окружении ~/venv-kk (CPU-платформа JAX допустима). Прогон обязан завершиться кодом 0 и создать манифест схемы v2 с pipeline_complete=false.
+3. K10/ожидаемое красное: `python3 tools/a4_manifest.py --verify` → код 1 с сообщением «покрытие частично: …» (а НЕ «манифест не найден»). Приведи точный текст.
+4. K9: `python3 -m pytest net/tests -q` — состояние не хуже исходного (01–16; в 06 ровно один xfail; GPU-тесты скипаются с причиной).
+5. `arch-ml control check . --constraints CONSTRAINTS.yaml` — красный РОВНО по C-038, новых нарушений нет.
+6. Защита от ложного зелёного (обязательная проверка): собери фикстуру полного покрытия во временном файле и убедись, что --verify даёт код 0 ТОЛЬКО при всех пяти executed с evidence, и код 1 при любой одной не-executed. Если в любом сценарии гейт зеленеет при неполном покрытии — это ДЕФЕКТ: статус blocked и подробный отчёт.
+
+ОТЧЁТ (обязательные пункты): числа по K1–K10 из спеки §6; точный текст сообщения --verify; вывод pytest (счёт зелёных/скипов/xfail); вывод control check; явная констатация «A4 НЕ закрыт: pipeline_complete=false, непокрытые стадии — sft, rl_base_scheme, spark_inference»; git-хэш.
+
+ФИНАЛИЗАЦИЯ: git-коммит только evidence/a4-skeleton-run-manifest.json и evidence/a4-run-wire/**, сообщение `evidence(axiom): wire-прогон A4 — манифест v2 с частичным покрытием (ADR-014)`.
+
+ФОРМАТ ФИНАЛЬНОГО ОТВЕТА (обязателен):
+заверши ответ fenced-блоком ```json: {"status": "complete|blocked", "summary": "<3-5 строк>", "evidence": ["<файл:строка | команда | число>", "..."], "next_steps": ["..."], "blockers": ["..."]}
+status=complete только если wire-прогон состоялся и красный по C-038 объяснён частичным покрытием; при любом ложном зелёном — blocked.
+"""

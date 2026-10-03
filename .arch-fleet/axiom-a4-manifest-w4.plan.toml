@@ -1,0 +1,123 @@
+# План флота — дельта ADR-014, переигровка n4 + интеграция n5.
+# Состояние до запуска (main): n1 (a4_manifest.py, схема v2) — 0f61b27, n2 (run_a4_pipeline.py) — 2242097,
+# n3 (тесты манифеста v2, 27 passed) — d462958. Осталось: тесты оркестратора (n4) и сквозная проверка (n5).
+# Агент задан явно: в предыдущем прогоне роутер выбрал hermes, узел n4 не дал ни строки вывода за 600 с.
+id = "axiom-a4-manifest-w4"
+package = "axiom"
+
+pattern = "dag"
+order = ["n4-tests-pipeline", "n5-verify"]
+
+[[edges]]
+from = "n4-tests-pipeline"
+to = "n5-verify"
+
+[policy]
+max_parallel = 1
+stop_on_gate_fail = true
+autonomy = "R2"
+merge_gate = "owner"
+require_worktree = true
+
+[policy.budget]
+max_node_secs = 3600
+max_attempts = 1
+
+[defaults]
+route = "standard"
+timeout_from_manifest = true
+on_fail = "block"
+
+[[defaults.gates]]
+
+[defaults.gates.contract]
+allow = ["complete"]
+
+[[nodes]]
+id = "n4-tests-pipeline"
+group = "wave2-retry"
+route = "standard"
+effort = 1
+agent = "kimi-code"
+domain = "tooling"
+required_skills = ["python", "pytest", "jax"]
+depends_on = []
+on_fail = "block"
+spec_files = [
+  "docs/adr/ADR-014-manifest-progona-a4-nesyot-sostav-stadiy-konveyera-chastichnyy-progon-geyt-ne-zakryvaet.md",
+  "docs/specs/A4-RUN.delta.md",
+]
+outputs = ["tools/tests/test_a4_pipeline.py"]
+spec = """
+Ты — независимый автор тестов узла n4 флота по кейсу axiom. Код оркестратора написан ДРУГИМ исполнителем (узел n2, коммит 2242097) и уже в main. Источник истины — спека §5.2 и §6, а НЕ код.
+
+ПРЕДЫДУЩАЯ ПОПЫТКА ЭТОГО УЗЛА ПРОВАЛИЛАСЬ: агент не выдал ни строки вывода за 600 секунд. Поэтому: работай быстро и малыми шагами, не запускай длинных прогонов «на исследование».
+
+ВЛАДЕЕШЬ ФАЙЛОМ (только он): tools/tests/test_a4_pipeline.py (создаёшь с нуля).
+ЗАПРЕЩЕНО трогать: tools/run_a4_pipeline.py (дефект — в blockers, не правь), tools/a4_manifest.py, tools/tests/test_a4_manifest.py (владение n3), net/**, env/**, evidence/**, ARCHITECTURE-SPINE.md, docs/**, model/**, CONSTRAINTS.yaml.
+
+ЧТО СДЕЛАТЬ (pytest; фикстуры в tmp_path; прогоны МИНИМАЛЬНЫЕ — `--steps 1 --tasks 2`):
+- K3: wire-прогон оркестратора → в --out есть непустой журнал прогона (run_ref); манифест существует; pipeline_complete=false; `--verify` даёт код 1 и сообщение с непокрытыми стадиями (sft, rl_base_scheme, spark_inference).
+- K8: два прогона с одним --seed дают одинаковый model_weights_sha256 (детерминизм).
+- Контракт §5.2: stdout содержит JSON-сводку {run_ref, model_weights_sha256, dataset_sha256, stages, pipeline_complete}; стадия spark_inference НЕ имеет статуса executed (подмена стенда запрещена); код 0 при частичном покрытии.
+
+БЮДЖЕТ ВРЕМЕНИ (критично): одиночный прогон оркестратора — это сеть на 24 слоях, он НЕ быстрый. Поэтому:
+- Сначала ОДИН раз замерь вручную: `time python3 tools/run_a4_pipeline.py --seed 0 --steps 1 --tasks 2 --out /tmp/n4-probe` в ~/venv-kk (CPU: JAX_PLATFORMS=cpu). Запиши время в отчёт.
+- Если прогон занимает ≤120 с — тесты K3/K8 делай обычными (их общее время ≤ ~5 мин).
+- Если >120 с — пометь прогонные тесты `@pytest.mark.slow` и скипай их по умолчанию (`pytest.mark.skipif` по env `A4_SLOW!=1`), НО приведи в отчёте ручной замер (команда + время + результат) как evidence. Пустой отчёт без замера не принимается.
+- Никогда не запускай больше двух прогонов в одном тесте; используй общий fixture, где возможно.
+
+КРИТЕРИИ ПРИЁМКИ УЗЛА:
+- pytest tools/tests -q — зелёный (медленные — skip с причиной); pytest tools/tests -q -m slow (или A4_SLOW=1) при бюджете — тоже зелёный, либо явный отчёт, почему не запускался.
+- Расхождение кода с контрактом — в blockers с командой воспроизведения, тест не подгоняй.
+
+ФИНАЛИЗАЦИЯ: git-коммит только tools/tests/test_a4_pipeline.py, сообщение `test(tools): контрактные тесты оркестратора A4 (K3, K8)`.
+
+ФОРМАТ ФИНАЛЬНОГО ОТВЕТА (обязателен — именно на этом упали узлы n1 и предыдущий n4):
+заверши ответ fenced-блоком ровно с одним JSON-объектом, БЕЗ плейсхолдеров и без текста внутри блока:
+```json
+{"status": "complete", "summary": "прогонные тесты: замер X с, суite N passed M skipped; K3/K8 проверены", "evidence": ["time python3 tools/run_a4_pipeline.py ... -> X с", "pytest tools/tests -q -> N passed"], "next_steps": [], "blockers": []}
+```
+status ТОЛЬКО из: complete | blocked. Никаких «complete|blocked» внутри блока.
+"""
+
+[[nodes]]
+id = "n5-verify"
+group = "wave3-integration"
+route = "standard"
+effort = 2
+agent = "kimi-code"
+domain = "ml-jax"
+required_skills = ["python", "jax", "pytest", "git"]
+depends_on = ["n4-tests-pipeline"]
+on_fail = "block"
+spec_files = [
+  "docs/adr/ADR-014-manifest-progona-a4-nesyot-sostav-stadiy-konveyera-chastichnyy-progon-geyt-ne-zakryvaet.md",
+  "docs/specs/A4-RUN.delta.md",
+]
+outputs = ["evidence/a4-skeleton-run-manifest.json", "evidence/a4-run-wire/manifest.json", "evidence/a4-run-wire/run.log"]
+spec = """
+Ты — исполнитель интеграционного узла n5 флота по кейсу axiom. Код дельты (tools/a4_manifest.py, tools/run_a4_pipeline.py) и контрактные тесты уже в main. Задача — сквозная проверка и честная фиксация итога дельты ADR-014.
+
+ВЛАДЕЕШЬ: evidence/a4-skeleton-run-manifest.json и каталог evidence/a4-run-wire/ (журнал прогона).
+Код в tools/** НЕ правишь: нашёл дефект — стоп и blocked, а не правка за автором.
+ЗАПРЕЩЕНО трогать: ARCHITECTURE-SPINE.md, docs/**, model/**, CONSTRAINTS.yaml, evidence/README.md, net/**, tools/tests/**.
+
+ЧТО СДЕЛАТЬ:
+1. `pytest tools/tests -q` — весь набор зелёный (медленные прогонные — допустимо skip с причиной).
+2. Сквозной wire-прогон: `python3 tools/run_a4_pipeline.py --seed 0 --steps 1 --tasks 10 --out evidence/a4-run-wire/` в ~/venv-kk (CPU-платформа JAX допустима). Код 0 обязателен; манифест схемы v2 с pipeline_complete=false. Замерь и запиши время.
+3. Ожидаемое красное: `python3 tools/a4_manifest.py --verify` → код 1 с сообщением «покрытие частично: …» (НЕ «манифест не найден»). Приведи точный текст.
+4. `python3 -m pytest net/tests -q` — состояние не хуже исходного (в 06 ровно один xfail; GPU-тесты скипаются с причиной). Если сьют долгий — ограничься подмножеством и явно скажи об этом в отчёте, указав, какие тесты не запускались.
+5. `arch-ml control check . --constraints CONSTRAINTS.yaml` — красный РОВНО по C-038, новых нарушений нет.
+6. ЗАЩИТА ОТ ЛОЖНОГО ЗЕЛЁНОГО (обязательно): фикстуры во временном файле — (а) все пять стадий executed с evidence → --verify код 0; (б) ровно одна стадия absent/skipped → код 1 с её именем; (в) подделка pipeline_complete=true при неполных стадиях → в файле false. Любой ложный зелёный — ДЕФЕКТ: статус blocked и разбор.
+
+ОТЧЁТ (обязательные пункты): числа K1–K10 из спеки §6; время wire-прогона; точный текст --verify; счёт pytest (зелёные/скипы/xfail); вывод control check; явная констатация «A4 НЕ закрыт: pipeline_complete=false, непокрытые стадии — sft, rl_base_scheme, spark_inference»; git-хэш.
+
+ФИНАЛИЗАЦИЯ: git-коммит только evidence/a4-skeleton-run-manifest.json и evidence/a4-run-wire/**, сообщение `evidence(axiom): wire-прогон A4 — манифест v2 с частичным покрытием (ADR-014)`.
+
+ФОРМАТ ФИНАЛЬНОГО ОТВЕТА (обязателен): заверши ответ fenced-блоком ровно с одним JSON-объектом, без плейсхолдеров:
+```json
+{"status": "complete", "summary": "wire-прогон X с, verify -> покрытие частично: ...; ложного зелёного нет", "evidence": ["tools/a4_manifest.py --verify -> покрытие частично: ...", "control check -> 1 error C-038"], "next_steps": [], "blockers": []}
+```
+status ТОЛЬКО из: complete | blocked. complete — только если wire-прогон состоялся и красный по C-038 объяснён частичным покрытием; при ложном зелёном — blocked.
+"""

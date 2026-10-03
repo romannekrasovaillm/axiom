@@ -1,0 +1,78 @@
+# ПРИМЕЧАНИЕ: пути домашнего каталога заменены на `/home/user/` — гейт CI «personal paths» (AD-7).
+id = "axiom-env-wave"
+package = "axiom"
+pattern = "fanout"
+# repo не задаётся: корень прогона передаётся аргументом --repo (fleet run --repo <корень> --plan <файл>)
+
+order = ["n5-env-proposals"]
+
+[policy]
+max_parallel = 1
+stop_on_gate_fail = true
+autonomy = "R2"
+merge_gate = "owner"
+require_worktree = true
+
+[policy.budget]
+max_node_secs = 7200
+max_attempts = 1
+
+[defaults]
+route = "Critical"
+timeout_from_manifest = true
+on_fail = "block"
+
+[[defaults.gates]]
+
+[defaults.gates.contract]
+allow = ["complete"]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WAVE 0 — canary: сквозной тонкий срез. Поведение сети НЕ меняется: узел
+# объявляет механику декларативно и доказывает, что сьют остаётся зелёным.
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[nodes]]
+id = "n5-env-proposals"
+group = "wave-env"
+route = "standard"
+effort = 2
+agent = "kimi-code"
+domain = "ml-eval"
+required_skills = ["writing", "rl-environments", "measurement"]
+depends_on = []
+on_fail = "block"
+spec_files = [
+  "docs/specs/ENVIRONMENT-V1.md",
+  "docs/research/v41-flash-report-extract.md",
+  "docs/DECISION-PACKAGE-V41-FLASH.json",
+]
+outputs = [".arch-fleet/out/env-hardening-proposal.md"]
+spec = """
+Ты — исполнитель узла n5-env-proposals флота по кейсу axiom. Ты пишешь ПРЕДЛОЖЕНИЕ (не финальную спеку) по трём находкам из пакета решения, чтобы архитектор внёс их в docs/specs/ENVIRONMENT-V1.md.
+
+ВЛАДЕЕШЬ ФАЙЛОМ: новый .arch-fleet/out/env-hardening-proposal.md.
+ЗАПРЕЩЕНО: править docs/**, net/**, model/**, CONSTRAINTS.yaml, ARCHITECTURE-SPINE.md — это зона архитектора. Твой результат — только файл предложения.
+
+ЧТО НАПИСАТЬ (по каждому пункту: что предлагается, куда именно в ENVIRONMENT-V1.md, почему, как проверить механически):
+1. Анти-hacking контур прогона среды (находка F-ENV-HARDENING, источник — V4.1-Flash §5.3.1): отключение интернета, срез git-истории, пурж кэшей (go/mod, node_modules, .jar, pycache); отдельно отметить наблюдённый в источнике exploit-seeking в кибер-оценке и вывод: без этих мер механический вердикт (spine AD-2) не защищён от подгонки. Предложить точные пункты в спеку и проверку «гейт прогона: контур применён, иначе вердикт недействителен».
+2. Учёт derived-latency при сравнении solo vs multi-agent (находка F-MULTIAGENT-DISCREPANCY): дайджест утверждает деградацию multi-agent, отчёт §5.3.5 показывает превосходство Agent Team на всех дедлайнах при reward с вычетом derived-latency. Предложить формулировку для CMP-006/ENVIRONMENT-V1: сравнивать solo vs team только при одинаковом wall-clock дедлайне и с учётом суммарной стоимости (токены + время инструментов), иначе сравнение невалидно по spine AD-3.
+3. Якорь лесенки усилия (находка F-EFFORT-LADDER, §5.3.3): прирост фронт-лоадный — усилие 60–80 даёт почти максимум при менее половины бюджета, шаг к 100 удлиняет траектории в 1.6–1.8x за маргинальный прирост. Предложить конкретную лесенку (уровни усилия, бюджеты токенов, критерий переключения) под требование скелета «минимум 2 домена x 2 уровня усилия».
+4. Ограничения честности: всё, что не подтверждено первоисточником, помечать как наше решение или [ТРЕБУЕТ ПРОВЕРКИ]; ссылки — на разделы отчёта, а не на пересказ.
+
+КРИТЕРИИ ПРИЁМКИ УЗЛА: файл предложения существует; по каждому из трёх пунктов есть (а) конкретная вставка текста для спеки, (б) механическая проверка, (в) ссылка на раздел первоисточника; нет правок вне своего файла (проверить git status).
+
+ФИНАЛИЗАЦИЯ: git-коммит только по .arch-fleet/out/env-hardening-proposal.md, сообщение `docs(fleet): предложение по env-находкам V4.1-Flash (анти-hacking, latency, effort-лесенка)`.
+ОТЧЁТ: status, что сделано, что не сделано и почему, открытые вопросы.
+
+ФОРМАТ ФИНАЛЬНОГО ОТВЕТА (обязателен, иначе автоматический гейт не пропустит узел):
+заверши ответ fenced-блоком ```json с контрактом результата:
+{"status": "complete|blocked", "summary": "<что сделано, 3-5 строк>", "evidence": ["<файл:строка | команда | число>", "..."], "next_steps": ["..."], "blockers": ["..."]}
+status=complete ставится только при выполненной работе; при неполной — blocked и перечисление в blockers.
+
+СКОУП МЕХАНИЧЕСКИХ ГЕЙТОВ: проверку кейса запускать по подкаталогу кейса
+(из корня кейса: `arch-ml control check . --constraints CONSTRAINTS.yaml` и
+`pytest net/tests -q`). Корневой набор репозитория spine-aiml содержит правила других
+подпроектов (Rust-CLI, banking и т.д.) и падает по независящим причинам — это шум, а не сигнал.
+"""

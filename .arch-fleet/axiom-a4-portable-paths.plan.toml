@@ -1,0 +1,228 @@
+# План флота — дельта ADR-014 / K11–K12: портируемость путей в манифесте A4.
+# Состояние до запуска (main 4af137d): манифест v2 работает, но run_ref и evidence содержат абсолютные
+# пути удалённого worktree → A5 по манифесту невозможен. Контракт (спека §4 пп. 6–7, K11–K12, §5.1/§5.2)
+# зафиксирован ДО запуска.
+# Уроки предыдущих прогонов: агент задан явно (hermes дал нулевой выхлоп); требование к JSON-контракту
+# усилено — блок без плейсхолдеров.
+id = "axiom-a4-portable-paths"
+package = "axiom"
+
+pattern = "dag"
+order = ["n1-generator-paths", "n2-pipeline-paths", "n3-tests-paths", "n4-verify-paths"]
+
+[[edges]]
+from = "n1-generator-paths"
+to = "n3-tests-paths"
+
+[[edges]]
+from = "n2-pipeline-paths"
+to = "n3-tests-paths"
+
+[[edges]]
+from = "n3-tests-paths"
+to = "n4-verify-paths"
+
+[policy]
+max_parallel = 2
+stop_on_gate_fail = true
+autonomy = "R2"
+merge_gate = "owner"
+require_worktree = true
+
+[policy.budget]
+max_node_secs = 3600
+max_attempts = 1
+
+[defaults]
+route = "standard"
+timeout_from_manifest = true
+on_fail = "block"
+
+[[defaults.gates]]
+
+[defaults.gates.contract]
+allow = ["complete"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WAVE 1 — два независимых узла: генератор и оркестратор правятся по отдельности.
+# ─────────────────────────────────────────────────────────────────────────────
+[[nodes]]
+id = "n1-generator-paths"
+group = "wave1-parallel"
+route = "standard"
+effort = 1
+agent = "kimi-code"
+domain = "tooling"
+required_skills = ["python", "cli", "pytest"]
+depends_on = []
+on_fail = "block"
+spec_files = [
+  "docs/adr/ADR-014-manifest-progona-a4-nesyot-sostav-stadiy-konveyera-chastichnyy-progon-geyt-ne-zakryvaet.md",
+  "docs/specs/A4-RUN.delta.md",
+]
+outputs = ["tools/a4_manifest.py"]
+spec = """
+Ты — исполнитель узла n1 флота по кейсу axiom. Источник истины: docs/specs/A4-RUN.delta.md §4 (правила 5–8), §5.1 и ADR-014 (Decision п. 8). Код схемы v2 уже в main — ты ДОРАБАТЫВАЕШЬ пути, не переписываешь схему.
+
+ВЛАДЕЕШЬ ФАЙЛОМ (только он): tools/a4_manifest.py.
+ЗАПРЕЩЕНО трогать: tools/run_a4_pipeline.py (владеет узел n2), tools/tests/** (владеет узел n3), net/**, evidence/**, ARCHITECTURE-SPINE.md, docs/**, model/**, CONSTRAINTS.yaml.
+
+ПРОБЛЕМА (дефект приёмки 13.09.2026): первый wire-прогон записал в run_ref и stages[].evidence абсолютные пути worktree флота. Worktree удаляется после мержа → манифест непортируем, A5-прогон по нему невозможен, в артефакте личные пути сборочной машины.
+
+ЧТО СДЕЛАТЬ:
+1. НОРМАЛИЗАЦИЯ при генерации: если --run-ref абсолютный и лежит ВНУТРИ корня репозитория (git rev-parse --show-toplevel; для этого репозитория — /home/…/spine-aiml) — привести к относительному пути от корня (например кейсы/axiom/evidence/...). Если абсолютный и ВНЕ репозитория — отказ: код 1, диагностика в stderr, файл не создан.
+2. ОТКАЗ для абсолютных путей в evidence-строках: если в переданных --stage значениях evidence встречается абсолютный путь (токен, начинающийся с '/'), либо нормализовать его тем же правилом (внутри репо), либо отклонить (вне репо) — выбери одно и задокументируй в докстринге; предпочтительно нормализовать внутри репо и отклонять вне.
+3. VERIFY отклоняет манифест, содержащий ЛЮБОЙ абсолютный путь (в run_ref или в любой строке stages[].evidence, включая вручную отредактированные): код 1, сообщение вида «абсолютный путь запрещён: <поле>: <значение>». Проверяй рекурсивно по всем строкам манифеста (кроме полей, где '/' легален по формату — таких нет).
+4. run_ref по-прежнему обязан существовать и быть непустым — теперь проверка идёт резолвом относительного пути от корня репозитория (не от cwd).
+5. Сохранить всё остальное поведение: схема v2, классифицированные сообщения («манифест не найден» / «покрытие частично: …» / «схема v1 не поддерживается»), вычисляемый pipeline_complete, атомарная запись, отказ без записи при отсутствии хешей/run-ref.
+
+КРИТЕРИИ ПРИЁМКИ УЗЛА (проверь вручную, вывод — в evidence):
+- Генерация с --run-ref <абсолютный путь внутри репо> → в записанном манифесте run_ref относительный, начинается не с '/'.
+- Генерация с --run-ref <абсолютный путь вне репо, напр. /tmp/...> → код 1, манифест не создан.
+- --verify на манифесте с абсолютным путём → код 1 с сообщением «абсолютный путь запрещён: …».
+- Существующая схема не сломана: pytest tools/tests -q — без НОВЫХ падений (тесты узла n3 добавятся позже; сейчас 27 passed/6 skipped).
+- python3 tools/a4_manifest.py --verify на репозитории → код 1, «покрытие частично: …» (вердикт не изменился по смыслу).
+
+ФИНАЛИЗАЦИЯ: git-коммит только tools/a4_manifest.py, сообщение `fix(tools): пути манифеста A4 относительны от корня репозитория (K11, ADR-014)`.
+
+ФОРМАТ ФИНАЛЬНОГО ОТВЕТА (обязателен, гейт падал на этом дважды): заверши ответ fenced-блоком ровно с одним JSON-объектом, БЕЗ плейсхолдеров и текста внутри блока:
+```json
+{"status": "complete", "summary": "что сделано, 3-5 строк", "evidence": ["<команда> -> <код/число>", "file:line"], "next_steps": [], "blockers": []}
+```
+status ТОЛЬКО из: complete | blocked.
+"""
+
+[[nodes]]
+id = "n2-pipeline-paths"
+group = "wave1-parallel"
+route = "standard"
+effort = 1
+agent = "kimi-code"
+domain = "ml-jax"
+required_skills = ["python", "jax", "cli"]
+depends_on = []
+on_fail = "block"
+spec_files = [
+  "docs/adr/ADR-014-manifest-progona-a4-nesyot-sostav-stadiy-konveyera-chastichnyy-progon-geyt-ne-zakryvaet.md",
+  "docs/specs/A4-RUN.delta.md",
+]
+outputs = ["tools/run_a4_pipeline.py"]
+spec = """
+Ты — исполнитель узла n2 флота по кейсу axiom. Источник истины: docs/specs/A4-RUN.delta.md §5.2 и ADR-014 (Decision п. 8). Оркестратор уже в main (коммит 2242097) — ты ДОРАБАТЫВАЕШЬ пути и независимость от cwd.
+
+ВЛАДЕЕШЬ ФАЙЛОМ (только он): tools/run_a4_pipeline.py.
+ЗАПРЕЩЕНО трогать: tools/a4_manifest.py (владеет узел n1; вызывай ТОЛЬКО подпроцессом по CLI §5.1), tools/tests/** (владеет узел n3), net/** (кроме импорта), env/** (кроме импорта), evidence/**, ARCHITECTURE-SPINE.md, docs/**, model/**, CONSTRAINTS.yaml.
+
+ПРОБЛЕМА: оркестратор передавал генератору абсолютные пути (--out/run_ref в worktree), из-за чего манифест оказался непортируемым после удаления worktree.
+
+ЧТО СДЕЛАТЬ:
+1. ОРКЕСТРАТОР НЕ ЗАВИСИТ ОТ CWD: все пути, которые он передаёт генератору (--run-ref) и пишет в журнал/evidence, — относительные от корня репозитория (git rev-parse --show-toplevel). Запуск из любого каталога даёт манифест без абсолютных путей.
+2. --out может быть передан абсолютным пользователем: артефакты пишутся туда как просили, но в манифест попадают ТОЛЬКО относительные пути (как §5.1 узла n1: внутри репо — нормализуется, вне репо — генератор откажет; поэтому если --out вне репозитория, оркестратор обязан явно сообщить об ошибке ДО генерации и завершиться ненулевым кодом с понятным сообщением, а не падать в недрах генератора).
+3. Проверь вызов генератора на совместимость с CLI §5.1 (флаги --stage name=status:evidence и т.д.) — контракт не менялся.
+4. Сохрани поведение: код 0 при частичном покрытии; статусы стадий как раньше (spark_inference — skipped с причиной, sft/rl_base_scheme — absent); JSON-сводка в stdout.
+
+КРИТЕРИИ ПРИЁМКИ УЗЛА (проверь вручную; прогон может быть долгим — минимум --steps 1 --tasks 1):
+- Прогон `--seed 0 --steps 1 --tasks 1 --out <относительный путь внутри репо>` завершается кодом 0, и в манифесте нет ни одной строки, начинающейся с '/'.
+- Прогон с --out за пределами репозитория (/tmp/...) → ненулевой код и явное сообщение (не трейсбек).
+- `pytest tools/tests -q` — без НОВЫХ падений (тесты n3 добавятся позже).
+- Замерь и запиши в evidence время прогона.
+
+ФИНАЛИЗАЦИЯ: git-коммит только tools/run_a4_pipeline.py, сообщение `fix(tools): оркестратор A4 пишет относительные пути, независим от cwd (K12)`.
+
+ФОРМАТ ФИНАЛЬНОГО ОТВЕТА (обязателен): заверши ответ fenced-блоком ровно с одним JSON-объектом, без плейсхолдеров:
+```json
+{"status": "complete", "summary": "что сделано, 3-5 строк", "evidence": ["time python3 tools/run_a4_pipeline.py ... -> X с", "<команда> -> код"], "next_steps": [], "blockers": []}
+```
+status ТОЛЬКО из: complete | blocked.
+"""
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WAVE 2 — независимый автор тестов на портируемость (K11, K12).
+# ─────────────────────────────────────────────────────────────────────────────
+[[nodes]]
+id = "n3-tests-paths"
+group = "wave2-tests"
+route = "standard"
+effort = 1
+agent = "kimi-code"
+domain = "tooling"
+required_skills = ["python", "pytest", "cli"]
+depends_on = ["n1-generator-paths", "n2-pipeline-paths"]
+on_fail = "block"
+spec_files = [
+  "docs/adr/ADR-014-manifest-progona-a4-nesyot-sostav-stadiy-konveyera-chastichnyy-progon-geyt-ne-zakryvaet.md",
+  "docs/specs/A4-RUN.delta.md",
+]
+outputs = ["tools/tests/test_a4_manifest.py", "tools/tests/test_a4_pipeline.py"]
+spec = """
+Ты — независимый автор тестов узла n3 флота по кейсу axiom. Код генератора и оркестратора правили ДРУГИЕ исполнители (узлы n1, n2). Источник истины — спека §4 (правила 5–8) и §6 (K11, K12), а НЕ код.
+
+ВЛАДЕЕШЬ ФАЙЛАМИ (только они): tools/tests/test_a4_manifest.py (K11 — генератор), tools/tests/test_a4_pipeline.py (K12 — оркестратор).
+ЗАПРЕЩЕНО трогать: tools/a4_manifest.py, tools/run_a4_pipeline.py (дефект — в blockers, не правь), net/**, env/**, evidence/**, ARCHITECTURE-SPINE.md, docs/**, model/**, CONSTRAINTS.yaml.
+
+ЧТО ДОБАВИТЬ (не удаляй и не ломай существующие тесты: сейчас в test_a4_manifest.py 27 тестов суммарно по каталогу, включая старые):
+- K11 (в test_a4_manifest.py): манифест с абсолютным путём в run_ref → --verify код 1 и сообщение «абсолютный путь запрещён: …»; манифест с абсолютным путём внутри строки stages[].evidence → --verify код 1; генерация с --run-ref абсолютным путём ВНЕ репозитория (например /tmp/...) → код 1, файл не создан; генерация с --run-ref абсолютным путём ВНУТРИ репозитория → в записанном манифесте путь относительный (не начинается с '/').
+- K12 (в test_a4_pipeline.py): прогон оркестратора из НЕ-корневого cwd (например os.chdir(tmp_path)) с минимальными --steps 1 --tasks 1 --out <относительный путь внутри репо> → код 0, и в манифесте нет ни одной строки, начинающейся с '/' (проверь рекурсивно по всем строковым значениям JSON); повторный вывод: run_ref резолвится от корня репозитория и существует.
+- Прогонные проверки — МИНИМАЛЬНЫЕ (--steps 1 --tasks 1). Если одиночный прогон > 120 с — помечай тест `@pytest.mark.slow` и скипай по умолчанию (`A4_SLOW!=1`), но приведи в отчёте РУЧНОЙ замер: команда, время, результат.
+- Все фикстуры — в tmp_path; evidence/ не трогать.
+
+КРИТЕРИИ ПРИЁМКИ УЗЛА:
+- `pytest tools/tests -q` — зелёный (медленные — skip с причиной); без регрессий существующих тестов.
+- Падающий тест = расхождение КОДА с контрактом: фиксируй в blockers с командой воспроизведения, тест НЕ подгоняй.
+
+ФИНАЛИЗАЦИЯ: git-коммит только двух файлов тестов, сообщение `test(tools): портируемость путей манифеста A4 — K11, K12`.
+
+ФОРМАТ ФИНАЛЬНОГО ОТВЕТА (обязателен): заверши ответ fenced-блоком ровно с одним JSON-объектом, без плейсхолдеров:
+```json
+{"status": "complete", "summary": "что добавлено, 3-5 строк", "evidence": ["pytest tools/tests -q -> N passed M skipped", "замер прогона -> X с"], "next_steps": [], "blockers": []}
+```
+status ТОЛЬКО из: complete | blocked.
+"""
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WAVE 3 — сквозная портируемость на реальном прогоне + перегенерация манифеста.
+# ─────────────────────────────────────────────────────────────────────────────
+[[nodes]]
+id = "n4-verify-paths"
+group = "wave3-integration"
+route = "standard"
+effort = 2
+agent = "kimi-code"
+domain = "ml-jax"
+required_skills = ["python", "jax", "pytest", "git"]
+depends_on = ["n3-tests-paths"]
+on_fail = "block"
+spec_files = [
+  "docs/adr/ADR-014-manifest-progona-a4-nesyot-sostav-stadiy-konveyera-chastichnyy-progon-geyt-ne-zakryvaet.md",
+  "docs/specs/A4-RUN.delta.md",
+]
+outputs = ["evidence/a4-skeleton-run-manifest.json", "evidence/a4-run-wire/manifest.json", "evidence/a4-run-wire/run-journal.json"]
+spec = """
+Ты — исполнитель интеграционного узла n4 флота по кейсу axiom. Узлы n1–n3 уже в твоей ветке. Задача — перегенерировать манифест с портируемыми путями и доказать K12 на реальном прогоне.
+
+ВЛАДЕЕШЬ: evidence/a4-skeleton-run-manifest.json и каталог evidence/a4-run-wire/** (журнал и артефакты прогона).
+Код в tools/** НЕ правишь: дефект — стоп и blocked.
+ЗАПРЕЩЕНО трогать: ARCHITECTURE-SPINE.md, docs/**, model/**, CONSTRAINTS.yaml, evidence/README.md, net/**, tools/tests/**.
+
+ЧТО СДЕЛАТЬ:
+1. `pytest tools/tests -q` — зелёный (медленные — скип с причиной).
+2. ПЕРЕГЕНЕРИРОВАТЬ манифест реальным прогоном: `python3 tools/run_a4_pipeline.py --seed 0 --steps 1 --tasks 10 --out evidence/a4-run-wire/` в ~/venv-kk (CPU-платформа JAX допустима), запуск из корня репозитория. Старый манифест с абсолютными путями перезаписывается — это и есть цель.
+3. ДОКАЗАТЬ ПОРТИРУЕМОСТЬ (главное):
+   - в манифесте НЕТ ни одной строки, начинающейся с '/', ни в run_ref, ни в stages[].evidence (проверь рекурсивно скриптом и приведи вывод);
+   - `python3 tools/a4_manifest.py --verify` → код 1 с «покрытие частично: …» (НЕ «журнал не найден», НЕ «абсолютный путь»);
+   - run_ref резолвится от корня репозитория, файл существует и непуст;
+   - проверка независимости от cwd: запусти `--verify` из другого каталога (например из /tmp) с явным путём к скрипту и к манифесту — вердикт тот же.
+   - (Полный `git clone` в другой каталог НЕ обязателен — репозиторий большой; отметь это в отчёте как отложенную проверку.)
+4. `arch-ml control check . --constraints CONSTRAINTS.yaml` — красный РОВНО по C-038 (частичное покрытие), новых нарушений нет.
+5. Проверь, что в артефактах прогона нет личных путей вне репозитория: `grep -rn "/home/" evidence/a4-skeleton-run-manifest.json evidence/a4-run-wire/run-journal.json` — совпадений быть не должно.
+
+ОТЧЁТ (обязательные пункты): подтверждение отсутствия абсолютных путей (с выводом), точный текст --verify, число тестов, вывод control check, время прогона, явная констатация «A4 по-прежнему не закрыт: pipeline_complete=false, непокрытые стадии — sft, rl_base_scheme, spark_inference», git-хэш.
+
+ФИНАЛИЗАЦИЯ: git-коммит только evidence/a4-skeleton-run-manifest.json и evidence/a4-run-wire/**, сообщение `fix(evidence): манифест A4 перегенерирован с относительными путями (K11-K12)`.
+
+ФОРМАТ ФИНАЛЬНОГО ОТВЕТА (обязателен): заверши ответ fenced-блоком ровно с одним JSON-объектом, без плейсхолдеров:
+```json
+{"status": "complete", "summary": "перегенерация + портируемость доказана; A4 не закрыт", "evidence": ["grep -c абсолютных путей -> 0", "tools/a4_manifest.py --verify -> покрытие частично: ..."], "next_steps": [], "blockers": []}
+```
+status ТОЛЬКО из: complete | blocked. complete — только если манифест перегенерирован и абсолютных путей нет; при любом расхождении — blocked.
+"""

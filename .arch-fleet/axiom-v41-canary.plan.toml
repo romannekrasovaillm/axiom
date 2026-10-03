@@ -1,0 +1,87 @@
+# ПРИМЕЧАНИЕ: пути домашнего каталога заменены на `/home/user/` — гейт CI «personal paths» (AD-7).
+id = "axiom-v41-canary"
+package = "axiom"
+pattern = "fanout"
+# repo не задаётся: корень прогона передаётся аргументом --repo (fleet run --repo <корень> --plan <файл>)
+
+order = ["n0-config"]
+
+[policy]
+max_parallel = 1
+stop_on_gate_fail = true
+autonomy = "R2"
+merge_gate = "owner"
+require_worktree = true
+
+[policy.budget]
+max_node_secs = 7200
+max_attempts = 1
+
+[defaults]
+route = "Critical"
+timeout_from_manifest = true
+on_fail = "block"
+
+[[defaults.gates]]
+
+[defaults.gates.contract]
+allow = ["complete"]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WAVE 0 — canary: сквозной тонкий срез. Поведение сети НЕ меняется: узел
+# объявляет механику декларативно и доказывает, что сьют остаётся зелёным.
+# ─────────────────────────────────────────────────────────────────────────────
+[[nodes]]
+id = "n0-config"
+group = "wave0-canary"
+route = "standard"
+effort = 2
+agent = "kimi-code"
+domain = "ml-jax"
+required_skills = ["jax", "pytest"]
+depends_on = []
+on_fail = "block"
+spec_files = [
+  "docs/specs/MODEL-L3-SKELETON.md",
+  "docs/adr/ADR-009-import-kv-dlinnokontekstnoy-discipliny-deepseek-v4-1-flash-v-skelet-l3-swa-vetka-v-kazhdom-sloe-sparse-vybor-v-mla-sloyah-fp4-na-latentnom-keshe.md",
+]
+outputs = ["net/config.json", "net/config.py"]
+spec = """
+Ты — исполнитель canary-узла флота по кейсу axiom (скелет L3, чистый JAX).
+Источник требований: ADR-009 и MODEL-L3-SKELETON §9 из spec_files.
+
+ЦЕЛЬ: объявить механику длинного контекста декларативно и доказать, что сьют остаётся зелёным. Поведение сети в этом узле НЕ меняется.
+
+ВЛАДЕЕШЬ ФАЙЛАМИ (только они): net/config.json, net/config.py.
+ЗАПРЕЩЕНО трогать: net/mla.py, net/kda.py, net/model.py, net/tests/**, ARCHITECTURE-SPINE.md, docs/**, model/**, CONSTRAINTS.yaml — это чужие узлы или зона архитектора.
+
+ЧТО СДЕЛАТЬ:
+1. Добавить в net/config.json поля: swa_window=128, swa_share_kda_projections=true, mla_top_k=512, mla_index_heads=1, mla_index_dim=128, qat_kv_enabled=false, attn_dense_reference=true, indexer_seed=0.
+2. Научить net/config.py читать их с дефолтами, безопасными для существующего кода: при attn_dense_reference=true и qat_kv_enabled=false численное поведение модели обязано остаться прежним (самой дельты в этом узле ещё нет — механику реализуют другие узлы).
+3. Пересчитать actual_param_count и active_params_per_token с учётом indexer'а (mla_index_heads x mla_index_dim на каждый из 6 MLA-слоёв) по согласованному определению в поле active_params_definition; при необходимости уточнить само определение. Бюджет 0,9–1,2B держать.
+4. Добавить в deviations три строки: (а) шаринг q/k/v KDA-слоя под окно SWA — наше решение, источник (V4.1-Flash §2.2) использует отдельные проекции; (б) значение top_k адаптировано под 12 Q-голов скелета (в источнике 512 при 64 головах и контексте 1M); (в) допускается короткая плотная фаза перед sparse-режимом — источник обучал sparse с нуля на 45T токенов и 552B, переносимость на 20B/1B не доказана.
+5. НЕ активировать C-035 и не менять CONSTRAINTS.yaml — это делает архитектор после мержа.
+
+КРИТЕРИИ ПРИЁМКИ УЗЛА (механические):
+- pytest net/tests -q — прежний результат до дельты: 01–12 зелёные (в 06 допустим ровно один xfail), никаких новых падений.
+- Проверка конфига: config.json парсится, все 8 новых полей присутствуют с ожидаемыми значениями, actual_param_count в [9e8, 1.2e9].
+- arch-ml control check . --constraints CONSTRAINTS.yaml — PASS (34 правила).
+
+ФИНАЛИЗАЦИЯ: git-коммит только по net/config.json и net/config.py, сообщение `feat(net): дельта v1.5 — шаг 0, декларация механики в config (ADR-009)`.
+ОТЧЁТ: status (complete|blocked), что сделано, точные значения счётчиков до/после, краткий вывод pytest, что не сделано и почему, открытые вопросы. Если спека кажется неполной — остановиться и записать вопрос, а не додумывать.
+
+ФОРМАТ ФИНАЛЬНОГО ОТВЕТА (обязателен, иначе автоматический гейт не пропустит узел):
+заверши ответ fenced-блоком ```json с контрактом результата:
+{"status": "complete|blocked", "summary": "<что сделано, 3-5 строк>", "evidence": ["<файл:строка | команда | число>", "..."], "next_steps": ["..."], "blockers": ["..."]}
+status=complete ставится только при выполненной работе; при неполной — blocked и перечисление в blockers.
+
+СКОУП МЕХАНИЧЕСКИХ ГЕЙТОВ: проверку кейса запускать по подкаталогу кейса
+(из корня кейса: `arch-ml control check . --constraints CONSTRAINTS.yaml` и
+`pytest net/tests -q`). Корневой набор репозитория spine-aiml содержит правила других
+подпроектов (Rust-CLI, banking и т.д.) и падает по независящим причинам — это шум, а не сигнал.
+"""
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WAVE 1 — три независимых узла по владению файлами (запускаются после canary).
+# ─────────────────────────────────────────────────────────────────────────────

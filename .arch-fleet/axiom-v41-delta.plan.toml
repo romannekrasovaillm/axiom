@@ -1,0 +1,424 @@
+# ПРИМЕЧАНИЕ: пути домашнего каталога заменены на `/home/user/` — гейт CI «personal paths» (AD-7).
+id = "axiom-v41-delta"
+package = "axiom"
+pattern = "dag"
+# repo не задаётся: корень прогона передаётся аргументом --repo (fleet run --repo <корень> --plan <файл>)
+
+order = ["n5-env-proposals", "n0-config", "n1-mla", "n2-kda", "n3-quant", "n3-tests", "n4-verify"]
+
+[[edges]]
+from = "n0-config"
+to = "n1-mla"
+
+[[edges]]
+from = "n0-config"
+to = "n2-kda"
+
+[[edges]]
+from = "n0-config"
+to = "n3-quant"
+
+[[edges]]
+from = "n0-config"
+to = "n3-tests"
+
+[[edges]]
+from = "n1-mla"
+to = "n4-verify"
+
+[[edges]]
+from = "n2-kda"
+to = "n4-verify"
+
+[[edges]]
+from = "n3-quant"
+to = "n4-verify"
+
+[[edges]]
+from = "n3-tests"
+to = "n4-verify"
+
+[policy]
+max_parallel = 3
+stop_on_gate_fail = true
+autonomy = "R2"
+merge_gate = "owner"
+require_worktree = true
+
+[policy.budget]
+max_node_secs = 7200
+max_attempts = 1
+
+[defaults]
+route = "Critical"
+timeout_from_manifest = true
+on_fail = "block"
+
+[[defaults.gates]]
+
+[defaults.gates.contract]
+allow = ["complete"]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WAVE 0 — canary: сквозной тонкий срез. Поведение сети НЕ меняется: узел
+# объявляет механику декларативно и доказывает, что сьют остаётся зелёным.
+# ─────────────────────────────────────────────────────────────────────────────
+[[nodes]]
+id = "n0-config"
+group = "wave0-canary"
+route = "standard"
+effort = 2
+agent = "kimi-code"
+domain = "ml-jax"
+required_skills = ["jax", "pytest"]
+depends_on = []
+on_fail = "block"
+spec_files = [
+  "docs/specs/MODEL-L3-SKELETON.md",
+  "docs/adr/ADR-009-import-kv-dlinnokontekstnoy-discipliny-deepseek-v4-1-flash-v-skelet-l3-swa-vetka-v-kazhdom-sloe-sparse-vybor-v-mla-sloyah-fp4-na-latentnom-keshe.md",
+]
+outputs = ["net/config.json", "net/config.py"]
+spec = """
+Ты — исполнитель canary-узла флота по кейсу axiom (скелет L3, чистый JAX).
+Источник требований: ADR-009 и MODEL-L3-SKELETON §9 из spec_files.
+
+ЦЕЛЬ: объявить механику длинного контекста декларативно и доказать, что сьют остаётся зелёным. Поведение сети в этом узле НЕ меняется.
+
+ВЛАДЕЕШЬ ФАЙЛАМИ (только они): net/config.json, net/config.py.
+ЗАПРЕЩЕНО трогать: net/mla.py, net/kda.py, net/model.py, net/tests/**, ARCHITECTURE-SPINE.md, docs/**, model/**, CONSTRAINTS.yaml — это чужие узлы или зона архитектора.
+
+ЧТО СДЕЛАТЬ:
+1. Добавить в net/config.json поля: swa_window=128, swa_share_kda_projections=true, mla_top_k=512, mla_index_heads=1, mla_index_dim=128, qat_kv_enabled=false, attn_dense_reference=true, indexer_seed=0.
+2. Научить net/config.py читать их с дефолтами, безопасными для существующего кода: при attn_dense_reference=true и qat_kv_enabled=false численное поведение модели обязано остаться прежним (самой дельты в этом узле ещё нет — механику реализуют другие узлы).
+3. Пересчитать actual_param_count и active_params_per_token с учётом indexer'а (mla_index_heads x mla_index_dim на каждый из 6 MLA-слоёв) по согласованному определению в поле active_params_definition; при необходимости уточнить само определение. Бюджет 0,9–1,2B держать.
+4. Добавить в deviations три строки: (а) шаринг q/k/v KDA-слоя под окно SWA — наше решение, источник (V4.1-Flash §2.2) использует отдельные проекции; (б) значение top_k адаптировано под 12 Q-голов скелета (в источнике 512 при 64 головах и контексте 1M); (в) допускается короткая плотная фаза перед sparse-режимом — источник обучал sparse с нуля на 45T токенов и 552B, переносимость на 20B/1B не доказана.
+5. НЕ активировать C-035 и не менять CONSTRAINTS.yaml — это делает архитектор после мержа.
+
+КРИТЕРИИ ПРИЁМКИ УЗЛА (механические):
+- pytest net/tests -q — прежний результат до дельты: 01–12 зелёные (в 06 допустим ровно один xfail), никаких новых падений.
+- Проверка конфига: config.json парсится, все 8 новых полей присутствуют с ожидаемыми значениями, actual_param_count в [9e8, 1.2e9].
+- arch-ml control check . --constraints CONSTRAINTS.yaml — PASS (34 правила).
+
+ФИНАЛИЗАЦИЯ: git-коммит только по net/config.json и net/config.py, сообщение `feat(net): дельта v1.5 — шаг 0, декларация механики в config (ADR-009)`.
+ОТЧЁТ: status (complete|blocked), что сделано, точные значения счётчиков до/после, краткий вывод pytest, что не сделано и почему, открытые вопросы. Если спека кажется неполной — остановиться и записать вопрос, а не додумывать.
+
+ФОРМАТ ФИНАЛЬНОГО ОТВЕТА (обязателен, иначе автоматический гейт не пропустит узел):
+заверши ответ fenced-блоком ```json с контрактом результата:
+{"status": "complete|blocked", "summary": "<что сделано, 3-5 строк>", "evidence": ["<файл:строка | команда | число>", "..."], "next_steps": ["..."], "blockers": ["..."]}
+status=complete ставится только при выполненной работе; при неполной — blocked и перечисление в blockers.
+
+СКОУП МЕХАНИЧЕСКИХ ГЕЙТОВ: проверку кейса запускать по подкаталогу кейса
+(из корня кейса: `arch-ml control check . --constraints CONSTRAINTS.yaml` и
+`pytest net/tests -q`). Корневой набор репозитория spine-aiml содержит правила других
+подпроектов (Rust-CLI, banking и т.д.) и падает по независящим причинам — это шум, а не сигнал.
+"""
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WAVE 1 — три независимых узла по владению файлами (запускаются после canary).
+# ─────────────────────────────────────────────────────────────────────────────
+[[nodes]]
+id = "n1-mla"
+group = "wave1-fanout"
+route = "critical"
+effort = 3
+agent = "kimi-code"
+domain = "ml-jax"
+required_skills = ["jax", "attention", "sparse-attention", "pytest"]
+depends_on = ["n0-config"]
+on_fail = "block"
+spec_files = [
+  "docs/specs/MODEL-L3-SKELETON.md",
+  "docs/research/v41-flash-report-extract.md",
+]
+outputs = ["net/mla.py", "net/attn_window.py"]
+spec = """
+Ты — исполнитель узла n1-mla флота по кейсу axiom (скелет L3, чистый JAX).
+Требования: MODEL-L3-SKELETON §9 (D1, D2, D4) и ADR-009; факты первоисточника — docs/research/v41-flash-report-extract.md (§2.1, §2.3, §2.3.2). Конфиг уже объявлен узлом n0-config.
+
+ВЛАДЕЕШЬ ФАЙЛАМИ (только они): net/mla.py и, при необходимости, новый net/attn_window.py.
+ЗАПРЕЩЕНО трогать: net/config.json, net/config.py, net/kda.py, net/model.py, net/tests/**, docs/**, model/**, ARCHITECTURE-SPINE.md, CONSTRAINTS.yaml. Если нужна правка чужого файла — остановиться и записать это как зависимость в отчёт (её внесёт архитектор).
+
+ЧТО СДЕЛАТЬ:
+1. Существующий плотный причинный путь сохранить как есть — он остаётся оракулом и включается флагом config.attn_dense_reference. Не удалять и не «улучшать» его.
+2. Локальная SWA-ветка для MLA-слоя: окно n_win = config.swa_window = 128, собственные K/V-проекции от своего hidden (как в источнике), точный softmax по последним n_win позициям.
+3. Sparse-выбор (CSA2-lite): indexer = config.mla_index_heads голов дом config.mla_index_dim; indexer Q — от своего hidden; indexer K — проекцией ИЗ ЛАТЕНТА (как в CSA2: indexer K проецируется из main KV, а не отдельным путём из hidden); скор считается по записям латента; отбор top-k = min(config.mla_top_k, T).
+4. Внимание: softmax по ОБЪЕДИНЕНИЮ выбранных записей и окна (дубликаты снимать маской), а не только по выбранным записям. Доля смешивания окна — обучаемый скаляр на слой.
+5. FP4-крючок: предусмотреть точку квантования латента под флагом config.qat_kv_enabled (вызов функции из net/quant.py, которую пишет параллельный узел n3-quant; если модуля ещё нет — импорт под try/except с явной пометкой в отчёте, саму реализацию НЕ писать). При qat_kv_enabled=false поведение обязано остаться прежним.
+6. Детерминизм: все новые источники случайности — только через config.indexer_seed.
+7. НЕ реализовывать: компрессию последовательности m>1, cross-layer режимы Full/Reindex/Reuse, иерархический пул кандидатов — явно вне объёма (ADR-009, Alternatives 5).
+
+КРИТЕРИИ ПРИЁМКИ УЗЛА (числа обязательны в отчёте):
+- При swa_window=0 и mla_top_k >= T выходы MLA-слоя со включённым sparse-путём совпадают с плотным оракулом в пределах 1e-4 (fp32, CPU).
+- При attn_dense_reference=true прежнее поведение: pytest net/tests -q без новых падений (01–12, в 06 ровно один xfail).
+- Детерминизм: одинаковый вход + indexer_seed даёт идентичные top-k индексы (сравнить два вызова).
+- Прирост параметров узла — перечислить каждый тензор с формой и суммой.
+
+ФИНАЛИЗАЦИЯ: git-коммит только по своим файлам, сообщение `feat(net): дельта v1.5 — MLA sparse+SWA, плотный оракул за флагом (ADR-009)`.
+ОТЧЁТ: status, что сделано, числа критериев, прирост параметров, что не сделано и почему, открытые вопросы.
+
+ФОРМАТ ФИНАЛЬНОГО ОТВЕТА (обязателен, иначе автоматический гейт не пропустит узел):
+заверши ответ fenced-блоком ```json с контрактом результата:
+{"status": "complete|blocked", "summary": "<что сделано, 3-5 строк>", "evidence": ["<файл:строка | команда | число>", "..."], "next_steps": ["..."], "blockers": ["..."]}
+status=complete ставится только при выполненной работе; при неполной — blocked и перечисление в blockers.
+
+СКОУП МЕХАНИЧЕСКИХ ГЕЙТОВ: проверку кейса запускать по подкаталогу кейса
+(из корня кейса: `arch-ml control check . --constraints CONSTRAINTS.yaml` и
+`pytest net/tests -q`). Корневой набор репозитория spine-aiml содержит правила других
+подпроектов (Rust-CLI, banking и т.д.) и падает по независящим причинам — это шум, а не сигнал.
+"""
+
+[[nodes]]
+id = "n2-kda"
+group = "wave1-fanout"
+route = "critical"
+effort = 3
+agent = "kimi-code"
+domain = "ml-jax"
+required_skills = ["jax", "linear-attention", "pytest"]
+depends_on = ["n0-config"]
+on_fail = "block"
+spec_files = [
+  "docs/specs/MODEL-L3-SKELETON.md",
+  "docs/research/v41-flash-report-extract.md",
+  "net/kda-formulas.md",
+]
+outputs = ["net/kda.py"]
+spec = """
+Ты — исполнитель узла n2-kda флота по кейсу axiom (скелет L3, чистый JAX).
+Требования: MODEL-L3-SKELETON §9 (D1 в части KDA-слоёв) и ADR-009. Формулы KDA — в net/kda-formulas.md, их НЕ менять (это выверенный первоисточник).
+
+ВЛАДЕЕШЬ ФАЙЛОМ (только он): net/kda.py.
+ЗАПРЕЩЕНО трогать: net/config.json, net/config.py, net/mla.py, net/model.py, net/tests/**, docs/**, model/**, ARCHITECTURE-SPINE.md, CONSTRAINTS.yaml. Если нужна правка чужого файла — записать как зависимость в отчёт.
+
+ЧТО СДЕЛАТЬ:
+1. Добавить в KDA-слой ветку локального окна (n_win = config.swa_window = 128), построенную на УЖЕ ВЫЧИСЛЕННЫХ q/k/v линейного слоя (dk=dv=128, 12 голов) при config.swa_share_kda_projections=true — новых тензоров быть не должно.
+2. Выход окна складывается с рекуррентным выходом KDA; доля смешивания — один обучаемый скаляр на слой (это допустимый и ожидаемый прирост, отразить в отчёте).
+3. При config.swa_share_kda_projections=false код не должен ломаться: либо ветка не строится, либо честно сообщается о неподдержке — выбрать решение и записать его.
+4. Рекуррентная и чанкированная формы KDA обязаны остаться численно эквивалентными (главный страж — существующий паритет-тест 02). При выключенном окне численное поведение — прежнее.
+
+КРИТЕРИИ ПРИЁМКИ УЗЛА (числа обязательны):
+- pytest net/tests/test_02_kda_parity.py -q — зелёный, расхождение форм не хуже прежнего (порядка 1e-8).
+- pytest net/tests -q — без новых падений (01–12, в 06 ровно один xfail).
+- Эквивалентность при выключенном окне: выход KDA-слоя совпадает с прежним в пределах 1e-6.
+- Прирост: 0 тензоров, только скаляры смешивания — перечислить точно.
+
+ФИНАЛИЗАЦИЯ: git-коммит только по net/kda.py, сообщение `feat(net): дельта v1.5 — окно SWA на KDA со шарингом проекций (ADR-009)`.
+ОТЧЁТ: status, что сделано, числа критериев, прирост параметров, что не сделано и почему, открытые вопросы.
+
+ФОРМАТ ФИНАЛЬНОГО ОТВЕТА (обязателен, иначе автоматический гейт не пропустит узел):
+заверши ответ fenced-блоком ```json с контрактом результата:
+{"status": "complete|blocked", "summary": "<что сделано, 3-5 строк>", "evidence": ["<файл:строка | команда | число>", "..."], "next_steps": ["..."], "blockers": ["..."]}
+status=complete ставится только при выполненной работе; при неполной — blocked и перечисление в blockers.
+
+СКОУП МЕХАНИЧЕСКИХ ГЕЙТОВ: проверку кейса запускать по подкаталогу кейса
+(из корня кейса: `arch-ml control check . --constraints CONSTRAINTS.yaml` и
+`pytest net/tests -q`). Корневой набор репозитория spine-aiml содержит правила других
+подпроектов (Rust-CLI, banking и т.д.) и падает по независящим причинам — это шум, а не сигнал.
+"""
+
+[[nodes]]
+id = "n3-quant"
+group = "wave1-fanout"
+route = "critical"
+effort = 2
+agent = "kimi-code"
+domain = "ml-jax"
+required_skills = ["jax", "quantization", "pytest"]
+depends_on = ["n0-config"]
+on_fail = "block"
+spec_files = [
+  "docs/specs/MODEL-L3-SKELETON.md",
+  "docs/research/v41-flash-report-extract.md",
+]
+outputs = ["net/quant.py", "net/tests/test_14_kv_fp4.py"]
+spec = """
+Ты — исполнитель узла n3-quant флота по кейсу axiom (скелет L3, чистый JAX).
+Требования: MODEL-L3-SKELETON §9 (D3) и ADR-009. Факты первоисточника — docs/research/v41-flash-report-extract.md, раздел «FP4 main KV (§2.4.4)».
+
+ВАЖНО о границах: MLA-путь параллельно правит узел n1-mla в своей ветке. Ты НЕ правишь net/mla.py. Ты пишешь самостоятельный модуль и тест к нему; подключение вызова в MLA-слой выполняет архитектор при мерже — так два узла не конфликтуют по файлу.
+
+ВЛАДЕЕШЬ ФАЙЛАМИ: новый net/quant.py, новый net/tests/test_14_kv_fp4.py.
+ЗАПРЕЩЕНО трогать: net/mla.py, net/kda.py, net/config.json, net/config.py, net/model.py, существующие net/tests/**, docs/**, model/**, ARCHITECTURE-SPINE.md, CONSTRAINTS.yaml.
+
+ЧТО СДЕЛАТЬ:
+1. net/quant.py: fake-quant MXFP4 для латентного KV-вектора по последней оси, блоками по 16 каналов: E2M1 (знак, 2 бита экспоненты, 1 бит мантиссы) + ОДИН E4M3 scale на 16 каналов, БЕЗ second-level global scale. Прямой проход со straight-through estimator — переиспользовать приёмы существующей весовой QAT-ветки, не переписывая её.
+2. Публичная функция в стиле API скелета, чтобы архитектор одной строкой подключил её в MLA-слое под флагом config.qat_kv_enabled; при выключенном флаге — возврат входа без изменений (побитово).
+3. Тест net/tests/test_14_kv_fp4.py:
+   - round-trip: ошибка квант/де-квант на латенте с реалистичным масштабом (RMSNorm≈1, наблюдаемый максимум ≈10; формат держит до 448×6=2688) — привести max и mean абсолютной ошибки;
+   - toy-проба: сравнить toy-качество с FP8-бейзлайном на маленькой фикстуре (образец — net/tests/conftest.py) и показать дельту; порог приёмки дельты — не хуже 2 п.п. Если не проходит — тест обязан это ПОКАЗАТЬ (xfail с причиной и числами), а не подогнать порог;
+   - qat_kv_enabled=false ⇒ функция возвращает вход без изменений (побитово).
+
+КРИТЕРИИ ПРИЁМКИ УЗЛА (числа обязательны):
+- pytest net/tests/test_14_kv_fp4.py -q — round-trip и no-op зелёные; порог дельты 2 п.п. либо выдержан, либо честно помечен как невыдержанный с числами.
+- pytest net/tests -q — без новых падений (01–12, в 06 ровно один xfail).
+
+ФИНАЛИЗАЦИЯ: git-коммит только по своим файлам, сообщение `feat(net): дельта v1.5 — MXFP4 fake-quant латентного KV (ADR-009)`.
+ОТЧЁТ: status, что сделано, числа (ошибка round-trip, дельта recall против FP8), что не сделано и почему, открытые вопросы.
+
+ФОРМАТ ФИНАЛЬНОГО ОТВЕТА (обязателен, иначе автоматический гейт не пропустит узел):
+заверши ответ fenced-блоком ```json с контрактом результата:
+{"status": "complete|blocked", "summary": "<что сделано, 3-5 строк>", "evidence": ["<файл:строка | команда | число>", "..."], "next_steps": ["..."], "blockers": ["..."]}
+status=complete ставится только при выполненной работе; при неполной — blocked и перечисление в blockers.
+
+СКОУП МЕХАНИЧЕСКИХ ГЕЙТОВ: проверку кейса запускать по подкаталогу кейса
+(из корня кейса: `arch-ml control check . --constraints CONSTRAINTS.yaml` и
+`pytest net/tests -q`). Корневой набор репозитория spine-aiml содержит правила других
+подпроектов (Rust-CLI, banking и т.д.) и падает по независящим причинам — это шум, а не сигнал.
+"""
+
+[[nodes]]
+id = "n3-tests"
+group = "wave1-fanout"
+route = "standard"
+effort = 2
+agent = "kimi-code"
+domain = "ml-jax"
+required_skills = ["pytest", "jax"]
+depends_on = ["n0-config"]
+on_fail = "block"
+spec_files = [
+  "docs/specs/MODEL-L3-SKELETON.md",
+  "docs/adr/ADR-009-import-kv-dlinnokontekstnoy-discipliny-deepseek-v4-1-flash-v-skelet-l3-swa-vetka-v-kazhdom-sloe-sparse-vybor-v-mla-sloyah-fp4-na-latentnom-keshe.md",
+]
+outputs = [
+  "net/tests/test_13_sparse_dense_equivalence.py",
+  "net/tests/test_15_cost_8k_64k.py",
+  "net/tests/test_16_indexer_determinism.py",
+]
+spec = """
+Ты — исполнитель узла n3-tests флота по кейсу axiom (скелет L3, чистый JAX).
+Ты пишешь ТЕСТЫ ПО СПЕКЕ до мержа кода других узлов. Это осознанный приём: критерии приёмки первичны, реализация вторична. Тесты обязаны быть механическими и честными.
+
+ВЛАДЕЕШЬ ФАЙЛАМИ (новые, только они): net/tests/test_13_sparse_dense_equivalence.py, net/tests/test_15_cost_8k_64k.py, net/tests/test_16_indexer_determinism.py.
+ЗАПРЕЩЕНО: менять существующие net/tests/** (особенно test_06 — он держатель утверждения о NoPE-экстраполяции), править net/*.py, docs/**, model/**, CONSTRAINTS.yaml, ARCHITECTURE-SPINE.md. Тест FP4 пишет другой узел (test_14_kv_fp4.py) — не создавай его.
+
+ЧТО НАПИСАТЬ (MODEL-L3-SKELETON §9.3, критерии 13, 16, 17):
+- test_13_sparse_dense_equivalence (критерий 13): при mla_top_k >= T и swa_window=0 выходы модели совпадают с плотным путём (config.attn_dense_reference=true) в пределах 1e-4, fp32, CPU, независимо от натренированных весов.
+- test_15_cost_8k_64k (критерий 16): замер времени и памяти forward на 8K (не хуже 5% против плотного пути) и на 64K (строго лучше). Числа выводить в сообщении теста; ассерт на регрессию >5% на 8K обязателен. Если на CPU-фикстуре 64K недостижим по памяти — сделать честный xfail с указанием причины и порога для GPU-прогона, а не тихий skip.
+- test_16_indexer_determinism (критерий 17): одинаковый вход + indexer_seed даёт идентичные top-k индексы; смена seed меняет выбор (иначе тест ничего не проверяет).
+
+ТРЕБОВАНИЯ К КАЧЕСТВУ:
+- Тест должен падать по делу и НЕ проходить на вырожденной конфигурации: если фикстура не способна различить поведение, тест обязан это показать (образец честности — test_06, где порог задан относительно вырожденного предиктора).
+- Использовать существующие фикстуры net/tests/conftest.py, не дублировать конфиги без нужды.
+- Каждый тест — с docstring: какой критерий проверяет и почему порог именно такой.
+- Пока код не смержен, тесты могут падать из-за отсутствия реализации — это допустимо и ожидаемо. НЕ подгонять под текущее поведение и НЕ ставить skip, маскирующий отсутствие реализации. Допустим только явный xfail/importorskip с причиной и указанием связанного узла.
+
+КРИТЕРИИ ПРИЁМКИ УЗЛА: тесты синтаксически валидны и запускаются (pytest по трём файлам: допустимы падения из-за отсутствия реализации, недопустимы ошибки коллекции); в отчёте — вывод прогона и объяснение каждого падения.
+
+ФИНАЛИЗАЦИЯ: git-коммит только по трём новым файлам, сообщение `test(net): дельта v1.5 — критерии 13/16/17 (эквивалентность, цена, детерминизм indexer)`.
+ОТЧЁТ: status, что сделано, вывод прогона, что не сделано и почему, открытые вопросы.
+
+ФОРМАТ ФИНАЛЬНОГО ОТВЕТА (обязателен, иначе автоматический гейт не пропустит узел):
+заверши ответ fenced-блоком ```json с контрактом результата:
+{"status": "complete|blocked", "summary": "<что сделано, 3-5 строк>", "evidence": ["<файл:строка | команда | число>", "..."], "next_steps": ["..."], "blockers": ["..."]}
+status=complete ставится только при выполненной работе; при неполной — blocked и перечисление в blockers.
+
+СКОУП МЕХАНИЧЕСКИХ ГЕЙТОВ: проверку кейса запускать по подкаталогу кейса
+(из корня кейса: `arch-ml control check . --constraints CONSTRAINTS.yaml` и
+`pytest net/tests -q`). Корневой набор репозитория spine-aiml содержит правила других
+подпроектов (Rust-CLI, banking и т.д.) и падает по независящим причинам — это шум, а не сигнал.
+"""
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WAVE 2 — join: сборка, прогон и измерение всех критериев 13–17 (кода не пишет).
+# ─────────────────────────────────────────────────────────────────────────────
+[[nodes]]
+id = "n4-verify"
+group = "wave2-join"
+route = "critical"
+effort = 3
+agent = "kimi-code"
+domain = "ml-jax"
+required_skills = ["pytest", "jax", "measurement"]
+depends_on = ["n1-mla", "n2-kda", "n3-quant", "n3-tests"]
+on_fail = "block"
+spec_files = [
+  "docs/specs/MODEL-L3-SKELETON.md",
+  "docs/adr/ADR-009-import-kv-dlinnokontekstnoy-discipliny-deepseek-v4-1-flash-v-skelet-l3-swa-vetka-v-kazhdom-sloe-sparse-vybor-v-mla-sloyah-fp4-na-latentnom-keshe.md",
+]
+outputs = ["net/n4-verify-report.json"]
+spec = """
+Ты — исполнитель узла n4-verify (сведение) флота по кейсу axiom. Кода модели не пишешь: собираешь результаты волны 1, прогоняешь сьют и измеряешь критерии приёмки 13–17 из ADR-009 / MODEL-L3-SKELETON §9.3.
+
+ЧЕГО НЕ ДЕЛАТЬ:
+- Не «дорабатывать» чужие узлы: если критерий не выполняется — фиксируй числа и падение, а не правишь net/mla.py, net/kda.py, net/quant.py, net/config.json.
+- Не менять существующие тесты, особенно test_06 (держатель утверждения о NoPE-экстраполяции). Снятие xfail в test_06 — исключительное право результата: только если recall >= RECALL_MIN по факту.
+- Не трогать docs/**, model/**, ARCHITECTURE-SPINE.md, CONSTRAINTS.yaml.
+
+ЧТО СДЕЛАТЬ:
+1. Прогнать полный сьют: pytest net/tests -q (и gpu_smoke, если GPU доступен; недоступность GPU — скип с явной причиной).
+2. Снять и записать в отчёт числа по каждому критерию:
+   - 13: максимальное расхождение sparse-пути с плотным оракулом при mla_top_k >= T и swa_window=0 (порог 1e-4).
+   - 14: результат test_06 — recall на тренировочном и экстраполированном гэпах, статус xfail/xpass; вывод о переходе критерия №6.
+   - 15: ошибка round-trip MXFP4 и дельта toy-качества против FP8 (порог 2 п.п.).
+   - 16: время и память forward на 8K и 64K против плотного пути (8K: не хуже 5%; 64K: строго лучше).
+   - 17: детерминизм top-k индексов при фиксированном indexer_seed.
+3. Проверить механические гейты кейса и приложить вывод: arch-ml control check . --constraints CONSTRAINTS.yaml; arch-ml control spine ARCHITECTURE-SPINE.md.
+4. Сверить бюджет: actual_param_count и active_params_per_token из config.json — в коридоре 0,9–1,2B по счётчику, определение не разошлось с кодом.
+5. Записать машиночитаемый отчёт net/n4-verify-report.json со схемой: {"git_head": "...", "suite": {"passed": N, "failed": N, "xfailed": N}, "criteria": {"13": {...}, "14": {...}, "15": {...}, "16": {...}, "17": {...}}, "gates": {"fitness": "PASS|FAIL", "spine": "..."}, "params": {"total": N, "active": N}, "verdict": "green|red|inconclusive", "blockers": [...]}.
+6. Verdict=green ставить ТОЛЬКО если критерии 13 и 17 выполнены, критерий 14 имеет измеренный результат (не обязательно положительный), 15 и 16 имеют числа; иначе verdict=red или inconclusive с перечислением причин.
+
+ФИНАЛИЗАЦИЯ: git-коммит только по созданному отчёту, сообщение `test(net): дельта v1.5 — сводный замер критериев 13–17 (ADR-009)`.
+ОТЧЁТ: status, verdict, таблица «критерий — значение — порог — вердикт», вывод гейтов, blockers, открытые вопросы. Числа без округления до удобных значений.
+
+ФОРМАТ ФИНАЛЬНОГО ОТВЕТА (обязателен, иначе автоматический гейт не пропустит узел):
+заверши ответ fenced-блоком ```json с контрактом результата:
+{"status": "complete|blocked", "summary": "<что сделано, 3-5 строк>", "evidence": ["<файл:строка | команда | число>", "..."], "next_steps": ["..."], "blockers": ["..."]}
+status=complete ставится только при выполненной работе; при неполной — blocked и перечисление в blockers.
+
+СКОУП МЕХАНИЧЕСКИХ ГЕЙТОВ: проверку кейса запускать по подкаталогу кейса
+(из корня кейса: `arch-ml control check . --constraints CONSTRAINTS.yaml` и
+`pytest net/tests -q`). Корневой набор репозитория spine-aiml содержит правила других
+подпроектов (Rust-CLI, banking и т.д.) и падает по независящим причинам — это шум, а не сигнал.
+"""
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WAVE ENV — независимая ветка: находки вне архитектуры сети из пакета решения
+# (F-ENV-HARDENING, F-MULTIAGENT-DISCREPANCY, F-EFFORT-LADDER). Файлы net/ НЕ
+# трогает, поэтому может исполняться параллельно с одиночным прогоном hr-*.
+# Результат — ПРЕДЛОЖЕНИЕ в .arch-fleet/out/, в docs/** вносит архитектор.
+# ─────────────────────────────────────────────────────────────────────────────
+[[nodes]]
+id = "n5-env-proposals"
+group = "wave-env"
+route = "standard"
+effort = 2
+agent = "kimi-code"
+domain = "ml-eval"
+required_skills = ["writing", "rl-environments", "measurement"]
+depends_on = []
+on_fail = "block"
+spec_files = [
+  "docs/specs/ENVIRONMENT-V1.md",
+  "docs/research/v41-flash-report-extract.md",
+  "docs/DECISION-PACKAGE-V41-FLASH.json",
+]
+outputs = [".arch-fleet/out/env-hardening-proposal.md"]
+spec = """
+Ты — исполнитель узла n5-env-proposals флота по кейсу axiom. Ты пишешь ПРЕДЛОЖЕНИЕ (не финальную спеку) по трём находкам из пакета решения, чтобы архитектор внёс их в docs/specs/ENVIRONMENT-V1.md.
+
+ВЛАДЕЕШЬ ФАЙЛОМ: новый .arch-fleet/out/env-hardening-proposal.md.
+ЗАПРЕЩЕНО: править docs/**, net/**, model/**, CONSTRAINTS.yaml, ARCHITECTURE-SPINE.md — это зона архитектора. Твой результат — только файл предложения.
+
+ЧТО НАПИСАТЬ (по каждому пункту: что предлагается, куда именно в ENVIRONMENT-V1.md, почему, как проверить механически):
+1. Анти-hacking контур прогона среды (находка F-ENV-HARDENING, источник — V4.1-Flash §5.3.1): отключение интернета, срез git-истории, пурж кэшей (go/mod, node_modules, .jar, pycache); отдельно отметить наблюдённый в источнике exploit-seeking в кибер-оценке и вывод: без этих мер механический вердикт (spine AD-2) не защищён от подгонки. Предложить точные пункты в спеку и проверку «гейт прогона: контур применён, иначе вердикт недействителен».
+2. Учёт derived-latency при сравнении solo vs multi-agent (находка F-MULTIAGENT-DISCREPANCY): дайджест утверждает деградацию multi-agent, отчёт §5.3.5 показывает превосходство Agent Team на всех дедлайнах при reward с вычетом derived-latency. Предложить формулировку для CMP-006/ENVIRONMENT-V1: сравнивать solo vs team только при одинаковом wall-clock дедлайне и с учётом суммарной стоимости (токены + время инструментов), иначе сравнение невалидно по spine AD-3.
+3. Якорь лесенки усилия (находка F-EFFORT-LADDER, §5.3.3): прирост фронт-лоадный — усилие 60–80 даёт почти максимум при менее половины бюджета, шаг к 100 удлиняет траектории в 1.6–1.8x за маргинальный прирост. Предложить конкретную лесенку (уровни усилия, бюджеты токенов, критерий переключения) под требование скелета «минимум 2 домена x 2 уровня усилия».
+4. Ограничения честности: всё, что не подтверждено первоисточником, помечать как наше решение или [ТРЕБУЕТ ПРОВЕРКИ]; ссылки — на разделы отчёта, а не на пересказ.
+
+КРИТЕРИИ ПРИЁМКИ УЗЛА: файл предложения существует; по каждому из трёх пунктов есть (а) конкретная вставка текста для спеки, (б) механическая проверка, (в) ссылка на раздел первоисточника; нет правок вне своего файла (проверить git status).
+
+ФИНАЛИЗАЦИЯ: git-коммит только по .arch-fleet/out/env-hardening-proposal.md, сообщение `docs(fleet): предложение по env-находкам V4.1-Flash (анти-hacking, latency, effort-лесенка)`.
+ОТЧЁТ: status, что сделано, что не сделано и почему, открытые вопросы.
+
+ФОРМАТ ФИНАЛЬНОГО ОТВЕТА (обязателен, иначе автоматический гейт не пропустит узел):
+заверши ответ fenced-блоком ```json с контрактом результата:
+{"status": "complete|blocked", "summary": "<что сделано, 3-5 строк>", "evidence": ["<файл:строка | команда | число>", "..."], "next_steps": ["..."], "blockers": ["..."]}
+status=complete ставится только при выполненной работе; при неполной — blocked и перечисление в blockers.
+
+СКОУП МЕХАНИЧЕСКИХ ГЕЙТОВ: проверку кейса запускать по подкаталогу кейса
+(из корня кейса: `arch-ml control check . --constraints CONSTRAINTS.yaml` и
+`pytest net/tests -q`). Корневой набор репозитория spine-aiml содержит правила других
+подпроектов (Rust-CLI, banking и т.д.) и падает по независящим причинам — это шум, а не сигнал.
+"""

@@ -1,0 +1,11 @@
+{
+ "run_ref": "pretrain-pilot-gb10",
+ "gpu_type": "GB10 / DGX Spark (стенд, окна)",
+ "gpu_hours_estimate": 30,
+ "usd_estimate": 0,
+ "limit_usd": 0.5,
+ "budget_method": "Пилот 0.5-1B токенов на l3-full (grad-checkpointing, пул 4×2048): цель — стабильность+MFU на sm_121, не полный 20B. GPU свои — USD 0 (электричество), лимит формальный. Калибровка AD-8 (arXiv 2412.19437) — метод базовой сметы pretreain-l3.",
+ "stop_rule": "stop по target_tokens 0.5B или limit; resume между окнами",
+ "created_at": "2026-10-03T09:20:00+03:00",
+ "approved_by": "architect"
+}

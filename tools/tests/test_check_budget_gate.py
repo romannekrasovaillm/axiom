@@ -243,7 +243,7 @@ def test_non_positive_gpu_hours_fails(tmp_path: Path) -> None:
 
 
 def test_budget_method_without_calibration_fails(tmp_path: Path) -> None:
-    """Метод без калибровки AD-8 (arXiv 2412.19437, 343 TFLOP/s) не принимается."""
+    """Метод без ссылки на AD-8 (калибровка или формула 6·N·D) не принимается."""
     _write_estimate(
         tmp_path,
         "a4-skeleton",
@@ -253,7 +253,7 @@ def test_budget_method_without_calibration_fails(tmp_path: Path) -> None:
     code, out, _ = _verify(tmp_path)
 
     assert code != 0
-    assert "budget_method: не ссылается на калибровку AD-8" in out
+    assert "budget_method: не ссылается на метод AD-8" in out
 
 
 def test_estimate_of_another_run_fails(tmp_path: Path) -> None:

@@ -434,10 +434,18 @@ def card_to_datacard(card: dict[str, Any]):
 
 
 def canonical_tokenizer():
-    """Пиннутый канонический BPE (``net/config.json:tokenizer_hash``, ADR-4).
+    """Канонический BPE скелета: детерминированная заглушка стадии (ADR-4).
 
-    Хеш сверяется с конфигом: молчаливая подмена токенизатора запрещена —
-    ``tokenizer_hash`` в журнале обязан быть тем же, что запиннен в сети.
+    Стадия строит BPE на синтетическом корпусе скелета; его хеш — собственный
+    **объявленный хеш заглушки**, и он уезжает в журнал как есть.  Соответствие
+    ``net/config.json:tokenizer_hash`` здесь НЕ проверяется: пин описывает
+    токенизатор претрейн-корпуса (BPE 160K, обученный на реальных данных), а
+    стадии скелета (SFT/RL/смоук) легитимно работают на заглушке — их следы
+    (``evidence/a4-run-wire/*/stage-journal.json``) несут именно хеш заглушки.
+    Сверку пина выполняет тот пресет, для которого она обязательна
+    (``l3-full``, ``tools/pretrain_run.py``), и только против токенизатора,
+    которым размечены данные — см. :func:`config_tokenizer_pin` и
+    :func:`tokenizer_hash_matches`.
     """
     from net.data import synthetic_corpus_texts
     from net.tokenizer import BPETokenizer
@@ -445,14 +453,30 @@ def canonical_tokenizer():
     tok = BPETokenizer(vocab_size=160_000).train(
         synthetic_corpus_texts(seed=0, n_docs=20, words_per_doc=32), seed=0
     )
+    return tok, tok.vocab_hash()
+
+
+def config_tokenizer_pin() -> str:
+    """Пин токенизатора из ``net/config.json`` (может быть коротким префиксом).
+
+    Пин объявлен как 16-hex префикс sha256 файла-артефакта корпусного BPE
+    (``tools/bpe_train.py``), поэтому сравнение обязано быть префиксным, а не
+    на равенство: полный хеш манифеста ``tokens/`` длиннее пина.
+    """
     config = json.loads((CASE_DIR / "net" / "config.json").read_text(encoding="utf-8"))
     pinned = config.get("tokenizer_hash")
-    actual = tok.vocab_hash()
-    if pinned and actual != pinned:
-        raise StageError(
-            f"tokenizer_hash {actual} != запинненного {pinned} (net/config.json)"
-        )
-    return tok, actual
+    return str(pinned).strip() if isinstance(pinned, str) else ""
+
+
+def tokenizer_hash_matches(actual: str, pinned: str) -> bool:
+    """Совпадает ли хеш токенизатора с пином: пин — префикс (короткий или равный)."""
+    actual = str(actual or "").strip()
+    pinned = str(pinned or "").strip()
+    if not pinned:
+        return True  # пин не объявлен — сверять нечего
+    if len(pinned) <= len(actual):
+        return actual.startswith(pinned)
+    return pinned.startswith(actual)
 
 
 def document_text(doc: dict[str, Any]) -> str:

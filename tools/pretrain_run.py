@@ -261,16 +261,22 @@ def build_tokenizer_and_config(args: argparse.Namespace) -> tuple[Any, Any, dict
     max_emitted = max(3 + 256 - 1, max_id)
     vocab_size = 1 << max(10, int(max_emitted).bit_length())
     cfg = sft_stage.build_model_config(vocab_size, args.model_preset, qat_weights=False)
+    pinned = sft_stage.config_tokenizer_pin()
     info = {
         "hash": tokenizer_hash,
-        "source": "net/tokenizer.py canonical (net/config.json:tokenizer_hash)",
+        "source": "net/tokenizer.py canonical — синтетическая заглушка скелета "
+                  "(не корпусной BPE 160K)",
         "vocab_size": tokenizer.vocab_size,
         "merges": len(tokenizer.merges),
         "max_emitted_id": int(max_emitted),
         "model_vocab_size": int(vocab_size),
+        "config_pin": pinned or None,
+        "matches_config_pin": sft_stage.tokenizer_hash_matches(tokenizer_hash, pinned),
         "note": (
-            "модельный vocab покрывает все испускаемые id канонического "
-            "токенизатора; полный BPE 160K на корпусе — масштаб вне скелета"
+            "заглушка скелета объявляет собственный хеш; пин net/config.json "
+            "описывает корпусной BPE 160K и сверяется только для пресета "
+            "l3-full против токенизатора, которым размечены данные (packed). "
+            "модельный vocab покрывает все испускаемые id заглушки"
         ),
     }
     return tokenizer, cfg, info
@@ -682,6 +688,24 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
         print(f"[pretrain] ОТКАЗ сметы: {exc}", file=sys.stderr, flush=True)
         return journal, False
 
+    # --- grad-checkpointing: для l3-full обязателен ------------------------
+    # Порядок отказов: бюджет → grad-checkpointing → seed.  Раньше этот отказ
+    # стоял после сборки даталоадера, и отсутствие шардов маскировало его
+    # («данные: …»).  Проверка не зависит от данных, поэтому идёт сразу за сметой.
+    grad_checkpointing = args.grad_checkpointing
+    if grad_checkpointing is None:
+        grad_checkpointing = args.model_preset in GRAD_CHECKPOINT_REQUIRED
+    if args.model_preset in GRAD_CHECKPOINT_REQUIRED and not grad_checkpointing:
+        reason = (
+            "grad-checkpointing обязателен для пресета l3-full: без remat графа "
+            "прогон упирается в память активаций (урок OOM 956 ГиБ). "
+            "Явное --no-grad-checkpointing для l3-full запрещено."
+        )
+        journal["refusal"] = reason
+        _write_journal(journal, out_dir, journal_path=journal_path)
+        print(f"[pretrain] ОТКАЗ: {reason}", file=sys.stderr, flush=True)
+        return journal, False
+
     # --- данные -----------------------------------------------------------
     mix = parse_mix(args.mix, streams)
     ckpt_manager = tl.CheckpointManager(paths["ckpt_dir"], keep_last=args.keep_last)
@@ -744,6 +768,28 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
         _write_journal(journal, out_dir, journal_path=journal_path)
         print(f"[pretrain] ОТКАЗ resume: {reason}", file=sys.stderr, flush=True)
         return journal, False
+
+    # --- l3-full: токенизатор данных обязан совпасть с пином конфига -------
+    # Пин net/config.json описывает корпусной BPE 160K.  Для малого пресета
+    # легитимна синтетическая заглушка (её хеш объявлен в журнале), но
+    # производственный пресет l3-full обязан читать данные, размеченные
+    # каноническим BPE: чужие id молча читались бы по неверным индексам.
+    # Сверка идёт последней из «дешёвых» отказов (после бюджета/grad/seed):
+    # это контракт данных, а не стартовая гигиена, и она не должна маскировать
+    # отказы сметы или resume.
+    if args.model_preset == sft_stage.L3_FULL_PRESET:
+        pinned = sft_stage.config_tokenizer_pin()
+        actual_hash = str(tokenizer_info.get("hash") or "")
+        if not sft_stage.tokenizer_hash_matches(actual_hash, pinned):
+            reason = (
+                f"токенизатор l3-full {actual_hash[:16]}… не совпал с пином "
+                f"net/config.json {pinned[:16]}…: данные размечены не каноническим "
+                "BPE (ADR-4) — пересоберите tokens/ каноническим токенизатором"
+            )
+            journal["refusal"] = reason
+            _write_journal(journal, out_dir, journal_path=journal_path)
+            print(f"[pretrain] ОТКАЗ данных: {reason}", file=sys.stderr, flush=True)
+            return journal, False
 
     # --- H1: decay-окно против объёма Q ------------------------------------
     decay_plan = None
@@ -853,21 +899,6 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
             else None
         ),
     }
-
-    # --- grad-checkpointing: для l3-full обязателен ------------------------
-    grad_checkpointing = args.grad_checkpointing
-    if grad_checkpointing is None:
-        grad_checkpointing = args.model_preset in GRAD_CHECKPOINT_REQUIRED
-    if args.model_preset in GRAD_CHECKPOINT_REQUIRED and not grad_checkpointing:
-        reason = (
-            "grad-checkpointing обязателен для пресета l3-full: без remat графа "
-            "прогон упирается в память активаций (урок OOM 956 ГиБ). "
-            "Явное --no-grad-checkpointing для l3-full запрещено."
-        )
-        journal["refusal"] = reason
-        _write_journal(journal, out_dir, journal_path=journal_path)
-        print(f"[pretrain] ОТКАЗ: {reason}", file=sys.stderr, flush=True)
-        return journal, False
 
     # --- цикл -------------------------------------------------------------
     manager = ckpt_manager

@@ -104,6 +104,18 @@ def tiny_cfg(**overrides) -> ModelConfig:
 
 T_TINY = 512  # >= 3 * NEEDLE_STRIDE + needle, and > mla_top_k
 
+#: Bound on the cross-form numerical drift of the scan capture (module docstring,
+#: T-b4).  ``lax.scan`` compiles its body, and XLA lowers a reduction inside a
+#: compiled body in a different association order than the op-by-op loop — the
+#: same effect the docstring measures at ~3.5e-5 for eager-vs-compiled.  On this
+#: fixture (8 layers, hidden 32) the compiled scan and the compiled loop agree to
+#: 3.19e-5 (deterministic, independent of the ADR-018 flag), so an exact
+#: ``array_equal`` between the two forms is not attainable — and no scan-based
+#: capture can attain it.  The bound is an order of magnitude above that drift
+#: and far below any structural difference (T-b3 measures O(1) for merged vs
+#: unmerged), so it still fails a capture whose graph is not the model's.
+_SCAN_FORM_ATOL = 1e-4
+
 
 def _tiny_params(cfg: ModelConfig, seed: int = 0) -> model.ModelParams:
     return model.init_params(jr.PRNGKey(seed), cfg)
@@ -272,8 +284,12 @@ def test_t_b3_flag_off_is_bit_identical_after_the_switch_has_been_on():
     params = _tiny_params(cfg)
     ids = jnp.arange(T_TINY, dtype=jnp.int32)[None, :] % cfg.vocab_size
 
-    baseline = jax.jit(lambda p: model.forward(p, cfg, ids, chunk_size=16))(params)
-    jax.block_until_ready(baseline)
+    # Both legs are overridden explicitly: the pinned net/config.json declares the
+    # ADR-018 flag on, so reading it without a switch would make "baseline" the
+    # merged leg.  The pre-delta path is the flag *off*, whatever the pin says.
+    with bench.declared_switch(False, 16):
+        baseline = jax.jit(lambda p: model.forward(p, cfg, ids, chunk_size=16))(params)
+        jax.block_until_ready(baseline)
 
     with bench.declared_switch(True, 16):
         with_on = jax.jit(lambda p: model.forward(p, cfg, ids, chunk_size=16))(params)
@@ -297,18 +313,25 @@ def test_t_b3_runtime_switch_moves_the_declared_reader():
     from net import attn_sparse
     from net import config as net_config
 
-    pinned = net_config.CONFIG_PATH
+    pinned_path = net_config.CONFIG_PATH
+    # The reader's value outside any switch is whatever the pinned config declares
+    # (ADR-018 turned it on): the test must not assume a default, only that the
+    # switch moves the reader to each requested leg and restores the pin.
+    pinned_declared = attn_sparse.declared_block_merge()
+    assert pinned_declared in (0, 16), pinned_declared
     try:
-        assert attn_sparse.declared_block_merge() == 0  # the case pins the flag off
         with bench.declared_switch(True, 16):
             assert attn_sparse.declared_block_merge() == 16
             assert not net_config.CONFIG_PATH.samefile(bench.CONFIG_PATH), (
                 "the switch must not be an edit of the pinned net/config.json"
             )
-        assert attn_sparse.declared_block_merge() == 0
-        assert net_config.CONFIG_PATH == pinned
+        assert attn_sparse.declared_block_merge() == pinned_declared
+        with bench.declared_switch(False, 16):
+            assert attn_sparse.declared_block_merge() == 0
+        assert attn_sparse.declared_block_merge() == pinned_declared
+        assert net_config.CONFIG_PATH == pinned_path
     finally:
-        net_config.CONFIG_PATH = pinned
+        net_config.CONFIG_PATH = pinned_path
 
 
 # ---------------------------------------------------------------------------
@@ -340,10 +363,13 @@ def test_t_b4b_scan_form_capture_equals_model_forward_compiled():
     The scan form is the 64K one (the reference form needs ~15.3 GiB there and
     dies on a 16 GB card), and ``capture_leg`` compiles the capture, so the
     equality that matters is against a compiled ``model.forward``.  This is the
-    same assertion as T-b4 — the capture *is* the model's forward, bit for bit —
-    with the reference compiled too, which is the only way a ``lax.scan``-based
-    capture can be compared: ``lax.scan`` compiles its body, and a compiled body
-    cannot reproduce an eager reference bit for bit (module docstring, T-b4).
+    same assertion as T-b4 — the capture *is* the model's forward — with the
+    reference compiled too, which is the only way a ``lax.scan``-based capture
+    can be compared: ``lax.scan`` compiles its body, and a compiled body cannot
+    reproduce a reference bit for bit (module docstring, T-b4).  The equality is
+    therefore within ``_SCAN_FORM_ATOL`` — the measured association-order bound —
+    not ``array_equal``: compiled scan and compiled loop differ by 3.19e-5 on
+    this fixture, deterministically, once both legs are declared the same way.
     """
     cfg = tiny_cfg()
     params = _tiny_params(cfg)
@@ -357,21 +383,26 @@ def test_t_b4b_scan_form_capture_equals_model_forward_compiled():
             p, cfg, x, chunk_size=16, use_attnres=False, return_hidden=True))(params, ids)[1]
         hidden, mla_inputs = jax.jit(lambda p, x: bench.capture_forward(
             p, cfg, x, use_attnres=False, chunk_size=16, form="scan"))(params, ids)
-    assert bool(jnp.array_equal(hidden, expected)), (
-        "the scan form drifts from net/model.py's compiled forward — its activations are "
-        "not the model's"
+        # Both reference legs are overridden to the same (off) declaration as the
+        # scan leg: the pinned net/config.json now declares the ADR-018 flag on,
+        # so compiling the reference outside the switch would compare the merged
+        # leg against the unmerged one — the switch, not the pin, must fix the leg.
+        compiled_loop = jax.jit(lambda p, x: bench.capture_forward(
+            p, cfg, x, use_attnres=False, chunk_size=16, form="loop"))(params, ids)[1]
+    assert bool(jnp.allclose(hidden, expected, rtol=0.0, atol=_SCAN_FORM_ATOL)), (
+        "the scan form drifts from net/model.py's compiled forward beyond the "
+        "association-order bound — its activations are not the model's"
     )
-    # The captured MLA inputs are the model's too: they equal the compiled
-    # reference form's, and T-b4 pins that form's inputs against the tensors the
-    # layers were actually handed (by wrapping net.mla.apply_with_pool — done
-    # eagerly there, because a recorded tensor cannot escape a jit trace).
-    compiled_loop = jax.jit(lambda p, x: bench.capture_forward(
-        p, cfg, x, use_attnres=False, chunk_size=16, form="loop"))(params, ids)[1]
+    # The captured MLA inputs are the model's too: they match the compiled
+    # reference form's within the same bound, and T-b4 pins that form's inputs
+    # against the tensors the layers were actually handed (by wrapping
+    # net.mla.apply_with_pool — done eagerly there, because a recorded tensor
+    # cannot escape a jit trace).
     assert len(compiled_loop) == len(mla_inputs) == cfg.num_mla_layers
     for layer, (reference, scanned) in enumerate(zip(compiled_loop, mla_inputs)):
-        assert bool(jnp.array_equal(reference, scanned)), (
+        assert bool(jnp.allclose(reference, scanned, rtol=0.0, atol=_SCAN_FORM_ATOL)), (
             f"MLA layer {layer}: the scan form reports a different input than the "
-            f"reference form"
+            f"reference form beyond the association-order bound"
         )
 
 

@@ -73,8 +73,14 @@ REQUIRED_NUMERIC_FIELDS = {
     "limit_usd": "лимит, USD",
 }
 
-#: Метод обязан ссылаться на калибровку из AD-8 (arXiv 2412.19437, 343 TFLOP/s).
+#: Метод обязан ссылаться на AD-8: либо на калибровку (arXiv 2412.19437,
+#: 343 TFLOP/s), либо на объявленную формулу оценки AD-8 — training-FLOPs
+#: ``6·N·D`` с фактором recompute (``k``).  Вторая форма — не заглушка: так
+#: считает производственная смета ``pretreain-l3`` (D берётся из манифестов
+#: tokens/, а не из approx-оценки), и её метод AD-8 ссылается формулой, а не
+#: калибровкой.  Заглушка («прикидка на глаз») не несёт ни одной из ссылок.
 CALIBRATION_MARKERS = ("2412.19437", "343")
+METHOD_MARKERS = ("6*N*D", "6·N·D", "6ND", "recompute")
 CALIBRATION_DEFAULT = (
     "калибровка по arXiv 2412.19437: 343 TFLOP/s эффективных на H800"
 )
@@ -200,10 +206,14 @@ def validate_estimate(estimate: Any, run_ref: str) -> list[str]:
 
     method = estimate.get("budget_method")
     if isinstance(method, str) and method.strip():
-        if not any(marker in method for marker in CALIBRATION_MARKERS):
+        grounded = any(marker in method for marker in CALIBRATION_MARKERS) or any(
+            marker in method for marker in METHOD_MARKERS
+        )
+        if not grounded:
             errs.append(
-                "budget_method: не ссылается на калибровку AD-8 "
-                f"(arXiv {CALIBRATION_MARKERS[0]}, {CALIBRATION_MARKERS[1]} TFLOP/s)"
+                "budget_method: не ссылается на метод AD-8 "
+                f"(калибровка arXiv {CALIBRATION_MARKERS[0]}, {CALIBRATION_MARKERS[1]} "
+                "TFLOP/s, либо формула training-FLOPs 6·N·D с recompute)"
             )
 
     if isinstance(estimate.get("created_at"), str) and estimate["created_at"].strip():

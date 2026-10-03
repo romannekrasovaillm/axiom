@@ -20,6 +20,19 @@ from typing import NamedTuple
 import jax
 import jax.numpy as jnp
 
+#: Per-layer remat policies of the backbone loop, declared in
+#: ``net/config.json`` as ``grad_ckpt_policy`` (spine AD-9 / guard C-035 style:
+#: the *file* is the switch, not an edit of this path).  ``none`` builds the
+#: graph as before; ``per_layer`` wraps every backbone layer in
+#: ``jax.checkpoint``, so the backward pass recomputes the layer from its inputs
+#: (``h``, the candidate-pool carry and the previous layer deltas) instead of
+#: keeping the layer's attention/MoE intermediates alive.  The coarse wrap of
+#: the whole ``compute_loss`` in ``net/train_loop.py`` does **not** cut the
+#: request (XLA then keeps the whole graph's intermediates on the recompute
+#: boundary — D-8: 972 GiB at T=8192 even with ``--grad-checkpointing``), which
+#: is why the boundary has to be per layer.
+GRAD_CKPT_POLICIES = ("none", "per_layer")
+
 from .config import ModelConfig, validate_config
 from . import attnres as attnres_mod
 from . import attn_sparse as attn_sparse_mod
@@ -146,31 +159,84 @@ def forward(
     use_attnres: bool = True,
     return_hidden: bool = False,
     collect_qb: bool = False,
+    grad_ckpt_policy: str = "none",
 ) -> jnp.ndarray | tuple:
     """Next-token logits for ``input_ids`` of shape (B, T).
 
     Returns ``(B, T, vocab)`` logits; ``return_hidden`` appends the backbone's
     final hidden state (used for MTP) and ``collect_qb`` appends the mean QB
     auxiliary loss over the LatentMoE layers (ours — see ``net/moe.py``).
+
+    ``grad_ckpt_policy`` (``none`` | ``per_layer``, see ``GRAD_CKPT_POLICIES``)
+    selects the remat granularity of the backbone loop.  ``per_layer`` wraps
+    each layer's transition in ``jax.checkpoint``; its live set is the layer
+    input ``h``, the candidate-pool carry and the layer's own intermediates,
+    so the backward pass recomputes the layer instead of retaining it.  With
+    ``none`` the graph is built exactly as before (bit-for-bit).
     """
+    if grad_ckpt_policy not in GRAD_CKPT_POLICIES:
+        raise ValueError(
+            f"неизвестная политика grad-checkpointing: {grad_ckpt_policy!r}; "
+            f"ожидается одна из {GRAD_CKPT_POLICIES}"
+        )
+    remat = grad_ckpt_policy == "per_layer"
     emb = params.embedding[input_ids]  # (B, T, hidden)
     h = emb
     embed_src = emb
-    layer_deltas = []
+    layer_deltas: list[jnp.ndarray] = []
     qb_losses = []
     pool = None  # ADR-012 candidate pool, built by the first ``full`` MLA layer
+
+    def _layer_step(
+        block: BlockParams,
+        attnres_w,
+        h: jnp.ndarray,
+        pool,
+        prior_deltas: tuple,
+        embed_src: jnp.ndarray,
+        *,
+        index: int,
+        is_kda: bool,
+        mode: str,
+    ):
+        """One backbone layer's transition — the remat unit.
+
+        Takes the layer's parameters and the full live set (``h``, the pool
+        carry, the previous deltas that AttnRes mixes) and returns the next
+        ``h``, this layer's delta, its QB term and the updated pool.
+        ``index``/``is_kda``/``mode`` are static and captured by the caller.
+        """
+        delta, qb, pool_out = _block_delta(
+            block, is_kda, cfg, h, chunk_size, collect_qb, mode, pool
+        )
+        if use_attnres and index > 0:
+            sources = jnp.stack([embed_src, *prior_deltas], axis=0)  # (N, B, T, hidden)
+            corr = attnres_mod.apply_layer(attnres_w, sources)
+        else:
+            corr = 0.0
+        return h + delta + corr, delta, qb, pool_out
+
     for i, block in enumerate(params.layers):
         is_kda = _layer_is_kda(i)
         mode = "full" if is_kda else mla_mod.layer_mode(cfg, _mla_ordinal(i))
-        delta, qb, pool = _block_delta(block, is_kda, cfg, h, chunk_size, collect_qb, mode, pool)
+
+        def step(
+            block, attnres_w, h, pool, prior_deltas, embed_src,
+            _i=i, _is_kda=is_kda, _mode=mode,
+        ):
+            return _layer_step(
+                block, attnres_w, h, pool, prior_deltas, embed_src,
+                index=_i, is_kda=_is_kda, mode=_mode,
+            )
+
+        if remat:
+            step = jax.checkpoint(step)
+        attnres_w = params.attnres.w[i] if use_attnres else None
+        h, delta, qb, pool = step(
+            block, attnres_w, h, pool, tuple(layer_deltas), embed_src
+        )
         if qb is not None:
             qb_losses.append(qb)
-        if use_attnres and i > 0:
-            sources = jnp.stack([embed_src] + layer_deltas, axis=0)  # (N, B, T, hidden)
-            corr = attnres_mod.apply_layer(params.attnres.w[i], sources)
-        else:
-            corr = 0.0
-        h = h + delta + corr
         layer_deltas.append(delta)
     h = rms_norm(h, params.norm_final)
     logits = h @ params.embedding.T
@@ -215,15 +281,27 @@ def compute_loss(
     input_ids: jnp.ndarray,
     chunk_size: int = 64,
     use_attnres: bool = True,
+    grad_ckpt_policy: str | None = None,
 ) -> jnp.ndarray:
     """Combined NTP + MTP auxiliary + QB load-balancing loss.
 
     The QB term (weight ``cfg.qb_weight``, mean over the LatentMoE layers) is
     ours: the paper's QB is a non-gradient bias update (Eq. 14) and defines no
     differentiable loss — see ``net/moe.py`` and ``config.json`` deviations.
+
+    The backbone's remat granularity is read from ``cfg.grad_ckpt_policy``
+    (declared in ``net/config.json``; pretrain ``l3-full`` carries
+    ``per_layer``) unless ``grad_ckpt_policy`` overrides it for a call.  The
+    per-layer checkpoint lives inside the layer loop of :func:`forward`,
+    because a coarse wrap of this whole function does not reduce the
+    activation request (D-8).
     """
-    logits, hidden, qb = forward(params, cfg, input_ids, chunk_size, use_attnres,
-                                 return_hidden=True, collect_qb=True)
+    policy = cfg.grad_ckpt_policy if grad_ckpt_policy is None else grad_ckpt_policy
+    logits, hidden, qb = forward(
+        params, cfg, input_ids, chunk_size, use_attnres,
+        return_hidden=True, collect_qb=True,
+        grad_ckpt_policy=policy,
+    )
     ntp = _cross_entropy(logits[:, :-1], input_ids[:, 1:])
     aux = mtp_loss(params, cfg, hidden, input_ids, chunk_size)
     return ntp + cfg.mtp_loss_weight * aux + cfg.qb_weight * qb

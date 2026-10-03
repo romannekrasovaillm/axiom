@@ -169,6 +169,18 @@ class ModelConfig:
     # QAT is enabled for the SFT stage only (MODEL-L3-SKELETON.md section 3).
     qat_enabled: bool = False
 
+    # --- grad-checkpointing granularity (D-8; spine AD-9/C-035 form) ---------
+    # ``none`` builds the training graph as before; ``per_layer`` wraps every
+    # backbone layer of ``net.model.forward`` in ``jax.checkpoint`` so the
+    # backward pass recomputes the layer from its inputs instead of keeping its
+    # attention/MoE intermediates (the coarse wrap of the whole ``compute_loss``
+    # in ``net/train_loop.py`` does not cut the request — D-8, 972 GiB at
+    # T=8192).  Declared in ``net/config.json`` as ``grad_ckpt_policy``; the
+    # pretrain preset ``l3-full`` carries ``per_layer``.  Read by ``net/model.py``
+    # (``compute_loss`` -> ``forward``); the schema default stays ``none`` so a
+    # config built in code (tests, smokes) keeps the pre-D-8 graph.
+    grad_ckpt_policy: str = "none"
+
     def as_dict(self) -> dict:
         return dataclasses.asdict(self)
 
@@ -200,6 +212,14 @@ def validate_config(cfg: ModelConfig) -> None:
     assert cfg.swa_window >= 0, "swa_window must be >= 0 (0 disables the window branch)"
     assert cfg.mla_top_k >= 1, "mla_top_k must be >= 1"
     assert cfg.mla_index_heads >= 1 and cfg.mla_index_dim > 0
+
+    # Grad-checkpointing granularity (D-8): the declared policy has to be one
+    # the backbone loop implements — an unknown value would silently fall back
+    # to no remat, which is exactly the OOM the field exists to prevent.
+    assert cfg.grad_ckpt_policy in ("none", "per_layer"), (
+        "grad_ckpt_policy must be none|per_layer, got "
+        f"{cfg.grad_ckpt_policy!r}"
+    )
 
     # Hierarchical pool (ADR-012): the modes are declared, and a consumer
     # (``reindex``/``reuse``) can only run after a builder (``full``).

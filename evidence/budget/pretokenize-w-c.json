@@ -1,10 +1,10 @@
 {
  "run_ref": "pretokenize-w-c",
  "gpu_type": "CPU хоста (GPU не задействована)",
- "gpu_hours_estimate": 0,
+ "gpu_hours_estimate": 0.02,
  "usd_estimate": 0,
  "limit_usd": 0.5,
- "budget_method": "претокенизация W/C в пакеты T=8192 (uint32) + обучение BPE 160K — CPU-работа хоста, GPU-часов 0; лимит формальный (электричество)",
+ "budget_method": "CPU-прогон (GPU 0): претокенизация W/C. Калибровка AD-8 (arXiv 2412.19437, 343 TFLOP/s) неприменима к CPU — оценка консервативна, лимит формальный.",
  "stop_rule": "неприменимо (CPU-прогон, ограничен --limit-mb на пробе)",
  "created_at": "2026-09-30T16:10:00+03:00",
  "approved_by": "architect"

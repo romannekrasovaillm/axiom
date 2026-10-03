@@ -2132,7 +2132,13 @@ def train(
     def loss_fn(params, batch):
         return model.compute_loss(params, cfg, batch, chunk_size=train_config.chunk_size)
 
-    if train_config.grad_checkpointing:
+    # Coarse-обёртка поверх ВСЕГО loss применяется, только когда модельный
+    # уровень не несёт свою remat-политику: послойный ``per_layer`` живёт
+    # внутри ``compute_loss``, а вложенный в него внешний ``jax.checkpoint``
+    # XLA инлайнит вместе со всеми внутренними remat-границами — компилированный
+    # граф совпадает с нематериализованным побайтово (OOM 888 ГиБ на пилоте
+    # GB10 03.10.2026 при байт-идентичном hlo_rematerialization-отчёте).
+    if train_config.grad_checkpointing and cfg.grad_ckpt_policy == "none":
         policy = _checkpoint_policy(train_config.grad_checkpointing_policy)
         loss_fn = jax.checkpoint(loss_fn, policy=policy)
 

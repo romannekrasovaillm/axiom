@@ -712,6 +712,57 @@ def test_l10_grad_checkpointing_keeps_numerics():
     assert tolerance < 1e-5, f"remat разошёлся с обычным шагом на {tolerance}"
 
 
+def test_l11_per_layer_policy_skips_outer_coarse_wrap(monkeypatch):
+    """L-11: модельная политика ``per_layer`` отменяет внешнюю coarse-обёртку.
+
+    Вложение ``jax.checkpoint``(coarse) поверх послойных remat внутри
+    ``compute_loss`` приводит к тому, что XLA инлайнит внутренние remat —
+    компилированный граф совпадает с нематериализованным (OOM 888 ГиБ на
+    пилоте GB10 03.10.2026). Обёртка применяется только при политике ``none``.
+    """
+    import dataclasses
+
+    cfg, pool = parity_setup(steps=1)
+    cfg = dataclasses.replace(cfg, grad_ckpt_policy="per_layer")
+    calls: list[str] = []
+    real = tl._checkpoint_policy
+
+    def spy(name):
+        calls.append(name)
+        return real(name)
+
+    monkeypatch.setattr(tl, "_checkpoint_policy", spy)
+    result = tl.train(
+        cfg,
+        batched(pool),
+        train_config=tl.TrainConfig(steps=1, lr=1e-2, seed=7, grad_checkpointing=True),
+        budget=free_budget(),
+    )
+    assert result.steps_done == 1
+    assert calls == [], f"coarse-обёртка применилась поверх per_layer: {calls}"
+
+
+def test_l11_none_policy_keeps_outer_coarse_wrap(monkeypatch):
+    """L-11: при политике ``none`` coarse-обёртка по флагу остаётся."""
+    cfg, pool = parity_setup(steps=1)
+    calls: list[str] = []
+    real = tl._checkpoint_policy
+
+    def spy(name):
+        calls.append(name)
+        return real(name)
+
+    monkeypatch.setattr(tl, "_checkpoint_policy", spy)
+    result = tl.train(
+        cfg,
+        batched(pool),
+        train_config=tl.TrainConfig(steps=1, lr=1e-2, seed=7, grad_checkpointing=True),
+        budget=free_budget(),
+    )
+    assert result.steps_done == 1
+    assert calls == ["full"], f"coarse-обёртка потерялась при политике none: {calls}"
+
+
 def test_l10_wsd_schedule_reaches_the_loop():
     """В цикле действует WSD: decay последних 20% опускает LR ниже пика."""
     cfg, pool = parity_setup(steps=20)

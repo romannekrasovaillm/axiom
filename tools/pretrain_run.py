@@ -42,6 +42,7 @@ bf16-параметры при fp32-мастере, grad-checkpointing для ``
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import platform
@@ -68,6 +69,13 @@ DEFAULT_SHARD_SUBDIR = "datasets/axiom-pretrain-l3"
 
 #: Подкаталог прогонов на каноническом диске (вне git: журналы и чекпойнты).
 DEFAULT_RUN_SUBDIR = "runs/pretrain-l3"
+
+#: Корпусной BPE (``tools/bpe_train.py``) в корне шард-набора: артефакт и
+#: манифест с его sha256.  Тот же файл, чей хеш пиннится ``net/config.json``
+#: (AD-4) и которым размечены ``tokens/*.bin``.
+CORPUS_TOKENIZER_SUBDIR = "tokenizer"
+CORPUS_TOKENIZER_FILE = "tokenizer.model"
+CORPUS_TOKENIZER_MANIFEST = "tokenizer-manifest.json"
 
 #: Пресеты, для которых grad-checkpointing обязателен (урок OOM 956 ГиБ).
 GRAD_CHECKPOINT_REQUIRED = (sft_stage.L3_FULL_PRESET,)
@@ -249,34 +257,153 @@ def backend_block(tokenizer, cfg, repo_root: Optional[Path]) -> dict[str, Any]:
     return block
 
 
+class CorpusTokenizer:
+    """Корпусной BPE (``tools/bpe_train.py``) для путей претрейна.
+
+    Обёртка над ``tokenizers.Tokenizer`` (Rust) — **тем же** словарём, которым
+    размечены ``tokens/*.bin`` (``tools/pretokenize.py``).  Сырой путь обязан
+    кодировать текст им, а не скелетной заглушкой ``net/tokenizer.py``: id
+    заглушки лежат в другом словаре, поэтому модель читала бы embedding по
+    неверным индексам (наблюдался NaN лосса на packed-миксе).  ``vocab_hash``
+    возвращает sha256 файла-артефакта — то же значение, что пин
+    ``net/config.json:tokenizer_hash`` и ``tokenizer_hash`` манифеста (AD-4),
+    поэтому сверка с пином идёт по префиксу.
+    """
+
+    def __init__(self, tokenizer: Any, *, vocab_hash: str, vocab_size: int, merges: int):
+        self._tokenizer = tokenizer
+        self._vocab_hash = str(vocab_hash)
+        self.vocab_size = int(vocab_size)
+        #: Число мерджей (int, в отличие от списка у ``BPETokenizer``) — из
+        #: манифеста, для журнала; минус паддинг словаря под 160K.
+        self.merges = int(merges)
+
+    def encode(self, text: str) -> list[int]:
+        return [int(token) for token in self._tokenizer.encode(text).ids]
+
+    def vocab_hash(self) -> str:
+        return self._vocab_hash
+
+
+def _file_sha256(path: Path, chunk: int = 1 << 20) -> str:
+    """sha256 файла (потоково) — то же значение, что ``tokenizer_hash`` (AD-4)."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for block in iter(lambda: handle.read(chunk), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def load_corpus_tokenizer(
+    shard_root: Path, *, pinned: str
+) -> Optional[CorpusTokenizer]:
+    """Корпусной BPE из ``<shard-root>/tokenizer``; ``None`` — файла нет.
+
+    Артефакт ``tokenizer.model`` (HF ``tokenizers`` json) + манифест рядом.
+    Сверка fail-closed: хеш файла обязан совпасть с ``tokenizer_hash`` манифеста
+    и с пином ``net/config.json`` (ADR-4), иначе подмена токенизатора молча
+    запрещена — id поехали бы по чужому словарю, а лосс выглядел бы нормально.
+    Отсутствие артефакта — не ошибка: стадия честно откатывается на скелетную
+    заглушку с её собственным гейтом (поведение прежних смоуков).
+    """
+    directory = Path(shard_root) / CORPUS_TOKENIZER_SUBDIR
+    artifact = directory / CORPUS_TOKENIZER_FILE
+    if not artifact.is_file():
+        return None
+    actual = _file_sha256(artifact)
+    manifest: dict[str, Any] = {}
+    manifest_path = directory / CORPUS_TOKENIZER_MANIFEST
+    if manifest_path.is_file():
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise StageRefused(
+                f"манифест корпусного токенизатора не разбирается: {manifest_path}: {exc}"
+            ) from exc
+        declared = str(manifest.get("tokenizer_hash") or "")
+        if declared and declared != actual:
+            raise StageRefused(
+                f"tokenizer_hash артефакта {actual[:16]}… ≠ манифеста "
+                f"{declared[:16]}… — файл изменён после упаковки (ADR-4)"
+            )
+    if not sft_stage.tokenizer_hash_matches(actual, pinned):
+        raise StageRefused(
+            f"корпусной токенизатор {actual[:16]}… не совпал с пином "
+            f"net/config.json {str(pinned)[:16]}…: подмена токенизатора молча "
+            "запрещена (ADR-4) — пересоберите tokenizer/ каноническим BPE или "
+            "уберите его из корня шард-набора"
+        )
+    try:
+        from tokenizers import Tokenizer
+    except ImportError as exc:  # pragma: no cover — окружение без библиотеки
+        raise StageRefused(
+            "нет библиотеки tokenizers для загрузки корпусного BPE: pip install tokenizers"
+        ) from exc
+    try:
+        tokenizer = Tokenizer.from_file(str(artifact))
+    except Exception as exc:  # нечитаемый артефакт — отказ, а не молчаливый откат
+        raise StageRefused(
+            f"корпусной токенизатор не читается ({type(exc).__name__}): {exc}"
+        ) from exc
+    vocab_size = int(manifest.get("vocab_size") or tokenizer.get_vocab_size())
+    merges = int(manifest.get("merges") or max(0, vocab_size - 4 - 256))
+    return CorpusTokenizer(
+        tokenizer, vocab_hash=actual, vocab_size=vocab_size, merges=merges
+    )
+
+
 def build_tokenizer_and_config(args: argparse.Namespace) -> tuple[Any, Any, dict[str, Any]]:
     """Пиннутый токенизатор + конфиг скелета с покрывающим словарём.
 
-    Словарь модели выводится из фактически испускаемых id канонического BPE
-    (как в стадии SFT): пресет — масштаб, а не словарь, и молча подставить
-    туда чужой размер значило бы читать embedding по неверным индексам.
+    Приоритет — корпусной BPE ``<shard-root>/tokenizer`` (``tools/bpe_train.py``):
+    он же пиннится ``net/config.json`` и им размечены данные.  Найден и сходится
+    с пином — сырой путь кодирует текст тем же словарём, что packed-путь; найден,
+    но не сходится — блокирующий отказ.  Файла нет — прежнее поведение:
+    скелетная заглушка ``net/tokenizer.py`` с собственным гейтом.  Словарь модели
+    выводится из фактически испускаемых id загруженного токенизатора (пресет —
+    масштаб, а не словарь): иначе embedding читался бы по неверным индексам.
     """
-    tokenizer, tokenizer_hash = sft_stage.canonical_tokenizer()
-    max_id = max(tokenizer._merge_id.values()) if tokenizer._merge_id else 0
+    pinned = sft_stage.config_tokenizer_pin()
+    paths = resolve_paths(args)
+    streams = tuple(name.strip() for name in getattr(args, "streams", "W,C").split(",") if name.strip())
+    # Packed-путь берёт токенизатор из манифестов tokens/ (``_packed_tokenizer_pin``)
+    # и этот оверрайд не использует — не трогаем его и не подменяем ему словарь.
+    packed = resolve_packed(args, paths["tokens_root"], streams)
+    corpus = None if packed else load_corpus_tokenizer(paths["shard_root"], pinned=pinned)
+    if corpus is not None:
+        tokenizer = corpus
+        tokenizer_hash = tokenizer.vocab_hash()
+        max_id = max(0, int(tokenizer.vocab_size) - 1)
+        source = (
+            "corpus BPE tools/bpe_train.py (<shard-root>/tokenizer) — тот же "
+            "словарь, которым размечены tokens/*.bin"
+        )
+    else:
+        tokenizer, tokenizer_hash = sft_stage.canonical_tokenizer()
+        max_id = max(tokenizer._merge_id.values()) if tokenizer._merge_id else 0
+        source = (
+            "net/tokenizer.py canonical — синтетическая заглушка скелета "
+            "(не корпусной BPE 160K); <shard-root>/tokenizer отсутствует"
+        )
     max_emitted = max(3 + 256 - 1, max_id)
     vocab_size = 1 << max(10, int(max_emitted).bit_length())
     cfg = sft_stage.build_model_config(vocab_size, args.model_preset, qat_weights=False)
-    pinned = sft_stage.config_tokenizer_pin()
+    merges = tokenizer.merges if isinstance(tokenizer.merges, int) else len(tokenizer.merges)
     info = {
         "hash": tokenizer_hash,
-        "source": "net/tokenizer.py canonical — синтетическая заглушка скелета "
-                  "(не корпусной BPE 160K)",
+        "source": source,
         "vocab_size": tokenizer.vocab_size,
-        "merges": len(tokenizer.merges),
+        "merges": int(merges),
         "max_emitted_id": int(max_emitted),
         "model_vocab_size": int(vocab_size),
         "config_pin": pinned or None,
         "matches_config_pin": sft_stage.tokenizer_hash_matches(tokenizer_hash, pinned),
         "note": (
-            "заглушка скелета объявляет собственный хеш; пин net/config.json "
-            "описывает корпусной BPE 160K и сверяется только для пресета "
-            "l3-full против токенизатора, которым размечены данные (packed). "
-            "модельный vocab покрывает все испускаемые id заглушки"
+            "модельный vocab покрывает все испускаемые id загруженного "
+            "токенизатора (макс. id → ближайшая степень двойки): для корпусного "
+            "BPE 160K это 262144, тогда как packed-путь берёт vocab точным из "
+            "манифеста tokens/ (160000) — расхождение путей осознанное и видно "
+            "в журнале"
         ),
     }
     return tokenizer, cfg, info
@@ -940,6 +1067,7 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
         "decay_start": decay_start,
         "grad_checkpointing": bool(grad_checkpointing),
         "grad_checkpointing_policy": args.grad_checkpointing_policy,
+        "grad_ckpt_policy": getattr(cfg, "grad_ckpt_policy", None),
         "param_dtype": args.param_dtype,
         "checkpoint_every": args.checkpoint_every,
         "checkpoint_every_min": args.ckpt_every_min,

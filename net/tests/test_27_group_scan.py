@@ -213,11 +213,13 @@ def test_forward_parity(use_attnres):
 
 
 def test_forward_parity_output_modes():
-    """The scanned hidden state and QB term match the unrolled ones too."""
+    """The full output contract matches too: all three slots — logits, hidden
+    state and QB term — come back in the same order from the scanned and the
+    unrolled backbone (``emit_logits`` + ``return_hidden`` + ``collect_qb``)."""
     cfg = _scan_cfg()
     params = model.init_params(jr.PRNGKey(0), cfg)
     ids = _ids(cfg)
-    kw = dict(chunk_size=16, emit_logits=False, return_hidden=True, collect_qb=True)
+    kw = dict(chunk_size=16, emit_logits=True, return_hidden=True, collect_qb=True)
     on = model.forward(params, _with_flag(cfg, True), ids, **kw)
     off = model.forward(params, _with_flag(cfg, False), ids, **kw)
     assert len(on) == 3 and len(off) == 3

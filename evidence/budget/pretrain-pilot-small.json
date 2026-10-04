@@ -1,0 +1,12 @@
+{
+ "run_ref": "pretrain-pilot-small",
+ "gpu_type": "GB10 / DGX Spark (стенд, окна)",
+ "gpu_hours_estimate": 30,
+ "usd_estimate": 0,
+ "limit_usd": 0.5,
+ "budget_method": "Endurance-пилот конвейера на small-пресете (l3-full заблокирован стеной графа ~896 ГиБ, см. docs/RESULTS-2026-10-03.ru.md; развязка — chunked KDA backward, очередь дельт). Цель: длительный прогон реального датапута W/C с resume/decay/метриками/чекпойнтами на стенде без аренды. Профиль памяти small@8192 верифицирован Кими (3 шага, 2.8-4.2 c/шаг). Калибровка AD-8 (arXiv 2412.19437). XLA_PYTHON_CLIENT_MEM_FRACTION<=0.25 + PREALLOCATE=false (рецепт earlyoom, journalctl -u earlyoom 13:02 и 15:38).",
+ "stop_rule": "stop по target_tokens 0.5B или limit; resume между окнами",
+ "created_at": "2026-10-04T00:30:00+03:00",
+ "approved_by": "architect",
+ "target_tokens": 500000000
+}

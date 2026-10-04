@@ -217,6 +217,22 @@ class ModelConfig:
     # ``chunk_size``, so there is no second knob to keep in sync.
     kda_chunked_backward: bool = False
 
+    # --- group-scan of the layer stack (host-RAM of the JIT compile) --------
+    # The backbone is periodic ``[K,K,K,M]`` (config.py invariant below): one
+    # unrolled graph of 24 distinct layer bodies makes XLA trace, lower and
+    # compile 24 bodies (host spike > 250 GB at l3-full@8192, D-8 report
+    # hr-073849-05).  ``True`` collapses the identical tail groups into a
+    # ``jax.lax.scan`` over one shared body, so the host compile sees O(1)
+    # bodies instead of O(num_layers) — the *device* memory plan is unchanged.
+    # The switch is read by ``net/model.py`` (``forward`` ->
+    # ``_group_scan_units``); ``False`` builds the pre-delta unrolled graph
+    # bit-for-bit and is the parity reference the tests pin.  The schema
+    # default is ``True`` — the flag is a mechanism of the model, not an
+    # opt-in — while a config that cannot scan (a single group, or a
+    # heterogeneous mode layout) falls back to the unrolled path with a
+    # journal line, never a wrong graph.
+    scan_layers: bool = True
+
     def as_dict(self) -> dict:
         return dataclasses.asdict(self)
 
@@ -273,6 +289,16 @@ def validate_config(cfg: ModelConfig) -> None:
     assert isinstance(cfg.kda_chunked_backward, bool), (
         "kda_chunked_backward must be a bool (False = pre-delta graph), "
         f"got {cfg.kda_chunked_backward!r}"
+    )
+
+    # Group-scan of the layer stack: a plain on/off switch read by
+    # ``net/model.py``.  A non-bool would be silently truthy/falsy at the gate
+    # and flip the *host compile* shape by accident (the graph stays correct,
+    # but the /6 reduction disappears), so the declared value has to be a real
+    # bool.
+    assert isinstance(cfg.scan_layers, bool), (
+        "scan_layers must be a bool (False = unrolled parity graph), "
+        f"got {cfg.scan_layers!r}"
     )
 
     # Hierarchical pool (ADR-012): the modes are declared, and a consumer

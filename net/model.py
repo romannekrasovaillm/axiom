@@ -14,11 +14,18 @@ Composition (MODEL-L3-SKELETON.md section 1):
 
 from __future__ import annotations
 
+import logging
 import math
 from typing import NamedTuple
 
 import jax
 import jax.numpy as jnp
+
+#: Journal line the group-scan emits when a declared switch cannot be honoured
+#: (a single group, or a pool layout the scan cannot carry).  The fallback is
+#: the unrolled path, so the graph stays correct — the line records *why* the
+#: host-compile saving did not materialise.
+_log = logging.getLogger(__name__)
 
 #: Per-layer remat policies of the backbone loop, declared in
 #: ``net/config.json`` as ``grad_ckpt_policy`` (spine AD-9 / guard C-035 style:
@@ -83,6 +90,72 @@ def _layer_is_dense(cfg: ModelConfig, index: int) -> bool:
 def dense_moe_split(cfg: ModelConfig) -> tuple[int, int]:
     """(dense, latent-MoE) layer counts — (1, 23) for the full skeleton."""
     return cfg.moe_dense_layers, cfg.num_layers - cfg.moe_dense_layers
+
+
+#: Layers per group-scan unit — one ``[KDA, KDA, KDA, MLA]`` block
+#: (``net/config.py``'s ``num_layers % 4 == 0`` invariant).
+_LAYERS_PER_UNIT = 4
+
+
+def _group_scan_units(cfg: ModelConfig) -> tuple[int, str] | None:
+    """Plan for the group-scan of the layer stack, or ``None`` to unroll.
+
+    Returns ``(first_unit, mode)`` when the repeated tail groups can be run by
+    one ``jax.lax.scan`` body: the leading ``first_unit`` units stay in python
+    (they hold the one dense-MLP layer, ``net/model.py`` section 1) and the
+    units ``first_unit .. num_layers/4 - 1`` share a body.  Every guard below
+    that says "cannot" only *loses the host-compile saving* — the unrolled
+    path is the same arithmetic — so a rejected plan is a journal warning, not
+    an error.
+
+    Guards (each is a structural premise of the scan, not a preference):
+
+    * ``scan_layers`` off → the unrolled parity-reference path;
+    * ``num_layers % 4`` → no whole ``[K,K,K,M]`` units to scan;
+    * ``first_unit >= num_units`` → a single unit, nothing repeats;
+    * heterogeneous ``mla_layer_modes`` over the scanned units → the shared
+      body would have to branch on a per-iteration mode (a scan body cannot
+      specialise per iteration without a host callback);
+    * a live candidate pool (``not attn_dense_reference`` **and**
+      ``mla_pool_size > 0``): the pool is a fixed-shape pytree carried across
+      the scan, but ``sparse_union_attention`` flips it between ``None``
+      (criterion-13 fast path, merged layer) and a built pool, so its
+      *structure* is not stable across iterations.  Under the dense oracle the
+      pool is never built (``apply_with_pool`` returns it untouched), which is
+      exactly the pinned ``net/config.json`` layout.
+    """
+    if not bool(getattr(cfg, "scan_layers", False)):
+        return None
+    if int(cfg.num_layers) % _LAYERS_PER_UNIT != 0:
+        return None
+    n_units = int(cfg.num_layers) // _LAYERS_PER_UNIT
+    first_unit = -(-int(cfg.moe_dense_layers) // _LAYERS_PER_UNIT)  # ceil
+    if first_unit >= n_units:
+        return None
+
+    if not cfg.attn_dense_reference and int(cfg.mla_pool_size) > 0:
+        _log.warning(
+            "group-scan: candidate pool is live (attn_dense_reference=false, "
+            "mla_pool_size=%d); the pool's pytree structure is not stable across "
+            "scan iterations — falling back to the unrolled path",
+            cfg.mla_pool_size,
+        )
+        return None
+
+    modes = {mla_mod.layer_mode(cfg, u) for u in range(first_unit, n_units)}
+    if len(modes) != 1:
+        _log.warning(
+            "group-scan: heterogeneous MLA modes over units %d..%d (%s) — "
+            "falling back to the unrolled path",
+            first_unit, n_units - 1, sorted(modes),
+        )
+        return None
+    return first_unit, modes.pop()
+
+
+def _stack_leaves(trees) -> object:
+    """Stack a list of identical trees along a new leading axis (per leaf)."""
+    return jax.tree_util.tree_map(lambda *xs: jnp.stack(xs), *trees)
 
 
 def init_params(key, cfg: ModelConfig) -> ModelParams:
@@ -151,6 +224,41 @@ def _block_delta(
     return attn_out + mlp_out, qb, pool
 
 
+def _layer_transition(
+    block: BlockParams,
+    attnres_w,
+    h: jnp.ndarray,
+    pool,
+    prior_deltas: tuple,
+    embed_src: jnp.ndarray,
+    *,
+    cfg: ModelConfig,
+    chunk_size: int,
+    collect_qb: bool,
+    use_attnres: bool,
+    index: int,
+    is_kda: bool,
+    mode: str,
+):
+    """One backbone layer's transition, factored out of :func:`forward`.
+
+    The residual delta plus the AttnRes correction over the *variable-length*
+    prefix (embedding + every prior layer's delta) — the unrolled reference the
+    group-scan reproduces with its masked fixed-shape form.  Returns
+    ``(h_next, delta, qb, pool_next)``; ``qb`` is None unless the layer is a
+    LatentMoE block and ``collect_qb`` is set.
+    """
+    delta, qb, pool_out = _block_delta(
+        block, is_kda, cfg, h, chunk_size, collect_qb, mode, pool
+    )
+    if use_attnres and index > 0:
+        sources = jnp.stack([embed_src, *prior_deltas], axis=0)  # (N, B, T, hidden)
+        corr = attnres_mod.apply_layer(attnres_w, sources)
+    else:
+        corr = 0.0
+    return h + delta + corr, delta, qb, pool_out
+
+
 def forward(
     params: ModelParams,
     cfg: ModelConfig,
@@ -188,6 +296,28 @@ def forward(
             f"ожидается одна из {GRAD_CKPT_POLICIES}"
         )
     remat = grad_ckpt_policy == "per_layer"
+
+    # Group-scan of the repeated `[K,K,K,M]` tail groups (host-compile RAM /6):
+    # declared by ``cfg.scan_layers`` and admitted only when the layout lets one
+    # shared body reproduce the unrolled arithmetic (``_group_scan_units``).
+    # ``None`` (the flag off, or an un-scanable layout) runs the loop below
+    # verbatim — the parity reference.
+    plan = _group_scan_units(cfg)
+    if plan is not None:
+        return _forward_group_scan(
+            params,
+            cfg,
+            input_ids,
+            chunk_size=chunk_size,
+            use_attnres=use_attnres,
+            return_hidden=return_hidden,
+            collect_qb=collect_qb,
+            remat=remat,
+            emit_logits=emit_logits,
+            first_unit=plan[0],
+            mode=plan[1],
+        )
+
     emb = params.embedding[input_ids]  # (B, T, hidden)
     h = emb
     embed_src = emb
@@ -214,15 +344,11 @@ def forward(
         ``h``, this layer's delta, its QB term and the updated pool.
         ``index``/``is_kda``/``mode`` are static and captured by the caller.
         """
-        delta, qb, pool_out = _block_delta(
-            block, is_kda, cfg, h, chunk_size, collect_qb, mode, pool
+        return _layer_transition(
+            block, attnres_w, h, pool, prior_deltas, embed_src,
+            cfg=cfg, chunk_size=chunk_size, collect_qb=collect_qb,
+            use_attnres=use_attnres, index=index, is_kda=is_kda, mode=mode,
         )
-        if use_attnres and index > 0:
-            sources = jnp.stack([embed_src, *prior_deltas], axis=0)  # (N, B, T, hidden)
-            corr = attnres_mod.apply_layer(attnres_w, sources)
-        else:
-            corr = 0.0
-        return h + delta + corr, delta, qb, pool_out
 
     for i, block in enumerate(params.layers):
         is_kda = _layer_is_kda(i)
@@ -255,6 +381,159 @@ def forward(
     if collect_qb:
         qb_mean = jnp.stack(qb_losses).mean() if qb_losses else jnp.zeros(())
         out.append(qb_mean)
+    return out[0] if len(out) == 1 else tuple(out)
+
+
+def _forward_group_scan(
+    params: ModelParams,
+    cfg: ModelConfig,
+    input_ids: jnp.ndarray,
+    *,
+    chunk_size: int,
+    use_attnres: bool,
+    return_hidden: bool,
+    collect_qb: bool,
+    remat: bool,
+    emit_logits: bool,
+    first_unit: int,
+    mode: str,
+) -> jnp.ndarray | tuple:
+    """``forward`` with the repeated ``[K,K,K,M]`` tail run by one ``lax.scan``.
+
+    Same arithmetic, same order, same parameters as the loop in :func:`forward`
+    — the host-compile working set shrinks because XLA reuses one unit body's
+    buffers across the scanned units instead of tracing a distinct region per
+    layer (``tools/bench_block_merge.py`` measures the per-record cost flat in
+    the layer count inside a scan).  The plan's guards (``_group_scan_units``)
+    reject every layout the shared body cannot reproduce, so reaching here means
+    the scanned units are uniform: all past the dense-MLP prefix (hence all
+    LatentMoE), one MLA ``mode``, and a candidate pool whose pytree structure
+    does not change across iterations (under the pinned ``attn_dense_reference``
+    the pool is the ``None`` it started as).
+
+    AttnRes is the one piece that is *not* a fixed-shape tensor in the unrolled
+    loop: layer ``i`` mixes the embedding with every earlier layer's delta, an
+    ``(i+1, B, T, hidden)`` stack rebuilt each step.  The scan carries a
+    fixed-shape ``sources`` buffer of ``(num_layers+1, B, T, hidden)`` (slot 0
+    the embedding, slot ``k+1`` layer ``k``'s delta) and reads the live prefix
+    with :func:`net.attnres.apply_layer_masked`, which pushes the not-yet-written
+    slots to ``-inf`` before the softmax — bit-for-bit the variable-length
+    :func:`net.attnres.apply_layer` over the same prefix.
+    """
+    n_units = int(cfg.num_layers) // _LAYERS_PER_UNIT
+    units = list(range(first_unit, n_units))
+    prefix_layers = first_unit * _LAYERS_PER_UNIT
+
+    emb = params.embedding[input_ids]  # (B, T, hidden)
+    h = emb
+    b, t = input_ids.shape
+    sources = jnp.zeros((cfg.num_layers + 1, b, t, cfg.hidden), dtype=emb.dtype)
+    sources = sources.at[0].set(emb)
+    pool = None  # ADR-012 candidate pool — ``None`` under the dense oracle
+    qb_terms: list[jnp.ndarray] = []
+    prefix_deltas: list[jnp.ndarray] = []
+
+    for i in range(prefix_layers):
+        block = params.layers[i]
+        is_kda = _layer_is_kda(i)
+        lm = "full" if is_kda else mla_mod.layer_mode(cfg, _mla_ordinal(i))
+
+        def step(
+            block, attnres_w, h, pool, prior_deltas, embed_src,
+            _i=i, _is_kda=is_kda, _mode=lm,
+        ):
+            return _layer_transition(
+                block, attnres_w, h, pool, prior_deltas, embed_src,
+                cfg=cfg, chunk_size=chunk_size, collect_qb=collect_qb,
+                use_attnres=use_attnres, index=_i, is_kda=_is_kda, mode=_mode,
+            )
+
+        if remat:
+            step = jax.checkpoint(step)
+        attnres_w = params.attnres.w[i] if use_attnres else None
+        h, delta, qb, pool = step(
+            block, attnres_w, h, pool, tuple(prefix_deltas), emb
+        )
+        if qb is not None:
+            qb_terms.append(qb)
+        prefix_deltas.append(delta)
+        sources = sources.at[i + 1].set(delta)
+
+    def layer(u: int, s: int) -> BlockParams:
+        return params.layers[u * _LAYERS_PER_UNIT + s]
+
+    # One stack per sub-layer and field (a NamedTuple parameter tree cannot be
+    # indexed on a stacked axis): norm vectors (U, 4, hidden), the three KDA
+    # attention trees and the one MLA tree stacked over units, the four MLP
+    # trees, and the unit ordinals for the AttnRes pseudo-query lookup.
+    xs = (
+        jnp.stack([jnp.stack([layer(u, s).norm_attn for s in range(4)]) for u in units]),
+        jnp.stack([jnp.stack([layer(u, s).norm_mlp for s in range(4)]) for u in units]),
+        _stack_leaves([layer(u, 0).attn for u in units]),
+        _stack_leaves([layer(u, 1).attn for u in units]),
+        _stack_leaves([layer(u, 2).attn for u in units]),
+        _stack_leaves([layer(u, 3).attn for u in units]),
+        tuple(_stack_leaves([layer(u, s).mlp for u in units]) for s in range(4)),
+        jnp.asarray(units, dtype=jnp.int32),
+    )
+
+    def body(carry, unit):
+        h, pool, sources, qb_sum = carry
+        (
+            norm_attn, norm_mlp, attn0, attn1, attn2, attn_mla, mlp, u,
+        ) = unit
+        for s, attn_p in enumerate((attn0, attn1, attn2, attn_mla)):
+            is_kda = s != _LAYERS_PER_UNIT - 1
+            index = u * _LAYERS_PER_UNIT + s
+            block = BlockParams(
+                norm_attn=norm_attn[s], attn=attn_p,
+                norm_mlp=norm_mlp[s], mlp=mlp[s],
+            )
+
+            def sub(
+                block, attnres_w, h, pool, sources,
+                _is_kda=is_kda, _index=index, _mode="full" if is_kda else mode,
+            ):
+                delta, qb, pool_out = _block_delta(
+                    block, _is_kda, cfg, h, chunk_size, collect_qb, _mode, pool
+                )
+                if use_attnres:
+                    corr = attnres_mod.apply_layer_masked(
+                        attnres_w, sources, _index + 1
+                    )
+                else:
+                    corr = 0.0
+                return h + delta + corr, delta, qb, pool_out
+
+            if remat:
+                sub = jax.checkpoint(sub)
+            attnres_w = (
+                jnp.take(params.attnres.w, index, axis=0) if use_attnres else None
+            )
+            h, delta, qb, pool = sub(block, attnres_w, h, pool, sources)
+            sources = sources.at[index + 1].set(delta)
+            if collect_qb and qb is not None:
+                qb_sum = qb_sum + qb
+        return (h, pool, sources, qb_sum), None
+
+    carry = (h, pool, sources, jnp.zeros((), dtype=jnp.float32))
+    (h, pool, sources, qb_sum), _ys = jax.lax.scan(body, carry, xs)
+
+    h = rms_norm(h, params.norm_final)
+    out: list = []
+    if emit_logits:
+        out.append(h @ params.embedding.T)
+    if return_hidden:
+        out.append(h)
+    if collect_qb:
+        # The unrolled loop means over every LatentMoE layer's QB term; the scan
+        # split that set into the prefix terms (kept in python) and the scanned
+        # sum, so rebuild the same numerator and divide by the same count.
+        qb_total = qb_sum
+        for term in qb_terms:
+            qb_total = qb_total + term
+        denom = max(int(cfg.num_layers) - int(cfg.moe_dense_layers), 1)
+        out.append(qb_total / denom)
     return out[0] if len(out) == 1 else tuple(out)
 
 

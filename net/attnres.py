@@ -43,3 +43,33 @@ def apply_layer(w_l: jnp.ndarray, sources: jnp.ndarray) -> jnp.ndarray:
     scores = jnp.einsum("d,nbtd->nbt", w_l, keys)  # (N, B, T)
     weights = jax.nn.softmax(scores, axis=0)  # (N, B, T)
     return jnp.einsum("nbt,nbtd->btd", weights, sources)  # (B, T, hidden)
+
+
+def apply_layer_masked(
+    w_l: jnp.ndarray, sources: jnp.ndarray, valid_n: jnp.ndarray
+) -> jnp.ndarray:
+    """Depth attention over a *fixed-shape* source stack, masked to ``valid_n``.
+
+    The group-scan carries the layer deltas in a fixed ``(num_layers, B, T,
+    hidden)`` buffer, so at layer ``index`` only the first ``valid_n = index + 1``
+    entries of that buffer are live (entry 0 is the embedding, entries 1..index
+    are the deltas written so far; the rest are a zero placeholder).  Naively
+    softmaxing over all ``N`` entries would (a) give the placeholder slots
+    nonzero weight and (b) change the normaliser as the scan advances, so the
+    dead slots are pushed to ``-inf`` before the softmax: for a row whose live
+    count is ``valid_n`` the result is bit-for-bit the variable-length
+    :func:`apply_layer` over ``sources[:valid_n]`` (softmax is shift-invariant
+    and the masked weight is exactly ``exp(-inf) = 0``).
+
+    ``valid_n`` is a scalar (a traced ``lax.scan`` carry, one per iteration);
+    it must satisfy ``1 <= valid_n <= N`` (entry 0, the embedding, is always
+    live, which is the same lower bound the unrolled loop relies on).
+    """
+    keys = headwise_rms_norm(sources)  # RMSNorm(k), Eq. 8
+    scores = jnp.einsum("d,nbtd->nbt", w_l, keys)  # (N, B, T)
+    n = jnp.arange(scores.shape[0], dtype=scores.dtype)
+    scores = jnp.where(
+        (n < valid_n)[:, None, None], scores, jnp.finfo(scores.dtype).min
+    )
+    weights = jax.nn.softmax(scores, axis=0)  # (N, B, T)
+    return jnp.einsum("nbt,nbtd->btd", weights, sources)  # (B, T, hidden)

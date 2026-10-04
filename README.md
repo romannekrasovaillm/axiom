@@ -155,3 +155,15 @@ after skeleton results. Pretrain corpus W/C shards downloading; domain dataset v
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+## Окружение (для кодовых агентов)
+
+Python-окружение проекта: **`/home/roman/venv-axiom/bin/python`** (jax[cuda], tokenizers, pytest). Нестандартный путь — не ищи другие venv.
+
+```bash
+# тесты (CPU):
+cd /home/roman/axiom && NET_JAX_BACKEND=cpu ~/venv-axiom/bin/python -m pytest net/tests tools/tests -q
+# GB10 (ssh gb10-fast): ~/venv-axiom/bin/python там же; LD_LIBRARY_PATH=$(ls -d ~/venv-axiom/lib/python3.12/site-packages/nvidia/*/lib | tr '\n' ':')
+```
+
+Долгие прогоны: `setsid nohup ... < /dev/null > log 2>&1 &` (stdin обязательно `/dev/null`, иначе сессия висит).

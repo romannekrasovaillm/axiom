@@ -348,8 +348,20 @@ def _short_conv_chunk(x: jnp.ndarray, w: jnp.ndarray, buf: jnp.ndarray) -> tuple
     return out, new_buf
 
 
-def apply_chunked(params: KDAParams, cfg: ModelConfig, x: jnp.ndarray, chunk_size: int) -> jnp.ndarray:
-    """Run KDA attention over ``(T, hidden)`` in chunks of ``chunk_size``."""
+def apply_chunked(
+    params: KDAParams, cfg: ModelConfig, x: jnp.ndarray, chunk_size: int
+) -> jnp.ndarray:
+    """Run KDA attention over ``(T, hidden)`` in chunks of ``chunk_size``.
+
+    ``cfg.kda_chunked_backward`` selects the backward-pass granularity of the
+    chunk loop (D-8 remainder).  Off, the scan body is built exactly as before
+    and the graph is bit-for-bit the pre-delta one.  On, the body is wrapped in
+    ``jax.checkpoint``, so the affine-transition prefix ``P``/``Q`` of a chunk
+    (``chunk_step``'s ``associative_scan`` — the O(T·H·dk·dk) kit) is recomputed
+    from the chunk's carry during backward instead of being retained for every
+    chunk.  This is the FLA-style chunked delta-rule backward; the forward pass
+    and its numbers are unchanged either way, only what autodiff keeps differs.
+    """
     T = x.shape[0]
     C = chunk_size
     n_chunks = (T + C - 1) // C
@@ -357,6 +369,14 @@ def apply_chunked(params: KDAParams, cfg: ModelConfig, x: jnp.ndarray, chunk_siz
     x_p = jnp.pad(x, ((0, pad), (0, 0))) if pad else x
     x_chunks = x_p.reshape(n_chunks, C, -1)
     carry0 = init_state(cfg)
-    _, out = jax.lax.scan(lambda c, xc: chunk_step(params, cfg, c, xc), carry0, x_chunks)
+
+    def body(carry: KDAState, xc: jnp.ndarray):
+        return chunk_step(params, cfg, carry, xc)
+
+    if cfg.kda_chunked_backward:
+        # Recompute each chunk's trajectory (M, N, P, Q and projections) from
+        # its saved carry in the backward pass rather than retaining them.
+        body = jax.checkpoint(body)
+    _, out = jax.lax.scan(body, carry0, x_chunks)
     out = out.reshape(n_chunks * C, -1)
     return _with_window(out[:T], params, cfg, x)

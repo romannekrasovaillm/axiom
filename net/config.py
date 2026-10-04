@@ -198,6 +198,25 @@ class ModelConfig:
     # (``compute_loss`` -> ``forward``/``mtp_loss``).
     ce_chunk_tokens: int = 0
 
+    # --- chunked KDA backward (D-8 remainder; spine AD-9/C-035 form) --------
+    # ``net/kda.py`` already scans the sequence in chunks of ``chunk_size``, so
+    # the *carries* between chunks are O(chunk)-sized.  The wall is *inside*
+    # ``chunk_step``: ``jax.lax.associative_scan`` materialises the affine
+    # transition prefix ``P`` (C, H, dk, dk) and ``Q`` (C, H, dk, dv) per chunk;
+    # concatenated over the outer scan that is O(T·H·dk·dk) fp32 per layer
+    # (6,44 ГиБ per (H, T, dk, dk) tensor at T=8192), and XLA's own remat pass
+    # keeps ~a dozen copies of it (D-8: 892 ГиБ at T=8192 even with per-layer
+    # remat).  ``True`` wraps the chunk-scan body in ``jax.checkpoint``, so the
+    # backward pass recomputes each chunk's trajectory from its saved carry
+    # (FLA-style delta-rule) instead of retaining every chunk's ``P``/``Q`` —
+    # the live tensor becomes one chunk's ``(chunk_size, H, dk, dk)`` plus the
+    # chunk carries.  ``False`` (the schema default, so a config built in code
+    # keeps the pre-delta graph bit-for-bit) leaves the scan body un-rematted;
+    # ``net/config.json`` declares the pretrain value.  Read by ``net/kda.py``
+    # (``apply_chunked`` -> the scan body); the whole width is the existing
+    # ``chunk_size``, so there is no second knob to keep in sync.
+    kda_chunked_backward: bool = False
+
     def as_dict(self) -> dict:
         return dataclasses.asdict(self)
 
@@ -245,6 +264,15 @@ def validate_config(cfg: ModelConfig) -> None:
     assert isinstance(cfg.ce_chunk_tokens, int) and cfg.ce_chunk_tokens >= 0, (
         "ce_chunk_tokens must be a non-negative integer (0 disables chunking), "
         f"got {cfg.ce_chunk_tokens!r}"
+    )
+
+    # Chunked KDA backward (D-8 remainder): a plain on/off switch read by the
+    # chunk-scan body of ``net/kda.py:apply_chunked``.  A non-bool would be
+    # silently truthy/falsy at the ``if`` and flip the graph by accident, so the
+    # declared value has to be a real bool.
+    assert isinstance(cfg.kda_chunked_backward, bool), (
+        "kda_chunked_backward must be a bool (False = pre-delta graph), "
+        f"got {cfg.kda_chunked_backward!r}"
     )
 
     # Hierarchical pool (ADR-012): the modes are declared, and a consumer

@@ -51,6 +51,7 @@
   "qat_enabled": false,
   "grad_ckpt_policy": "per_layer",
   "ce_chunk_tokens": 1024,
+  "kda_chunked_backward": true,
   "swa_window": 128,
   "swa_share_kda_projections": true,
   "mla_top_k": 512,

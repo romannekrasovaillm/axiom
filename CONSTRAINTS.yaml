@@ -439,3 +439,15 @@ constraints:
     evidence: "tools/check_precision_pinning.py + net/tests/conftest.py: применяет пиннинг и читает обратно jax_default_matmul_precision, jax.devices() и фактическое наличие --xla_gpu_deterministic_ops в XLA_FLAGS процесса; PASS только при политике highest, CUDA-устройстве и флаге детерминизма в гейтовом профиле (ADR-013: без флага A5-манифест не воспроизводится побитово)"
     adr: ADR-010, ADR-013
     owner: архитектор
+
+  - id: C-043
+    name: "AD-12: страж чистоты eval-набора существует и рабоч — selftest с мутантами (красный на пересечении, зелёный на чистой синтетике); без leak_check вердикт по набору не выносится"
+    type: command_succeeds
+    command: 'python3 tools/check_eval_leak.py --selftest'
+    timeout_secs: 60
+    severity: high
+    scope: case
+    kind: structural
+    evidence: "tools/check_eval_leak.py → selftest: подстрока-пересечение и 12-граммовое окно на синтетических корпусах дают FAIL, чистая пара — PASS; нечитаемый вход — FAIL (fail-closed). Поведенческий прогон на реальных eval-наборах — при их сборке (PENDING-EVIDENCE в AD-12)"
+    adr: ADR-023
+    owner: архитектор

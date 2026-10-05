@@ -23,6 +23,9 @@ from .verifier import arch_ml_bin, arch_ml_build_hash
 
 CASE_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_DATA_DIR = CASE_DIR / "env" / "data"
+#: Пин токенизатора со стенда (E-3.1): дефолт документации; при ``--adapter jaxlm``
+#: путь указывается явно — стендовый пин не подставляется молча.
+DEFAULT_TOKENIZER_PATH = Path("/home/roman/axiom-run/raw/tokenizer/tokenizer-manifest.json")
 
 
 def _load_task(path: Path) -> dict:
@@ -110,20 +113,58 @@ def cmd_reward(args) -> int:
     return 0
 
 
+def _build_model_factory(args):
+    """Фабрика адаптера §13 для calibrate по ``--adapter`` (None — заглушка).
+
+    ``stub`` → None (прежнее поведение). ``jaxlm`` требует ``--checkpoint`` и
+    явный ``--tokenizer-path``: без них — понятная ошибка, а не молчаливый
+    прогон. Импорт ``JaxLMAdapter`` (и через него ``jax``/``net``) — ленивый,
+    внутри фабрики: CPU-ветки без ML-стека не падают на импорте.
+    """
+    if args.adapter == "stub":
+        return None
+    if args.adapter != "jaxlm":  # защита от расширения choices без ветки
+        raise ValueError(f"неизвестный адаптер: {args.adapter!r}")
+    if args.checkpoint is None:
+        raise ValueError("--adapter jaxlm требует --checkpoint DIR (каталог шага чекпойнта)")
+    if args.tokenizer_path is None:
+        raise ValueError(
+            "--adapter jaxlm требует явный --tokenizer-path PATH "
+            f"(пин стенда: {DEFAULT_TOKENIZER_PATH})"
+        )
+    checkpoint = args.checkpoint
+    tokenizer_path = args.tokenizer_path
+    config_path = args.config
+    model_seed = args.model_seed
+
+    def factory():
+        from .jaxlm_adapter import JaxLMAdapter
+
+        config = config_path or str(CASE_DIR / "net" / "config.json")
+        return JaxLMAdapter(
+            checkpoint, config, tokenizer_path=tokenizer_path, seed=model_seed,
+        )
+
+    return factory
+
+
 def cmd_calibrate(args) -> int:
+    model_factory = _build_model_factory(args)
+    model_name = args.model_name or args.adapter
     report = calibrate_mod.calibrate(
         args.tasks,
         args.case,
         args.out,
-        model_name=args.model_name,
+        model_name=model_name,
         model_seed=args.model_seed,
         bin=arch_ml_bin(),
+        model_factory=model_factory,
     )
     _print_json({
-        "out": str(args.out / f"calibration-{args.model_name}.json"),
+        "out": str(args.out / f"calibration-{model_name}.json"),
         "pass_rate": report["aggregate"]["pass_rate"],
         "ready": report["readiness"]["ready"],
-        "tasks": len(report["matrix"][args.model_name]),
+        "tasks": len(report["matrix"][model_name]),
     })
     return 0
 
@@ -159,11 +200,30 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--hidden-constraints", type=Path, default=None)
     r.set_defaults(fn=cmd_reward)
 
-    c = sub.add_parser("calibrate", help="кальбровка на заглушке → отчёт в evidence")
+    c = sub.add_parser("calibrate", help="кальбровка (заглушка | jaxlm) → отчёт в evidence")
     c.add_argument("--tasks", type=Path, required=True, help="каталог с public/ и holdout/")
     c.add_argument("--case", type=Path, default=CASE_DIR)
     c.add_argument("--out", type=Path, required=True, help="каталог evidence/")
-    c.add_argument("--model-name", default="stub")
+    c.add_argument(
+        "--adapter", choices=("stub", "jaxlm"), default="stub",
+        help="источник эпизодов: stub (детерминированная заглушка) | jaxlm (реальная модель §13)",
+    )
+    c.add_argument(
+        "--checkpoint", type=Path, default=None,
+        help="каталог чекпойнта (обязателен для --adapter jaxlm)",
+    )
+    c.add_argument(
+        "--tokenizer-path", type=Path, default=None,
+        help=(
+            "путь к пиннутому токенизатору; для --adapter jaxlm указывать явно "
+            f"(пин стенда: {DEFAULT_TOKENIZER_PATH})"
+        ),
+    )
+    c.add_argument(
+        "--config", default=None,
+        help="ModelConfig JSON для --adapter jaxlm (по умолчанию net/config.json кейса)",
+    )
+    c.add_argument("--model-name", default=None, help="имя модели в отчёте (по умолчанию = --adapter)")
     c.add_argument("--model-seed", type=int, default=7)
     c.set_defaults(fn=cmd_calibrate)
     return p

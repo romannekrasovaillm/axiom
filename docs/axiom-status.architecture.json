@@ -1,0 +1,401 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "axiom — промежуточные итоги 05.10: статус, архитектура L3, обучение в Spine AI/ML",
+    "output": "diagrams/axiom-status.html",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "pipeline",
+        "label": "Статус конвейера",
+        "focus": [
+          "data-wcq",
+          "tokenizer",
+          "pretrain-loop",
+          "ckpt",
+          "sft-in",
+          "sft-stage",
+          "rl-arms",
+          "rl-env",
+          "k3"
+        ],
+        "note": "Данные → претрейн ногами на GB10 → чекпойнты → SFT → RL в две методологии → арена против K3. ✓ готово, ▶ идёт, ○ план."
+      },
+      {
+        "id": "model",
+        "label": "Архитектура L3",
+        "focus": [
+          "tokenizer",
+          "l3-skeleton",
+          "ckpt",
+          "pretrain-loop"
+        ],
+        "note": "Скелет L3: narrow-but-deep, KDA + MLA + LatentMoE; QAT MXFP4 с SFT; токенизатор v2 запиннен полным sha256."
+      },
+      {
+        "id": "harness",
+        "label": "Spine AI/ML harness",
+        "focus": [
+          "gb10",
+          "arch-ml",
+          "rl-env",
+          "guard-reward",
+          "guard-leak",
+          "guard-sft"
+        ],
+        "note": "arch-ml как среда и верификатор (TITO); поведенческие стражи с мутантами; fail-closed; зоны ADR-028."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "data-wcq",
+      "type": "database",
+      "label": "Корпус W/C/Q 17,84B",
+      "sublabel": "✓ шард-стрим · ротация 500М · sha256 verified",
+      "tag": "ADR-021",
+      "pos": [
+        80,
+        60
+      ],
+      "size": [
+        220,
+        66
+      ]
+    },
+    {
+      "id": "tokenizer",
+      "type": "backend",
+      "label": "Токенизатор BPE 160K",
+      "sublabel": "✓ v2 16e4a532 — полный sha256 в манифесте",
+      "tag": "ADR-004-amend",
+      "pos": [
+        460,
+        60
+      ],
+      "size": [
+        220,
+        66
+      ]
+    },
+    {
+      "id": "pretrain-loop",
+      "type": "cloud",
+      "label": "Претрейн-луп на GB10",
+      "sublabel": "▶ нога-2: шаг 309/600 · loss 8,19 · тренд ✓",
+      "tag": "RUNBOOK §7",
+      "pos": [
+        840,
+        60
+      ],
+      "size": [
+        230,
+        66
+      ]
+    },
+    {
+      "id": "l3-skeleton",
+      "type": "backend",
+      "label": "Скелет L3 ~1B MoE",
+      "sublabel": "KDA + MLA + LatentMoE · narrow-but-deep",
+      "tag": "ADR-003/019",
+      "pos": [
+        460,
+        220
+      ],
+      "size": [
+        220,
+        66
+      ]
+    },
+    {
+      "id": "ckpt",
+      "type": "database",
+      "label": "Реестр чекпойнтов",
+      "sublabel": "✓ Orbax tree_hash · курсор 300 · нога-1 300/300",
+      "tag": "AD-4",
+      "pos": [
+        840,
+        220
+      ],
+      "size": [
+        230,
+        66
+      ]
+    },
+    {
+      "id": "sft-in",
+      "type": "database",
+      "label": "SFT-вход: v12-normalized",
+      "sublabel": "✓ 44 949 записей · 0/0,14/0 · + env-блок E-2 15%",
+      "tag": "C-044/§8.5",
+      "pos": [
+        460,
+        380
+      ],
+      "size": [
+        220,
+        66
+      ]
+    },
+    {
+      "id": "sft-stage",
+      "type": "backend",
+      "label": "SFT-стадия",
+      "sublabel": "○ полный прогон после 3 ног · QAT MXFP4 on",
+      "tag": "ADR-005",
+      "pos": [
+        840,
+        380
+      ],
+      "size": [
+        230,
+        66
+      ]
+    },
+    {
+      "id": "guard-reward",
+      "type": "backend",
+      "label": "C-039 изоляция награды",
+      "sublabel": "✓ LLM-судья вне контура — проверка кода",
+      "tag": "AD-2",
+      "pos": [
+        460,
+        540
+      ],
+      "size": [
+        220,
+        66
+      ]
+    },
+    {
+      "id": "rl-arms",
+      "type": "cloud",
+      "label": "RL: две ветки-сравнения",
+      "sublabel": "○ laguna (CISPO+LOO) | frognano · health C-045",
+      "tag": "ADR-027",
+      "pos": [
+        840,
+        540
+      ],
+      "size": [
+        230,
+        66
+      ]
+    },
+    {
+      "id": "rl-env",
+      "type": "backend",
+      "label": "Среда v1 на arch-ml",
+      "sublabel": "✓ 40 тестов · лестница L0–L3 · calibrate ✓",
+      "tag": "ENV-V1",
+      "pos": [
+        840,
+        700
+      ],
+      "size": [
+        230,
+        66
+      ]
+    },
+    {
+      "id": "k3",
+      "type": "external",
+      "label": "Kimi K3 — baseline",
+      "sublabel": "holdout-сравнение · равный бюджет (AD-3)",
+      "tag": "AD-1",
+      "pos": [
+        460,
+        700
+      ],
+      "size": [
+        220,
+        66
+      ]
+    },
+    {
+      "id": "gb10",
+      "type": "external",
+      "label": "GB10 / DGX Spark",
+      "sublabel": "▶ одна нагрузка (AD-7) · B3-down · 75 ГиБ",
+      "tag": "ADR-013",
+      "pos": [
+        80,
+        540
+      ],
+      "size": [
+        220,
+        66
+      ]
+    },
+    {
+      "id": "guard-leak",
+      "type": "backend",
+      "label": "C-043 чистота eval",
+      "sublabel": "✓ selftest-мутанты · реальный прогон — PENDING",
+      "tag": "AD-12",
+      "pos": [
+        80,
+        860
+      ],
+      "size": [
+        220,
+        66
+      ]
+    },
+    {
+      "id": "guard-sft",
+      "type": "backend",
+      "label": "C-044 аудитор SFT",
+      "sublabel": "✓ 3 класса + эпизод-семантика · нормализация",
+      "tag": "AD-12",
+      "pos": [
+        460,
+        860
+      ],
+      "size": [
+        220,
+        66
+      ]
+    },
+    {
+      "id": "arch-ml",
+      "type": "external",
+      "label": "arch-ml 0.3.2",
+      "sublabel": "✓ верификатор пиннут build-hash (TITO)",
+      "tag": "ADR-022",
+      "pos": [
+        840,
+        860
+      ],
+      "size": [
+        230,
+        66
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "c1",
+      "from": "data-wcq",
+      "to": "tokenizer",
+      "label": "стрим шардов",
+      "variant": "emphasis",
+      "fromSide": "right",
+      "toSide": "left"
+    },
+    {
+      "id": "c2",
+      "from": "tokenizer",
+      "to": "pretrain-loop",
+      "label": "tokens-v2 · пин хеша",
+      "variant": "emphasis",
+      "fromSide": "right",
+      "toSide": "left"
+    },
+    {
+      "id": "c3",
+      "from": "pretrain-loop",
+      "to": "ckpt",
+      "label": "Orbax + курсор",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDy": 64
+    },
+    {
+      "id": "c4",
+      "from": "l3-skeleton",
+      "to": "pretrain-loop",
+      "label": "forward/backward",
+      "fromSide": "right",
+      "toSide": "left"
+    },
+    {
+      "id": "c5",
+      "from": "ckpt",
+      "to": "sft-stage",
+      "label": "чекпойнт пилота",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDy": 67
+    },
+    {
+      "id": "c6",
+      "from": "sft-in",
+      "to": "sft-stage",
+      "label": "набор + env-блок + leak_check",
+      "variant": "emphasis",
+      "fromSide": "right",
+      "toSide": "left"
+    },
+    {
+      "id": "c7",
+      "from": "sft-stage",
+      "to": "rl-arms",
+      "label": "чекпойнт SFT + env-грамотность",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDy": 67
+    },
+    {
+      "id": "c8",
+      "from": "rl-env",
+      "to": "rl-arms",
+      "label": "пул/синтез раундами",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "c9",
+      "from": "arch-ml",
+      "to": "rl-env",
+      "label": "верификатор = награда",
+      "variant": "emphasis",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "c10",
+      "from": "guard-reward",
+      "to": "rl-arms",
+      "label": "награда без судьи",
+      "fromSide": "right",
+      "toSide": "left"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Статус 05.10",
+      "items": [
+        "Нога-1 претрейна: 300/300, loss 13,54 → 8,12 — resume-механика подтверждена",
+        "Нога-2 идёт: шаг 309+/600, warm restart lr (WSD на новый горизонт)",
+        "Приборы: 526 тестов зелёных · 3 стража C-043/044/045 с мутантами",
+        "Fitness: 45 правил · trace 26/26 · спайн 13 инвариантов"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Решения (ADR)",
+      "items": [
+        "ADR-023: уроки Лагуны → регламенты и стражи (тренд §3.1, бронь предмета, гигиена SFT)",
+        "ADR-027: RL в двух методологиях — ветки laguna | frognano, вердикт МакНемар",
+        "ADR-028: зоны по темам — две равноценные линии в одном репозитории",
+        "ADR-004-амендмент: канон токенизатора = корпусной BPE v2"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Дальше (по решению владельца)",
+      "items": [
+        "Нога-3 (601–900) → SFT-смоук на v12-normalized + env-блок",
+        "Калибровка L0/L1 на реальном чекпойнте → первые числа R1 (коридор pass-rate)",
+        "RL: две ветки последовательно на одной GPU (AD-7) → МакНемар на holdout",
+        "20B-претрейн на аренде H800 — отдельное решение, сейчас строго GB10"
+      ]
+    }
+  ]
+}

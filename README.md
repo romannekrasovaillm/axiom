@@ -10,6 +10,9 @@
   [![license](https://img.shields.io/badge/license-MIT-2ea44f?style=flat-square)](LICENSE)
   [![reports](https://img.shields.io/badge/reports-live_on_Pages-8250df?style=flat-square)](https://romannekrasovaillm.github.io/axiom/)
 
+  🔮 **[Живая статус-визуализация проекта →](https://romannekrasovaillm.github.io/axiom/diagrams/axiom-status.html)**
+  конвейер обучения · архитектура L3 (KDA + MLA + LatentMoE) · Spine AI/ML harness · стражи · промежуточные итоги
+
   **RU:** собственная нейросеть с нуля на JAX — претрейн, SFT, RL, агентные способности и свой
   конвейер обучения. Не адаптация чужих весов. Скелет **L3** (~1B MoE / 20B токенов) обучается
   целиком на одной машине (NVIDIA GB10 / DGX Spark). Каждое решение зафиксировано ADR и проверяется

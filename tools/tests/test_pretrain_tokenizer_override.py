@@ -13,7 +13,10 @@
 * **T-ov2** — хеш не совпал с пином: **блокирующий** отказ (fail-closed), в
   журнале — причина; тихой подмены на заглушку нет;
 * **T-ov3** — файла нет: прежнее поведение — скелетная заглушка;
-* **T-ov4** — артефакт правлен после упаковки (манифест разошёлся): отказ.
+* **T-ov4** — артефакт правлен после упаковки (манифест разошёлся): отказ;
+* **T-ov5** — packed-путь: канон — пин ``net/config.json`` (ADR-004 амендмент
+  п. 2), а не заглушка скелета; расхождение данных с пином — warning в журнале,
+  но не блокировка (механика К2 покрытия id остаётся).
 
 Фикстуры синтетические (``tmp_path``), канонический диск ``~/gb10-shared`` не
 трогается.
@@ -275,3 +278,81 @@ def test_manifest_tamper_refuses(tmp_path: Path, corpus_with_tokenizer: Path):
     with pytest.raises(pretrain_run.StageRefused) as excinfo:
         pretrain_run.build_tokenizer_and_config(_args(root))
     assert "манифест" in str(excinfo.value)
+
+
+# --------------------------------------------------------------------------- #
+# T-ov5: packed-путь — канон из пина net/config.json, не заглушка (ADR-004 амен.)
+# --------------------------------------------------------------------------- #
+
+
+#: Реальный пин канонического корпусного BPE v2 (net/config.json:101, ADR-004).
+CANONICAL_V2 = "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+
+
+def test_config_pin_is_full_sha256():
+    """Пин config.json — полный sha256 корпусного BPE v2 (не обрезанный префикс)."""
+    pin = sft_stage.config_tokenizer_pin()
+    assert pin == CANONICAL_V2
+    assert len(pin) == 64 and all(ch in "0123456789abcdef" for ch in pin)
+
+
+def test_packed_canonical_takes_config_pin():
+    """config-пин объявлен: canonical_hash == пин config.json, matches против него."""
+    canon = pretrain_run.canonical_hash_for_packed(
+        CANONICAL_V2, build_hash="9f8d0309" + "0" * 56, config_pin=CANONICAL_V2
+    )
+    assert canon["canonical_hash"] == CANONICAL_V2
+    assert canon["matches_canonical"] is True
+    assert canon["canonical_source"] == "net/config.json"
+
+
+def test_packed_canonical_mutant_mismatch_warns_not_blocks():
+    """Мутант: данные с другим хешем — matches_canonical=false + warning, без отказа."""
+    stub_hash = "9f8d0309" + "a" * 56
+    pin = {"hash": "deadbeef" + "b" * 56, "vocab_size": 160_000, "streams": ["W", "C"]}
+    info, warning = pretrain_run.packed_tokenizer_info(
+        {"hash": stub_hash},
+        pin,
+        model_vocab_size=262_144,
+        config_pin=CANONICAL_V2,
+    )
+    assert info["canonical_hash"] == CANONICAL_V2, "канон — пин config.json, не заглушка"
+    assert info["matches_canonical"] is False
+    assert warning is not None and "ВНИМАНИЕ" in warning
+    # Расхождение не блокирует packed-путь: К2-механика покрытия id остаётся.
+    assert info["vocab_size"] == 160_000
+    assert info["model_vocab_size"] == 262_144
+    assert info["hash"] == pin["hash"]
+
+
+def test_packed_canonical_match_is_quiet():
+    """Данные совпали с пином: matches_canonical=true, предупреждения нет."""
+    pin = {"hash": CANONICAL_V2, "vocab_size": 160_000, "streams": ["W", "C"]}
+    info, warning = pretrain_run.packed_tokenizer_info(
+        {"hash": "9f8d0309" + "0" * 56},
+        pin,
+        model_vocab_size=160_000,
+        config_pin=CANONICAL_V2,
+    )
+    assert info["canonical_hash"] == CANONICAL_V2
+    assert info["matches_canonical"] is True
+    assert warning is None
+
+
+def test_packed_canonical_without_pin_keeps_build_hash():
+    """Пина нет/пуст — прежнее поведение: канон — токенизатор сборки."""
+    stub_hash = "9f8d0309" + "0" * 56
+    canon = pretrain_run.canonical_hash_for_packed(
+        stub_hash, build_hash=stub_hash, config_pin=""
+    )
+    assert canon["canonical_hash"] == stub_hash
+    assert canon["matches_canonical"] is True
+    assert canon["canonical_source"] == "build_tokenizer"
+
+    pin = {"hash": "cafebabe" + "1" * 56, "vocab_size": 160_000, "streams": ["W"]}
+    info, warning = pretrain_run.packed_tokenizer_info(
+        {"hash": stub_hash}, pin, model_vocab_size=160_000, config_pin=""
+    )
+    assert info["canonical_hash"] == stub_hash
+    assert info["matches_canonical"] is False
+    assert warning is not None and "не объявлен" in warning

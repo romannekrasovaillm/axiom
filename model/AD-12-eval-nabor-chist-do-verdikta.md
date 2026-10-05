@@ -3,8 +3,9 @@ id: AD-12
 type: ad
 title: "Eval-набор чист до вердикта — утечка в обучающем источнике делает число недействительным"
 status: "PROPOSED"
-affects: [ADR-023]
+affects: [CMP-005]
 verified_by: [C-043]
+source: "docs/adr/ADR-023-perenos-urokov-laguny-v-reglamenty-i-strazhi-axiom.md"
 ---
 
 - **Binds**: сборщик eval-набора (`eval_holdout.jsonl`, `eval_ood*.jsonl`) ↔ карточка набора (поле `leak_check`) ↔ снимающий вердикт по числу набора ↔ все кандидатные миксы и обучающие наборы (tokens-v2 W/C/Q, SFT/RL)

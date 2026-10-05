@@ -570,6 +570,90 @@ def _packed_tokenizer_pin(
     return {"hash": hashes.pop(), "vocab_size": vocab, "streams": names}
 
 
+def canonical_hash_for_packed(
+    manifest_hash: str, *, build_hash: str = "", config_pin: str | None = None
+) -> dict[str, Any]:
+    """Канон токенизатора packed-пути (ADR-004, амендмент от 2026-10-05, п. 2).
+
+    Пин ``net/config.json:tokenizer_hash`` — полный sha256 корпусного BPE v2,
+    которым обязаны быть размечены ``tokens/*.bin``.  Если пин объявлен и
+    непуст, каноном выступает **он**, и ``matches_canonical`` считается против
+    него (``pin_manifest == config_pin``); заглушка скелета (``build_hash``)
+    каноном не объявляется никогда.  Пина нет/пуст — прежнее поведение: канон —
+    токенизатор сборки, сверка с ним.
+    """
+    manifest = str(manifest_hash or "").strip()
+    pin = config_pin if config_pin is not None else sft_stage.config_tokenizer_pin()
+    pin = str(pin or "").strip()
+    if pin:
+        return {
+            "canonical_hash": pin,
+            "matches_canonical": manifest == pin,
+            "canonical_source": "net/config.json",
+        }
+    build = str(build_hash or "").strip()
+    return {
+        "canonical_hash": build,
+        "matches_canonical": manifest == build,
+        "canonical_source": "build_tokenizer",
+    }
+
+
+def packed_tokenizer_info(
+    tokenizer_info: dict[str, Any],
+    pin: dict[str, Any],
+    *,
+    model_vocab_size: int,
+    config_pin: str | None = None,
+) -> tuple[dict[str, Any], str | None]:
+    """Tokenizer-блок packed-пути: канон — пин ``net/config.json``, не заглушка.
+
+    Модель обязана покрыть фактические id в ``.bin`` (механика К2):
+    ``model_vocab_size`` берётся из манифеста tokens/.  ``matches_canonical=false``
+    не блокирует packed-путь — это расхождение контракта данных, громко
+    зафиксированное в журнале; блокирует его отдельная сверка пресета l3-full по
+    хешу манифеста.  Возвращает (журнальный блок, текст предупреждения или None):
+    предупреждение — только при реальном расхождении данных с каноном.
+    """
+    canon = canonical_hash_for_packed(
+        str(pin["hash"]),
+        build_hash=str(tokenizer_info.get("hash") or ""),
+        config_pin=config_pin,
+    )
+    declared = canon["canonical_source"] == "net/config.json"
+    canonical_name = (
+        "пин net/config.json"
+        if declared
+        else "токенизатор сборки (пин net/config.json не объявлен)"
+    )
+    info = {
+        "hash": str(pin["hash"]),
+        "source": "packed manifest tokens/ (токенизатор, которым собраны .bin)",
+        "vocab_size": int(pin["vocab_size"]),
+        "model_vocab_size": int(model_vocab_size),
+        "canonical_hash": canon["canonical_hash"],
+        "canonical_source": canon["canonical_source"],
+        "matches_canonical": canon["matches_canonical"],
+        "streams": pin["streams"],
+        "note": (
+            "model_vocab_size выведен из манифеста tokens/ — покрывает фактические "
+            "id в .bin, а не диапазон id канонического BPE (иначе embedding по чужим "
+            "индексам). matches_canonical сверяет данные с каноном ("
+            + canonical_name
+            + "): расхождение — контракт данных, не гигиена"
+        ),
+    }
+    warning = None
+    if not canon["matches_canonical"]:
+        warning = (
+            "[pretrain] ВНИМАНИЕ: токенизатор packed-данных "
+            f"{str(pin['hash'])[:16]}… ≠ канонического {canon['canonical_hash'][:16]}… "
+            f"({canonical_name}) — прогон идёт на словаре корпуса, расхождение "
+            "зафиксировано в журнале (tokenizer.matches_canonical=false)"
+        )
+    return info, warning
+
+
 def resolve_packed(args: argparse.Namespace, tokens_root: Path, streams: tuple[str, ...]) -> bool:
     """К2: включён ли packed-путь.  Явный флаг сильнее авто-детекта.
 
@@ -752,32 +836,15 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
             _write_journal(journal, out_dir, journal_path=journal_path)
             print(f"[pretrain] ОТКАЗ данных: {exc}", file=sys.stderr, flush=True)
             return journal, False
-        canonical_hash = tokenizer_info["hash"]
+        # Канон — пин net/config.json (ADR-004 амендмент п.2), а не заглушка
+        # скелета, которую build_tokenizer_and_config даёт на стенде без
+        # корпусного токенизатора.  Пина нет — прежнее поведение.
         cfg = sft_stage.build_model_config(pin["vocab_size"], args.model_preset, qat_weights=False)
-        tokenizer_info = {
-            "hash": pin["hash"],
-            "source": "packed manifest tokens/ (токенизатор, которым собраны .bin)",
-            "vocab_size": pin["vocab_size"],
-            "model_vocab_size": int(cfg.vocab_size),
-            "canonical_hash": canonical_hash,
-            "matches_canonical": pin["hash"] == canonical_hash,
-            "streams": pin["streams"],
-            "note": (
-                "model_vocab_size выведен из манифеста tokens/ — покрывает фактические "
-                "id в .bin, а не диапазон id канонического BPE (иначе embedding по чужим "
-                "индексам). matches_canonical=false — данные собраны не тем же "
-                "токенизатором, что пин net/config.json: это расхождение контракта данных"
-            ),
-        }
-        if not tokenizer_info["matches_canonical"]:
-            print(
-                "[pretrain] ВНИМАНИЕ: токенизатор packed-данных "
-                f"{pin['hash'][:16]}… ≠ канонического пина {canonical_hash[:16]}… "
-                "(net/config.json) — прогон идёт на словаре корпуса, расхождение "
-                "зафиксировано в журнале (tokenizer.matches_canonical=false)",
-                file=sys.stderr,
-                flush=True,
-            )
+        tokenizer_info, canonical_warning = packed_tokenizer_info(
+            tokenizer_info, pin, model_vocab_size=int(cfg.vocab_size)
+        )
+        if canonical_warning:
+            print(canonical_warning, file=sys.stderr, flush=True)
 
     journal["tokenizer"] = tokenizer_info
     journal["model"] = {

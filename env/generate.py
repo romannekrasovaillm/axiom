@@ -21,6 +21,7 @@ from .util import (
     copy_case_snapshot,
     sha256_text,
     tree_sha256,
+    workspace_size_cap,
     write_json,
 )
 
@@ -181,6 +182,8 @@ def _build_public_task(
         corruption.corrupt(clean_dir, ws_dir, seed, level)
     else:
         copy_case_snapshot(clean_dir, ws_dir)
+    # Гейт объёма: снапшот после исключений обязан укладываться в кап (§7, §11(8)).
+    workspace_size_cap(ws_dir)
     spec = _make_spec(
         task_id, source, level, seed, _workspace_digest(ws_dir),
         count_case_volume(ws_dir), hidden_sha, public_rules,

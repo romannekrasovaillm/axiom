@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -102,27 +103,108 @@ def stable_coin(task_seed: int, model_seed: int, salt: str) -> float:
     return int.from_bytes(digest[:8], "big") / float(2**64)
 
 
-# Каталоги/файлы, исключаемые из снапшота чистого кейса (не архитектура, а
-# рантайм среды): сам env/, артефакты evidence/, тяжёлый Archify-HTML, кэши,
-# скрытые файлы.
-_EXCLUDED_DIRS = {"env", "evidence", "__pycache__"}
+# Каталоги, исключаемые из снапшота чистого кейса на ЛЮБОМ уровне (не
+# архитектура, а рантайм среды и тяжёлые артефакты прогонов): сам env/,
+# evidence/, тяжёлый Archify-HTML/кэши (см. суффиксы), скрытые файлы и каталоги
+# (правило «имя начинается с точки» отсекает .git, .arch-handoff, .pytest_cache).
+_SNAPSHOT_EXCLUDED_DIRS = frozenset({"benchmarks", "evidence", "env", "__pycache__"})
+
+# Файлы, исключаемые из снапшота по расширению на любом уровне: веса (C-032),
+# бинарные данные (zst/parquet) и кэши/тяжёлый HTML.
+_SNAPSHOT_EXCLUDED_SUFFIXES = WEIGHT_SUFFIXES + (".zst", ".parquet", ".pyc", ".html")
+
+# Глобальный кап объёма снапшота воркспейса (§7, §11(8)). Эталонный воркспейс
+# ~4 МБ; превышение — дефект генерации (типовой случай — неисключённый data/).
+WORKSPACE_CAP_BYTES = 64 * 1024 * 1024
 
 
-def _snapshot_ignored(path: str) -> bool:
-    name = Path(path).name
-    if name in _EXCLUDED_DIRS:
-        return True
+def _snapshot_ignored(src_root: str, current_dir: str, name: str) -> bool:
+    """True — запись ``name`` в ``current_dir`` не попадает в снапшот кейса.
+
+    ``src_root`` — нормализованный корень кейса: верхнеуровневый ``data/``
+    исключается, вложенные ``data/`` (если появятся) — нет (§7).
+    """
     if name.startswith("."):
         return True
-    if name.endswith(".pyc"):
+    if name in _SNAPSHOT_EXCLUDED_DIRS:
         return True
-    if name.endswith(".html"):
+    if name == "runs" or name.startswith("runs-"):
+        return True
+    if name == "data" and os.path.normpath(current_dir) == src_root:
+        return True
+    if Path(name).suffix.lower() in _SNAPSHOT_EXCLUDED_SUFFIXES:
         return True
     return False
 
 
 def copy_case_snapshot(src: Path, dst: Path) -> None:
-    """Копирует чистый кейс ``src`` в ``dst``, исключая рантайм-каталоги."""
+    """Копирует чистый кейс ``src`` в ``dst``, исключая тяжёлые/нерантайм-пути.
+
+    Сигнатура и возврат (void) стабильны. Набор копируемых файлов детерминирован
+    от содержимого и не зависит от порядка обхода: ``tree_sha256`` снапшота
+    воспроизводим (§7, §11(8)).
+    """
     if dst.exists():
         shutil.rmtree(dst)
-    shutil.copytree(src, dst, ignore=lambda d, names: [n for n in names if _snapshot_ignored(n)])
+    root = os.path.normpath(os.fspath(src))
+
+    def ignore(directory: str, names: list[str]) -> list[str]:
+        d = os.path.normpath(directory)
+        return [n for n in names if _snapshot_ignored(root, d, n)]
+
+    shutil.copytree(src, dst, ignore=ignore)
+
+
+def dir_total_bytes(root: Path) -> int:
+    """Суммарный размер обычных файлов дерева (симлинки считаются по ссылке)."""
+    total = 0
+    for p in root.rglob("*"):
+        if p.is_file() and not p.is_symlink():
+            total += p.stat().st_size
+    return total
+
+
+def human_bytes(n: int) -> str:
+    """Человекочитаемый размер (для диагностических сообщений)."""
+    value = float(n)
+    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if value < 1024 or unit == "TiB":
+            return f"{int(value)} B" if unit == "B" else f"{value:.1f} {unit}"
+        value /= 1024.0
+    return f"{int(value)} B"
+
+
+def _top_path_sizes(root: Path, top: int = 5) -> tuple[int, list[tuple[str, int]]]:
+    """Объём ``root`` и ``top`` крупнейших непосредственных детей (по имени)."""
+    total = 0
+    sized: list[tuple[str, int]] = []
+    for child in sorted(root.iterdir()):
+        if child.is_dir() and not child.is_symlink():
+            size = dir_total_bytes(child)
+        else:
+            try:
+                size = child.stat().st_size
+            except OSError:
+                size = 0
+        total += size
+        sized.append((child.name, size))
+    sized.sort(key=lambda kv: (-kv[1], kv[0]))
+    return total, sized[:top]
+
+
+def workspace_size_cap(ws_dir: Path, cap_bytes: int = WORKSPACE_CAP_BYTES) -> None:
+    """Гейт объёма снапшота воркспейса (§7, §11(8)).
+
+    Превышение ``cap_bytes`` → ``ValueError`` с задачей, объёмом и топ-5
+    крупнейших путей: это дефект генерации (обычно неисключённый каталог данных),
+    а не сбой агента.
+    """
+    total, top = _top_path_sizes(ws_dir)
+    if total <= cap_bytes:
+        return
+    detail = ", ".join(f"{name} ({human_bytes(size)})" for name, size in top) or "нет"
+    raise ValueError(
+        f"workspace {Path(ws_dir).as_posix()} (задача {Path(ws_dir).name}) превышает "
+        f"кап {human_bytes(cap_bytes)}: {human_bytes(total)}; "
+        f"топ-5 крупнейших путей: {detail}"
+    )

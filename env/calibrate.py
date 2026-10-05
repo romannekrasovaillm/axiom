@@ -18,6 +18,7 @@ from . import run as run_mod
 from . import stub_model
 from .util import (
     EMPTY_HIDDEN_SHA256,
+    dir_total_bytes,
     read_json,
     sha256_file,
     write_json,
@@ -54,11 +55,13 @@ def calibrate(
         raise RuntimeError(f"нет задач в {public_dir}")
 
     cells: list[dict[str, Any]] = []
+    workspace_total_bytes = 0
     work_root = Path(tempfile.mkdtemp(prefix="calibrate-work-"))
     try:
         for sp in spec_paths:
             spec = read_json(sp)
             base_ws = public_dir / spec["id"]
+            workspace_total_bytes += dir_total_bytes(base_ws)
             hc = hidden_path if spec["verifier"]["hidden_constraints_sha256"] != EMPTY_HIDDEN_SHA256 else None
             out_ws = work_root / spec["id"]
             stub = stub_model.run_stub_model(
@@ -97,6 +100,7 @@ def calibrate(
             "hidden_constraints_sha256": sha256_file(hidden_path) if hidden_path else EMPTY_HIDDEN_SHA256,
         },
         "matrix": {model_name: cells},
+        "workspace_total_bytes": workspace_total_bytes,
         "aggregate": {
             "pass_rate": pass_rate,
             "mean_reward": statistics.fmean(rewards),

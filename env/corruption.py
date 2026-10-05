@@ -151,10 +151,12 @@ def corrupt(clean_dir: Path, out_dir: Path, seed: int, level: str) -> list[Damag
     при копировании). Возвращает список применённых повреждений (для метаданных
     и отката).
     """
-    from .util import copy_case_snapshot
+    from .util import copy_case_snapshot, workspace_size_cap
 
     copy_case_snapshot(clean_dir, out_dir)
     damages = plan_damages(clean_dir, seed, level)
     for d in damages:
         apply_damage(out_dir, d)
+    # Гейт объёма снапшота после порчи (§7, §11(8)): дефект генерации — сразу.
+    workspace_size_cap(out_dir)
     return damages

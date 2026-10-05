@@ -1,10 +1,10 @@
 ---
-id: ADR-025
+id: ADR-027
 type: adr
 title: "RL-стадия в двух методологиях — ветки «Лагуна» и «FrogNano» на одном чекпойнте с механическим сравнением"
 status: "accepted"
 affects: [CMP-005, CMP-006]
-source: "docs/adr/ADR-025-rl-dve-metodologii-vetki-laguna-i-frognano.md"
+source: "docs/adr/ADR-027-rl-dve-metodologii-vetki-laguna-i-frognano.md"
 ---
 
 - **Binds**: SFT-чекпойнт (один, симлинк) ↔ ветки `--arm laguna|frognano` ↔ общий скрытый holdout ↔ равный бюджет RL-шагов ↔ вердикт МакНемар

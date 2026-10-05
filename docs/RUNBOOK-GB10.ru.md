@@ -48,3 +48,27 @@
 - **pytest tmpdir-гигиена**: полный прогон `env/tests` оставляет ~24 ГБ в `/tmp/pytest-of-roman` (workspace-копии кейса); ретенция pytest держит 3 последних прогона → до 73 ГБ. Прогонять с `--basetemp` на свежий каталог и удалять его сразу после прогона; диск ПК 468 ГБ — два параллельных прогона = почти полный диск.
 - CPU-бэкенд JAX не показателен по памяти (remat игнорируется) — выводы «влезет/не влезет» только по GPU-прогону на стенде.
 - Прогоны root/контейнеров живут в другом mount namespace: их файлы (чекпойнты) из-под `roman` не видны — ущерб оценивает владелец.
+
+## 7. Окна между ногами претрейна (протокол 05.10)
+
+Цикл «нога ~300 шагов → сервисное окно платформы → следующая нога»:
+
+1. **Нога завершилась** (лимит шагов или стоп-файл `~/axiom-run/STOP`): верифицировать хвост — тренд по §3.1 PRETRAIN-PIPELINE (медианы окон, стоп = 3 роста подряд), чекпойнты + resume-курсор, бюджет против `evidence/budget/pretrain-pilot-gb10.json`.
+2. **Watcher автоматически возвращает платформу** (bash-петля pid ~360924: через 30 с после выхода претрейна — `docker start llm-platform-runtime`): сервисное окно платформы, действий не требует. Наблюдатель ищется по поведению (`pgrep -af "docker start llm-platform-runtime"`), не по имени.
+3. **Следующая нога**: `docker stop llm-platform-runtime` → возобновление (команда текущей ноги + `--resume`; полная команда — из `/proc/<pid>/cmdline` живого процесса или журнала):
+
+```bash
+cd ~/axiom && ~/venv-axiom/bin/python tools/pretrain_run.py \
+  --run-ref pretrain-pilot-gb10 --shard-root /home/roman/axiom-run/raw-v2 \
+  --tokens-root /home/roman/gb10-shared/datasets/axiom-pretrain-l3/tokens-v2 \
+  --model-preset l3-full --seq-len 8192 --batch-size 1 --grad-checkpointing \
+  --steps 300 --checkpoint-every 25 --ckpt-every-min 30 \
+  --stop-file /home/roman/axiom-run/STOP \
+  --budget-file evidence/budget/pretrain-pilot-gb10.json \
+  --out /home/roman/axiom-run/pilot-l3full-endurance \
+  --journal /home/roman/axiom-run/pilot-l3full-endurance-journal.jsonl \
+  --metrics /home/roman/axiom-run/pilot-l3full-endurance/metrics.jsonl --resume
+```
+
+Первый шаг возобновлённой ноги сверяется с курсором (шаг > 300). Окно зафиксировать в `~/gb10-shared/.locks/axiom-run.lock`; C-040 (одна нагрузка) — до запуска.
+4. **Окна проб** (калибровка/RL-смоук между ногами): тот же паттерн — стоп платформы → проба → возврат. Семантику `--steps` при `--resume` (относительные/абсолютные) сверить по первому возобновлённому шагу.

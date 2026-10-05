@@ -1,0 +1,12 @@
+# План отката handoff-пакета (машиночитаемый) — репетируется на гейте A4:
+# `arch control gate A4 <repo> --rehearse`. Файл НЕ затирается повторной
+# генерацией: перед передачей перепишите шаги под фактический план отката
+# эпика (должен соответствовать разделу «План отката» TASK.md). Шаги с
+# внешними/деструктивными эффектами репетиция отклоняет — docs/control.md.
+baseline_commit: "b859da5"
+steps:
+  - name: якорь-доступен
+    run: git cat-file -t b859da5
+  - name: откат-на-baseline
+    run: git reset --hard b859da5
+verify: test -z "$(git status --porcelain --untracked-files=no)"

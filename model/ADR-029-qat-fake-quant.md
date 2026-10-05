@@ -1,10 +1,10 @@
 ---
-id: ADR-028
+id: ADR-029
 type: adr
 title: "QAT MXFP4: собственный fake-quant STE; AQT не принимается"
 status: "accepted"
 affects: [CMP-002, CMP-003]
-source: "docs/adr/ADR-028-qat-mxfp4-sobstvennyy-fake-quant.md"
+source: "docs/adr/ADR-029-qat-mxfp4-sobstvennyy-fake-quant.md"
 ---
 
 QAT-тренировка (со стадии SFT, ADR-005 п. 7) — собственный pure-JAX fake-quant

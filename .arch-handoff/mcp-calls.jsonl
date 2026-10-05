@@ -1,0 +1,44 @@
+{"ts":"2026-09-28T07:12:36.158301376+03:00","tool":"fitness_check","verdict":"fail","duration_ms":406,"rules":["ADR: обязательные секции (Alternatives) — решение без альтернатив не решение","ADR: отрицательные последствия описаны (иначе решение продано, а не проверено)"],"session_id":"f1041a81a393eb7b","host":"claude-code"}
+{"ts":"2026-09-28T07:21:06.377212857+03:00","tool":"trace_check","verdict":"fail","duration_ms":7,"rules":["int-contract-missing","spine-ref-missing-in-model"],"session_id":"f1041a81a393eb7b","host":"claude-code"}
+{"ts":"2026-09-28T09:37:02.970786312+03:00","tool":"fitness_check","verdict":"pass","duration_ms":272,"session_id":"7e483a76f7786491","host":"claude-code"}
+{"ts":"2026-09-28T09:37:12.320233363+03:00","tool":"spine_lint","verdict":"pass","duration_ms":1,"session_id":"7e483a76f7786491","host":"claude-code"}
+{"ts":"2026-09-28T09:37:12.431311349+03:00","tool":"trace_check","verdict":"pass","duration_ms":8,"session_id":"7e483a76f7786491","host":"claude-code"}
+{"ts":"2026-09-28T09:49:33.264159676+03:00","tool":"significance_from_diff","verdict":"ok","duration_ms":9,"session_id":"7e483a76f7786491","host":"claude-code"}
+{"ts":"2026-09-28T11:44:44.710715392+03:00","tool":"fitness_check","verdict":"pass","duration_ms":277,"session_id":"520f2a7389a5abe9","host":"claude-code"}
+{"ts":"2026-09-28T11:45:20.142954291+03:00","tool":"spine_lint","verdict":"pass","duration_ms":1,"session_id":"520f2a7389a5abe9","host":"claude-code"}
+{"ts":"2026-09-28T11:45:22.947435093+03:00","tool":"trace_check","verdict":"pass","duration_ms":9,"session_id":"520f2a7389a5abe9","host":"claude-code"}
+{"ts":"2026-09-28T13:15:46.869813811+03:00","tool":"fitness_check","verdict":"pass","duration_ms":285,"session_id":"3c428d0bd5799fd1","host":"claude-code"}
+{"ts":"2026-09-28T13:30:13.075787823+03:00","tool":"fitness_check","verdict":"pass","duration_ms":398,"session_id":"3c428d0bd5799fd1","host":"claude-code"}
+{"ts":"2026-09-28T14:31:24.737817283+03:00","tool":"fitness_check","verdict":"pass","duration_ms":316,"session_id":"c755c7e4591574e5","host":"claude-code"}
+{"ts":"2026-09-28T14:55:48.367121042+03:00","tool":"fitness_check","verdict":"pass","duration_ms":294,"session_id":"c4a0b32d3094369a","host":"claude-code"}
+{"ts":"2026-09-28T14:55:48.367675444+03:00","tool":"significance_from_diff","verdict":"invalid","duration_ms":0,"session_id":"c4a0b32d3094369a","host":"claude-code"}
+{"ts":"2026-09-28T14:55:51.351070650+03:00","tool":"significance_from_diff","verdict":"ok","duration_ms":15,"session_id":"c4a0b32d3094369a","host":"claude-code"}
+{"ts":"2026-09-29T22:09:40.317534192+03:00","tool":"fitness_check","verdict":"pass","duration_ms":347,"session_id":"1f3f1adaf9264127","host":"claude-code"}
+{"ts":"2026-09-29T22:10:32.590559125+03:00","tool":"fitness_check","verdict":"pass","duration_ms":318,"session_id":"1f3f1adaf9264127","host":"claude-code"}
+{"ts":"2026-09-30T09:30:24.596507841+03:00","tool":"fitness_check","verdict":"pass","duration_ms":387,"session_id":"d7b1a2fb1fad3e53","host":"claude-code"}
+{"ts":"2026-09-30T09:59:39.206706827+03:00","tool":"fitness_check","verdict":"pass","duration_ms":265,"session_id":"d7b1a2fb1fad3e53","host":"claude-code"}
+{"ts":"2026-09-30T12:37:09.483356765+03:00","tool":"fitness_check","verdict":"pass","duration_ms":259,"session_id":"2caa456a7bbc7438","host":"claude-code"}
+{"ts":"2026-09-30T13:41:38.591101655+03:00","tool":"fitness_check","verdict":"pass","duration_ms":448,"session_id":"51e1272fb7bd1f8b","host":"claude-code"}
+{"ts":"2026-09-30T13:44:02.754322180+03:00","tool":"delta_guard","verdict":"pass","duration_ms":19,"session_id":"51e1272fb7bd1f8b","host":"claude-code"}
+{"ts":"2026-10-02T08:27:38.579490750+03:00","tool":"fitness_check","verdict":"fail","duration_ms":359,"rules":["ADR: обратимость указана явно (reversible | costly | irreversible)","ADR: обязательные секции (Alternatives) — решение без альтернатив не решение","ADR: отрицательные последствия описаны (иначе решение продано, а не проверено)"],"session_id":"cf3daf87f5142cbe","host":"claude-code"}
+{"ts":"2026-10-02T08:39:20.679728627+03:00","tool":"fitness_check","verdict":"pass","duration_ms":271,"session_id":"cf3daf87f5142cbe","host":"claude-code"}
+{"ts":"2026-10-02T09:15:14.805016810+03:00","tool":"fitness_check","verdict":"pass","duration_ms":261,"session_id":"41f1e6d061244aae","host":"claude-code"}
+{"ts":"2026-10-02T09:15:19.622329153+03:00","tool":"architect_review","verdict":"fail","duration_ms":311,"session_id":"41f1e6d061244aae","host":"claude-code"}
+{"ts":"2026-10-03T08:21:29.663980675+03:00","tool":"fitness_check","verdict":"pass","duration_ms":281,"session_id":"772c355f6a8c3e0b","host":"claude-code"}
+{"ts":"2026-10-03T17:43:58.305921154+03:00","tool":"fitness_check","verdict":"pass","duration_ms":478,"session_id":"aa6e01c05f07ec4b","host":"claude-code"}
+{"ts":"2026-10-04T13:02:30.997655776+03:00","tool":"fitness_check","verdict":"pass","duration_ms":407,"session_id":"465db9e0d1259485","host":"claude-code"}
+{"ts":"2026-10-05T05:36:36.388930850+03:00","tool":"spine_lint","verdict":"pass","duration_ms":1,"session_id":"373797835e895009","host":"claude-code"}
+{"ts":"2026-10-05T05:36:36.399502481+03:00","tool":"trace_check","verdict":"fail","duration_ms":8,"rules":["spine-ref-missing-in-model"],"session_id":"373797835e895009","host":"claude-code"}
+{"ts":"2026-10-05T05:36:36.409192148+03:00","tool":"model_validate","verdict":"fail","duration_ms":9,"rules":["broken-link"],"session_id":"373797835e895009","host":"claude-code"}
+{"ts":"2026-10-05T05:37:24.854268595+03:00","tool":"model_validate","verdict":"pass","duration_ms":10,"session_id":"373797835e895009","host":"claude-code"}
+{"ts":"2026-10-05T05:37:24.863930534+03:00","tool":"trace_check","verdict":"fail","duration_ms":9,"rules":["spine-ref-missing-in-model"],"session_id":"373797835e895009","host":"claude-code"}
+{"ts":"2026-10-05T05:37:39.515342472+03:00","tool":"fitness_check","verdict":"pass","duration_ms":279,"session_id":"373797835e895009","host":"claude-code"}
+{"ts":"2026-10-05T05:44:33.334338341+03:00","tool":"trace_check","verdict":"fail","duration_ms":9,"rules":["spine-ref-missing-in-model"],"session_id":"373797835e895009","host":"claude-code"}
+{"ts":"2026-10-05T05:44:54.423771294+03:00","tool":"model_validate","verdict":"pass","duration_ms":10,"session_id":"373797835e895009","host":"claude-code"}
+{"ts":"2026-10-05T05:44:54.439280474+03:00","tool":"trace_check","verdict":"pass","duration_ms":14,"session_id":"373797835e895009","host":"claude-code"}
+{"ts":"2026-10-05T05:44:54.441467226+03:00","tool":"spine_lint","verdict":"pass","duration_ms":1,"session_id":"373797835e895009","host":"claude-code"}
+{"ts":"2026-10-05T06:25:51.421894029+03:00","tool":"fitness_check","verdict":"fail","duration_ms":270,"rules":["Спинальные инварианты: каждый AD привязан к fitness-правилу"],"session_id":"d427bade5483bc57","host":"claude-code"}
+{"ts":"2026-10-05T06:26:12.891888914+03:00","tool":"fitness_check","verdict":"fail","duration_ms":284,"rules":["Спинальные инварианты: каждый AD привязан к fitness-правилу"],"session_id":"d427bade5483bc57","host":"claude-code"}
+{"ts":"2026-10-05T06:34:13.471121695+03:00","tool":"trace_check","verdict":"fail","duration_ms":10,"rules":["spine-ref-missing-in-model"],"session_id":"d427bade5483bc57","host":"claude-code"}
+{"ts":"2026-10-05T06:34:31.944611874+03:00","tool":"fitness_check","verdict":"fail","duration_ms":277,"rules":["Спинальные инварианты: каждый AD привязан к fitness-правилу"],"session_id":"c92354a494d18e7c","host":"claude-code"}
+{"ts":"2026-10-05T06:39:20.198310158+03:00","tool":"trace_check","verdict":"fail","duration_ms":8,"rules":["spine-ref-missing-in-model"],"session_id":"c92354a494d18e7c","host":"claude-code"}

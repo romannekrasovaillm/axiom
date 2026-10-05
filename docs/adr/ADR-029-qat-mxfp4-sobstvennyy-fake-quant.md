@@ -1,4 +1,4 @@
-# ADR-028. QAT MXFP4: собственный fake-quant STE (`net/quant.py`); AQT не принимается
+# ADR-029. QAT MXFP4: собственный fake-quant STE (`net/quant.py`); AQT не принимается
 
 - Date: 2026-10-05
 - Status: Accepted (архитектор; маршрут Fast — реализация существует и отработала в смоук-прогонах, ADR фиксирует решение до полного SFT)

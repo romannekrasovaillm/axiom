@@ -1,0 +1,1884 @@
+{
+ "generated_at": "2026-09-26T14:50:25",
+ "hypotheses_dir": "/home/roman/hypotheses",
+ "min_score": 2,
+ "hits": [
+  {
+   "card": "qwen-hybrid-3-1-threshold",
+   "title": "Внешнее подтверждение режима reindex и запрета править порог критерия 16",
+   "state": "fleeting",
+   "score": 26,
+   "hits": {
+    "files": [
+     "mla.py",
+     "attn_sparse.py",
+     "test_15_cost_8k_64k.py",
+     "config.json"
+    ],
+    "keys": [
+     "mla_top_k",
+     "mla_layer_modes",
+     "attn_dense_reference",
+     "swa_window"
+    ],
+    "deps": [],
+    "words": [
+     "8K",
+     "reindex"
+    ]
+   },
+   "skills": [
+    "qwen-hybrid-gdn-kernels",
+    "hybrid-attention-lab",
+    "sparse-attention-1m-lab"
+   ],
+   "plugins": [
+    "qwen-training",
+    "pretrain"
+   ],
+   "promote_when": "обсуждается изменение порогов/методики критерия 16 (нужен внешний аргумент, а не пересмотр порога)"
+  },
+  {
+   "card": "frozen-router-mopd",
+   "title": "Заморозка роутера, expert-bias и MTP на SFT/MOPD",
+   "state": "latent",
+   "score": 25,
+   "hits": {
+    "files": [
+     "moe.py",
+     "test_11_routing.py",
+     "config.json",
+     "run_sft_smoke.py"
+    ],
+    "keys": [
+     "qb_weight",
+     "moe_top_k",
+     "routing_seed",
+     "mtp_loss_weight"
+    ],
+    "deps": [],
+    "words": [
+     "балансировка"
+    ]
+   },
+   "skills": [
+    "motif3-moe-stabilization",
+    "motif3-mopd-posttraining"
+   ],
+   "plugins": [
+    "motif-technologies"
+   ],
+   "promote_when": "SFT/MOPD-стадия идёт на скелете и есть метрика дрейфа роутинга (распределение экспертов до/после)"
+  },
+  {
+   "card": "contextpilot-proactive-context",
+   "title": "Политика сама управляет контекстом и получает кредит из механического вердикта",
+   "state": "fleeting",
+   "score": 22,
+   "hits": {
+    "files": [
+     "reward.py",
+     "run.py",
+     "infer.py",
+     "ENVIRONMENT-V1.md"
+    ],
+    "keys": [
+     "context_curriculum",
+     "curriculum_split",
+     "spent_tokens"
+    ],
+    "deps": [],
+    "words": [
+     "снапшот"
+    ]
+   },
+   "skills": [
+    "selfcompact-context-management",
+    "bodhi-branching-entropy-rlvr",
+    "partial-rollouts-infra"
+   ],
+   "plugins": [
+    "context-engineering",
+    "rlvr",
+    "kimi"
+   ],
+   "promote_when": "среда даёт невырожденную награду и штраф за бюджет токенов срабатывает не на всех траекториях"
+  },
+  {
+   "card": "dflash-drafter-gb10",
+   "title": "Драфтер поверх L3: tok/s на GB10 при идентичном выходе",
+   "state": "latent",
+   "score": 22,
+   "hits": {
+    "files": [
+     "infer.py",
+     "mtp.py",
+     "quant.py",
+     "checkpoint.py"
+    ],
+    "keys": [
+     "mtp_layers",
+     "qat_kv_enabled",
+     "qat_enabled"
+    ],
+    "deps": [],
+    "words": [
+     "GB10"
+    ]
+   },
+   "skills": [
+    "llm-speculative-decoding",
+    "logit-distillation-muse-recipe"
+   ],
+   "plugins": [
+    "speculative-decoding",
+    "distillation"
+   ],
+   "promote_when": "инференс скелета на GB10 даёт измеримый tok/s и найден приемлемый по качеству драфтер"
+  },
+  {
+   "card": "ncp-concept-supervision",
+   "title": "Концепт-супервизия (пул скрытых + VQ-голова) как ускоритель сходимости L3",
+   "state": "fleeting",
+   "score": 22,
+   "hits": {
+    "files": [
+     "model.py",
+     "attn_sparse.py",
+     "config.json",
+     "FIDELITY-TO-K3.md"
+    ],
+    "keys": [
+     "mtp_loss_weight",
+     "moe_latent_dim",
+     "qb_weight"
+    ],
+    "deps": [],
+    "words": [
+     "пул"
+    ]
+   },
+   "skills": [
+    "olmo-open-pipeline",
+    "per-head-muon",
+    "muon-moe-lab"
+   ],
+   "plugins": [
+    "ai2-olmo",
+    "pretrain"
+   ],
+   "promote_when": "есть baseline-кривая лосса L3 на фиксированном бюджете токенов, с которой можно сравнить aux-сигнал"
+  },
+  {
+   "card": "verpo-evidence-credit",
+   "title": "Вердикты гейтов как evidence-канал для правок",
+   "state": "latent",
+   "score": 22,
+   "hits": {
+    "files": [
+     "reward.py",
+     "mtp.py",
+     "run_sft_smoke.py",
+     "SFT-STAGE.delta.md"
+    ],
+    "keys": [
+     "mtp_loss_weight",
+     "qat_weights"
+    ],
+    "deps": [],
+    "words": [
+     "evidence",
+     "правки",
+     "отбор",
+     "вердикт"
+    ]
+   },
+   "skills": [
+    "rlvr-verifier-design",
+    "generative-verifier-genv"
+   ],
+   "plugins": [
+    "rlvr",
+    "verification"
+   ],
+   "promote_when": "стадия SFT/MOPD правит все токены одинаково, хотя вердикты указывают на конкретные решения"
+  },
+  {
+   "card": "handoff-package-no-stale-contracts",
+   "title": "Пакет handoff не уносит контракты и план отката прошлого эпика",
+   "state": "latent",
+   "score": 21,
+   "hits": {
+    "files": [
+     "MANIFEST.json",
+     "TASK.md",
+     "SPEC.md",
+     "ROLLBACK.yaml"
+    ],
+    "keys": [
+     "baseline_commit",
+     "route"
+    ],
+    "deps": [],
+    "words": [
+     "пакет",
+     "контракт",
+     "откат"
+    ]
+   },
+   "skills": [
+    "hypothesis-card"
+   ],
+   "plugins": [
+    "hypothesis-router"
+   ],
+   "promote_when": "пакет создаётся повторно в каталоге, где лежал пакет прошлого эпика, и исполнитель не может сверить реализацию со спекой"
+  },
+  {
+   "card": "kda-kalman-write-rule",
+   "title": "Правило записи KDA с учётом неопределённости (Kalman)",
+   "state": "latent",
+   "score": 21,
+   "hits": {
+    "files": [
+     "kda.py",
+     "kda-formulas.md",
+     "config.json",
+     "curriculum.py"
+    ],
+    "keys": [
+     "kda_decay_rank",
+     "context_curriculum"
+    ],
+    "deps": [],
+    "words": [
+     "KDA",
+     "состояние",
+     "контекст"
+    ]
+   },
+   "skills": [
+    "kda-core",
+    "kda-variants",
+    "kimi-delta-attention"
+   ],
+   "plugins": [
+    "kimi-kda-skills",
+    "kimi-k3-concept-skills"
+   ],
+   "promote_when": "есть baseline по длинному контексту (8K→64K) и нужно решать, стоит ли менять правило записи памяти"
+  },
+  {
+   "card": "local-agent-baseline-gb10",
+   "title": "Локальный агентный baseline 30B на GB10 для сравнения и работы",
+   "state": "latent",
+   "score": 20,
+   "hits": {
+    "files": [
+     "infer.py",
+     "checkpoint.py",
+     "net_executor.py",
+     "ENVIRONMENT-V1.md"
+    ],
+    "keys": [
+     "qat_enabled",
+     "mla_top_k"
+    ],
+    "deps": [],
+    "words": [
+     "GB10",
+     "baseline"
+    ]
+   },
+   "skills": [
+    "gb10-finetune",
+    "gb10-cpt-sft-recipe",
+    "gb10-experiment-launcher"
+   ],
+   "plugins": [
+    "gb10"
+   ],
+   "promote_when": "арена (CMP-005) выходит на сравнение с внешней моделью и есть решение по лицензии/симлинку весов"
+  },
+  {
+   "card": "per-head-qk-norm-muon",
+   "title": "Per-head Q/K-норма под per-head Muon: снять взрыв логитов",
+   "state": "latent",
+   "score": 20,
+   "hits": {
+    "files": [
+     "optimizer.py",
+     "kda.py",
+     "mla.py",
+     "config.json"
+    ],
+    "keys": [
+     "warmup_ratio",
+     "pretrain_dtype"
+    ],
+    "deps": [],
+    "words": [
+     "Muon",
+     "норма"
+    ]
+   },
+   "skills": [
+    "per-head-muon",
+    "muon-moe-lab"
+   ],
+   "plugins": [
+    "kimi-k3-concept-skills",
+    "pretrain"
+   ],
+   "promote_when": "замер логитов/лосса на 8K в gate-профиле показывает выброс, который снимает per-head норма"
+  },
+  {
+   "card": "verify-by-separate-role",
+   "title": "Гейт-награду не пишет та же траектория, что патч",
+   "state": "active",
+   "score": 20,
+   "hits": {
+    "files": [
+     "verifier.py",
+     "reward.py",
+     "run_a4_pipeline.py",
+     "stage-journal.json"
+    ],
+    "keys": [
+     "budget_seconds",
+     "spent_tokens"
+    ],
+    "deps": [],
+    "words": [
+     "гейт",
+     "тест"
+    ]
+   },
+   "skills": [
+    "agent-verification-eval",
+    "rlvr-verifier-design"
+   ],
+   "plugins": [
+    "agent-harness",
+    "rlvr"
+   ],
+   "promote_when": "RL-стадия идёт на задачах, где проверка пишется тем же проходом, что решение, и есть подозрение на ложную уверенность"
+  },
+  {
+   "card": "moe-sparsity-scaling-law",
+   "title": "Правила LR и batch для MoE с учётом доли активных",
+   "state": "latent",
+   "score": 19,
+   "hits": {
+    "files": [
+     "config.json",
+     "optimizer.py",
+     "MODEL-L3-SKELETON.md"
+    ],
+    "keys": [
+     "moe_top_k",
+     "warmup_ratio",
+     "lr_schedule"
+    ],
+    "deps": [],
+    "words": [
+     "MoE"
+    ]
+   },
+   "skills": [
+    "pretrain-moe-config",
+    "ling26-pretraining-recipe"
+   ],
+   "plugins": [
+    "pretrain",
+    "antgroup-ling"
+   ],
+   "promote_when": "подбираем LR/batch для претрейна 1B MoE на 20B токенов и нужен не ручной перебор, а правило"
+  },
+  {
+   "card": "router-prior-anchor",
+   "title": "Мягкий анкор к приору вместо заморозки роутера",
+   "state": "latent",
+   "score": 19,
+   "hits": {
+    "files": [
+     "moe.py",
+     "test_11_routing.py",
+     "config.json"
+    ],
+    "keys": [
+     "qb_weight",
+     "moe_top_k",
+     "routing_seed"
+    ],
+    "deps": [],
+    "words": [
+     "балансировка"
+    ]
+   },
+   "skills": [
+    "moe-router-health",
+    "motif3-moe-stabilization",
+    "moe-stability-guard"
+   ],
+   "plugins": [
+    "moe",
+    "motif-technologies"
+   ],
+   "promote_when": "обсуждается заморозка роутера на SFT/MOPD и нужен численный аргумент за альтернативу"
+  },
+  {
+   "card": "train-what-you-deploy",
+   "title": "Лосс только на верифицируемых токен-спанах",
+   "state": "latent",
+   "score": 19,
+   "hits": {
+    "files": [
+     "reward.py",
+     "verifier.py",
+     "run_rl_smoke.py",
+     "RL-STAGE.delta.md"
+    ],
+    "keys": [
+     "spent_tokens",
+     "max_tokens"
+    ],
+    "deps": [],
+    "words": [
+     "вердикт"
+    ]
+   },
+   "skills": [
+    "lego-rl-harness-native-rl",
+    "agentic-rl-patterns"
+   ],
+   "plugins": [
+    "agentic-rl"
+   ],
+   "promote_when": "RL-стадия считает лосс по всей траектории, хотя вердикт предметен лишь на части токенов"
+  },
+  {
+   "card": "moe-pad-pathology-router",
+   "title": "PAD-патология: вырожденный токен перегружает одних и тех же экспертов MoE",
+   "state": "latent",
+   "score": 18,
+   "hits": {
+    "files": [
+     "moe.py",
+     "data.py"
+    ],
+    "keys": [
+     "moe_top_k",
+     "moe_num_routed",
+     "qb_weight",
+     "routing_seed"
+    ],
+    "deps": [],
+    "words": []
+   },
+   "skills": [
+    "laguna-02-moe-router"
+   ],
+   "plugins": [
+    "laguna"
+   ],
+   "promote_when": "включаем packing последовательностей в претрейне/мид-трейне L3 или диагностируем перегруз экспертов"
+  },
+  {
+   "card": "mopd-token-share-budget",
+   "title": "Бюджет MOPD-стадии по token-share, а не по доле промптов",
+   "state": "latent",
+   "score": 18,
+   "hits": {
+    "files": [
+     "RL-STAGE.delta.md",
+     "a4_manifest.py",
+     "test_21_rl_stage.py",
+     "stage-journal.json"
+    ],
+    "keys": [
+     "qat_weights",
+     "context_curriculum"
+    ],
+    "deps": [],
+    "words": []
+   },
+   "skills": [
+    "open-mopd-capability-imbalance",
+    "motif3-mopd-posttraining",
+    "grpo-grouping-portability"
+   ],
+   "plugins": [
+    "distillation",
+    "motif-technologies"
+   ],
+   "promote_when": "стадия MOPD заведена в stage_set (v1 её не содержит) и есть прогон с ≥2 учителями на скелете L3"
+  },
+  {
+   "card": "attention-gate-as-input-sink",
+   "title": "Гейт внимания как зависящий от входа attention sink",
+   "state": "latent",
+   "score": 17,
+   "hits": {
+    "files": [
+     "mla.py",
+     "kda.py",
+     "attn_sparse.py"
+    ],
+    "keys": [
+     "kda_g_min",
+     "siti_beta_gate"
+    ],
+    "deps": [],
+    "words": [
+     "гейт",
+     "SWA"
+    ]
+   },
+   "skills": [
+    "stepfun-01-hybrid-attention-gate",
+    "laguna-01-hybrid-attention"
+   ],
+   "plugins": [
+    "stepfun",
+    "laguna"
+   ],
+   "promote_when": "правим attention-блок скелета (гейты голов, sink-токены, SWA/Global-микс) или выбираем softplus vs sigmoid"
+  },
+  {
+   "card": "environment-as-scaffold",
+   "title": "Обогащение наблюдений среды вместо прогрева SFT",
+   "state": "active",
+   "score": 17,
+   "hits": {
+    "files": [
+     "generate.py",
+     "run.py",
+     "verifier.py",
+     "ENVIRONMENT-V1.md"
+    ],
+    "keys": [
+     "verdict_mix"
+    ],
+    "deps": [],
+    "words": [
+     "гейт",
+     "среда"
+    ]
+   },
+   "skills": [
+    "agentic-rl-patterns",
+    "lego-rl-harness-native-rl"
+   ],
+   "plugins": [
+    "agentic-rl"
+   ],
+   "promote_when": "награда вырождена и обсуждается SFT-прогрев вместо изменения среды"
+  },
+  {
+   "card": "execution-grounded-benchmark-gen",
+   "title": "Эталон из исполнения, а не из судьи",
+   "state": "active",
+   "score": 17,
+   "hits": {
+    "files": [
+     "generate.py",
+     "corruption.py",
+     "verifier.py"
+    ],
+    "keys": [
+     "difficulty",
+     "attempts"
+    ],
+    "deps": [],
+    "words": [
+     "правило",
+     "задача"
+    ]
+   },
+   "skills": [
+    "aar-benchmark-architecture",
+    "train-bench-builder",
+    "kat-tui-11-benchmark-evaluator"
+   ],
+   "plugins": [
+    "automated-research",
+    "kimi",
+    "kat"
+   ],
+   "promote_when": "расширяется генератор задач и нужен источник эталона, не зависящий от модели"
+  },
+  {
+   "card": "harness-token-economics",
+   "title": "Токен-экономика оркестрации: когда флот дешевле одиночного агента",
+   "state": "latent",
+   "score": 17,
+   "hits": {
+    "files": [
+     "TASK.md",
+     "MANIFEST.json",
+     "CONSTRAINTS.yaml"
+    ],
+    "keys": [
+     "recommended_timeout_secs",
+     "epic_context_tokens"
+    ],
+    "deps": [],
+    "words": [
+     "харнесс",
+     "бюджет"
+    ]
+   },
+   "skills": [
+    "harness-context-window-control",
+    "harness-tool-calling-trends"
+   ],
+   "plugins": [
+    "agent-harnesses",
+    "tool-calling"
+   ],
+   "promote_when": "накопились замеры прогонов (токены/время на задачу) и есть развилка «флот против одиночного агента» с числами"
+  },
+  {
+   "card": "judge-credit-limits",
+   "title": "Текстовый шаговый кредит ненадёжен: обоснование AD-2/C-039",
+   "state": "active",
+   "score": 17,
+   "hits": {
+    "files": [
+     "reward.py",
+     "check_reward_isolation.py",
+     "CONSTRAINTS.yaml"
+    ],
+    "keys": [
+     "budget_seconds",
+     "spent_tokens"
+    ],
+    "deps": [],
+    "words": [
+     "судья",
+     "шаг"
+    ]
+   },
+   "skills": [
+    "benchshield-reward-integrity",
+    "rlvr-verifier-design"
+   ],
+   "plugins": [
+    "verification",
+    "rlvr"
+   ],
+   "promote_when": "обсуждается ввод LLM-судьи/PRM в контур кредита или снятие ограничения C-039"
+  },
+  {
+   "card": "learnability-frontier-task-synth",
+   "title": "Онлайн-синтез задач по фронтиру обучаемости",
+   "state": "active",
+   "score": 17,
+   "hits": {
+    "files": [
+     "generate.py",
+     "calibrate.py",
+     "schemas.py",
+     "ENVIRONMENT-V1.md"
+    ],
+    "keys": [
+     "difficulty"
+    ],
+    "deps": [],
+    "words": [
+     "калибровка",
+     "задача"
+    ]
+   },
+   "skills": [
+    "kat-tui-01-verifiable-task-miner",
+    "mai-verifiable-task-pipeline",
+    "agentic-posttraining-tool-synthesis"
+   ],
+   "plugins": [
+    "kat",
+    "microsoft-ai-thinking",
+    "agentic-rl"
+   ],
+   "promote_when": "среда даёт невырожденную награду и появился чекпоинт, для которого можно измерять фронтир обучаемости"
+  },
+  {
+   "card": "locus-output-length-budget",
+   "title": "Длина вывода как целевая метрика: низкоранговое подпространство",
+   "state": "latent",
+   "score": 17,
+   "hits": {
+    "files": [
+     "infer.py",
+     "config.json",
+     "RL-STAGE.delta.md"
+    ],
+    "keys": [
+     "lr_schedule",
+     "warmup_ratio"
+    ],
+    "deps": [],
+    "words": [
+     "вывод",
+     "бюджет"
+    ]
+   },
+   "skills": [
+    "ling26-token-efficiency-posttraining",
+    "effort-sft-budget-truncation",
+    "long2short"
+   ],
+   "plugins": [
+    "antgroup-ling",
+    "effort",
+    "kimi"
+   ],
+   "promote_when": "инференс на GB10 упирается в стоимость вывода, а не в качество"
+  },
+  {
+   "card": "mxfp4-kappa-qat-guard",
+   "title": "SNR-граница для MXFP4: фактор участия и ротация тензоров",
+   "state": "latent",
+   "score": 17,
+   "hits": {
+    "files": [
+     "quant.py",
+     "config.json",
+     "MODEL-L3-SKELETON.md"
+    ],
+    "keys": [
+     "qat_enabled",
+     "qat_kv_enabled"
+    ],
+    "deps": [],
+    "words": [
+     "MXFP4",
+     "блок"
+    ]
+   },
+   "skills": [
+    "qat-sft",
+    "mxfp4-moe-gb10"
+   ],
+   "plugins": [
+    "qat",
+    "quantization"
+   ],
+   "promote_when": "начинается QAT MXFP4 и нужно решить, какие тензоры квантизовать без потерь"
+  },
+  {
+   "card": "progress-report-unreliable",
+   "title": "Стоп-правила не по самоотчёту о прогрессе",
+   "state": "latent",
+   "score": 17,
+   "hits": {
+    "files": [
+     "reward.py",
+     "run.py",
+     "RL-STAGE.delta.md"
+    ],
+    "keys": [
+     "budget_seconds",
+     "attempts"
+    ],
+    "deps": [],
+    "words": [
+     "стоп-правило",
+     "артефакт"
+    ]
+   },
+   "skills": [
+    "dash-adaptive-supervision-horizons",
+    "long-horizon-lab"
+   ],
+   "plugins": [
+    "distillation",
+    "agents"
+   ],
+   "promote_when": "стоп-правило стадии опирается на оценку прогресса, полученную от модели, а не из артефактов"
+  },
+  {
+   "card": "sparse-supervision-loss",
+   "title": "Разреженная супервизия: 0,05% токенов на траекторию",
+   "state": "active",
+   "score": 17,
+   "hits": {
+    "files": [
+     "SFT-STAGE.delta.md",
+     "check_budget_gate.py",
+     "RL-STAGE.delta.md"
+    ],
+    "keys": [
+     "spent_tokens",
+     "budget_seconds"
+    ],
+    "deps": [],
+    "words": [
+     "бюджет",
+     "границы"
+    ]
+   },
+   "skills": [
+    "effort-sft-budget-truncation",
+    "dash-adaptive-supervision-horizons"
+   ],
+   "plugins": [
+    "effort",
+    "distillation"
+   ],
+   "promote_when": "стадия обучения ограничена бюджетом токенов и нужен способ сократить лосс без потери — **ВЫПОЛНЕНО 17.09.2026** (см. журнал)"
+  },
+  {
+   "card": "arcticswarm-fleet-isolation",
+   "title": "Изоляция веток флота и подтверждение на границах коммита",
+   "state": "latent",
+   "score": 16,
+   "hits": {
+    "files": [
+     "MANIFEST.json",
+     "ARCHITECTURE.md",
+     "CONSTRAINTS.yaml"
+    ],
+    "keys": [
+     "pattern",
+     "baseline_commit"
+    ],
+    "deps": [],
+    "words": [
+     "ветка"
+    ]
+   },
+   "skills": [
+    "arcticswarm-multiagent-research",
+    "hierarchical-skill-orchestration"
+   ],
+   "plugins": [
+    "multi-agent-systems"
+   ],
+   "promote_when": "флот с параллельными ветками показывает расхождение/ранний консенсус на общей части артефактов"
+  },
+  {
+   "card": "axiom-pretrain-gb10",
+   "title": "Претрейн L3 (1B / 20B токенов) целиком на GB10, своим контуром",
+   "state": "latent",
+   "score": 16,
+   "hits": {
+    "files": [
+     "net/config.json",
+     "stage-journal.json"
+    ],
+    "keys": [
+     "context_curriculum",
+     "attn_dense_reference"
+    ],
+    "deps": [],
+    "words": [
+     "GB10",
+     "DGX Spark",
+     "претрейн",
+     "20B"
+    ]
+   },
+   "skills": [
+    "gb10-full-setup",
+    "gb10-cuda-stack",
+    "gb10-data-pipeline",
+    "gb10-pipeline-template"
+   ],
+   "plugins": [
+    "gb10"
+   ],
+   "promote_when": "измеренный на GB10 tok/s при 8K/64K даёт календарный срок, приемлемый владельцу; собран претрейн-корпус 20B с карточкой и хешем; есть смета-эквивалент (AD-8) и решение владельца новым ADR, supersede ADR-004/AD-7"
+  },
+  {
+   "card": "bf16-allreduce-lmhead-drift",
+   "title": "BF16 all-reduce входа LM head и дрейф логитов: FP32-редукции, hash-checks, спецтокены",
+   "state": "latent",
+   "score": 16,
+   "hits": {
+    "files": [
+     "model.py",
+     "optimizer.py",
+     "check_precision_pinning.py"
+    ],
+    "keys": [
+     "pretrain_dtype",
+     "tie_embeddings"
+    ],
+    "deps": [],
+    "words": [
+     "BF16"
+    ]
+   },
+   "skills": [
+    "laguna-04-numerics-reliability"
+   ],
+   "plugins": [
+    "laguna"
+   ],
+   "promote_when": "готовим распределённый прогон L3 (TP/DDP) или видим дрейф логитов/скачки grad-norm"
+  },
+  {
+   "card": "harness-ab-selection",
+   "title": "A/B-выбор харнесса при фиксированной модели",
+   "state": "latent",
+   "score": 16,
+   "hits": {
+    "files": [
+     "TASK.md",
+     "MANIFEST.json",
+     "CONSTRAINTS.yaml"
+    ],
+    "keys": [
+     "epic_context_tokens",
+     "recommended_timeout_secs"
+    ],
+    "deps": [],
+    "words": [
+     "харнесс"
+    ]
+   },
+   "skills": [
+    "harness-context-window-control",
+    "harness-tool-calling-trends"
+   ],
+   "plugins": [
+    "agent-harnesses",
+    "tool-calling"
+   ],
+   "promote_when": "есть фиксированная модель и сопоставимые задачи, на которых можно сравнить две конфигурации харнесса по held-out метрике"
+  },
+  {
+   "card": "muon-moonlight-lr-rule",
+   "title": "Muon с Moonlight-масштабом и WSD: LR-закон и коллапс экспертов без масштаба",
+   "state": "latent",
+   "score": 16,
+   "hits": {
+    "files": [
+     "optimizer.py",
+     "config.json"
+    ],
+    "keys": [
+     "lr_schedule",
+     "weight_decay",
+     "warmup_ratio"
+    ],
+    "deps": [],
+    "words": [
+     "Muon"
+    ]
+   },
+   "skills": [
+    "laguna-03-muon-wsd-lr-law"
+   ],
+   "plugins": [
+    "laguna"
+   ],
+   "promote_when": "выбираем LR/расписание претрейна L3 на Muon или видим коллапс экспертов"
+  },
+  {
+   "card": "proof-carrying-reward",
+   "title": "Награда, улаженная реальностью: доказательство, проверяемое исполнением",
+   "state": "active",
+   "score": 16,
+   "hits": {
+    "files": [
+     "verifier.py",
+     "reward.py",
+     "stage-journal.json"
+    ],
+    "keys": [
+     "budget_seconds",
+     "spent_tokens"
+    ],
+    "deps": [],
+    "words": [
+     "награда"
+    ]
+   },
+   "skills": [
+    "generative-verifier-genv",
+    "benchshield-reward-integrity",
+    "rlvr-verifier-design"
+   ],
+   "plugins": [
+    "rlvr",
+    "verification"
+   ],
+   "promote_when": "появился прогон, где проверяющий (судья/чекер) слабее генератора и best-of-N ломает soundness"
+  },
+  {
+   "card": "self-improvement-loop-ornith",
+   "title": "Цикл самоулучшения: модель сама предлагает задачи, скаффолды и роллауты",
+   "state": "latent",
+   "score": 16,
+   "hits": {
+    "files": [
+     "generate.py",
+     "corruption.py",
+     "run_rl_smoke.py",
+     "calibrate.py"
+    ],
+    "keys": [
+     "seed"
+    ],
+    "deps": [],
+    "words": [
+     "задача"
+    ]
+   },
+   "skills": [
+    "ornith15-self-improvement-loop"
+   ],
+   "plugins": [
+    "ornith"
+   ],
+   "promote_when": "среда даёт невырожденную награду и есть буфер задач, по которому можно мерить новизну"
+  },
+  {
+   "card": "t1-routing-replay",
+   "title": "Реплей маршрутов экспертов и плотная процесс-награда",
+   "state": "latent",
+   "score": 16,
+   "hits": {
+    "files": [
+     "moe.py",
+     "config.json",
+     "run_rl_smoke.py"
+    ],
+    "keys": [
+     "moe_top_k",
+     "routing_seed"
+    ],
+    "deps": [],
+    "words": [
+     "награда"
+    ]
+   },
+   "skills": [
+    "moe-router-health",
+    "stable-latent-moe"
+   ],
+   "plugins": [
+    "moe",
+    "kimi-k3-concept-skills"
+   ],
+   "promote_when": "RL-стадия идёт на MoE и нужен либо плотный сигнал, либо воспроизводимость маршрутизации между генерацией и обучением"
+  },
+  {
+   "card": "task-difficulty-curriculum",
+   "title": "Калибровка трудности задач и самогенерируемая учебная программа",
+   "state": "active",
+   "score": 16,
+   "hits": {
+    "files": [
+     "calibrate.py",
+     "generate.py",
+     "schemas.py",
+     "ENVIRONMENT-V1.md"
+    ],
+    "keys": [
+     "difficulty"
+    ],
+    "deps": [],
+    "words": [
+     "калибровка"
+    ]
+   },
+   "skills": [
+    "ornith15-self-improvement-loop"
+   ],
+   "plugins": [
+    "ornith"
+   ],
+   "promote_when": "калибровка среды (K3) проведена и есть кривая pass-rate по уровням сложности"
+  },
+  {
+   "card": "mfa-afd-decode-roofline",
+   "title": "MFA/AFD: интенсивность внимания и минимальная разреженность MoE под железо",
+   "state": "latent",
+   "score": 15,
+   "hits": {
+    "files": [
+     "mla.py",
+     "infer.py"
+    ],
+    "keys": [
+     "mla_latent_dim",
+     "mla_top_k",
+     "mla_head_dim"
+    ],
+    "deps": [],
+    "words": []
+   },
+   "skills": [
+    "stepfun-02-mfa-afd-decoding"
+   ],
+   "plugins": [
+    "stepfun"
+   ],
+   "promote_when": "считаем tok/s/память инференса L3 на GB10 или выбираем архитектуру attention/разреженность MoE"
+  },
+  {
+   "card": "moe-routing-effrank-monitor",
+   "title": "Эффективный ранг роутинга как датчик коллапса MoE",
+   "state": "latent",
+   "score": 15,
+   "hits": {
+    "files": [
+     "moe.py",
+     "test_11_routing.py",
+     "config.json"
+    ],
+    "keys": [
+     "qb_weight",
+     "routing_seed"
+    ],
+    "deps": [],
+    "words": []
+   },
+   "skills": [
+    "moe-router-health",
+    "stable-latent-moe"
+   ],
+   "plugins": [
+    "moe",
+    "kimi-k3-concept-skills"
+   ],
+   "promote_when": "начинается претрейн MoE и нужен ранний датчик деградации распределения экспертов"
+  },
+  {
+   "card": "mopd-staleness-refresh",
+   "title": "Обновление student-logprob перед шагом MOPD при кэше учителей",
+   "state": "latent",
+   "score": 15,
+   "hits": {
+    "files": [
+     "RL-STAGE.delta.md",
+     "run_rl_smoke.py",
+     "stage-journal.json"
+    ],
+    "keys": [
+     "qat_weights",
+     "mtp_loss_weight"
+    ],
+    "deps": [],
+    "words": []
+   },
+   "skills": [
+    "open-mopd-capability-imbalance",
+    "partial-rollouts-infra"
+   ],
+   "plugins": [
+    "distillation",
+    "kimi"
+   ],
+   "promote_when": "MOPD-стадия с кэшем учителей и K>1 роллаутов запущена на скелете"
+  },
+  {
+   "card": "fp8-blockwise-hadamard-qat",
+   "title": "FP8-блоки, повороты против выбросов, NVFP4 только через QAD",
+   "state": "latent",
+   "score": 13,
+   "hits": {
+    "files": [
+     "quant.py",
+     "test_08_qat.py",
+     "test_14_kv_fp4.py"
+    ],
+    "keys": [
+     "qat_enabled"
+    ],
+    "deps": [],
+    "words": [
+     "FP8"
+    ]
+   },
+   "skills": [
+    "laguna-07-quantization"
+   ],
+   "plugins": [
+    "laguna"
+   ],
+   "promote_when": "квантуем L3 для инференса на GB10 (FP8/INT4/NVFP4) или включаем QAT"
+  },
+  {
+   "card": "mtp-self-speculative-decoding",
+   "title": "MTP-1 → клон в MTP-2/3: самоспекулятивный декодинг без смены выхода",
+   "state": "latent",
+   "score": 13,
+   "hits": {
+    "files": [
+     "mtp.py",
+     "infer.py"
+    ],
+    "keys": [
+     "mtp_layers",
+     "mtp_loss_weight"
+    ],
+    "deps": [],
+    "words": [
+     "MTP"
+    ]
+   },
+   "skills": [
+    "stepfun-05-mtp-speculative"
+   ],
+   "plugins": [
+    "stepfun"
+   ],
+   "promote_when": "нужен ускоренный инференс L3 на GB10 с побитово идентичным greedy-выходом"
+  },
+  {
+   "card": "swa-global-mix-yarn-g-layers",
+   "title": "Редкие глобальные слои и YaRN только на них: контекст без дообучения",
+   "state": "latent",
+   "score": 13,
+   "hits": {
+    "files": [
+     "attn_sparse.py",
+     "config.json"
+    ],
+    "keys": [
+     "swa_window",
+     "context_curriculum"
+    ],
+    "deps": [],
+    "words": [
+     "SWA"
+    ]
+   },
+   "skills": [
+    "laguna-01-hybrid-attention"
+   ],
+   "plugins": [
+    "laguna"
+   ],
+   "promote_when": "расширяем контекст L3 за пределы curriculum 8192→65536 или проектируем SWA/Global-микс"
+  },
+  {
+   "card": "agent-federation-governance",
+   "title": "Проверяемое авторство и полномочия веток флота",
+   "state": "latent",
+   "score": 12,
+   "hits": {
+    "files": [
+     "MANIFEST.json",
+     "TASK.md"
+    ],
+    "keys": [
+     "route",
+     "baseline_commit"
+    ],
+    "deps": [],
+    "words": []
+   },
+   "skills": [
+    "hierarchical-skill-orchestration"
+   ],
+   "plugins": [
+    "multi-agent-systems"
+   ],
+   "promote_when": "во флоте появляется более одного уровня полномочий (кто предлагает, кто утверждает) и нужна проверяемость авторства"
+  },
+  {
+   "card": "latent-success-probe",
+   "title": "Внутренний монитор успеха вместо LLM-судьи",
+   "state": "fleeting",
+   "score": 12,
+   "hits": {
+    "files": [
+     "reward.py",
+     "stub_model.py",
+     "stage-journal.json"
+    ],
+    "keys": [
+     "spent_tokens"
+    ],
+    "deps": [],
+    "words": []
+   },
+   "skills": [
+    "effort-calibration-eval",
+    "agent-verification-eval"
+   ],
+   "plugins": [
+    "effort",
+    "agents"
+   ],
+   "promote_when": "возникает задача различать стадии прогона (когда продолжать, когда останавливать) без внешнего судьи"
+  },
+  {
+   "card": "moe-expert-death-activation-blowup",
+   "title": "Смерть экспертов при нормальном роутинге и локальный взрыв активаций",
+   "state": "latent",
+   "score": 12,
+   "hits": {
+    "files": [
+     "moe.py",
+     "optimizer.py"
+    ],
+    "keys": [
+     "moe_num_routed",
+     "moe_expert_intermediate"
+    ],
+    "deps": [],
+    "words": []
+   },
+   "skills": [
+    "stepfun-03-moe-stability-lab"
+   ],
+   "plugins": [
+    "stepfun"
+   ],
+   "promote_when": "на прогоне L3 растёт max/median или падает min/median норм экспертов"
+  },
+  {
+   "card": "single-agent-beats-multiagent",
+   "title": "Одиночный агент против флота: контрпример с AST-гейтом",
+   "state": "latent",
+   "score": 12,
+   "hits": {
+    "files": [
+     "MANIFEST.json",
+     "CONSTRAINTS.yaml"
+    ],
+    "keys": [
+     "pattern",
+     "route"
+    ],
+    "deps": [],
+    "words": []
+   },
+   "skills": [
+    "safe-refactor",
+    "harness-eval"
+   ],
+   "plugins": [
+    "safe-coding",
+    "agent-harness"
+   ],
+   "promote_when": "принимается решение о форме оркестрации (одиночный агент против флота) без собственных замеров"
+  },
+  {
+   "card": "muon-ns-precision-loss-spikes",
+   "title": "BF16-итерация Newton–Schulz даёт редкие лосс-спайки: итерацию считать в FP16",
+   "state": "latent",
+   "score": 11,
+   "hits": {
+    "files": [
+     "optimizer.py",
+     "check_precision_pinning.py"
+    ],
+    "keys": [
+     "pretrain_dtype"
+    ],
+    "deps": [],
+    "words": [
+     "Muon",
+     "Polar Express"
+    ]
+   },
+   "skills": [
+    "stepfun-04-muon-precision-steplaw"
+   ],
+   "plugins": [
+    "stepfun"
+   ],
+   "promote_when": "необъяснённый редкий лосс-спайк на прогоне L3 при Muon или тюнинг точности NS-итерации"
+  },
+  {
+   "card": "selective-revalidation",
+   "title": "Перепроверять только затронутое: конфликт версий против конфликта решений",
+   "state": "latent",
+   "score": 11,
+   "hits": {
+    "files": [
+     "CONSTRAINTS.yaml",
+     "MANIFEST.json"
+    ],
+    "keys": [
+     "baseline_commit"
+    ],
+    "deps": [],
+    "words": [
+     "версия",
+     "гейт"
+    ]
+   },
+   "skills": [
+    "skill-library-manager",
+    "skill-management"
+   ],
+   "plugins": [
+    "skill-management"
+   ],
+   "promote_when": "изменения в зависимостях (скиллы, правила, конфиги) начинают инвалидировать ранее принятые решения"
+  },
+  {
+   "card": "consistency-gap",
+   "title": "Разрыв консистентности: один прогон не доказательство",
+   "state": "active",
+   "score": 8,
+   "hits": {
+    "files": [],
+    "keys": [
+     "seed",
+     "attempts"
+    ],
+    "deps": [],
+    "words": [
+     "прогон",
+     "вердикт"
+    ]
+   },
+   "skills": [
+    "effort-calibration-eval",
+    "agent-verification-eval"
+   ],
+   "plugins": [
+    "effort",
+    "agents"
+   ],
+   "promote_when": "принимается решение по одному прогону без повторов (или по одной попытке на задачу)"
+  },
+  {
+   "card": "agentic-rl-async-staleness-tito",
+   "title": "Асинхронный агентный RL: TITO-инвариант, LOO-базлайн, цепочка наград, staleness ≤10",
+   "state": "latent",
+   "score": 7,
+   "hits": {
+    "files": [
+     "run_rl_smoke.py",
+     "check_reward_isolation.py"
+    ],
+    "keys": [],
+    "deps": [],
+    "words": [
+     "CISPO"
+    ]
+   },
+   "skills": [
+    "laguna-06-agentic-rl-cispo"
+   ],
+   "plugins": [
+    "laguna"
+   ],
+   "promote_when": "ставим RL-стадию L3 (axiom): инференс и трейнер расходятся, нужен инвариант токенов и базлайн"
+  },
+  {
+   "card": "system-one-typed-decisions",
+   "title": "Типизированные решения вместо генерации: калиброванные вероятности (RLCD) для верифицируемых задач",
+   "state": "latent",
+   "score": 7,
+   "hits": {
+    "files": [
+     "reward.py",
+     "verifier.py"
+    ],
+    "keys": [],
+    "deps": [],
+    "words": [
+     "калибровка"
+    ]
+   },
+   "skills": [
+    "agentic-rl-patterns",
+    "lego-rl-harness-native-rl"
+   ],
+   "plugins": [
+    "agentic-rl"
+   ],
+   "promote_when": "в контуре появилась задача с малым типизированным пространством ответов (выбор slug, роутинг, классификация) и цена ошибки формата/галлюцинации высока"
+  },
+  {
+   "card": "mispo-is-correction-not-masks",
+   "title": "MIS-PO: бинарные IS-фильтры вместо масок; truncation-aware bootstrapping",
+   "state": "latent",
+   "score": 6,
+   "hits": {
+    "files": [
+     "run_rl_smoke.py",
+     "check_reward_isolation.py"
+    ],
+    "keys": [],
+    "deps": [],
+    "words": []
+   },
+   "skills": [
+    "stepfun-06-rl-mispo"
+   ],
+   "plugins": [
+    "stepfun"
+   ],
+   "promote_when": "ставим RL L3 с рассогласованием инференс↔трейнер или обрезкой длинных траекторий"
+  },
+  {
+   "card": "pacore-parallel-trajectory-rounds",
+   "title": "PaCoRe: раунды параллельных траекторий со сжатым обменом выводами",
+   "state": "latent",
+   "score": 6,
+   "hits": {
+    "files": [
+     "run_rl_smoke.py",
+     "curriculum.py"
+    ],
+    "keys": [],
+    "deps": [],
+    "words": []
+   },
+   "skills": [
+    "stepfun-07-pacore-agents"
+   ],
+   "plugins": [
+    "stepfun"
+   ],
+   "promote_when": "строим test-time compute для L3 (раунды траекторий) или учим синтез через RL"
+  },
+  {
+   "card": "skill-closure-authorization",
+   "title": "Замыкание зависимостей скилла и запрет переноса авторизации",
+   "state": "latent",
+   "score": 6,
+   "hits": {
+    "files": [
+     "CONSTRAINTS.yaml",
+     "MANIFEST.json"
+    ],
+    "keys": [],
+    "deps": [],
+    "words": []
+   },
+   "skills": [
+    "skill-management"
+   ],
+   "plugins": [
+    "skill-management"
+   ],
+   "promote_when": "скиллы начинают тянуть внешние зависимости (пакеты/сервисы/MCP), и обновление зависимости не должно сохранять прежние полномочия"
+  },
+  {
+   "card": "reward-hack-detector-history-cleaning",
+   "title": "Хаки агентных бенчей: чистка git-истории, upstream, детектор по траекториям",
+   "state": "latent",
+   "score": 5,
+   "hits": {
+    "files": [
+     "check_reward_isolation.py"
+    ],
+    "keys": [],
+    "deps": [],
+    "words": [
+     "reward hacking",
+     "траектории"
+    ]
+   },
+   "skills": [
+    "laguna-08-evals-reward-hacking"
+   ],
+   "plugins": [
+    "laguna"
+   ],
+   "promote_when": "оцениваем L3 агентными бенчами или чистим среду задач перед RL"
+  },
+  {
+   "card": "synthetic-corpus-staging",
+   "title": "Стадийное подмешивание синтетики: порог доли и two-stage",
+   "state": "active",
+   "score": 5,
+   "hits": {
+    "files": [],
+    "keys": [
+     "curriculum_split"
+    ],
+    "deps": [],
+    "words": [
+     "данные",
+     "стадия"
+    ]
+   },
+   "skills": [
+    "data-mixture-automixer",
+    "corpus-mixture-audit"
+   ],
+   "plugins": [
+    "laguna",
+    "data-curator"
+   ],
+   "promote_when": "формируется состав претрейн/мидтрейн-корпуса с доменной и синтетической частями"
+  },
+  {
+   "card": "memory-lifecycle-governance",
+   "title": "Жизненный цикл памяти о намерении: слияние и архивация по событиям",
+   "state": "latent",
+   "score": 4,
+   "hits": {
+    "files": [],
+    "keys": [
+     "min_score"
+    ],
+    "deps": [],
+    "words": [
+     "память"
+    ]
+   },
+   "skills": [
+    "memory-as-plans-wam"
+   ],
+   "plugins": [
+    "memory-systems"
+   ],
+   "promote_when": "карточек становится столько, что роутинг начинает поднимать шум, а дубли не выявляются"
+  },
+  {
+   "card": "closed-loop-tool-traj-synthesis",
+   "title": "Замкнутый синтез траекторий: generate-verify-refine вместо generate-then-filter",
+   "state": "active",
+   "score": 3,
+   "hits": {
+    "files": [],
+    "keys": [
+     "curriculum_split"
+    ],
+    "deps": [],
+    "words": []
+   },
+   "skills": [
+    "trajectory-data-engineering",
+    "agentic-posttraining-tool-synthesis",
+    "trajectory-flywheel"
+   ],
+   "plugins": [
+    "reasoning",
+    "agentic-rl"
+   ],
+   "promote_when": "планируется генерация SFT/RL-траекторий и выбирается между «сгенерировать-и-отфильтровать» и замкнутым циклом"
+  },
+  {
+   "card": "dream-rsi-replay-simulator",
+   "title": "История прогонов как replay-симулятор: оценка конфигураций без дорогих онлайн-прогонов",
+   "state": "latent",
+   "score": 3,
+   "hits": {
+    "files": [],
+    "keys": [],
+    "deps": [],
+    "words": [
+     "конфигурация",
+     "прогон",
+     "стоимость"
+    ]
+   },
+   "skills": [],
+   "plugins": [],
+   "promote_when": "накопилась история прогонов с сопоставимыми метриками (есть) и нужна оценка следующей конфигурации без запуска дорогого прогона (есть всегда)"
+  },
+  {
+   "card": "manifest-head-hash-blindness",
+   "title": "Неполный хеш в манифесте создаёт класс незаметных подмен",
+   "state": "latent",
+   "score": 3,
+   "hits": {
+    "files": [],
+    "keys": [],
+    "deps": [],
+    "words": [
+     "манифест",
+     "хеш",
+     "head"
+    ]
+   },
+   "skills": [],
+   "plugins": [],
+   "promote_when": "понадобится ревизия всех манифестов кейса на неполные хеши"
+  },
+  {
+   "card": "skill-graph-evolution",
+   "title": "Граф зависимостей скиллов, эволюционирующий из трейсов",
+   "state": "latent",
+   "score": 3,
+   "hits": {
+    "files": [],
+    "keys": [
+     "min_score"
+    ],
+    "deps": [],
+    "words": []
+   },
+   "skills": [
+    "trace-skill-bank-evolution",
+    "gse-globalized-skill-evolution",
+    "skill-library-manager"
+   ],
+   "plugins": [
+    "skill-management"
+   ],
+   "promote_when": "роутинг по плоскому списку перестаёт давать релевантный набор и нужны связи между скиллами"
+  },
+  {
+   "card": "skill-routing-diversity",
+   "title": "Роутинг по библиотеке скиллов: разнообразие вместо top-k",
+   "state": "latent",
+   "score": 3,
+   "hits": {
+    "files": [],
+    "keys": [
+     "min_score"
+    ],
+    "deps": [],
+    "words": []
+   },
+   "skills": [
+    "cobra-skill-optimization",
+    "lasko-skill-optimizer",
+    "skill-management"
+   ],
+   "plugins": [
+    "skill-optimization",
+    "skill-management"
+   ],
+   "promote_when": "библиотека скиллов превышает порог, при котором top-k отбор даёт ложные попадания, и есть трейс-лог для сверки маршрута"
+  },
+  {
+   "card": "skills-from-traces",
+   "title": "Из трейсов прогонов в постоянные скиллы",
+   "state": "fleeting",
+   "score": 3,
+   "hits": {
+    "files": [
+     "stage-journal.json"
+    ],
+    "keys": [],
+    "deps": [],
+    "words": []
+   },
+   "skills": [
+    "skill-management"
+   ],
+   "plugins": [
+    "skill-management"
+   ],
+   "promote_when": "трейсы прогонов хранятся в машиночитаемом виде и есть метрика прироста от скилла против его отсутствия"
+  },
+  {
+   "card": "synapse-typed-skill-exchange",
+   "title": "Типизированный обмен знанием о роутинге между замороженными агентами",
+   "state": "latent",
+   "score": 3,
+   "hits": {
+    "files": [
+     "MANIFEST.json"
+    ],
+    "keys": [],
+    "deps": [],
+    "words": []
+   },
+   "skills": [
+    "codewhale-fleet-automation",
+    "harness-fleet-model-rollout",
+    "map-graph-provenance-memory"
+   ],
+   "plugins": [
+    "codewhale",
+    "local-ops",
+    "memory-systems"
+   ],
+   "promote_when": "появляется соблазн добавить LLM-роутинг скиллов/инструментов, хотя статистика над тем же опытом дешевле"
+  },
+  {
+   "card": "cost-estimate-needs-skeleton",
+   "title": "Оценка цены шага врёт в разы в обе стороны — бюджет строится на скелете",
+   "state": "latent",
+   "score": 2,
+   "hits": {
+    "files": [],
+    "keys": [],
+    "deps": [],
+    "words": [
+     "цена",
+     "оценка"
+    ]
+   },
+   "skills": [],
+   "plugins": [],
+   "promote_when": "перед объявлением бюджета RL-стадии (3 сида): скелет измерен, оценка заменена фактом"
+  },
+  {
+   "card": "false-negative-costly",
+   "title": "Ложный минус в награде так же вреден, как ложный плюс",
+   "state": "latent",
+   "score": 2,
+   "hits": {
+    "files": [],
+    "keys": [],
+    "deps": [],
+    "words": [
+     "награда",
+     "ложный"
+    ]
+   },
+   "skills": [],
+   "plugins": [],
+   "promote_when": "RL выйдет на реальные rollout'ы и появится статистика нулевых задач по причинам"
+  },
+  {
+   "card": "laguna-eval-multi-run",
+   "title": "Eval-integrity: несколько прогонов и stderr вместо одной точки",
+   "state": "active",
+   "score": 2,
+   "hits": {
+    "files": [],
+    "keys": [],
+    "deps": [],
+    "words": [
+     "eval",
+     "судья"
+    ]
+   },
+   "skills": [
+    "effort-calibration-eval"
+   ],
+   "plugins": [
+    "effort"
+   ],
+   "promote_when": "фаза 2 (три сида) или пересмотр eval-протокола"
+  },
+  {
+   "card": "metric-instrument-sensitivity",
+   "title": "Перед оптимизацией проверь, откликается ли метрика на обучение, а не только на прибор",
+   "state": "latent",
+   "score": 2,
+   "hits": {
+    "files": [],
+    "keys": [],
+    "deps": [],
+    "words": [
+     "метрика",
+     "бюджет"
+    ]
+   },
+   "skills": [],
+   "plugins": [],
+   "promote_when": "понадобится выбирать оптимизируемую метрику для новой стадии"
+  },
+  {
+   "card": "verdict-threshold-same-series",
+   "title": "Порог и метрика обязаны стоять на одном ряду, иначе вердикт неопределён",
+   "state": "active",
+   "score": 2,
+   "hits": {
+    "files": [],
+    "keys": [],
+    "deps": [],
+    "words": [
+     "порог",
+     "вердикт"
+    ]
+   },
+   "skills": [],
+   "plugins": [],
+   "promote_when": "понадобится принимать решение по метрике, где порог и знаменатель заданы разными пунктами"
+  }
+ ]
+}

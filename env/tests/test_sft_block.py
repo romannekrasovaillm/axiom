@@ -245,3 +245,97 @@ def test_real_gates_integration_and_determinism(tmp_path: Path):
     ok, guard = sb.validate_block(f1)
     assert ok, guard
     assert sum_a["tool_calls"] >= 5
+
+
+# ── E-2.7: параллелизация генератора (--workers) ───────────────────────────
+#
+# Воркеры — процессы (:class:`multiprocessing.Pool`), фабрика верификатора
+# передаётся в пул через pickle, поэтому здесь она — модульная функция, а не
+# lambda. Содержимое каждой траектории зависит только от ``(seed, scenario,
+# index)``; шард — лишь исполнитель, порядок записей восстанавливается по
+# глобальному индексу, поэтому файл инвариантен по ``workers``.
+
+
+def _stub_factory(spec: dict, ws: Path) -> StubVerifier:
+    """Модульная (picklable) фабрика стаба — для воркеров пула."""
+    return StubVerifier(spec, ws)
+
+
+def _timeout_factory(spec: dict, ws: Path):
+    """Стаб с поддельным таймаутом на траектории ``s2-00003``.
+
+    Исключение из воркера (в т.ч. TimeoutError) не должно ронять пул:
+    траектория исключается, счётчик ``fails`` растёт, строка — в stderr.
+    """
+    if Path(ws).name == "s2-00003":
+        raise TimeoutError("fake worker timeout")
+    return StubVerifier(spec, ws)
+
+
+def _gen_w(tmp_path: Path, n_s1: int, n_s2: int, seed: int = 1, level: str = "L0",
+           workers: int = 1, factory=_stub_factory):
+    return sb.generate_block(
+        n_s1=n_s1, n_s2=n_s2, seed=seed, s1_level=level, workers=workers,
+        verifier_factory=factory, workdir=tmp_path / f"wd-w{workers}",
+    )
+
+
+def test_workers_repeatable_byte_identical(tmp_path: Path):
+    """(а) одинаковые seed+workers → байт-идентичные файлы (повторяемость)."""
+    a, _ = _gen_w(tmp_path, n_s1=3, n_s2=2, seed=99, workers=2)
+    b, _ = _gen_w(tmp_path, n_s1=3, n_s2=2, seed=99, workers=2)
+    f1, f2 = tmp_path / "a.jsonl", tmp_path / "b.jsonl"
+    sb.write_block(a, f1)
+    sb.write_block(b, f2)
+    assert f1.read_bytes() == f2.read_bytes()
+
+
+def test_workers_output_invariant_across_n(tmp_path: Path):
+    """Разбиение на шарды не меняет содержимое: N=1 и N=2 дают один файл.
+
+    Строгий инвариант E-2.7: содержимое траектории не зависит от ``workers``,
+    записи собираются в порядке глобальных индексов.
+    """
+    r1, _ = _gen_w(tmp_path, n_s1=6, n_s2=2, seed=20261005, workers=1)
+    r2, _ = _gen_w(tmp_path, n_s1=6, n_s2=2, seed=20261005, workers=2)
+    f1, f2 = tmp_path / "w1.jsonl", tmp_path / "w2.jsonl"
+    sb.write_block(r1, f1)
+    sb.write_block(r2, f2)
+    assert f1.read_bytes() == f2.read_bytes()
+
+
+def test_workers_partitions_valid(tmp_path: Path):
+    """(б) мини-выпуск workers=1 vs workers=2: обе партиции валидны стражем."""
+    for workers in (1, 2):
+        recs, _ = _gen_w(tmp_path, n_s1=6, n_s2=2, seed=20261005, workers=workers)
+        assert len(recs) == 8
+        out = tmp_path / f"mini-w{workers}.jsonl"
+        sb.write_block(recs, out)
+        ok, guard = sb.validate_block(out)
+        assert ok, (workers, guard)
+
+
+def test_record_count_independent_of_workers(tmp_path: Path):
+    """(в) число записей = n_s1+n_s2 при любом workers."""
+    for workers in (1, 2, 3):
+        recs, summary = _gen_w(tmp_path, n_s1=5, n_s2=3, seed=7, workers=workers)
+        assert len(recs) == 8
+        assert summary["records"] == 8
+        assert summary["s1"] == 5 and summary["s2"] == 3
+        assert summary["fails"] == 0
+
+
+def test_worker_exception_does_not_crash_pool(tmp_path: Path, capsys):
+    """(г) падение воркера не роняет пул: траектория исключена, fails, stderr-лог."""
+    recs, summary = _gen_w(
+        tmp_path, n_s1=4, n_s2=4, seed=5, workers=2, factory=_timeout_factory
+    )
+    assert summary["requested"] == 8
+    assert summary["fails"] == 1
+    assert len(recs) == 7 and summary["records"] == 7
+    err = capsys.readouterr().err
+    assert "fail" in err
+    assert "TimeoutError" in err
+    assert "index=7" in err  # s2-00003 — глобальный индекс 7 (после 4 S1)
+    # порядок уцелевших записей сохранён (нет дыры в порядке)
+    assert [r["scenario"] for r in recs] == ["S1"] * 4 + ["S2"] * 3

@@ -33,18 +33,27 @@ API, а не способность.
 * **Детерминизм.** ``--seed S`` → байт-идентичный выход: сортированные обходы,
   фиксированный порядок полей JSON, относительные (нормализованные) пути в
   наблюдении вердикта.
+* **Параллелизм (E-2.7).** ``--workers N`` (дефолт 1 — поведение неизменно):
+  шарды ``pos % N`` исполняются :class:`multiprocessing.Pool` (CPU-bound гейты,
+  не потоки). Содержимое траектории от ``N`` не зависит, записи собираются в
+  порядке глобальных индексов → итоговый jsonl инвариантен по ``N``. Падение
+  одной траектории не роняет пул: она исключается, ``summary['fails']`` несёт
+  счётчик, строка — в stderr (прогресс-лог).
 
 CLI::
 
     python3 -m env.sft_block --n-s1 70 --n-s2 30 --seed 20261005 \
-        --out data/datasets/sft_env_block_v1-mini.jsonl --validate
+        --workers 8 --out data/datasets/sft_env_block_v1-mini.jsonl --validate
 """
 
 from __future__ import annotations
 
 import argparse
+import functools
 import hashlib
 import json
+import multiprocessing
+import pickle
 import shutil
 import sys
 import tempfile
@@ -233,6 +242,17 @@ class BlockVerifier:
 
     def run_gates(self, workspace: Path) -> dict[str, Any]:
         return _normalize_verdict(self._env.run_gates(Path(workspace)), workspace)
+
+
+def _default_verifier_factory(
+    spec: dict[str, Any], ws: Path, *, bin: Optional[str] = None
+) -> BlockVerifier:
+    """Модульная фабрика реального верификатора.
+
+    Отдельная от ``generate_block`` функция — чтобы :class:`functools.partial`
+    от неё был picklable: воркеры пула получают фабрику через pickle (E-2.7).
+    """
+    return BlockVerifier(spec, ws, bin=bin)
 
 
 # ── Сборка ходов траектории ────────────────────────────────────────────────
@@ -501,6 +521,148 @@ def default_clean_root() -> Path:
     return DEFAULT_POOL_CASE if (DEFAULT_POOL_CASE / "CONSTRAINTS.yaml").is_file() else ROOT
 
 
+#: Префикс строки прогресс-лога E-2.7 (deliverable 2) в stderr.
+PROGRESS_PREFIX = "[sft-block]"
+
+
+def _progress_line(result: dict[str, Any]) -> str:
+    """Строка по одной траектории: шард, индекс, ``pass``/``fail``.
+
+    ``pass`` — траектория построена (в detail виден вердикт гейтов), ``fail`` —
+    исключение при построении (в detail — его тип и текст).
+    """
+    status = "pass" if result["ok"] else "fail"
+    if result["ok"]:
+        detail = "verdict=" + (
+            "passed" if result["record"]["verdict_passed"] else "failed"
+        )
+    else:
+        detail = f"error={result['error']}"
+    return (
+        f"{PROGRESS_PREFIX} shard={result['shard']} index={result['pos']} "
+        f"scenario={result['scenario']} {status} {detail}"
+    )
+
+
+def _log_progress(result: dict[str, Any]) -> None:
+    """Печатает строку прогресса в stderr с немедленным flush (фон-контроль)."""
+    print(_progress_line(result), file=sys.stderr, flush=True)
+
+
+def _run_task(task: dict[str, Any]) -> dict[str, Any]:
+    """Выполняет одно шард-задание (S1/S2-траекторию) и НИКОГДА не бросает.
+
+    Падение траектории (в т.ч. ``TimeoutError`` из верификатора) возвращается
+    как ``ok=False`` — пул воркеров не рушится, задача исключается из блока.
+    Функция модульного уровня и принимает один pickle-совместимый аргумент:
+    требование ``multiprocessing`` (spawn/fork шлют задание через pickle).
+    """
+    try:
+        clean_root = Path(task["clean_root"])
+        workdir = Path(task["workdir"])
+        factory = task["verifier_factory"]
+        if task["scenario"] == "S1":
+            record = build_s1(
+                clean_root, task["seed"], task["index"], task["level"],
+                verifier_factory=factory, workdir=workdir,
+            )
+        else:
+            record = build_s2(
+                clean_root, task["seed"], task["index"],
+                verifier_factory=factory, workdir=workdir,
+            )
+        return {
+            "pos": task["pos"], "shard": task["shard"],
+            "scenario": task["scenario"], "index": task["index"],
+            "ok": True, "record": record, "error": None,
+        }
+    except Exception as exc:  # noqa: BLE001 — изоляция сбоя одной траектории
+        return {
+            "pos": task["pos"], "shard": task["shard"],
+            "scenario": task["scenario"], "index": task["index"],
+            "ok": False, "record": None,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+
+def _build_tasks(
+    *,
+    n_s1: int,
+    n_s2: int,
+    seed: int,
+    level: str,
+    clean_root: Path,
+    verifier_factory: Callable[[dict[str, Any], Path], Any],
+    workdir: Path,
+    workers: int,
+) -> list[dict[str, Any]]:
+    """Пул задач в порядке генерации (сначала S1, затем S2).
+
+    Шард траектории — ``pos % workers`` (рекомендация E-2.7, внутри шарда —
+    последовательный перебор). Содержимое траектории от шарда НЕ зависит:
+    шард лишь исполнитель. Порядок результата восстанавливается по ``pos``,
+    поэтому итоговый jsonl инвариантен по ``workers``.
+    """
+    tasks: list[dict[str, Any]] = []
+    pos = 0
+    for scenario, count, scenario_level in (
+        ("S1", int(n_s1), level),
+        ("S2", int(n_s2), None),
+    ):
+        for index in range(count):
+            tasks.append({
+                "pos": pos,
+                "shard": pos % workers,
+                "scenario": scenario,
+                "index": index,
+                "level": scenario_level,
+                "seed": seed,
+                "clean_root": str(clean_root),
+                "workdir": str(workdir),
+                "verifier_factory": verifier_factory,
+            })
+            pos += 1
+    return tasks
+
+
+def _pool_context() -> Any:
+    """Контекст пула: fork на Linux (быстро для CPU-bound), иначе spawn."""
+    methods = multiprocessing.get_all_start_methods()
+    return multiprocessing.get_context("fork" if "fork" in methods else "spawn")
+
+
+def _require_picklable(factory: Callable[[dict[str, Any], Path], Any]) -> None:
+    """Рано и явно: фабрика верификатора обязана переживать pickle."""
+    try:
+        pickle.dumps(factory)
+    except Exception as exc:
+        raise ValueError(
+            "workers>1 требует picklable verifier_factory (пул передаёт фабрику "
+            "в воркеры через pickle); передайте функцию/класс модульного уровня "
+            "или используйте workers=1"
+        ) from exc
+
+
+def _dispatch(tasks: list[dict[str, Any]], workers: int) -> list[dict[str, Any]]:
+    """Исполняет задания: последовательно (workers=1) либо пулом процессов."""
+    if not tasks:
+        return []
+    if workers <= 1:
+        results: list[dict[str, Any]] = []
+        for task in tasks:
+            result = _run_task(task)
+            _log_progress(result)
+            results.append(result)
+        return results
+    _require_picklable(tasks[0]["verifier_factory"])
+    with _pool_context().Pool(processes=workers) as pool:
+        results = []
+        for result in pool.imap_unordered(_run_task, tasks, chunksize=1):
+            _log_progress(result)
+            results.append(result)
+    return results
+
+
 def generate_block(
     *,
     n_s1: int,
@@ -511,22 +673,32 @@ def generate_block(
     bin: Optional[str] = None,
     verifier_factory: Optional[Callable[[dict[str, Any], Path], Any]] = None,
     workdir: Optional[Path] = None,
+    workers: int = 1,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Генерирует env-блок; возвращает (records, summary).
 
     Порядок: сначала S1, затем S2 (детерминированно). Порча каждого S1 —
     собственный seed от ``(seed, index)``, отличный от seed'ов RL-пула.
+
+    ``workers`` (E-2.7, дефолт 1 — поведение неизменно): >1 — задания
+    раскладываются по шардам ``pos % workers`` и исполняются
+    :class:`multiprocessing.Pool` (CPU-bound гейты, не потоки). Результат
+    собирается в порядке глобальных индексов, поэтому файл инвариантен по
+    ``workers`` (при picklable ``verifier_factory``); упавшие траектории
+    исключаются, их число — в ``summary['fails']``.
     """
     if s1_level not in ("L0", "L1"):
         raise ValueError("s1_level должен быть 'L0' или 'L1'")
+    workers = int(workers)
+    if workers < 1:
+        raise ValueError("workers должен быть >= 1")
     clean_root = Path(full_case_root) if full_case_root is not None else default_clean_root()
     if not (clean_root / "CONSTRAINTS.yaml").is_file():
         raise FileNotFoundError(f"чистый кейс без CONSTRAINTS.yaml: {clean_root}")
 
     if verifier_factory is None:
-
-        def verifier_factory(spec: dict[str, Any], ws: Path) -> Any:  # type: ignore[misc]
-            return BlockVerifier(spec, ws, bin=bin)
+        # partial модульной фабрики — pickle-совместим для пула воркеров.
+        verifier_factory = functools.partial(_default_verifier_factory, bin=bin)
 
     own_workdir = workdir is None
     workdir = Path(workdir) if workdir is not None else Path(
@@ -534,30 +706,33 @@ def generate_block(
     )
     workdir.mkdir(parents=True, exist_ok=True)
 
-    records: list[dict[str, Any]] = []
     try:
-        for i in range(int(n_s1)):
-            records.append(
-                build_s1(
-                    clean_root, seed, i, s1_level,
-                    verifier_factory=verifier_factory, workdir=workdir,
-                )
-            )
-        for i in range(int(n_s2)):
-            records.append(
-                build_s2(
-                    clean_root, seed, i,
-                    verifier_factory=verifier_factory, workdir=workdir,
-                )
-            )
+        tasks = _build_tasks(
+            n_s1=n_s1, n_s2=n_s2, seed=seed, level=s1_level,
+            clean_root=clean_root, verifier_factory=verifier_factory,
+            workdir=workdir, workers=workers,
+        )
+        results = _dispatch(tasks, workers)
     finally:
         if own_workdir:
             shutil.rmtree(workdir, ignore_errors=True)
+
+    results.sort(key=lambda r: r["pos"])
+    records = [r["record"] for r in results if r["ok"]]
+    failures = [r for r in results if not r["ok"]]
 
     summary = block_summary(records)
     summary["seed"] = seed
     summary["clean_case_root"] = str(clean_root)
     summary["s1_level"] = s1_level
+    summary["workers"] = workers
+    summary["requested"] = int(n_s1) + int(n_s2)
+    summary["fails"] = len(failures)
+    summary["failures"] = [
+        {"pos": r["pos"], "scenario": r["scenario"], "index": r["index"],
+         "error": r["error"]}
+        for r in failures
+    ]
     return records, summary
 
 
@@ -670,6 +845,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--s1-level", choices=("L0", "L1"), default="L0")
     p.add_argument("--bin", default=None, help="бинарь arch-ml (иначе ENV_ARCH_ML_BIN/PATH)")
+    p.add_argument(
+        "--workers", type=int, default=1,
+        help="число воркеров multiprocessing.Pool (дефолт 1 — последовательно); "
+             "шарды pos %% workers, результат инвариантен по workers",
+    )
     p.add_argument("--validate", action="store_true", help="прогнать стража C-044 по блоку")
     p.add_argument("--summary-out", type=Path, default=None, help="куда записать сводку (JSON)")
     p.add_argument("--quiet", action="store_true")
@@ -681,6 +861,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     records, summary = generate_block(
         n_s1=args.n_s1, n_s2=args.n_s2, seed=args.seed,
         full_case_root=args.full_case_root, s1_level=args.s1_level, bin=args.bin,
+        workers=args.workers,
     )
     sha = write_block(records, args.out)
     summary["out"] = str(args.out)

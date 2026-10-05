@@ -57,14 +57,14 @@ constraints:
     evidence: "model/AD-*.md → поле «**Rule**»"
 
   - id: C-005
-    name: "Спинальные инварианты: каждый AD привязан к fitness-правилу"
+    name: "Спинальные инварианты: каждый AD привязан к fitness-правилу ИЛИ честно объявлен unverifiable (ADR-024; выравнивание с контрактом trace_check — третьего состояния нет)"
     type: each_file_must_contain
     glob: "model/AD-*.md"
-    pattern: "verified_by:\\s*\\[C-0"
+    pattern: "verified_by:\\s*\\[C-0|unverifiable:"
     severity: critical
     scope: case
     kind: documentary
-    evidence: "model/AD-*.md → frontmatter verified_by: [C-0NN]"
+    evidence: "model/AD-*.md → frontmatter verified_by: [C-0NN] ИЛИ unverifiable: <почему механический страж не строится и чем заменяется>; расширение 05.10 по ADR-024/AD-13 — невозможно выразить прежним паттерном честное состояние «стража нет по решению, проверка процедурная», при этом контракту трассируемости такое состояние уже соответствовало"
 
   - id: C-006
     name: "Spine: у каждого инварианта заполнены Binds и Prevents"

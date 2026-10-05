@@ -23,8 +23,8 @@
   "s2": 30,
   "s2_share": 0.3,
   "seed": 20261005,
-  "sha256": "41b9156971cab8691f9fee68cd3dabfe6201c49517cf0a9ce507d0f8418e65b8",
+  "sha256": "585a940ce9aff34eecc61509c55fc9575ac9b82b432f36773b4491c8dea57eeb",
   "tool_calls": 310,
   "turns": 410,
-  "verdict_passed": 0
+  "verdict_passed": 100
 }

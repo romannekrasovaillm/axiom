@@ -18,13 +18,17 @@ from . import run as run_mod
 from . import stub_model
 from .util import (
     EMPTY_HIDDEN_SHA256,
-    WORKSPACE_RULESET_PATH,
     dir_total_bytes,
     read_json,
     sha256_file,
     write_json,
 )
-from .verifier import arch_ml_build_hash, arch_ml_bin
+from .verifier import (
+    EXCLUDED_INFRA_RULES,
+    arch_ml_build_hash,
+    arch_ml_bin,
+    detect_excluded_infra_rules,
+)
 
 PASS_RATE_RANGE = (0.10, 0.90)
 
@@ -97,12 +101,15 @@ def calibrate(
         "generated_at": _now_iso(),
         "pinning": {
             "arch_ml_build": arch_ml_build_hash(b),
-            # R-1 (§7): вердикт исполняется на workspace-ruleset (снапшот несёт его
-            # под именем CONSTRAINTS.yaml), поэтому пиннинг — хеш этого ruleset,
-            # а не полного кейсового CONSTRAINTS.yaml (иначе пин не описывал бы
-            # фактический вердикт — AD-4).
-            "constraints_sha256": sha256_file(WORKSPACE_RULESET_PATH),
+            # R-1' (§7): снапшот несёт ПОЛНЫЙ кейсовый ruleset, поэтому пиннинг —
+            # его хеш (а не редуцированного workspace-ruleset, отклонённого E-2.5).
+            "constraints_sha256": sha256_file(clean_dir / "CONSTRAINTS.yaml"),
             "hidden_constraints_sha256": sha256_file(hidden_path) if hidden_path else EMPTY_HIDDEN_SHA256,
+            # Пин списка инфраструктурных правил, исключаемых фильтром вердикта
+            # (R-1'): детектор от полного ruleset; сверяется с реестровой
+            # константой (расхождение = дрейф ruleset, виден в отчёте).
+            "excluded_infra_rules": list(detect_excluded_infra_rules(clean_dir / "CONSTRAINTS.yaml")),
+            "excluded_infra_rules_registry": list(EXCLUDED_INFRA_RULES),
         },
         "matrix": {model_name: cells},
         "workspace_total_bytes": workspace_total_bytes,

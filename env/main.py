@@ -79,6 +79,12 @@ def cmd_verify(args) -> int:
             constraints_sha256=sha256_file(constraints_path),
             hidden_constraints_sha256=spec["verifier"]["hidden_constraints_sha256"],
             workspace_sha256=tree_sha256(args.state),
+            # R-1' (§7): в манифест — фактический список исключённых фильтром
+            # инфраструктурных правил (из отчёта fitness), иначе реестровый пин.
+            excluded_infra_rules=(
+                verdict.fitness_report.get("excluded_infra_rules")
+                if verdict.fitness_report else None
+            ),
             model_base=args.model_base,
             model_snapshot_sha256=model_snapshot,
             decoding=_decode_default(spec),

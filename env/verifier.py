@@ -19,9 +19,103 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
+import yaml
+
 from .util import run_cmd, sha256_file
 
 SPINE_FILE = "ARCHITECTURE-SPINE.md"
+
+#: Инфраструктурные правила кейса, исключаемые из вердикта (R-1', §7).
+#: Это ВСЕ правила ``type: command_succeeds`` кейсового CONSTRAINTS.yaml: они
+#: проверяют контур ВНЕ воркспейса (стражи ``tools/``, ``evidence/``,
+#: ``.arch-handoff``, стенд GB10, сетевой диск ``~/gb10-shared``). В изолированной
+#: песочнице (§7: microVM без сети) их артефактов нет, и вердикт становился бы
+#: машинозависимым (на стенде — один, на чужом GPU — другой). Фильтр делает
+#: ``fitness`` детерминированной функцией содержимого воркспейса.
+#:
+#: Источник списка — динамическое чтение ``type`` из ruleset снапшота
+#: (:func:`detect_excluded_infra_rules`), пиннутое в ``gates_version`` манифеста.
+#: Константа ниже — реестровый пин v1 (14 правил, C-032…C-045): рантайм-чтение
+#: его только ДОПОЛНЯЕТ (новые ``command_succeeds``), но не сужает и не может
+#: расшириться правкой типа произвольного правила агентом — фильтр смотрит и на
+#: пин, и на фактический ``type`` в ruleset.
+EXCLUDED_INFRA_RULES: tuple[str, ...] = (
+    "C-032", "C-033", "C-034", "C-035", "C-036", "C-037", "C-038",
+    "C-039", "C-040", "C-041", "C-042", "C-043", "C-044", "C-045",
+)
+
+
+def detect_excluded_infra_rules(constraints: Path) -> tuple[str, ...]:
+    """Динамически: id всех правил ``type: command_succeeds`` из ruleset.
+
+    Детерминированный детектор от содержимого файла (не от машины). На кейсовом
+    CONSTRAINTS.yaml возвращает ровно :data:`EXCLUDED_INFRA_RULES`; служит
+    источником пиннинга манифеста и гейта консистентности (тест).
+    """
+    try:
+        data = yaml.safe_load(Path(constraints).read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return ()
+    rules = data.get("constraints", []) if isinstance(data, dict) else []
+    return tuple(
+        sorted(
+            str(c["id"])
+            for c in rules
+            if isinstance(c, dict) and c.get("type") == "command_succeeds" and c.get("id")
+        )
+    )
+
+
+def _excluded_match_keys(constraints: Path) -> frozenset[str]:
+    """Ключи сопоставления с полем ``rule`` отчёта ``control check``.
+
+    Отчёт arch-ml кладёт в ``rule`` ИМЯ правила (не id), поэтому к пину id
+    добавляются имена только тех правил, чей ``type`` — ``command_succeeds``.
+    """
+    keys: set[str] = set(EXCLUDED_INFRA_RULES)
+    try:
+        data = yaml.safe_load(Path(constraints).read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return frozenset(keys)
+    rules = data.get("constraints", []) if isinstance(data, dict) else []
+    for c in rules:
+        if not isinstance(c, dict) or c.get("type") != "command_succeeds":
+            continue
+        if c.get("id"):
+            keys.add(str(c["id"]))
+        name = c.get("name")
+        if isinstance(name, str) and name:
+            keys.add(name)
+    return frozenset(keys)
+
+
+def filter_fitness_report(report: dict, constraints: Path) -> tuple[dict, list[dict]]:
+    """Исключает инфраструктурные правила из FitnessReport (R-1', §7).
+
+    Возвращает ``(отфильтрованный_отчёт, исключённые_issues)``. ``passed``
+    пересчитывается по оставшимся ``severity: error`` находкам; исключённые
+    кладутся в поле ``excluded_violations`` (прозрачность), исходный вердикт —
+    в ``raw_passed``. Чистая функция от ``(отчёт, ruleset)``: детерминирована и
+    не зависит от машины исполнения.
+    """
+    keys = _excluded_match_keys(constraints)
+    kept: list[dict] = []
+    excluded: list[dict] = []
+    for it in report.get("issues", []) or []:
+        if isinstance(it, dict) and it.get("rule") in keys:
+            excluded.append(it)
+        else:
+            kept.append(it)
+
+    out = dict(report)
+    out["issues"] = kept
+    out["raw_passed"] = bool(report.get("passed"))
+    out["excluded_infra_rules"] = list(detect_excluded_infra_rules(constraints))
+    out["excluded_violations"] = excluded
+    out["passed"] = not any(
+        isinstance(it, dict) and it.get("severity") == "error" for it in kept
+    )
+    return out, excluded
 
 
 class ArchMlUnavailable(RuntimeError):
@@ -86,6 +180,7 @@ class Verdict:
     violations: frozenset = frozenset()  # (rule, file) error-сигнатуры
     warn_issues: list = field(default_factory=list)
     fitness_report: Optional[dict] = None
+    excluded_violations: list = field(default_factory=list)  # infra-находки (R-1')
 
     def gates(self) -> dict[str, bool]:
         g = {
@@ -100,7 +195,12 @@ class Verdict:
 
 
 def _run_fitness(ws_dir: Path, constraints: Path, bin: str) -> tuple[GateResult, Optional[dict]]:
-    """``control check --json`` → (GateResult, сырой FitnessReport)."""
+    """``control check --json`` → (GateResult, отфильтрованный FitnessReport).
+
+    R-1' (§7): из отчёта исключаются инфраструктурные правила
+    (:func:`filter_fitness_report`) — ``passed`` пересчитывается, исключённые
+    видны в ``excluded_violations``.
+    """
     proc = run_cmd([bin, "control", "check", str(ws_dir), "--constraints", str(constraints), "--json"])
     if proc.returncode not in (0, 1):
         raise RuntimeError(f"control check упал (code {proc.returncode}): {proc.stderr.strip()}")
@@ -108,6 +208,7 @@ def _run_fitness(ws_dir: Path, constraints: Path, bin: str) -> tuple[GateResult,
         report = json.loads(proc.stdout)
     except json.JSONDecodeError as exc:
         raise RuntimeError(f"control check: не JSON ({exc}): {proc.stdout[:200]}") from exc
+    report, _excluded = filter_fitness_report(report, constraints)
     errors, warns = _split_issues(report.get("issues", []))
     return GateResult(passed=bool(report.get("passed")), errors=errors, warns=warns), report
 
@@ -254,6 +355,7 @@ def verify(
 
     violations = _violations_from_gates(gates)
     warns = _warns_from_gates(gates)
+    fitness_report = gates.get("_fitness_report") or {}
     return Verdict(
         passed=passed,
         objective_kind=kind,
@@ -264,7 +366,8 @@ def verify(
         tests_passed=tests_passed,
         violations=violations,
         warn_issues=warns,
-        fitness_report=gates.get("_fitness_report"),  # type: ignore[arg-type]
+        fitness_report=fitness_report,  # type: ignore[arg-type]
+        excluded_violations=list(fitness_report.get("excluded_violations", [])),
     )
 
 

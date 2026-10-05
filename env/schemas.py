@@ -123,6 +123,13 @@ def validate_manifest(manifest: Any) -> list[str]:
         _errs(e, "gates_version.arch_ml_build", _is_str(gv.get("arch_ml_build")), "arch_ml_build — непустая строка")
         _errs(e, "gates_version.constraints_sha256", is_sha256_hex(gv.get("constraints_sha256")), "constraints_sha256 — sha256")
         _errs(e, "gates_version.hidden_constraints_sha256", is_sha256_hex(gv.get("hidden_constraints_sha256")), "hidden_constraints_sha256 — sha256")
+        # R-1' (§7): пин списка инфраструктурных правил, исключаемых фильтром.
+        ex = gv.get("excluded_infra_rules")
+        _errs(
+            e, "gates_version.excluded_infra_rules",
+            isinstance(ex, list) and len(ex) > 0 and all(_is_str(x) for x in ex),
+            "excluded_infra_rules — непустой список непустых строк (R-1', §7)",
+        )
     else:
         e.append("gates_version: должен быть объектом")
 
@@ -179,6 +186,9 @@ PINNING_PATHS = (
     ("gates_version", "arch_ml_build"),
     ("gates_version", "constraints_sha256"),
     ("gates_version", "hidden_constraints_sha256"),
+    # R-1' (§7): список исключённых инфраструктурных правил — часть контракта
+    # вердикта, без него прогон не воспроизводим (AD-4).
+    ("gates_version", "excluded_infra_rules"),
     ("workspace_sha256",),
     ("model", "snapshot_sha256"),
 )

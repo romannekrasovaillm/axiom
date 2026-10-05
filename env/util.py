@@ -117,19 +117,6 @@ _SNAPSHOT_EXCLUDED_SUFFIXES = WEIGHT_SUFFIXES + (".zst", ".parquet", ".pyc", ".h
 # ~4 МБ; превышение — дефект генерации (типовой случай — неисключённый data/).
 WORKSPACE_CAP_BYTES = 64 * 1024 * 1024
 
-# §7 R-1 (ADR-016): снапшот задачи исполняет только workspace-скоуп правил.
-# Кейсовый CONSTRAINTS.yaml заменяется на workspace-ruleset ПОД ТЕМ ЖЕ ИМЕНЕМ:
-# case-скоуп стражи (C-037/38/40/41 и пр.) краснеют в песочнице на любой машине,
-# иначе честный pass-вердикт недостижим; gates_version.constraints_sha256
-# манифеста считается от подменённого файла (детерминизм вердикта).
-WORKSPACE_CONSTRAINTS_NAME = "CONSTRAINTS.yaml"
-WORKSPACE_RULESET_PATH = Path(__file__).resolve().parent / "constraints-workspace.yaml"
-
-
-def workspace_ruleset_bytes() -> bytes:
-    """Байты workspace-ruleset (`env/constraints-workspace.yaml`, ADR-016)."""
-    return WORKSPACE_RULESET_PATH.read_bytes()
-
 
 def _snapshot_ignored(src_root: str, current_dir: str, name: str) -> bool:
     """True — запись ``name`` в ``current_dir`` не попадает в снапшот кейса.
@@ -153,8 +140,11 @@ def _snapshot_ignored(src_root: str, current_dir: str, name: str) -> bool:
 def copy_case_snapshot(src: Path, dst: Path) -> None:
     """Копирует чистый кейс ``src`` в ``dst``, исключая тяжёлые/нерантайм-пути.
 
-    R-1 (§7, ADR-016): ``CONSTRAINTS.yaml`` снапшота — workspace-ruleset
-    (``env/constraints-workspace.yaml``), не полный кейсовый ruleset.
+    R-1' (§7, ревизия R-1 по blocked-диагностике E-2.5): ``CONSTRAINTS.yaml``
+    снапшота — ПОЛНЫЙ кейсовый ruleset (копируется как есть). Машинонезависимость
+    вердикта достигается не редукцией ruleset (она ломала trace: 12×
+    ad-not-verified), а фильтром инфраструктурных правил в
+    :mod:`env.verifier` (``command_succeeds`` вне воркспейса).
 
     Сигнатура и возврат (void) стабильны. Набор копируемых файлов детерминирован
     от содержимого и не зависит от порядка обхода: ``tree_sha256`` снапшота
@@ -169,9 +159,6 @@ def copy_case_snapshot(src: Path, dst: Path) -> None:
         return [n for n in names if _snapshot_ignored(root, d, n)]
 
     shutil.copytree(src, dst, ignore=ignore)
-    # R-1 (§7, ADR-016): workspace несёт workspace-ruleset под именем
-    # CONSTRAINTS.yaml, а не полный кейсовый ruleset.
-    (dst / WORKSPACE_CONSTRAINTS_NAME).write_bytes(workspace_ruleset_bytes())
 
 
 def dir_total_bytes(root: Path) -> int:

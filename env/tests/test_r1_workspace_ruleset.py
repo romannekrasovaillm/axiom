@@ -1,17 +1,38 @@
-"""R-1 (§7, ADR-016): вердикт среды исполняется на workspace-ruleset снапшота.
+"""R-1' (§7): снапшот несёт ПОЛНЫЙ кейсовый ruleset; вердикт машинонезависим
+через фильтр инфраструктурных правил (:mod:`env.verifier`).
 
-Тесты (б)–(г) п.1 handoff E-2.5: чистый кейс → ``verdict.passed``; порченный →
-``not passed``; восстановленный по Damage-листу → ``passed``. Требуют бинаря
-arch-ml (``arch_ml`` fixture → skip с явной причиной при отсутствии).
+Ревизия R-1 (E-2.5): подмена CONSTRAINTS.yaml на workspace-ruleset отклонена —
+ломала trace (12× ad-not-verified: 12 model/AD ссылаются на case-скоуп правила,
+отсутствовавшие в 5-правильном наборе; §9: редукция R<10 запрещена) и делала
+атомы порчи невидимыми песочнице. R-1' возвращает полный ruleset в снапшот, а
+машинонезависимость даёт фильтр: ``command_succeeds``-правила (C-032…C-045)
+проверяют контур ВНЕ воркспейса (tools/, evidence/, .arch-handoff, стенд GB10)
+и в изоляции неисполнимы.
+
+Тесты (а)–(д) handoff E-2.6. Требуют бинаря arch-ml (``arch_ml`` fixture →
+skip с явной причиной при отсутствии).
+
+Оговорка о кейсе: тесты исполняются на состоянии кейса в границах задачи
+(baseline) — фикстура ``case_dir`` (conftest) исключает посторонние
+пост-baseline файлы (ADR-030), нарушающие C-001/C-002 вне зоны задачи E-2.6.
 """
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
+import pytest
+import yaml
+
 from env import corruption
-from env.util import EMPTY_HIDDEN_SHA256
-from env.verifier import verify
+from env.util import EMPTY_HIDDEN_SHA256, copy_case_snapshot
+from env.verifier import (
+    EXCLUDED_INFRA_RULES,
+    detect_excluded_infra_rules,
+    filter_fitness_report,
+    verify,
+)
 
 #: Спека restore-gates: задачных тестов нет (``true``), проверяются только гейты.
 SPEC = {
@@ -28,50 +49,130 @@ SPEC = {
 }
 
 
-def _ruleset_error_rules(v) -> list[str]:
-    """Правила error-находок fitness (для проверки отсутствия case-скоупа)."""
-    return [it["rule"] for it in v.fitness.errors]
+def _snapshot(case_dir: Path, tmp_path: Path) -> Path:
+    """Изолированный снапшот кейса baseline (для порчи/восстановления)."""
+    dst = tmp_path / "case"
+    copy_case_snapshot(case_dir, dst)
+    return dst
 
 
-def test_clean_case_verdict_passes(clean_snapshot, arch_ml):
-    """(б) чистый кейс на workspace-ruleset → вердикт зелёный.
+def test_snapshot_carries_full_case_ruleset(case_dir, tmp_path):
+    """Снапшот несёт ПОЛНЫЙ ruleset (байт-в-байт кейсовый), не редукцию."""
+    dst = tmp_path / "snap"
+    copy_case_snapshot(case_dir, dst)
+    assert (dst / "CONSTRAINTS.yaml").read_bytes() == (case_dir / "CONSTRAINTS.yaml").read_bytes()
+    data = yaml.safe_load((dst / "CONSTRAINTS.yaml").read_text(encoding="utf-8"))
+    assert len(data["constraints"]) > 10, "редукция R<10 запрещена (§9)"
 
-    Критерий п.1: FitnessReport без error, case-скоуп стражи (C-037/38/40/41)
-    в отчёте отсутствуют.
-    """
-    v = verify(SPEC, clean_snapshot, bin=arch_ml)
-    assert _ruleset_error_rules(v) == [], _ruleset_error_rules(v)
-    report_text = " ".join(str(it) for it in v.fitness.errors)
-    for case_rule in ("C-037", "C-038", "C-040", "C-041"):
-        assert case_rule not in report_text, case_rule
-    assert v.fitness.passed
+
+def test_excluded_infra_rules_detected_dynamically(case_dir):
+    """Динамический детектор `type: command_succeeds` == реестровый пин (14)."""
+    detected = detect_excluded_infra_rules(case_dir / "CONSTRAINTS.yaml")
+    assert detected == EXCLUDED_INFRA_RULES
+    assert len(detected) == 14
+
+
+def test_clean_case_verdict_passes(case_dir, tmp_path, arch_ml):
+    """(а) чистый кейс → verdict.passed ПОЛНОСТЬЮ (fitness после фильтра ∧ spine ∧ trace)."""
+    ws = _snapshot(case_dir, tmp_path)
+    v = verify(SPEC, ws, bin=arch_ml)
+    assert v.fitness.passed, [it["rule"] for it in v.fitness.errors]
+    assert v.spine.passed, [it["rule"] for it in v.spine.errors]
+    assert v.trace.passed, [it["rule"] for it in v.trace.errors]
     assert v.passed, {
         "fitness": v.fitness.passed,
         "spine": v.spine.passed,
         "trace": v.trace.passed,
-        "trace_errors": [it["rule"] for it in v.trace.errors][:5],
+        "excluded": len(v.excluded_violations),
     }
+    # Инфра-находки не пусты (стражи вне песочницы краснеют) и отфильтрованы.
+    assert v.excluded_violations, "фильтр должен был исключить инфра-правила"
+    assert all(
+        it["rule"] in EXCLUDED_INFRA_RULES
+        or it["rule"] in {c["name"] for c in _rules_by_id(case_dir)}
+        for it in v.excluded_violations
+    )
 
 
-def test_corrupted_case_verdict_fails(tmp_path, case_dir, arch_ml):
-    """(в) порченный кейс → вердикт красный."""
+def test_corrupted_case_verdict_fails(case_dir, tmp_path, arch_ml):
+    """(б) порченный кейс (remove_adr_section ∩ break_affects) → вердикт красный."""
+    clean = _snapshot(case_dir, tmp_path)
     ws = tmp_path / "corrupted"
-    damages = corruption.corrupt(case_dir, ws, seed=42, level="L1")
-    assert damages
+    damages = corruption.corrupt(clean, ws, seed=42, level="L1")
+    kinds = {d.kind for d in damages}
+    assert "remove_adr_section" in kinds and "break_affects" in kinds, kinds
     v = verify(SPEC, ws, bin=arch_ml)
     assert not v.passed
 
 
-def test_restored_case_verdict_passes(tmp_path, case_dir, arch_ml):
-    """(г) восстановление по Damage-листу → вердикт зелёный."""
+def test_restored_case_verdict_passes(case_dir, tmp_path, arch_ml):
+    """(в) восстановление по Damage-листу → вердикт зелёный."""
+    clean = _snapshot(case_dir, tmp_path)
     ws = tmp_path / "restored"
-    damages = corruption.corrupt(case_dir, ws, seed=42, level="L1")
+    damages = corruption.corrupt(clean, ws, seed=42, level="L1")
     for d in damages:
-        corruption.revert_damage(ws, case_dir, d)
+        corruption.revert_damage(ws, clean, d)
     v = verify(SPEC, ws, bin=arch_ml)
     assert v.passed, {
         "fitness": v.fitness.passed,
         "spine": v.spine.passed,
         "trace": v.trace.passed,
-        "trace_errors": [it["rule"] for it in v.trace.errors][:5],
+        "fitness_errors": [it["rule"] for it in v.fitness.errors][:5],
     }
+
+
+def test_filter_removes_infra_violation_but_keeps_it_transparent(case_dir):
+    """(г) инфра-нарушение (rule C-040) исчезает из вердикта, видно в excluded_violations."""
+    report = {
+        "passed": False,
+        "issues": [
+            {"rule": "C-040", "file": "ws", "line": 0, "message": "stand", "severity": "error"},
+            {"rule": "C-007", "file": "docs/x.md", "line": 1, "message": "TODO", "severity": "error"},
+        ],
+        "summary": "x",
+    }
+    filtered, excluded = filter_fitness_report(report, case_dir / "CONSTRAINTS.yaml")
+    # C-040 удалён из issues и не влияет на passed; C-007 остаётся (content-правило).
+    assert [it["rule"] for it in filtered["issues"]] == ["C-007"]
+    assert filtered["passed"] is False  # C-007 — error
+    assert [it["rule"] for it in excluded] == ["C-040"]
+    assert filtered["excluded_violations"] == excluded
+    assert "C-040" in filtered["excluded_infra_rules"]
+    assert EXCLUDED_INFRA_RULES == tuple(filtered["excluded_infra_rules"])
+
+    # Только инфра-нарушение → после фильтра passed True (raw_passed=False сохранён).
+    only_infra = {"passed": False, "issues": [dict(report["issues"][0])]}
+    f2, _ = filter_fitness_report(only_infra, case_dir / "CONSTRAINTS.yaml")
+    assert f2["passed"] is True
+    assert f2["raw_passed"] is False
+
+
+def test_filter_is_deterministic(case_dir):
+    """(д) фильтр детерминирован: одинаковый вход → одинаковый выход (байт-в-байт)."""
+    report = {
+        "passed": False,
+        "issues": [
+            {"rule": "C-040", "file": "ws", "line": 0, "message": "m", "severity": "error"},
+            {"rule": "C-007", "file": "a.md", "line": 1, "message": "m", "severity": "error"},
+        ],
+    }
+    c = case_dir / "CONSTRAINTS.yaml"
+    a, _ = filter_fitness_report(report, c)
+    b, _ = filter_fitness_report(report, c)
+    assert json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
+
+
+def test_verifier_report_excludes_infra_on_clean(case_dir, tmp_path, arch_ml):
+    """Интеграционно: _run_fitness на чистом кейсе даёт passed и excluded_violations."""
+    from env.verifier import _run_fitness
+
+    ws = _snapshot(case_dir, tmp_path)
+    gate, report = _run_fitness(ws, ws / "CONSTRAINTS.yaml", arch_ml)
+    assert gate.passed is True
+    assert report["excluded_violations"], "инфра-нарушения видны в excluded_violations"
+    assert set(report["excluded_infra_rules"]) == set(EXCLUDED_INFRA_RULES)
+
+
+def _rules_by_id(case_dir: Path) -> list[dict]:
+    data = yaml.safe_load((case_dir / "CONSTRAINTS.yaml").read_text(encoding="utf-8"))
+    return data["constraints"]

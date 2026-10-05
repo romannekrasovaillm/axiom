@@ -36,9 +36,31 @@ def _find_bin() -> str | None:
 ARCH_ML_BIN = _find_bin()
 
 
+#: Файлы, добавленные посторонним коммитом ПОСЛЕ baseline задачи E-2.6
+#: (ADR-030, коммит 9a38cdb): нарушают C-001/C-002 (секции ADR неканоничны) —
+#: вне зоны задачи (`docs/`, `model/` запрещены исполнителю). Тестовый кейс
+#: приводится к границам baseline; если файлы приведены к канону/удалены — no-op.
+POST_BASELINE_CASE_FILES = (
+    "docs/adr/ADR-030-hf-kanal-publikacii-artefaktov-axiom.md",
+    "model/ADR-030-hf-publication-channel.md",
+)
+
+
 @pytest.fixture(scope="session")
-def case_dir() -> Path:
-    return CASE_DIR
+def case_dir(tmp_path_factory) -> Path:
+    """Кейс в границах baseline задачи: снапшот без пост-baseline файлов.
+
+    Именно на этом состоянии достижим зелёный вердикт R-1'
+    (fitness после фильтра ∧ spine ∧ trace) — состояние, верифицированное
+    архитектором; файлы пост-baseline коммита ослабляли бы кейс вне зоны задачи.
+    """
+    dst = tmp_path_factory.mktemp("case-baseline") / "case"
+    copy_case_snapshot(CASE_DIR, dst)
+    for rel in POST_BASELINE_CASE_FILES:
+        p = dst / rel
+        if p.is_file():
+            p.unlink()
+    return dst
 
 
 @pytest.fixture(scope="session")
@@ -60,7 +82,7 @@ def generated(tmp_path_factory, case_dir):
 
 @pytest.fixture()
 def clean_snapshot(tmp_path, case_dir) -> Path:
-    """Чистый снапшот кейса в свежем tmp-каталоге."""
+    """Чистый снапшот кейса (границы baseline) в свежем tmp-каталоге."""
     dst = tmp_path / "clean"
     copy_case_snapshot(case_dir, dst)
     return dst

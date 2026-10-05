@@ -14,12 +14,9 @@ import pytest
 
 from env.util import (
     WORKSPACE_CAP_BYTES,
-    WORKSPACE_CONSTRAINTS_NAME,
-    WORKSPACE_RULESET_PATH,
     copy_case_snapshot,
     dir_total_bytes,
     tree_sha256,
-    workspace_ruleset_bytes,
     workspace_size_cap,
 )
 
@@ -150,14 +147,17 @@ def test_real_case_snapshot_under_cap(case_dir, tmp_path):
     assert not (dst / "data").exists()
 
 
-def test_snapshot_constraints_is_workspace_ruleset(tmp_path):
-    """R-1 (§7, ADR-016): CONSTRAINTS.yaml снапшота == env/constraints-workspace.yaml."""
+def test_snapshot_constraints_is_full_case_ruleset(tmp_path):
+    """R-1' (§7): CONSTRAINTS.yaml снапшота == полный кейсовый ruleset.
+
+    Ревизия R-1 (E-2.5): подмена на workspace-ruleset отклонена — ломала trace
+    (12× ad-not-verified); машинонезависимость даёт фильтр в env.verifier.
+    """
     case = _make_mini_case(tmp_path / "case")
     dst = tmp_path / "snap"
     copy_case_snapshot(case, dst)
-    # (а) байт-в-байт равенство workspace-ruleset.
-    assert (dst / WORKSPACE_CONSTRAINTS_NAME).read_bytes() == workspace_ruleset_bytes()
-    assert (dst / WORKSPACE_CONSTRAINTS_NAME).read_bytes() == WORKSPACE_RULESET_PATH.read_bytes()
+    # Байт-в-байт равенство исходному кейсовому CONSTRAINTS.yaml (не редукция).
+    assert (dst / "CONSTRAINTS.yaml").read_bytes() == (case / "CONSTRAINTS.yaml").read_bytes()
 
 
 def test_generated_workspaces_under_cap(generated):

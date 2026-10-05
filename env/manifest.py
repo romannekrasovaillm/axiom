@@ -7,10 +7,11 @@ CONSTRAINTS, holdout и финального состояния доказате
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from . import schemas
 from .util import read_json, write_json
+from .verifier import EXCLUDED_INFRA_RULES
 
 
 class ManifestError(ValueError):
@@ -31,6 +32,7 @@ def build_manifest(
     usage: dict,
     timing: dict,
     verdict: dict,
+    excluded_infra_rules: Optional[list[str]] = None,
 ) -> dict:
     """Собирает манифест §8 из компонентов прогона."""
     return {
@@ -41,6 +43,11 @@ def build_manifest(
             "arch_ml_build": arch_ml_build,
             "constraints_sha256": constraints_sha256,
             "hidden_constraints_sha256": hidden_constraints_sha256,
+            # R-1' (§7): пин списка инфраструктурных правил, исключённых фильтром
+            # вердикта; пусто/None → реестровый пин v1.
+            "excluded_infra_rules": list(
+                EXCLUDED_INFRA_RULES if excluded_infra_rules is None else excluded_infra_rules
+            ),
         },
         "workspace_sha256": workspace_sha256,
         "model": {"snapshot_sha256": model_snapshot_sha256, "base": model_base},

@@ -38,6 +38,7 @@ def valid_manifest() -> dict:
             "arch_ml_build": "buildhash",
             "constraints_sha256": HASH,
             "hidden_constraints_sha256": HASH,
+            "excluded_infra_rules": ["C-032", "C-045"],
         },
         "workspace_sha256": HASH,
         "model": {"snapshot_sha256": HASH, "base": "stub"},

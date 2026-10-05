@@ -18,6 +18,7 @@ from . import run as run_mod
 from . import stub_model
 from .util import (
     EMPTY_HIDDEN_SHA256,
+    WORKSPACE_RULESET_PATH,
     dir_total_bytes,
     read_json,
     sha256_file,
@@ -96,7 +97,11 @@ def calibrate(
         "generated_at": _now_iso(),
         "pinning": {
             "arch_ml_build": arch_ml_build_hash(b),
-            "constraints_sha256": sha256_file(clean_dir / "CONSTRAINTS.yaml"),
+            # R-1 (§7): вердикт исполняется на workspace-ruleset (снапшот несёт его
+            # под именем CONSTRAINTS.yaml), поэтому пиннинг — хеш этого ruleset,
+            # а не полного кейсового CONSTRAINTS.yaml (иначе пин не описывал бы
+            # фактический вердикт — AD-4).
+            "constraints_sha256": sha256_file(WORKSPACE_RULESET_PATH),
             "hidden_constraints_sha256": sha256_file(hidden_path) if hidden_path else EMPTY_HIDDEN_SHA256,
         },
         "matrix": {model_name: cells},

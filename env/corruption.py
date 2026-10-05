@@ -1,10 +1,18 @@
 """Детерминированный мутатор чистого кейса (приём §3).
 
 Повреждения (по seed → фиксированный набор), все детектируются гейтами:
-- ``remove_adr_section`` — удаление обязательной секции ADR (C-001/C-002/C-003);
-- ``break_affects`` — разрыв ``affects:`` в model/AD-*.md (C-010);
+- ``remove_adr_section`` — удаление обязательной секции ADR (C-001/C-002/C-003 + trace);
+- ``break_affects`` — разрыв ``affects:`` в model/AD-*.md (C-010 + trace);
 - ``break_verified_by`` — разрыв ``verified_by:`` в model/AD-*.md (C-005 + trace);
 - ``break_ad_link`` — удаление model/AD-*.md (trace ``spine-ad-missing-in-model``).
+
+**R-3 (§9, 05.10.2026):** набор атомов v1 — только восстановимые 4 инструментами
+§13. ``break_ad_link`` исключён из L1-набора: восстановление требует создания
+отсутствующего файла, а интерфейс агента v1 не несёт инструмента создания файла
+(создание файлов = новый инструмент = новый ADR). L1 сохраняет три атома
+(``remove_adr_section``, ``break_affects``, ``break_verified_by``) — все
+восстановимы ``edit_file``-вставкой. L2/L3 сохраняют ``break_ad_link`` как
+заявленный (пока не восстановимый) атом объёма порчи.
 
 Воспроизводимость: одинаковый seed → байт-в-байт одинаковый повреждённый кейс.
 """
@@ -20,9 +28,10 @@ from typing import Any, Optional
 ADR_SECTIONS = ("## Alternatives Considered", "### Negative", "## Reversibility")
 
 # Состав повреждений по уровню лесенки (§9): L0 — одна порча, L1 — три.
+# L1 — только восстановимые edit_file-атомы (R-3): три атома без break_ad_link.
 LEVEL_ATOMS: dict[str, list[str]] = {
     "L0": ["remove_adr_section"],
-    "L1": ["remove_adr_section", "break_verified_by", "break_ad_link"],
+    "L1": ["remove_adr_section", "break_affects", "break_verified_by"],
     "L2": ["remove_adr_section", "break_affects", "break_verified_by", "break_ad_link"],
     "L3": ["remove_adr_section", "break_affects", "break_verified_by", "break_ad_link"],
 }

@@ -71,3 +71,37 @@ def test_damage_detectable_by_gates(tmp_path, case_dir, arch_ml):
     }
     violations = collect_violations(out, spec, bin=arch_ml)
     assert violations, "повреждённый кейс должен давать error-нарушения"
+
+
+def test_l1_atoms_recoverable_by_edit_file(tmp_path, case_dir):
+    """R-3 (§9): атомы L1 восстановимы 4 инструментами §13 (без создания файлов).
+
+    ``break_ad_link`` (удаление файла) исключён из L1: восстановление требовало бы
+    создания отсутствующего файла, которого интерфейс агента v1 не несёт.
+    Оставшиеся атомы — чистые вставки текста (``edit_file`` old→new), проверяем
+    конструктивно: восстановление каждого возвращает файл байт-в-байт к чистому.
+    """
+    assert "break_ad_link" not in corruption.LEVEL_ATOMS["L1"]
+    assert len(corruption.LEVEL_ATOMS["L1"]) == 3
+
+    out = tmp_path / "corr"
+    damages = corruption.corrupt(case_dir, out, seed=42, level="L1")
+    for d in damages:
+        assert d.kind != "break_ad_link"
+        # файл существует, повреждение — вставка текста, а не удаление файла
+        target = out / d.file
+        assert target.is_file(), d.file
+        clean_text = (case_dir / d.file).read_text(encoding="utf-8")
+        damaged_text = target.read_text(encoding="utf-8")
+        assert clean_text != damaged_text
+        # восстановление edit_file-вставкой: clean == damaged со вставленным блоком
+        p = 0
+        m = min(len(clean_text), len(damaged_text))
+        while p < m and clean_text[p] == damaged_text[p]:
+            p += 1
+        assert len(clean_text) > len(damaged_text), f"{d.kind}: не вставка"
+        assert clean_text[:p] == damaged_text[:p]
+        assert clean_text[p + (len(clean_text) - len(damaged_text)):] == damaged_text[p:]
+        # откат возвращает байт-в-байт чистое состояние
+        corruption.revert_damage(out, case_dir, d)
+        assert target.read_bytes() == (case_dir / d.file).read_bytes()

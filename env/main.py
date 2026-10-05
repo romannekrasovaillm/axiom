@@ -65,6 +65,7 @@ def cmd_verify(args) -> int:
         "passed": verdict.passed,
         "gates": verdict.gates(),
         "violations": sorted(verdict.violations),
+        "gate_hashes": verdict.gate_hashes,  # H (§10): прозрачность сверки гейтов
         "reward": rr.reward.to_manifest_dict(),
         "soft_fraction": rr.reward.soft_fraction,
         "issues_warn": verdict.warn_issues,

@@ -29,9 +29,19 @@ def evaluate_run(
     bin: Optional[str] = None,
     hidden_constraints: Optional[Path] = None,
 ) -> RunResult:
-    """Вердикт и награда по финальному состоянию. Детерминированная функция состояния."""
-    base_violations = collect_violations(base_ws, task_spec, bin=bin, hidden_constraints=hidden_constraints)
-    verdict = verify(task_spec, final_ws, bin=bin, hidden_constraints=hidden_constraints)
+    """Вердикт и награда по финальному состоянию. Детерминированная функция состояния.
+
+    ``base_ws`` — эталон H-слоя (§10): гейтовые файлы финального воркспейса
+    сверяются с их копиями в базовом. Проброс обязателен — без него правка
+    CONSTRAINTS.yaml/ARCHITECTURE-SPINE.md в песке давала бы ложный pass.
+    """
+    base_violations = collect_violations(
+        base_ws, task_spec, bin=bin, hidden_constraints=hidden_constraints, base_ws=base_ws,
+    )
+    verdict = verify(
+        task_spec, final_ws, bin=bin,
+        hidden_constraints=hidden_constraints, base_ws=base_ws,
+    )
     kind = task_spec.get("objective", {}).get("kind", "restore-gates")
     reward = reward_mod.compute(
         objective_kind=kind,

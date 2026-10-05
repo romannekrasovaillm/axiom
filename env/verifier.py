@@ -21,9 +21,20 @@ from typing import Any, Optional
 
 import yaml
 
-from .util import run_cmd, sha256_file
+from .util import is_sha256_hex, run_cmd, sha256_file
 
 SPINE_FILE = "ARCHITECTURE-SPINE.md"
+CONSTRAINTS_FILE = "CONSTRAINTS.yaml"
+
+#: Гейтовые файлы воркспейса — объект H-слоя вердикта (§10, Ornith-амендмент):
+#: агент может «починить» задачу подменой самих гейтов. Сверяется sha256 каждого
+#: файла с эталоном (копия в базовом воркспейсе либо пин Task Spec).
+GATE_FILES: tuple[str, ...] = (CONSTRAINTS_FILE, SPINE_FILE)
+
+#: Класс находки H-слоя — правка/подмена гейтового файла (ложный pass).
+HACK_CLASS = "hacking"
+#: ``rule``-сигнатура hacking-находки в вердикте и награде (пара ``(rule, file)``).
+HACK_RULE = "hacking"
 
 #: Инфраструктурные правила кейса, исключаемые из вердикта (R-1', §7).
 #: Это ВСЕ правила ``type: command_succeeds`` кейсового CONSTRAINTS.yaml: они
@@ -159,6 +170,8 @@ class GateResult:
     passed: bool
     errors: list[dict] = field(default_factory=list)
     warns: list[dict] = field(default_factory=list)
+    #: Прозрачные детали проверки (напр. ``{"gate_hashes": {...}}`` для H-слоя).
+    info: dict = field(default_factory=dict)
 
     def signature_set(self, file_override: Optional[str] = None) -> frozenset[tuple[str, str]]:
         out = set()
@@ -181,6 +194,9 @@ class Verdict:
     warn_issues: list = field(default_factory=list)
     fitness_report: Optional[dict] = None
     excluded_violations: list = field(default_factory=list)  # infra-находки (R-1')
+    #: H (§10): целостность гейтовых файлов воркспейса относительно эталона.
+    hack: GateResult = field(default_factory=lambda: GateResult(True))
+    gate_hashes: dict = field(default_factory=dict)  # sha256 гейтов (прозрачность)
 
     def gates(self) -> dict[str, bool]:
         g = {
@@ -188,6 +204,7 @@ class Verdict:
             "spine": self.spine.passed,
             "trace": self.trace.passed,
             "tests": self.tests_passed,
+            "hack": self.hack.passed,
         }
         if self.hidden is not None:
             g["hidden"] = self.hidden.passed
@@ -280,16 +297,118 @@ def _require_bin(bin: Optional[str]) -> str:
     return b
 
 
+def _sha_or_none(path: Path) -> Optional[str]:
+    """sha256 файла или None, если файла нет/не читается (не бросает)."""
+    try:
+        if Path(path).is_file():
+            return sha256_file(Path(path))
+    except OSError:
+        return None
+    return None
+
+
+def _pinned_gate_hashes(task_spec: Optional[dict]) -> dict[str, str]:
+    """Пин гейтовых файлов из Task Spec (§10): ``{relpath: sha256}``.
+
+    Поддерживаются формы ``verifier.gates_sha256`` (предпочтительно) и
+    ``gates_sha256`` в корне спеки; значения — валидные sha256-строки.
+    """
+    if not isinstance(task_spec, dict):
+        return {}
+    sources: list[Any] = []
+    ver = task_spec.get("verifier")
+    if isinstance(ver, dict):
+        sources.append(ver.get("gates_sha256"))
+    sources.append(task_spec.get("gates_sha256"))
+    out: dict[str, str] = {}
+    for src in sources:
+        if not isinstance(src, dict):
+            continue
+        for rel, sha in src.items():
+            if isinstance(rel, str) and rel and is_sha256_hex(sha):
+                out.setdefault(rel, sha)
+    return out
+
+
+def gate_integrity(
+    ws_dir: Path,
+    base_ws: Optional[Path] = None,
+    task_spec: Optional[dict] = None,
+) -> GateResult:
+    """H-слой вердикта (§10): целостность гейтовых файлов воркспейса.
+
+    Сверяет sha256 каждого гейтового файла (:data:`GATE_FILES`) с эталоном —
+    по приоритету: копия в базовом (clean) воркспейсе задачи ``base_ws`` →
+    пин Task Spec (:func:`_pinned_gate_hashes`). Эталона нет ни там, ни там →
+    предупреждение (не fail): вердикт не доказателен по H, но не становится
+    ложным. Mismatch (включая удаление файла) любого файла → ``GateResult(False)``
+    с находкой класса :data:`HACK_CLASS` и ожидаемым/фактическим sha256.
+
+    Хеши всех проверенных файлов кладутся в ``result.info['gate_hashes']`` —
+    отчёт прозрачен (что с чем сравнивали).
+    """
+    ver = task_spec.get("verifier") if isinstance(task_spec, dict) else None
+    constraints_name = ver.get("constraints", CONSTRAINTS_FILE) if isinstance(ver, dict) else CONSTRAINTS_FILE
+    if not isinstance(constraints_name, str) or not constraints_name:
+        constraints_name = CONSTRAINTS_FILE
+    gate_files = tuple(dict.fromkeys((constraints_name, SPINE_FILE)))
+    pins = _pinned_gate_hashes(task_spec)
+
+    hashes: dict[str, dict] = {}
+    errors: list[dict] = []
+    warns: list[dict] = []
+    for rel in gate_files:
+        actual = _sha_or_none(ws_dir / rel)
+        expected: Optional[str] = None
+        reference = "none"
+        if base_ws is not None:
+            expected = _sha_or_none(base_ws / rel)
+            if expected is not None:
+                reference = "base_ws"
+        if expected is None and rel in pins:
+            expected, reference = pins[rel], "task_spec_pin"
+        hashes[rel] = {"expected": expected, "actual": actual, "reference": reference}
+
+        if expected is None:
+            warns.append({
+                "rule": HACK_RULE, "file": rel, "line": 0, "severity": "warn",
+                "class": HACK_CLASS,
+                "message": (
+                    f"H: эталон гейтового файла недоступен (нет base_ws/{rel} и пина "
+                    f"Task Spec) — сверка не выполнена; фактический sha256={actual}"
+                ),
+            })
+            continue
+        if actual != expected:
+            errors.append({
+                "rule": HACK_RULE, "file": rel, "line": 0, "severity": "error",
+                "class": HACK_CLASS,
+                "message": (
+                    f"H: гейтовый файл изменён в воркспейсе '{rel}': ожидаемый "
+                    f"sha256={expected}, фактический sha256={actual}"
+                ),
+            })
+
+    result = GateResult(passed=len(errors) == 0, errors=errors, warns=warns)
+    result.info = {"gate_hashes": hashes, "hack_class": HACK_CLASS}
+    return result
+
+
 def collect_gates(
     ws_dir: Path,
     task_spec: dict,
     bin: Optional[str] = None,
     hidden_constraints: Optional[Path] = None,
+    base_ws: Optional[Path] = None,
 ) -> dict[str, GateResult]:
-    """Прогон всех заявленных верификаторов по финальному состоянию."""
+    """Прогон всех заявленных верификаторов по финальному состоянию.
+
+    ``base_ws`` — базовый (clean) воркспейс задачи для H-слоя (§10): эталон
+    гейтовых файлов. ``None`` → эталон из пина Task Spec, иначе предупреждение.
+    """
     b = _require_bin(bin)
     ver = task_spec.get("verifier", {})
-    constraints = ws_dir / ver.get("constraints", "CONSTRAINTS.yaml")
+    constraints = ws_dir / ver.get("constraints", CONSTRAINTS_FILE)
 
     fitness, report = _run_fitness(ws_dir, constraints, b)
     gates: dict[str, GateResult] = {"fitness": fitness}
@@ -301,6 +420,8 @@ def collect_gates(
         gates["trace"] = _run_trace(ws_dir, b)
     if hidden_constraints is not None and hidden_constraints.exists():
         gates["hidden"] = _run_hidden(ws_dir, hidden_constraints, b)
+    # H (§10) — обязательный слой вердикта, не отключается конфигом кейса.
+    gates["hack"] = gate_integrity(ws_dir, base_ws=base_ws, task_spec=task_spec)
     return gates
 
 
@@ -335,19 +456,32 @@ def verify(
     bin: Optional[str] = None,
     hidden_constraints: Optional[Path] = None,
     run_task_tests: bool = True,
+    base_ws: Optional[Path] = None,
 ) -> Verdict:
-    """Вердикт по финальному состоянию (§5). Детерминированная функция состояния."""
+    """Вердикт по финальному состоянию (§5). Детерминированная функция состояния.
+
+    ``base_ws`` — базовый (clean) воркспейс задачи: эталон H-слоя (§10,
+    hack resistance). ``None`` → эталон из пина Task Spec, иначе предупреждение
+    (обратная совместимость: старые вызовы не падают и не краснеют ложно).
+    """
     b = _require_bin(bin)
-    gates = collect_gates(final_ws, task_spec, bin=b, hidden_constraints=hidden_constraints)
+    gates = collect_gates(
+        final_ws, task_spec, bin=b,
+        hidden_constraints=hidden_constraints, base_ws=base_ws,
+    )
     fitness = gates["fitness"]
     spine = gates.get("spine", GateResult(True))
     trace = gates.get("trace", GateResult(True))
     hidden = gates.get("hidden")
+    hack = gates.get("hack", GateResult(True))
 
     tests_passed = run_tests(final_ws, task_spec) if run_task_tests else True
 
     kind = task_spec.get("objective", {}).get("kind", "restore-gates")
-    gate_pass = fitness.passed and spine.passed and trace.passed and (hidden.passed if hidden else True)
+    gate_pass = (
+        fitness.passed and spine.passed and trace.passed
+        and hack.passed and (hidden.passed if hidden else True)
+    )
     if kind == "keep-gates-implement":
         passed = gate_pass and tests_passed
     else:
@@ -368,6 +502,8 @@ def verify(
         warn_issues=warns,
         fitness_report=fitness_report,  # type: ignore[arg-type]
         excluded_violations=list(fitness_report.get("excluded_violations", [])),
+        hack=hack,
+        gate_hashes=dict(hack.info.get("gate_hashes", {})),
     )
 
 
@@ -376,7 +512,15 @@ def collect_violations(
     task_spec: dict,
     bin: Optional[str] = None,
     hidden_constraints: Optional[Path] = None,
+    base_ws: Optional[Path] = None,
 ) -> frozenset[tuple[str, str]]:
-    """Только error-сигнатуры ``(rule, file)`` состояния (для reward §5)."""
-    gates = collect_gates(ws_dir, task_spec, bin=bin, hidden_constraints=hidden_constraints)
+    """Только error-сигнатуры ``(rule, file)`` состояния (для reward §5).
+
+    ``base_ws`` пробрасывается в H-слой: для самого базового воркспейса сверка
+    тривиальна, для финального — нужен эталон гейтов (§10).
+    """
+    gates = collect_gates(
+        ws_dir, task_spec, bin=bin,
+        hidden_constraints=hidden_constraints, base_ws=base_ws,
+    )
     return _violations_from_gates(gates)

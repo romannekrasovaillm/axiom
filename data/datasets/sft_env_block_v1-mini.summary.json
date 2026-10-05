@@ -1,0 +1,30 @@
+{
+  "clean_case_root": "/home/roman/axiom/env/data-regen/public/real-l0-00",
+  "guard": {
+    "assistant_messages": 410,
+    "exit_code": 0,
+    "no_answer": 0,
+    "ok": true,
+    "records": 100,
+    "threshold": 0.05,
+    "tool_call_in_think": 0,
+    "unclosed_think": 0,
+    "unfinished_tool_call": 0,
+    "unfinished_tool_call_share": 0.0,
+    "verdict": "admissible"
+  },
+  "multi_action_records": 70,
+  "multi_action_share": 0.7,
+  "out": "data/datasets/sft_env_block_v1-mini.jsonl",
+  "records": 100,
+  "s1": 70,
+  "s1_level": "L0",
+  "s1_share": 0.7,
+  "s2": 30,
+  "s2_share": 0.3,
+  "seed": 20261005,
+  "sha256": "9e5a99f6f9ddb3b74f1b91a9e5148ffd22b0302037348493fdfdfae6af1c4cf8",
+  "tool_calls": 310,
+  "turns": 410,
+  "verdict_passed": 0
+}

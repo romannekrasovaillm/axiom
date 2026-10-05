@@ -116,6 +116,18 @@ T_TINY = 512  # >= 3 * NEEDLE_STRIDE + needle, and > mla_top_k
 #: unmerged), so it still fails a capture whose graph is not the model's.
 _SCAN_FORM_ATOL = 1e-4
 
+#: Bound on T-b4's eager scan-vs-loop drift — the same association-order effect as
+#: ``_SCAN_FORM_ATOL``, one level up.  ``tiny_cfg`` declares ``scan_layers=True``
+#: (the pinned ``net/config.json`` value), so the reference leg (``model.forward``)
+#: lowers a reduction inside a ``lax.scan`` body while the capture is the op-by-op
+#: reference loop; XLA orders the compiled reduction differently, and RMSNorm
+#: compounds it across layers.  Measured max|diff| = 3.526e-5 on this fixture
+#: (2026-10-05, ``docs/RESULTS-2026-10-05.ru.md`` §8: the comparison is the
+#: structural equivalence of two implementations, not a bit-exactness gate).  The
+#: bound is the precedent ``_SCAN_FORM_ATOL = 1e-4``; shape and finiteness stay
+#: strict, so a capture whose graph is not the model's still fails.
+_MODEL_FORWARD_ATOL = 1e-4
+
 
 def _tiny_params(cfg: ModelConfig, seed: int = 0) -> model.ModelParams:
     return model.init_params(jr.PRNGKey(seed), cfg)
@@ -350,9 +362,20 @@ def test_t_b4_capture_equals_model_forward(use_attnres: bool):
                                  return_hidden=True)[1]
         hidden, mla_inputs = bench.capture_forward(params, cfg, ids, use_attnres=use_attnres,
                                                    chunk_size=16)
-    assert bool(jnp.array_equal(hidden, expected)), (
-        "the capture drifts from net/model.py's forward — its activations are not the "
-        "model's"
+    # The reference leg scans (``tiny_cfg`` keeps the pinned ``scan_layers=True``)
+    # while the capture is the reference loop, so the two lower a reduction in a
+    # different association order: equality is structural, within the measured
+    # bound, not bit-exact.  Shape and finiteness stay exact, or a capture whose
+    # graph is not the model's would slip through.
+    assert hidden.shape == expected.shape, (
+        "the capture changes the hidden-state shape — its activations are not the model's"
+    )
+    assert bool(jnp.all(jnp.isfinite(hidden))) and bool(jnp.all(jnp.isfinite(expected))), (
+        "the capture or the model produced a non-finite activation"
+    )
+    assert bool(jnp.allclose(hidden, expected, rtol=0.0, atol=_MODEL_FORWARD_ATOL)), (
+        "the capture drifts from net/model.py's forward beyond the association-order "
+        "bound — its activations are not the model's"
     )
     assert len(mla_inputs) == cfg.num_mla_layers
 
@@ -460,8 +483,16 @@ def test_t_b4c_capture_form_is_chosen_by_need_and_declared():
 
 
 def test_t_b4_captured_inputs_are_what_the_layers_were_handed():
-    """Wrap ``net.mla.apply_with_pool`` and compare what each MLA layer received."""
-    cfg = tiny_cfg()
+    """Wrap ``net.mla.apply_with_pool`` and compare what each MLA layer received.
+
+    The reference leg runs the unrolled parity path (``scan_layers=False``): the
+    recorder reads the tensors the layers were handed, and a tensor produced inside
+    a ``lax.scan`` body is a trace-time value that cannot escape the trace
+    (``UnexpectedTracerError``).  The capture leg is the loop form either way, so
+    this keeps both legs on the model's eager forward — its own layers, one at a
+    time — and does not touch ``net/`` (``docs/RESULTS-2026-10-05.ru.md`` §8).
+    """
+    cfg = dataclasses.replace(tiny_cfg(), scan_layers=False)
     params = _tiny_params(cfg)
     ids = jnp.arange(T_TINY, dtype=jnp.int32)[None, :] % cfg.vocab_size
     recorded: list[jnp.ndarray] = []

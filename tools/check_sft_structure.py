@@ -25,19 +25,27 @@
 офлайн-набора траектория сгенерирована одним проходом, значит «ход» и
 «генерация» совпадают, а бюджет пробы обрезает именно её.
 
-Проверки (три класса, §8.1)
----------------------------
-* ``unclosed_think`` — ``<think>`` без парного ``</think>``;
-* ``tool_call_in_think`` — ``<tool_call>`` внутри ``<think>…</think>``;
-* ``no_answer`` — в записи нет текста ответа после удаления блоков
-  ``<think>``/``<tool_call>``/``<tool_response>``.
+Проверки (два класса хода + дефект эпизода, §8.1)
+-------------------------------------------------
+* ``unclosed_think`` (ход) — ``<think>`` без парного ``</think>``;
+* ``tool_call_in_think`` (ход) — ``<tool_call>`` внутри ``<think>…</think>``;
+* ``no_answer`` (эпизод) — **последний** assistant-ход эпизода отсутствует,
+  пуст или содержит только блоки ``<think>``/``<tool_call>``/``<tool_response>``
+  (после их удаления нет содержательного текста).
+
+**Эпизод и промежуточные ходы.**  Эпизод = одна запись (строка) jsonl.
+Промежуточные assistant-ходы (голый ``<tool_call>``, за которым в эпизоде
+следует результат ``user``/``tool``) дефектом **не являются** — они выносятся в
+отдельное информационное поле ``intermediate_tool_turns`` (count+share) и в
+классы дефектов не попадают.
 
 **Границы суждения.**  Дефекты считаются только среди **естественно
 завершённых** ходов (LAG-ADR-042/043).  Ход считается усечённым (обрезанным
 бюджетом пробы), если после последнего структурного закрывающего тега остался
 открывающий ``<think>``/``<tool_call>`` без пары: такой хвост **не** дефект, а
-усечение (мутант на пере-подсчёт).  Записи без ответа оцениваются только для
-незавершённых ходов — у усечённого хода ответа нет по определению.
+усечение (мутант на пере-подсчёт).  ``no_answer`` оценивается только для
+естественно завершённого последнего хода — у усечённого хода ответа нет по
+определению.
 
 **Ложные субстроки.**  Строки набора цитируют теги в прозе (например,
 пересказывают системную инструкцию).  Чтобы не считать цитату дефектом,
@@ -87,15 +95,17 @@ from pathlib import Path
 from typing import Any, Iterable, Iterator
 
 #: Схема отчёта аудита.
-REPORT_SCHEMA = "axiom-sft-structure/2"
+REPORT_SCHEMA = "axiom-sft-structure/3"
 #: Схема журнала нормализации.
-JOURNAL_SCHEMA = "axiom-sft-normalize/2"
+JOURNAL_SCHEMA = "axiom-sft-normalize/3"
 
 EXIT_OK = 0
 EXIT_DEFECT = 1
 EXIT_CANNOT = 2
 
-#: Три класса дефектов §8.1 (гейт).
+#: Классы дефектов **хода** (§8.1): считаются по сообщениям-assistant.
+TURN_CLASSES = ("unclosed_think", "tool_call_in_think")
+#: Все три класса дефектов §8.1 (гейт): два ходовых + ``no_answer`` (эпизод).
 CLASSES = ("unclosed_think", "tool_call_in_think", "no_answer")
 #: Порог сатурации (§8.2.2): доля усечённых ходов, выше — вердикт не выносится.
 SATURATION_SHARE = 0.20
@@ -182,11 +192,9 @@ def analyze_content(text: str) -> dict[str, Any]:
         think_stack = [pos for pos in think_stack if pos <= last_close]
         call_stack = [pos for pos in call_stack if pos <= last_close]
 
-    no_answer = (not truncated) and (_BLOCK_RE.sub("", text).strip() == "")
     return {
         "unclosed_think": len(think_stack),
         "tool_call_in_think": tool_call_in_think,
-        "no_answer": no_answer,
         "unfinished_tool_call": len(call_stack),
         "truncated": truncated,
         "unclosed_positions": sorted(think_stack),
@@ -194,8 +202,120 @@ def analyze_content(text: str) -> dict[str, Any]:
 
 
 def defect_counts(verdict: dict[str, Any]) -> dict[str, int]:
-    """Счётчики трёх классов из вердикта (bool → 0/1)."""
-    return {name: int(verdict[name]) for name in CLASSES}
+    """Счётчики классов **хода** из вердикта (bool → 0/1)."""
+    return {name: int(verdict[name]) for name in TURN_CLASSES}
+
+
+# --------------------------------------------------------------------------- #
+# Эпизод: дефект ответа и промежуточные ходы
+# --------------------------------------------------------------------------- #
+
+#: Роли, завершающие промежуточный ход агента (результат инструмента/вопрос).
+_RESULT_ROLES = ("user", "tool")
+
+
+def _substantive_text(text: str) -> str:
+    """Текст после удаления блоков ``<think>``/``<tool_call>``/``<tool_response>``."""
+    return _BLOCK_RE.sub("", text).strip()
+
+
+def _is_bare_tool_turn(text: str) -> bool:
+    """Ход-«голый вызов»: есть ``<tool_call>`` и нет содержательного текста."""
+    return bool(_TOOL_CALL_PAIR_RE.search(text)) and _substantive_text(text) == ""
+
+
+def _record_messages(record: Any) -> list[Any]:
+    """Сообщения записи; fallback на ``content``/``text`` как один ход."""
+    if not isinstance(record, dict):
+        raise InputError("запись не является объектом JSON")
+    messages = record.get("messages")
+    if isinstance(messages, list) and messages:
+        return messages
+    for key in ("content", "text"):
+        value = record.get(key)
+        if isinstance(value, str) and value.strip():
+            return [{"role": "assistant", "content": value}]
+    raise InputError("запись без messages и без content/text — формат не распознан")
+
+
+def _message_parts(message: Any) -> tuple[str | None, str | None]:
+    """``(роль, текст)`` сообщения, если оно объект со строковым ``content``."""
+    if not isinstance(message, dict):
+        return None, None
+    role = message.get("role")
+    content = message.get("content")
+    return (
+        role if isinstance(role, str) else None,
+        content if isinstance(content, str) else None,
+    )
+
+
+def analyze_episode(record: Any) -> dict[str, Any]:
+    """Классы дефектов **эпизода** (записи) по §8.1.
+
+    Ходовые классы (``unclosed_think``/``tool_call_in_think``) агрегируются по
+    assistant-сообщениям; ``no_answer`` — дефект эпизода: последний assistant-ход
+    отсутствует, пуст или содержит только блоки.  Промежуточные «голые» вызовы
+    (за которыми в эпизоде следует результат ``user``/``tool``) дефектом не
+    считаются — их число идёт в ``intermediate_tool_turns``.
+    """
+    messages = _record_messages(record)
+    roles = [_message_parts(message) for message in messages]
+    assistant_indices = [
+        index
+        for index, (role, content) in enumerate(roles)
+        if role == "assistant" and content is not None
+    ]
+
+    turn_counts = {name: 0 for name in TURN_CLASSES}
+    turn_texts: dict[str, str | None] = {name: None for name in TURN_CLASSES}
+    unfinished = completed = truncated = 0
+    for index in assistant_indices:
+        text = roles[index][1] or ""
+        verdict = analyze_content(text)
+        if verdict["truncated"]:
+            truncated += 1
+            continue
+        completed += 1
+        for name in TURN_CLASSES:
+            if verdict[name]:
+                turn_counts[name] += verdict[name]
+                if turn_texts[name] is None:
+                    turn_texts[name] = text
+        unfinished += verdict["unfinished_tool_call"]
+
+    intermediate = 0
+    for order, index in enumerate(assistant_indices):
+        if order == len(assistant_indices) - 1:
+            break  # последний assistant-ход не «промежуточный»
+        text = roles[index][1] or ""
+        if not _is_bare_tool_turn(text):
+            continue
+        next_role = roles[index + 1][0] if index + 1 < len(messages) else None
+        if next_role in _RESULT_ROLES:
+            intermediate += 1
+
+    if assistant_indices:
+        last_text = roles[assistant_indices[-1]][1] or ""
+        episode_completed = not analyze_content(last_text)["truncated"]
+        no_answer = episode_completed and _substantive_text(last_text) == ""
+    else:
+        last_text = ""
+        episode_completed = False
+        no_answer = True  # последний assistant-ход эпизода отсутствует
+
+    return {
+        "assistant_turns": len(assistant_indices),
+        "completed_turns": completed,
+        "truncated_turns": truncated,
+        "turn_counts": turn_counts,
+        "turn_texts": turn_texts,
+        "unfinished_tool_call": unfinished,
+        "intermediate_tool_turns": intermediate,
+        "no_answer": no_answer,
+        "last_text": last_text,
+        "episode_completed": episode_completed,
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -258,11 +378,12 @@ def _first_call_in_think(text: str) -> tuple[int, int, int] | None:
 def normalize_content(
     text: str,
 ) -> tuple[str, list[dict[str, Any]], dict[str, int], dict[str, int], bool]:
-    """Нормализовать одно assistant-сообщение.
+    """Нормализовать одно assistant-сообщение (ход).
 
     Возвращает ``(новый_текст, правки, найденные_классы, непочиненные_классы,
-    усечён)``.  ``no_answer`` механически непочиним (ответа нет — не выдумывать);
-    усечённый хвост не трогается (это не дефект).
+    усечён)``.  Классы здесь — ходовые (``TURN_CLASSES``); ``no_answer`` —
+    дефект эпизода, механически непочиним (ответа нет — не выдумывать) и
+    помечается в ``_normalize_record``.  Усечённый хвост не трогается.
     """
     initial = analyze_content(text)
     present = defect_counts(initial)
@@ -299,10 +420,6 @@ def normalize_content(
     unfixable = {name: count for name, count in remaining.items() if count}
     if final["unfinished_tool_call"]:
         unfixable["unfinished_tool_call"] = final["unfinished_tool_call"]
-    # no_answer механически не чинится даже если анализатор его не подтвердил в
-    # журнале: класс найден на входе — фиксируем как непочиненный.
-    if present.get("no_answer") and not unfixable.get("no_answer"):
-        unfixable["no_answer"] = 1
     return editor.text, editor.edits, present, unfixable, initial["truncated"]
 
 
@@ -329,30 +446,6 @@ def _iter_jsonl(path: Path) -> Iterator[tuple[int, bytes, Any]]:
         raise InputError(
             f"{path}: файл не читается ({type(exc).__name__}): {exc}"
         ) from exc
-
-
-def _assistant_texts(record: Any) -> list[str]:
-    """Тексты assistant-сообщений записи (только они — теги промпта не считаем)."""
-    if not isinstance(record, dict):
-        raise InputError("запись не является объектом JSON")
-    messages = record.get("messages")
-    if isinstance(messages, list) and messages:
-        texts = [
-            message["content"]
-            for message in messages
-            if isinstance(message, dict)
-            and message.get("role") == "assistant"
-            and isinstance(message.get("content"), str)
-            and message["content"].strip()
-        ]
-        if texts:
-            return texts
-        raise InputError("в записи нет непустого assistant-сообщения")
-    for key in ("content", "text"):
-        value = record.get(key)
-        if isinstance(value, str) and value.strip():
-            return [value]
-    raise InputError("запись без messages и без content/text — формат не распознан")
 
 
 def _sha256(path: Path) -> str:
@@ -392,9 +485,11 @@ def run_check(
     counts: dict[str, int] = {name: 0 for name in CLASSES}
     affected: dict[str, int] = {name: 0 for name in CLASSES}
     unfinished = 0
+    intermediate = 0
     records = 0
     assistant_messages = 0
     truncated = 0
+    episodes_completed = 0
     per_file: list[dict[str, Any]] = []
     examples: dict[str, list[dict[str, Any]]] = {name: [] for name in CLASSES}
 
@@ -409,7 +504,7 @@ def run_check(
     try:
         for path in paths:
             file_counts = {name: 0 for name in CLASSES}
-            file_records = file_completed = file_truncated = 0
+            file_records = file_completed = file_truncated = file_intermediate = 0
             stop = False
             for lineno, _raw, record in _iter_jsonl(path):
                 if limit and records >= limit:
@@ -417,27 +512,31 @@ def run_check(
                     break
                 records += 1
                 file_records += 1
-                for text in _assistant_texts(record):
-                    assistant_messages += 1
-                    verdict = analyze_content(text)
-                    if verdict["truncated"]:
-                        truncated += 1
-                        file_truncated += 1
-                        continue
-                    file_completed += 1
-                    for name in CLASSES:
-                        count = int(verdict[name])
-                        if count:
-                            file_counts[name] += count
-                            note(name, path, lineno, text, count)
-                    if verdict["unfinished_tool_call"]:
-                        unfinished += verdict["unfinished_tool_call"]
+                episode = analyze_episode(record)
+                assistant_messages += episode["assistant_turns"]
+                file_completed += episode["completed_turns"]
+                file_truncated += episode["truncated_turns"]
+                truncated += episode["truncated_turns"]
+                unfinished += episode["unfinished_tool_call"]
+                intermediate += episode["intermediate_tool_turns"]
+                file_intermediate += episode["intermediate_tool_turns"]
+                if episode["episode_completed"]:
+                    episodes_completed += 1
+                for name in TURN_CLASSES:
+                    count = episode["turn_counts"][name]
+                    if count:
+                        file_counts[name] += count
+                        note(name, path, lineno, episode["turn_texts"][name] or "", count)
+                if episode["no_answer"]:
+                    file_counts["no_answer"] += 1
+                    note("no_answer", path, lineno, episode["last_text"], 1)
             per_file.append(
                 {
                     "path": str(path),
                     "records": file_records,
                     "completed_turns": file_completed,
                     "truncated_turns": file_truncated,
+                    "intermediate_tool_turns": file_intermediate,
                     "classes": dict(file_counts),
                 }
             )
@@ -452,10 +551,15 @@ def run_check(
         name: {
             "count": counts[name],
             "affected_turns": affected[name],
-            "share": round(counts[name] / completed, 6) if completed else 0.0,
+            "share": (
+                round(counts[name] / episodes_completed, 6)
+                if name == "no_answer" and episodes_completed
+                else round(counts[name] / completed, 6) if completed else 0.0
+            ),
         }
         for name in CLASSES
     }
+    intermediate_share = (intermediate / completed) if completed else 0.0
     unfinished_share = (unfinished / completed) if completed else 0.0
     gate_unfinished = (
         completed >= UNFINISHED_MIN_PROBE and unfinished_share > UNFINISHED_TOOL_CALL_MAX
@@ -476,6 +580,7 @@ def run_check(
         "verdict": verdict,
         "input_files": [str(path) for path in paths],
         "records": records,
+        "episodes_completed": episodes_completed,
         "assistant_messages": assistant_messages,
         "completed_turns": completed,
         "truncated_turns": truncated,
@@ -483,6 +588,10 @@ def run_check(
         "saturated": saturated,
         "strict": strict,
         "classes": classes,
+        "intermediate_tool_turns": {
+            "count": intermediate,
+            "share": round(intermediate_share, 6),
+        },
         "unfinished_tool_call": {
             "count": unfinished,
             "share": round(unfinished_share, 6),
@@ -502,9 +611,25 @@ def _cannot(reason: str, paths: list[Path]) -> dict[str, Any]:
         "verdict": "cannot-check",
         "reason": reason,
         "input_files": [str(path) for path in paths],
+        "records": 0,
+        "episodes_completed": 0,
+        "assistant_messages": 0,
+        "completed_turns": 0,
+        "truncated_turns": 0,
+        "truncated_share": 0.0,
+        "saturated": False,
         "classes": {name: {"count": 0, "affected_turns": 0, "share": 0.0} for name in CLASSES},
+        "intermediate_tool_turns": {"count": 0, "share": 0.0},
+        "unfinished_tool_call": {
+            "count": 0,
+            "share": 0.0,
+            "threshold": UNFINISHED_TOOL_CALL_MAX,
+            "min_probe": UNFINISHED_MIN_PROBE,
+            "gated": False,
+        },
         "defects_found": False,
         "examples": {name: [] for name in CLASSES},
+        "files": [],
     }
 
 
@@ -531,7 +656,7 @@ def _normalize_record(
             and isinstance(message.get("content"), str)
         ):
             new_text, edits, found, bad, truncated = normalize_content(message["content"])
-            for name in CLASSES:
+            for name in TURN_CLASSES:
                 present[name] += found[name]
                 unfixable[name] += bad.get(name, 0)
             if found.get("unfinished_tool_call"):
@@ -552,6 +677,10 @@ def _normalize_record(
                 )
                 message = {**message, "content": new_text}
         messages.append(message)
+    # ``no_answer`` — дефект эпизода: ответ не выдумывается механически.
+    if analyze_episode(record)["no_answer"]:
+        present["no_answer"] += 1
+        unfixable["no_answer"] += 1
     return {**record, "messages": messages}, changed, {
         "classes": {name: count for name, count in present.items() if count},
         "unfixable": {name: count for name, count in unfixable.items() if count},
@@ -741,6 +870,36 @@ _NO_ANSWER = (
 )
 _TRUNCATED = "<think>\nрассуждение\n</think>\nначало ответа\n<think>\nоборвано бюджетом"
 
+#: Многошаговый эпизод: «голый» вызов (без текста ответа) + результат среды.
+_CLEAN_ANSWER = "<think>\nрассуждение\n</think>\nФинальный ответ по концептам."
+_BARE_CALL = (
+    "<think>\nрассуждение\n</think>\n"
+    '<tool_call>{"name": "search_concepts", "query": "q"}</tool_call>'
+)
+_TOOL_RESULT = "<tool_response>\nslug: q\ntype: t\n</tool_response>"
+
+
+def _episode_messages(*, pauses: int, final: bool) -> list[dict[str, str]]:
+    """Эпизод с ``pauses`` промежуточными вызовами (и, если ``final``, ответом)."""
+    messages: list[dict[str, str]] = [
+        {"role": "system", "content": "системная инструкция"},
+        {"role": "user", "content": "вопрос"},
+    ]
+    for _ in range(pauses):
+        messages.append({"role": "assistant", "content": _BARE_CALL})
+        messages.append({"role": "user", "content": _TOOL_RESULT})
+    messages.append({"role": "assistant", "content": _CLEAN_ANSWER if final else _BARE_CALL})
+    return messages
+
+
+def _write_episodes(path: Path, episodes: list[list[dict[str, str]]]) -> None:
+    lines = [
+        json.dumps({"messages": episode, "task_type": "explain_relation"},
+                   ensure_ascii=False) + "\n"
+        for episode in episodes
+    ]
+    path.write_text("".join(lines), encoding="utf-8")
+
 
 def _write_records(path: Path, assistants: list[str]) -> None:
     lines = []
@@ -818,14 +977,39 @@ def run_selftest() -> int:
              report_t["classes"]["tool_call_in_think"]["count"] > 0)
         )
 
-        # Мутант класса 3: запись без ответа (только блоки).
+        # Дефект эпизода: последний ход без содержательного текста (только блоки).
         no_answer = root / "no_answer.jsonl"
         _write_records(no_answer, [_CLEAN for _ in range(4)] + [_NO_ANSWER])
         code_n, report_n = run_check([no_answer], strict=True)
-        checks.append(("мутант «нет ответа» → exit 1 (strict)", code_n == EXIT_DEFECT))
+        checks.append(("эпизод без ответа → exit 1 (strict)", code_n == EXIT_DEFECT))
         checks.append(
-            ("мутант «нет ответа» → класс no_answer > 0",
+            ("эпизод без ответа → класс no_answer > 0",
              report_n["classes"]["no_answer"]["count"] > 0)
+        )
+
+        # Многошаговый эпизод: промежуточные голые вызовы — НЕ дефект, в отдельном поле.
+        multi = root / "multi_pause.jsonl"
+        _write_episodes(multi, [_episode_messages(pauses=3, final=True)])
+        code_m, report_m = run_check([multi], strict=True)
+        checks.append(
+            ("многошаговый эпизод → exit 0 (промежуточные вызовы не дефект)",
+             code_m == EXIT_OK and report_m["verdict"] == "admissible")
+        )
+        checks.append(
+            ("многошаговый эпизод → intermediate_tool_turns == 3, no_answer == 0",
+             report_m["intermediate_tool_turns"]["count"] == 3
+             and report_m["classes"]["no_answer"]["count"] == 0)
+        )
+
+        # Эпизод, оборвавшийся на голом вызове → дефект эпизода (нет ответа).
+        cut = root / "ended_in_call.jsonl"
+        _write_episodes(cut, [_episode_messages(pauses=2, final=False)])
+        code_c, report_c = run_check([cut], strict=True)
+        checks.append(("эпизод закончился голым tool_call → exit 1 (strict)", code_c == EXIT_DEFECT))
+        checks.append(
+            ("эпизод закончился голым tool_call → no_answer == 1, intermediate == 2",
+             report_c["classes"]["no_answer"]["count"] == 1
+             and report_c["intermediate_tool_turns"]["count"] == 2)
         )
 
         # Мутант усечения: оборванный бюджетом ход НЕ считается незакрытым think.
@@ -920,8 +1104,8 @@ def run_selftest() -> int:
     for label, passed in checks:
         print(f"[selftest] {'PASS' if passed else 'FAIL'}: {label}")
     print(
-        f"[selftest] {'PASS' if ok else 'FAIL'}: прибор ловит три класса, "
-        "не путает усечение с дефектом, журнал обратим"
+        f"[selftest] {'PASS' if ok else 'FAIL'}: прибор ловит два класса хода и "
+        "дефект эпизода, не путает усечение с дефектом, журнал обратим"
     )
     return EXIT_OK if ok else EXIT_DEFECT
 

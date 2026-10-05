@@ -70,6 +70,36 @@ def write_records(path: Path, assistants: list[str]) -> None:
     path.write_text("".join(lines), encoding="utf-8")
 
 
+# A multi-pause agent episode: each assistant message is one turn; intermediate
+# turns are bare ``<tool_call>`` blocks followed by a tool result, the final turn
+# carries the answer.
+BARE_CALL = (
+    "<think>\nрассуждение\n</think>\n"
+    '<tool_call>{"name": "search_concepts", "query": "q"}</tool_call>'
+)
+TOOL_RESULT = "<tool_response>\nslug: q\ntype: t\n</tool_response>"
+CLEAN_ANSWER = "<think>\nрассуждение\n</think>\nФинальный ответ по концептам."
+
+
+def episode(*, pauses: int, final: bool) -> dict:
+    messages = [
+        {"role": "system", "content": "инструкция с <tool_call> в прозе"},
+        {"role": "user", "content": "вопрос"},
+    ]
+    for _ in range(pauses):
+        messages.append({"role": "assistant", "content": BARE_CALL})
+        messages.append({"role": "user", "content": TOOL_RESULT})
+    messages.append({"role": "assistant", "content": CLEAN_ANSWER if final else BARE_CALL})
+    return {"messages": messages, "task_type": "explain_relation"}
+
+
+def write_episodes(path: Path, records: list[dict]) -> None:
+    path.write_text(
+        "".join(json.dumps(record, ensure_ascii=False) + "\n" for record in records),
+        encoding="utf-8",
+    )
+
+
 def run_cli(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(TOOL), *args],
@@ -121,6 +151,27 @@ def test_no_answer_is_flagged_alone(tmp_path: Path) -> None:
     assert code == sft.EXIT_DEFECT
     assert report["classes"]["no_answer"]["count"] == 1
     assert report["classes"]["unclosed_think"]["count"] == 0
+
+
+def test_multi_pause_episode_is_admissible(tmp_path: Path) -> None:
+    """Intermediate bare tool turns are not defects; they are counted separately."""
+    path = tmp_path / "multi.jsonl"
+    write_episodes(path, [episode(pauses=3, final=True)])
+    code, report = sft.run_check([path], strict=True)
+    assert code == sft.EXIT_OK
+    assert report["verdict"] == "admissible"
+    assert report["classes"]["no_answer"]["count"] == 0
+    assert report["intermediate_tool_turns"]["count"] == 3
+
+
+def test_episode_ending_in_bare_tool_call_is_no_answer(tmp_path: Path) -> None:
+    """An episode whose last assistant turn is only a tool call has no answer."""
+    path = tmp_path / "cut.jsonl"
+    write_episodes(path, [episode(pauses=2, final=False)])
+    code, report = sft.run_check([path], strict=True)
+    assert code == sft.EXIT_DEFECT
+    assert report["classes"]["no_answer"]["count"] == 1
+    assert report["intermediate_tool_turns"]["count"] == 2
 
 
 def test_budget_truncated_tail_is_not_a_defect(tmp_path: Path) -> None:

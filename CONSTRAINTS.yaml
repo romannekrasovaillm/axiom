@@ -452,3 +452,27 @@ constraints:
     adr: ADR-023
     owner: архитектор
 
+  - id: C-044
+    name: "SFT-STAGE §8.1: структурный аудитор SFT-набора существует и рабоч — selftest с мутантами на три класса дефектов; ход, обрезанный бюджетом пробы, дефектом не считается"
+    type: command_succeeds
+    command: 'python3 tools/check_sft_structure.py --selftest'
+    timeout_secs: 60
+    severity: high
+    scope: case
+    kind: structural
+    evidence: "tools/check_sft_structure.py → selftest: набор с незакрытым <think> / <tool_call> внутри <think> / без ответа даёт FAIL по каждому классу отдельно; think, обрезанный бюджетом пробы (не естественно завершённый ход), НЕ считается незакрытым (мутант на пере-подсчёт); цитата тега в прозе дефектом не считается; --normalize: исходник байт-в-байт не меняется, выход — новый файл, журнал обратим (правки old→new в координатах до правки, откат в обратном порядке), неизменённые записи байт-в-байт"
+    adr: ADR-023
+    owner: архитектор
+
+  - id: C-045
+    name: "RL-STAGE §8.1: страж вырождения награды RL существует и рабоч — selftest с мутантами (стоп-классы красные на вырожденном ряде, зелёные на здоровом; warn ≠ стоп)"
+    type: command_succeeds
+    command: 'python3 tools/check_rl_health.py --selftest'
+    timeout_secs: 60
+    severity: high
+    scope: case
+    kind: structural
+    evidence: "tools/check_rl_health.py → selftest на синтетических рядах метрик: pass_rate=0 ∧ reward_mean≤0.05 → стоп; zero_reward_share≥90 % → стоп; no_group_variance (adv_nonzero_share=0 на окне) → стоп; энтропия <0.5 два шага подряд → стоп; здоровый ряд → OK; template_collapse (повтор 4-граммы ≥8) и clip_frac≥0.2 → warn (не стоп); нечитаемый вход/строка без обязательного поля — fail-closed (exit 2)"
+    adr: ADR-023
+    owner: архитектор
+

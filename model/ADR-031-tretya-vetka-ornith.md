@@ -1,10 +1,10 @@
 ---
-id: ADR-029
+id: ADR-031
 type: adr
 title: "Третья ветка RL ornith — самоскаффолдинг (DeepReinforce/Ornith-1.5)"
 status: "accepted"
 affects: [CMP-006]
-source: "docs/adr/ADR-029-tretya-vetka-ornith-samoscaffolding.md"
+source: "docs/adr/ADR-031-tretya-vetka-ornith-samoscaffolding.md"
 ---
 
 Одна политика — три роли (proposer / harness-generator / solver), три

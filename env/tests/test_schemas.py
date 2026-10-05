@@ -20,6 +20,8 @@ def valid_task_spec() -> dict:
             "trace": True,
             "hidden_constraints_sha256": HASH,
         },
+        # H-слой (§10, E-3.3): пин гейтовых файлов — обязательное поле.
+        "gates_sha256": {"constraints": HASH, "spine": HASH},
         "budget_seconds": 1800,
         "max_tokens": 131072,
         "thinking_budget": 8192,
@@ -84,6 +86,35 @@ def test_task_spec_bad_level():
     s["difficulty"]["level"] = "L9"
     errs = schemas.validate_task_spec(s)
     assert any("level" in e for e in errs)
+
+
+# ── (г) H-слой §10: схемы валидируют наличие/отсутствие gates_sha256 ─────────
+def test_task_spec_missing_gates_sha256():
+    s = valid_task_spec()
+    del s["gates_sha256"]
+    errs = schemas.validate_task_spec(s)
+    assert any("gates_sha256" in e for e in errs), errs
+
+
+def test_task_spec_gates_sha256_bad_hash():
+    s = valid_task_spec()
+    s["gates_sha256"]["spine"] = "not-a-hash"
+    errs = schemas.validate_task_spec(s)
+    assert any("gates_sha256.spine" in e for e in errs), errs
+
+
+def test_task_spec_gates_sha256_incomplete():
+    s = valid_task_spec()
+    del s["gates_sha256"]["constraints"]
+    errs = schemas.validate_task_spec(s)
+    assert any("gates_sha256.constraints" in e for e in errs), errs
+
+
+def test_task_spec_gates_sha256_unknown_key():
+    s = valid_task_spec()
+    s["gates_sha256"]["extra"] = HASH
+    errs = schemas.validate_task_spec(s)
+    assert any("gates_sha256" in e and "extra" in e for e in errs), errs
 
 
 def test_manifest_valid():

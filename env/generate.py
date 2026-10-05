@@ -19,11 +19,13 @@ from . import corruption
 from .util import (
     EMPTY_HIDDEN_SHA256,
     copy_case_snapshot,
+    sha256_file,
     sha256_text,
     tree_sha256,
     workspace_size_cap,
     write_json,
 )
+from .verifier import CONSTRAINTS_FILE, SPINE_FILE
 
 REAL_IMPL_FILE = "IMPLEMENTATION.md"
 
@@ -131,6 +133,7 @@ def _make_spec(
     volume: int,
     hidden_sha: str,
     public_rules: int,
+    gates_sha: dict[str, str],
 ) -> dict[str, Any]:
     kind = "restore-gates" if source in ("corruption", "holdout") else "keep-gates-implement"
     tests_cmd = "true" if kind == "restore-gates" else real_tests_cmd(task_id)
@@ -148,6 +151,10 @@ def _make_spec(
             "trace": True,
             "hidden_constraints_sha256": hidden_sha,
         },
+        # H-слой (§10, E-3.3): пин гейтовых файлов из clean-состояния задачи.
+        # Verifier сверяет финал воркспейса против этого пина (основной путь);
+        # рантайм base_ws — только fallback для спек без пина.
+        "gates_sha256": gates_sha,
         "budget_seconds": 1800,
         "max_tokens": 131072,
         "thinking_budget": 8192,
@@ -159,6 +166,19 @@ def _make_spec(
             "level": level,
         },
         "seed": seed,
+    }
+
+
+def gates_sha256(clean_dir: Path) -> dict[str, str]:
+    """Пин гейтовых файлов §10 из clean-состояния задачи (E-3.3).
+
+    ``{constraints, spine}`` — sha256 CONSTRAINTS.yaml и ARCHITECTURE-SPINE.md
+    чистого кейса. Порча (corruption) гейтовые файлы не трогает, поэтому пин
+    равен и снапшоту задачи (real/corruption), и clean-состоянию holdout.
+    """
+    return {
+        "constraints": sha256_file(clean_dir / CONSTRAINTS_FILE),
+        "spine": sha256_file(clean_dir / SPINE_FILE),
     }
 
 
@@ -176,6 +196,7 @@ def _build_public_task(
     seed: int,
     hidden_sha: str,
     public_rules: int,
+    gates_sha: dict[str, str],
 ) -> dict[str, Any]:
     ws_dir = public_dir / task_id
     if source == "corruption":
@@ -186,7 +207,7 @@ def _build_public_task(
     workspace_size_cap(ws_dir)
     spec = _make_spec(
         task_id, source, level, seed, _workspace_digest(ws_dir),
-        count_case_volume(ws_dir), hidden_sha, public_rules,
+        count_case_volume(ws_dir), hidden_sha, public_rules, gates_sha,
     )
     write_json(public_dir / f"{task_id}.json", spec)
     return spec
@@ -206,6 +227,9 @@ def generate(
     holdout_dir.mkdir(parents=True, exist_ok=True)
 
     public_rules = count_public_rules(clean_dir / "CONSTRAINTS.yaml")
+    # H-слой (§10, E-3.3): пин гейтовых файлов из clean-состояния — один для
+    # всего набора (порча гейтов не трогает; holdout-воркспейс не строится).
+    gates_sha = gates_sha256(clean_dir)
 
     # Скрытый набор правил — вне workspace (в holdout/).
     hidden_yaml = render_hidden_constraints()
@@ -225,7 +249,8 @@ def generate(
             tseed = _task_seed(seed, source, level, i)
             hsha = EMPTY_HIDDEN_SHA256 if level == "L0" else hidden_sha
             spec = _build_public_task(
-                clean_dir, public_dir, task_id, source, level, tseed, hsha, public_rules
+                clean_dir, public_dir, task_id, source, level, tseed, hsha, public_rules,
+                gates_sha,
             )
             summary["public"].append({"id": task_id, "seed": spec["seed"], "level": level})
 
@@ -239,7 +264,7 @@ def generate(
         workspace = {"format": "git-bundle", "bundle_sha256": held_hash, "base_commit": held_hash[:40]}
         spec = _make_spec(
             task_id, "holdout", level, tseed, workspace,
-            count_case_volume(clean_dir), hsha, public_rules,
+            count_case_volume(clean_dir), hsha, public_rules, gates_sha,
         )
         write_json(holdout_dir / f"{task_id}.json", spec)
         summary["holdout"].append({"id": task_id, "seed": spec["seed"], "level": level})

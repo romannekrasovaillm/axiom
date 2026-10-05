@@ -16,6 +16,8 @@ _SLUG = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 _SOURCES = ("real", "corruption", "holdout")
 _OBJECTIVE_KINDS = ("restore-gates", "keep-gates-implement")
 _LEVELS = ("L0", "L1", "L2", "L3")
+#: Логические ключи пина гейтовых файлов Task Spec (§10, E-3.3).
+_GATE_PIN_KEYS = ("constraints", "spine")
 
 
 def _errs(errs: list[str], path: str, cond: bool, msg: str) -> None:
@@ -70,6 +72,17 @@ def validate_task_spec(spec: Any) -> list[str]:
         _errs(e, "verifier.hidden_constraints_sha256", is_sha256_hex(ver.get("hidden_constraints_sha256")), "verifier.hidden_constraints_sha256 — sha256")
     else:
         e.append("verifier: должен быть объектом")
+
+    # H-слой (§10, E-3.3): обязательный пин гейтовых файлов из clean-состояния.
+    gates = spec.get("gates_sha256")
+    if isinstance(gates, dict):
+        for key in _GATE_PIN_KEYS:
+            _errs(e, f"gates_sha256.{key}", is_sha256_hex(gates.get(key)), f"gates_sha256.{key} — sha256")
+        extra = sorted(k for k in gates if k not in _GATE_PIN_KEYS)
+        if extra:
+            e.append(f"gates_sha256: неизвестные ключи {extra} (ожидаются {list(_GATE_PIN_KEYS)})")
+    else:
+        e.append("gates_sha256: должен быть объектом {constraints, spine} (H-слой §10)")
 
     _errs(e, "budget_seconds", _is_int(spec.get("budget_seconds")) and spec["budget_seconds"] > 0, "budget_seconds — целое > 0")
     _errs(e, "max_tokens", _is_int(spec.get("max_tokens")) and spec["max_tokens"] > 0, "max_tokens — целое > 0")

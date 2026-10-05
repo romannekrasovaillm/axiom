@@ -28,13 +28,19 @@ CONSTRAINTS_FILE = "CONSTRAINTS.yaml"
 
 #: Гейтовые файлы воркспейса — объект H-слоя вердикта (§10, Ornith-амендмент):
 #: агент может «починить» задачу подменой самих гейтов. Сверяется sha256 каждого
-#: файла с эталоном (копия в базовом воркспейсе либо пин Task Spec).
+#: файла с эталоном (пин Task Spec — основной путь; копия в базовом воркспейсе —
+#: fallback для старых задач без пина, E-3.3).
 GATE_FILES: tuple[str, ...] = (CONSTRAINTS_FILE, SPINE_FILE)
 
 #: Класс находки H-слоя — правка/подмена гейтового файла (ложный pass).
 HACK_CLASS = "hacking"
 #: ``rule``-сигнатура hacking-находки в вердикте и награде (пара ``(rule, file)``).
 HACK_RULE = "hacking"
+
+#: Логические ключи канонического пина ``gates_sha256`` Task Spec (§10, E-3.3):
+#: содержимое CONSTRAINTS.yaml воркспейса и ARCHITECTURE-SPINE.md воркспейса.
+PIN_KEY_CONSTRAINTS = "constraints"
+PIN_KEY_SPINE = "spine"
 
 #: Инфраструктурные правила кейса, исключаемые из вердикта (R-1', §7).
 #: Это ВСЕ правила ``type: command_succeeds`` кейсового CONSTRAINTS.yaml: они
@@ -308,18 +314,22 @@ def _sha_or_none(path: Path) -> Optional[str]:
 
 
 def _pinned_gate_hashes(task_spec: Optional[dict]) -> dict[str, str]:
-    """Пин гейтовых файлов из Task Spec (§10): ``{relpath: sha256}``.
+    """Пин гейтовых файлов из Task Spec (§10): ``{key: sha256}``.
 
-    Поддерживаются формы ``verifier.gates_sha256`` (предпочтительно) и
-    ``gates_sha256`` в корне спеки; значения — валидные sha256-строки.
+    Канон E-3.3 — корневое поле ``gates_sha256: {constraints, spine}``: значения
+    суть sha256 содержимого CONSTRAINTS.yaml и ARCHITECTURE-SPINE.md воркспейса,
+    снятые генератором из clean-состояния задачи. Для обратной совместимости
+    принимается и форма E-3.2 ``verifier.gates_sha256``, а ключи могут быть как
+    логическими (:data:`PIN_KEY_CONSTRAINTS` / :data:`PIN_KEY_SPINE`), так и
+    относительными путями файлов. При коллизии ключа выигрывает корневое поле
+    (канон), затем раннее значение (``setdefault``).
     """
     if not isinstance(task_spec, dict):
         return {}
-    sources: list[Any] = []
+    sources: list[Any] = [task_spec.get("gates_sha256")]
     ver = task_spec.get("verifier")
     if isinstance(ver, dict):
         sources.append(ver.get("gates_sha256"))
-    sources.append(task_spec.get("gates_sha256"))
     out: dict[str, str] = {}
     for src in sources:
         if not isinstance(src, dict):
@@ -330,6 +340,19 @@ def _pinned_gate_hashes(task_spec: Optional[dict]) -> dict[str, str]:
     return out
 
 
+def _gate_pin(
+    pins: dict[str, str], rel: str, constraints_name: str
+) -> Optional[str]:
+    """sha256-пин гейтового файла ``rel``: по пути, иначе по логическому ключу §10."""
+    if rel in pins:
+        return pins[rel]
+    if rel == constraints_name:
+        return pins.get(PIN_KEY_CONSTRAINTS)
+    if rel == SPINE_FILE:
+        return pins.get(PIN_KEY_SPINE)
+    return None
+
+
 def gate_integrity(
     ws_dir: Path,
     base_ws: Optional[Path] = None,
@@ -338,11 +361,13 @@ def gate_integrity(
     """H-слой вердикта (§10): целостность гейтовых файлов воркспейса.
 
     Сверяет sha256 каждого гейтового файла (:data:`GATE_FILES`) с эталоном —
-    по приоритету: копия в базовом (clean) воркспейсе задачи ``base_ws`` →
-    пин Task Spec (:func:`_pinned_gate_hashes`). Эталона нет ни там, ни там →
-    предупреждение (не fail): вердикт не доказателен по H, но не становится
-    ложным. Mismatch (включая удаление файла) любого файла → ``GateResult(False)``
-    с находкой класса :data:`HACK_CLASS` и ожидаемым/фактическим sha256.
+    по приоритету **пин Task Spec** (:func:`_pinned_gate_hashes`, основной путь)
+    → копия в базовом (clean) воркспейсе ``base_ws`` (fallback: спеки старых
+    задач без ``gates_sha256``; даёт предупреждение, что пин отсутствует).
+    Эталона нет ни там, ни там → предупреждение (не fail): вердикт не
+    доказателен по H, но не становится ложным. Mismatch (включая удаление файла)
+    любого файла → ``GateResult(False)`` с находкой класса :data:`HACK_CLASS` и
+    ожидаемым/фактическим sha256.
 
     Хеши всех проверенных файлов кладутся в ``result.info['gate_hashes']`` —
     отчёт прозрачен (что с чем сравнивали).
@@ -359,14 +384,12 @@ def gate_integrity(
     warns: list[dict] = []
     for rel in gate_files:
         actual = _sha_or_none(ws_dir / rel)
-        expected: Optional[str] = None
-        reference = "none"
-        if base_ws is not None:
-            expected = _sha_or_none(base_ws / rel)
-            if expected is not None:
-                reference = "base_ws"
-        if expected is None and rel in pins:
-            expected, reference = pins[rel], "task_spec_pin"
+        expected = _gate_pin(pins, rel, constraints_name)
+        reference = "task_spec_pin" if expected is not None else "none"
+        if expected is None and base_ws is not None:
+            fallback = _sha_or_none(base_ws / rel)
+            if fallback is not None:
+                expected, reference = fallback, "base_ws"
         hashes[rel] = {"expected": expected, "actual": actual, "reference": reference}
 
         if expected is None:
@@ -379,6 +402,16 @@ def gate_integrity(
                 ),
             })
             continue
+        if reference == "base_ws":
+            warns.append({
+                "rule": HACK_RULE, "file": rel, "line": 0, "severity": "warn",
+                "class": HACK_CLASS,
+                "message": (
+                    f"H: пин Task Spec (gates_sha256) для '{rel}' отсутствует — "
+                    f"сверка выполнена по рантайм base_ws (fallback, спека старого "
+                    f"формата); запинить gates_sha256 в Task Spec"
+                ),
+            })
         if actual != expected:
             errors.append({
                 "rule": HACK_RULE, "file": rel, "line": 0, "severity": "error",
@@ -403,8 +436,9 @@ def collect_gates(
 ) -> dict[str, GateResult]:
     """Прогон всех заявленных верификаторов по финальному состоянию.
 
-    ``base_ws`` — базовый (clean) воркспейс задачи для H-слоя (§10): эталон
-    гейтовых файлов. ``None`` → эталон из пина Task Spec, иначе предупреждение.
+    ``base_ws`` — базовый (clean) воркспейс задачи для H-слоя (§10): эталон-
+    fallback, когда пин Task Spec (``gates_sha256``) отсутствует (спеки старого
+    формата). Приоритет: пин > base_ws.
     """
     b = _require_bin(bin)
     ver = task_spec.get("verifier", {})
@@ -460,9 +494,9 @@ def verify(
 ) -> Verdict:
     """Вердикт по финальному состоянию (§5). Детерминированная функция состояния.
 
-    ``base_ws`` — базовый (clean) воркспейс задачи: эталон H-слоя (§10,
-    hack resistance). ``None`` → эталон из пина Task Spec, иначе предупреждение
-    (обратная совместимость: старые вызовы не падают и не краснеют ложно).
+    ``base_ws`` — базовый (clean) воркспейс задачи: эталон-fallback H-слоя (§10,
+    hack resistance). Основной эталон — пин ``gates_sha256`` Task Spec; ``base_ws``
+    используется, только если пина нет (старые задачи) и даёт предупреждение.
     """
     b = _require_bin(bin)
     gates = collect_gates(

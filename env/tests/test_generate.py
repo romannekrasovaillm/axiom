@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections import Counter
 
 from env import schemas
-from env.util import find_weight_files, read_json
+from env.util import find_weight_files, read_json, sha256_file
 
 
 def test_public_and_holdout_counts(generated):
@@ -58,3 +58,22 @@ def test_corruption_restore_real_keep(generated):
             assert s["objective"]["kind"] == "restore-gates"
         else:
             assert s["objective"]["kind"] == "keep-gates-implement"
+
+
+def test_generated_gates_sha256_pin_matches_clean_state(generated):
+    """H-слой (§10, E-3.3): пин гейтов == sha256 гейтовых файлов clean-состояния.
+
+    Публичный воркспейс: пин == хешам его же CONSTRAINTS.yaml/ARCHITECTURE-SPINE.md
+    (порча гейты не трогает). Holdout (воркспейс не строится): пин == clean-кейсу.
+    """
+    case = generated["case"]
+    clean_constraints = sha256_file(case / "CONSTRAINTS.yaml")
+    clean_spine = sha256_file(case / "ARCHITECTURE-SPINE.md")
+    for p in (generated["out"] / "public").glob("*.json"):
+        s = read_json(p)
+        ws = generated["out"] / "public" / s["id"]
+        assert s["gates_sha256"]["constraints"] == sha256_file(ws / "CONSTRAINTS.yaml"), s["id"]
+        assert s["gates_sha256"]["spine"] == sha256_file(ws / "ARCHITECTURE-SPINE.md"), s["id"]
+    for p in (generated["out"] / "holdout").glob("holdout-*.json"):
+        s = read_json(p)
+        assert s["gates_sha256"] == {"constraints": clean_constraints, "spine": clean_spine}, s["id"]

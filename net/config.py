@@ -217,6 +217,28 @@ class ModelConfig:
     # ``chunk_size``, so there is no second knob to keep in sync.
     kda_chunked_backward: bool = False
 
+    # --- KDA implementation selector (ADR-031 delta A, spine AD-9/C-035) ----
+    # ``"chunked"`` — the pre-delta path: ``lax.scan`` over chunks with an
+    # ``lax.associative_scan`` over the per-token delta-rule transition monoid.
+    # That form materialises each token's ``(dk, dk)`` transition matrix (the
+    # ``P``/``Q`` prefix of ``chunk_step`` — the O(T·H·dk·dk) kit that made the
+    # KDA layer memory-bound).  ``"wyut"`` — the Kimi Linear §3.1 chunkwise
+    # form ("WY representation + UT transform", arXiv 2510.26692v2): the state
+    # transfer between chunks is a matmul, the intra-chunk correction is a
+    # ``C x C`` score matrix, and no ``(dk, dk)`` per-token tensor is built.
+    # Both implement the same recurrence (Eq. 1) and are pinned against
+    # ``apply_recurrent`` by ``net/tests/test_kda_wyut.py``.  The schema default
+    # is ``"chunked"`` (the regression reference): a config built in code keeps
+    # the pre-delta graph.  The dispatcher lives in ``net/kda.py:apply_kda``
+    # (called from ``net/model.py``).  ``net/config.json`` declares the value.
+    kda_impl: str = "chunked"
+
+    # Chunk width ``C`` of the WY/UT form (the paper's ``L/C`` chunking).  Read
+    # by ``net/kda.py:apply_wyut`` when the caller does not pass one; the
+    # ``chunked`` path keeps using the caller's ``chunk_size`` so the two
+    # implementations do not share a knob by accident.
+    kda_wyut_chunk: int = 64
+
     # --- group-scan of the layer stack (host-RAM of the JIT compile) --------
     # The backbone is periodic ``[K,K,K,M]`` (config.py invariant below): one
     # unrolled graph of 24 distinct layer bodies makes XLA trace, lower and
@@ -289,6 +311,19 @@ def validate_config(cfg: ModelConfig) -> None:
     assert isinstance(cfg.kda_chunked_backward, bool), (
         "kda_chunked_backward must be a bool (False = pre-delta graph), "
         f"got {cfg.kda_chunked_backward!r}"
+    )
+
+    # KDA implementation selector (ADR-031 delta A): the declared value names an
+    # implementation ``net/kda.py`` actually has — an unknown string would fall
+    # through to the old path silently, which is exactly the ambiguity the
+    # selector exists to remove.
+    assert cfg.kda_impl in ("chunked", "wyut"), (
+        "kda_impl must be 'chunked' (pre-delta form) or 'wyut' (WY/UT form), "
+        f"got {cfg.kda_impl!r}"
+    )
+    assert isinstance(cfg.kda_wyut_chunk, int) and cfg.kda_wyut_chunk > 0, (
+        "kda_wyut_chunk must be a positive integer (the chunk width C), "
+        f"got {cfg.kda_wyut_chunk!r}"
     )
 
     # Group-scan of the layer stack: a plain on/off switch read by

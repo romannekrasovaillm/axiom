@@ -348,6 +348,148 @@ def _short_conv_chunk(x: jnp.ndarray, w: jnp.ndarray, buf: jnp.ndarray) -> tuple
     return out, new_buf
 
 
+# ---------------------------------------------------------------------------
+# Chunked (WY representation + UT transform) form — ADR-031 delta A
+# ---------------------------------------------------------------------------
+
+
+def _log_cumulative_decay(alpha: jnp.ndarray) -> jnp.ndarray:
+    """``G`` with ``G_{i} = log(prod_{r<=i} alpha_r)`` (Eq. 3's log-gamma)."""
+    return jnp.cumsum(jnp.log(alpha), axis=0)
+
+
+def _decay_ratio_exp(log_g: jnp.ndarray) -> jnp.ndarray:
+    """Causal decay ratio ``exp(min(G_c - G_i, 0))`` for all ``(c, i)``.
+
+    ``G`` is the cumulative log-decay (non-increasing along the chunk, since
+    ``alpha <= 1``), so on the kept side ``c >= i`` the exponent is already
+    ``<= 0`` and the clamp is inert.  The clamp only touches the masked
+    ``c < i`` entries, where the source's ``Gamma_c / Gamma_i`` would overflow:
+    this is the numerical-safety point of the whole form — ``Gamma`` underflows
+    to zero within a 64-token chunk, so the reciprocal ``1/Gamma`` (the form the
+    paper's Eq. 9 writes) is ``inf`` on real keys, not just on padding.
+
+    Returns ``(H, C, C, dk)``: ``[h, c, i, d] = exp(min(G_c - G_i, 0))``.
+    """
+    g = log_g.transpose(1, 0, 2)  # (H, C, dk)
+    diff = g[:, :, None, :] - g[:, None, :, :]  # (H, C, C, dk)
+    return jnp.exp(jnp.minimum(diff, 0.0))
+
+
+def wyut_chunk_step(
+    params: KDAParams, cfg: ModelConfig, carry: KDAState, x: jnp.ndarray
+) -> tuple[KDAState, jnp.ndarray]:
+    """One chunk of ``(C, hidden)`` via the WY/UT chunkwise delta rule.
+
+    Mirrors :func:`chunk_step` (same recurrence, same carry) but never
+    materialises the per-token ``(dk, dk)`` transition matrices: the
+    inter-chunk state transfer is a matmul, the intra-chunk correction is the
+    ``C x C`` score matrix ``A = Tril((Gamma . Q)(K / Gamma)^T)``.
+    """
+    H, dk, dv = cfg.num_heads, cfg.kda_dk, cfg.kda_dv
+    C = x.shape[0]
+    proj = _project(params, cfg, x)
+    qp, kp, vp = proj["qp"], proj["kp"], proj["vp"]
+
+    qc, q_buf = _short_conv_chunk(qp, params.conv_q, carry.q_buf)
+    kc, k_buf = _short_conv_chunk(kp, params.conv_k, carry.k_buf)
+    vc, v_buf = _short_conv_chunk(vp, params.conv_v, carry.v_buf)
+    q, k, v = _postprocess(qc, kc, vc, cfg)
+
+    beta = proj["beta"]  # (C, H)
+    alpha = proj["alpha"]  # (C, H, dk)
+
+    log_g = _log_cumulative_decay(alpha)  # (C, H, dk) = log gamma^i
+    e = _decay_ratio_exp(log_g)  # (H, C, C, dk)
+    q, k, v = q.transpose(1, 0, 2), k.transpose(1, 0, 2), v.transpose(1, 0, 2)
+    beta_t = beta.transpose(1, 0)  # (H, C)
+
+    # Score matrices: A_{c,i} = q_c . diag(ratio) . k_i, and the same with k_c.
+    aqk = jnp.einsum("hcid,hcd,hid->hci", e, q, k)  # (H, C, C)
+    akk = jnp.einsum("hcid,hcd,hid->hci", e, k, k)  # (H, C, C)
+    lower = jnp.tril(jnp.ones((C, C), dtype=bool))
+    strict = jnp.tril(jnp.ones((C, C), dtype=bool), k=-1)
+    aqk = jnp.where(lower, aqk, 0.0)
+    l_mat = jnp.where(strict, akk, 0.0) * beta_t[:, :, None]  # L_{r,i}=beta_r Akk
+    eye = jnp.eye(C, dtype=l_mat.dtype)
+    t_mat = jnp.linalg.inv(eye + l_mat)  # (I + L)^{-1}, unit triangular
+
+    # W = T Diag(beta) (Gamma . K), U = T Diag(beta) V  (Eq. 7).
+    gamma = jnp.exp(log_g).transpose(1, 0, 2)  # (H, C, dk)
+    xw = (gamma * k) * beta_t[:, :, None]  # (H, C, dk)
+    vw = v * beta_t[:, :, None]  # (H, C, dv)
+    w = jnp.einsum("hcs,hsd->hcd", t_mat, xw)
+    u = jnp.einsum("hcs,hsd->hcd", t_mat, vw)
+
+    s_in = carry.S  # (H, dk, dv)
+    v_tilde = u - jnp.einsum("hcd,hde->hce", w, s_in)  # U - W S  (pseudo-value)
+
+    # Output (Eq. 9): inter-chunk from S, intra-chunk from the score matrix.
+    gamma_q = gamma * q  # (H, C, dk) = Gamma . Q
+    inter = jnp.einsum("hcd,hde->hce", gamma_q, s_in)
+    intra = jnp.einsum("hci,hie->hce", aqk, v_tilde)
+    o = (inter + intra).transpose(1, 0, 2)  # (C, H, dv)
+
+    # State transfer (Eq. 8): decay the carried state, absorb the chunk writes.
+    gamma_c = gamma[:, -1, :]  # (H, dk) = gamma^C
+    # gamma^{i+1->C} = gamma^C / gamma^i, evaluated as a log difference clamped
+    # above at 0 (both factors are <= 1 for i < C, so the clamp is inert there).
+    lam = jnp.exp(jnp.minimum(log_g[-1][None] - log_g, 0.0))  # (C, H, dk)
+    lam = lam.transpose(1, 0, 2)  # (H, C, dk), all entries <= 1
+    y = lam * k  # (H, C, dk)
+    s_new = gamma_c[:, :, None] * s_in + jnp.einsum("hcd,hce->hde", y, v_tilde)
+
+    out = _output_gate(o, proj["gate"], params)
+    return KDAState(s_new, q_buf, k_buf, v_buf), out
+
+
+def apply_wyut(
+    params: KDAParams,
+    cfg: ModelConfig,
+    x: jnp.ndarray,
+    chunk_size: int | None = None,
+) -> jnp.ndarray:
+    """KDA over ``(T, hidden)`` in chunks, WY representation + UT transform.
+
+    ``chunk_size=None`` reads ``cfg.kda_wyut_chunk`` (the declarative default).
+    Semantics are identical to :func:`apply_recurrent` / :func:`apply_chunked`
+    (the same recurrence, Eq. 1); this is the memory-lean formulation —
+    ``O(T)`` chunk carries and matmuls, no per-token ``(dk, dk)`` kit.
+    """
+    if chunk_size is None:
+        chunk_size = cfg.kda_wyut_chunk
+    T = x.shape[0]
+    C = chunk_size
+    n_chunks = (T + C - 1) // C
+    pad = n_chunks * C - T
+    x_p = jnp.pad(x, ((0, pad), (0, 0))) if pad else x
+    x_chunks = x_p.reshape(n_chunks, C, -1)
+    carry0 = init_state(cfg)
+
+    _, out = jax.lax.scan(
+        lambda c, xc: wyut_chunk_step(params, cfg, c, xc), carry0, x_chunks
+    )
+    out = out.reshape(n_chunks * C, -1)
+    return _with_window(out[:T], params, cfg, x)
+
+
+def apply_kda(
+    params: KDAParams,
+    cfg: ModelConfig,
+    x: jnp.ndarray,
+    chunk_size: int | None = None,
+) -> jnp.ndarray:
+    """Dispatch on ``cfg.kda_impl`` (``chunked`` — the regression reference).
+
+    ``chunked`` is the pre-delta path, byte-for-byte as before; ``wyut`` is the
+    ADR-031 delta-A form.  ``chunked`` honours the caller's ``chunk_size``;
+    ``wyut`` falls back to ``cfg.kda_wyut_chunk`` when it is ``None``.
+    """
+    if cfg.kda_impl == "wyut":
+        return apply_wyut(params, cfg, x, chunk_size=chunk_size or cfg.kda_wyut_chunk)
+    return apply_chunked(params, cfg, x, chunk_size=chunk_size or cfg.kda_wyut_chunk)
+
+
 def apply_chunked(
     params: KDAParams, cfg: ModelConfig, x: jnp.ndarray, chunk_size: int
 ) -> jnp.ndarray:

@@ -1980,6 +1980,21 @@ class TrainConfig:
     decay_ratio: float = 0.05
     seed: int = 0
     chunk_size: int = 64
+    #: Микробатч (число последовательностей в одном forward), ADR-031 delta B.
+    #: Сам размер батча задаёт даталоадер (``pretrain_run.py`` передаёт сюда
+    #: значение ``--micro-batch``); поле фиксирует его для журнала и проверки.
+    #: ``1`` — текущее поведение: один forward на шаг оптимизатора.
+    micro_batch: int = 1
+    #: Накопление градиентов до шага оптимизатора (ADR-031: батч 256K
+    #: накоплением).  ``0`` — выключено (один микробатч на шаг, текущее
+    #: поведение); ``T > 0`` — накопить ``ceil(T / (micro_batch * seq_len))``
+    #: микробатчей и шагнуть один раз.  Токены в метрике шага — фактически
+    #: потреблённые накоплением (не номинальный батч).
+    accum_tokens: int = 0
+    #: Каждые ``kpi_every`` шагов оптимизатора печатать медиану ток/с по
+    #: последним ``kpi_window`` шагам (носитель KPI — ``metrics.jsonl``).
+    kpi_every: int = 20
+    kpi_window: int = 20
     #: ``True`` — remat графа: память активаций падает ценой пересчёта.
     grad_checkpointing: bool = False
     #: ``full`` (nothing_saveable) | ``selective`` (dots без batch-осей).
@@ -2081,6 +2096,17 @@ def train(
         raise ValueError(f"неизвестное расписание: {train_config.schedule!r}")
     if train_config.param_dtype not in ("float32", "bfloat16"):
         raise ValueError(f"неизвестная точность параметров: {train_config.param_dtype!r}")
+    # ADR-031 delta B: micro-batch >= 1 and a non-negative accumulation target;
+    # a zero/negative micro-batch would make the accumulation count ill-defined,
+    # and a negative target has no meaning (0 already means "off").
+    if int(train_config.micro_batch) < 1:
+        raise ValueError(
+            f"micro_batch must be >= 1, got {train_config.micro_batch!r}"
+        )
+    if int(train_config.accum_tokens) < 0:
+        raise ValueError(
+            f"accum_tokens must be >= 0 (0 = off), got {train_config.accum_tokens!r}"
+        )
 
     manager = resume_from
     start_step = 0
@@ -2160,6 +2186,8 @@ def train(
     losses: list[float] = []
     lr_history: list[float] = []
     step_seconds: list[float] = []
+    #: Ток/с каждого шага оптимизатора — носитель KPI-медианы (delta B).
+    step_tokens_per_sec: list[float] = []
     stop_reason: str | None = None
     stopped_by_budget = False
     checkpoint_record: dict | None = None
@@ -2176,19 +2204,62 @@ def train(
     usd_spent = 0.0
     gpu_hours = gpu_hours_base
 
+    micro_batch = max(1, int(train_config.micro_batch))
+    accum_tokens = int(train_config.accum_tokens)
+
     for index in range(train_config.steps):
         absolute = start_step + index + 1
-        try:
-            batch = next(iterator)
-        except StopIteration:
+        # Delta B: pull the micro-batches of one optimizer step.  ``accum_tokens
+        # <= 0`` is the pre-delta behaviour — exactly one item, so the numbers
+        # below are bit-for-bit the ones the loop produced before.
+        group: list[Any] = []
+        target: int | None = None
+        exhausted = False
+        while target is None or len(group) < target:
+            try:
+                micro = next(iterator)
+            except StopIteration:
+                exhausted = True
+                break
+            group.append(micro)
+            if target is None:
+                tokens_per_micro = int(np.prod(np.shape(micro)))
+                if accum_tokens <= 0:
+                    target = 1
+                else:
+                    target = max(
+                        1, -(-accum_tokens // max(1, tokens_per_micro))
+                    )  # ceil(accum_tokens / tokens_per_micro)
+        if not group:
             stop_reason = (
                 f"data exhausted: поток батчей кончился на шаге {absolute - 1}"
                 f" из {start_step + train_config.steps}"
             )
             break
-        batch_tokens = int(np.prod(np.shape(batch)))
+        batch_tokens = sum(int(np.prod(np.shape(m))) for m in group)
         tick = time.time()
-        loss, grads = grad_fn(params, batch)
+        if len(group) == 1:
+            # No accumulation happened: identical to the pre-delta step.
+            loss, grads = grad_fn(params, group[0])
+            loss_value = float(jax.device_get(loss))
+        else:
+            # Token-weighted mean of the micro-batches' losses/gradients, so a
+            # curriculum phase change inside the group does not bias the step.
+            total = float(batch_tokens)
+            loss_acc = 0.0
+            grads = None
+            for m in group:
+                mt = float(np.prod(np.shape(m)))
+                micro_loss, micro_grads = grad_fn(params, m)
+                loss_acc += float(jax.device_get(micro_loss)) * mt
+                scaled = jax.tree_util.tree_map(lambda leaf: leaf * mt, micro_grads)
+                grads = (
+                    scaled
+                    if grads is None
+                    else jax.tree_util.tree_map(lambda a, b: a + b, grads, scaled)
+                )
+            grads = jax.tree_util.tree_map(lambda leaf: leaf / total, grads)
+            loss_value = loss_acc / total
         if use_bf16:
             grads = jax.tree_util.tree_map(lambda leaf: leaf.astype(jnp.float32), grads)
         master, state = step_fn(master, grads, state, lr_at(absolute - 1))
@@ -2197,11 +2268,10 @@ def train(
         if index == 0:
             first_tick = elapsed
 
-        # хост-синхронизация: числа метрик берутся с устройства явно
-        loss_value = float(jax.device_get(loss))
         losses.append(loss_value)
         lr_history.append(lr_at(absolute - 1))
         step_seconds.append(elapsed)
+        step_tokens_per_sec.append(batch_tokens / elapsed if elapsed > 0 else 0.0)
         tokens_seen += batch_tokens
         # Накопительные счётчики: база прошлых ног + текущая нога (К3).
         gpu_hours = gpu_hours_base + (time.time() - started) / 3600.0
@@ -2242,6 +2312,20 @@ def train(
             print(
                 f"[pretrain] шаг {absolute}: loss={loss_value:.4f} "
                 f"lr={lr_history[-1]:.3e} {elapsed:.2f} с/шаг",
+                flush=True,
+            )
+
+        # Delta B KPI: the owner's main metric during the batch-256K pilot is
+        # tokens/second, and per-step numbers are noisy — print the median over
+        # a rolling window every ``kpi_every`` optimizer steps.  The per-step
+        # carrier stays ``metrics.jsonl`` (``tokens_per_sec`` above).
+        kpi_every = max(1, int(train_config.kpi_every))
+        if (index + 1) % kpi_every == 0:
+            window = step_tokens_per_sec[-max(1, int(train_config.kpi_window)) :]
+            print(
+                f"[pretrain] KPI: медиана ток/с за последние {len(window)} шагов "
+                f"= {float(np.median(window)):.1f} (шаг {absolute}, "
+                f"микробатч={micro_batch}, накопление={accum_tokens or 'off'})",
                 flush=True,
             )
 
@@ -2311,6 +2395,16 @@ def train(
                     tokens_seen=tokens_seen,
                     gpu_hours=gpu_hours,
                 )
+            break
+
+        # Delta B: the stream ran out mid-accumulation — the step above is the
+        # honest one (tokens = what the group actually consumed); stop here.
+        # The final checkpoint block below persists the state for this reason.
+        if exhausted:
+            stop_reason = (
+                f"data exhausted: поток батчей кончился на шаге {absolute}"
+                f" из {start_step + train_config.steps}"
+            )
             break
 
     if (

@@ -132,6 +132,26 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
                         help="горизонт расписания (по умолчанию = --steps)")
     parser.add_argument("--seq-len", type=int, default=8192, help="длина упаковки (T)")
     parser.add_argument("--batch-size", type=int, default=1)
+    parser.add_argument(
+        "--micro-batch",
+        type=int,
+        default=None,
+        help=(
+            "размер микробатча (последовательностей на один forward), ADR-031 "
+            "delta B; по умолчанию равен --batch-size (текущее поведение). "
+            "Меньший микробатч — память, добирается накоплением --accum-tokens"
+        ),
+    )
+    parser.add_argument(
+        "--accum-tokens",
+        type=int,
+        default=0,
+        help=(
+            "накапливать градиенты до ~T токенов на один шаг оптимизатора "
+            "(ADR-031: батч 256K накоплением); 0 = выключено (один микробатч "
+            "на шаг). Число микробатчей = ceil(T/(micro-batch*seq-len))"
+        ),
+    )
     parser.add_argument("--shuffle-window", type=int, default=10000,
                         help="окно детерминированного шаффла (документов)")
     parser.add_argument("--max-doc-tokens", type=int, default=None,
@@ -943,6 +963,34 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
     if args.resume and args.total_steps is None:
         horizon = int(cursor_run.get("total_steps") or horizon)
 
+    # --- ADR-031 delta B: forward micro-batch vs accumulated whole batch ----
+    # ``loader_batch`` is the *forward* width (the memory knob): the loader
+    # yields that many sequences per item.  ``planned_batch`` is the equivalent
+    # per-optimizer-step width used by planning (H1 decay window, journal): with
+    # accumulation on, a step consumes ~``accum_tokens`` tokens, i.e.
+    # ``ceil(accum_tokens / seq_len)`` sequences.
+    if args.micro_batch is not None and int(args.micro_batch) < 1:
+        print(
+            f"[pretrain] ОТКАЗ: --micro-batch должен быть >= 1, "
+            f"получено {args.micro_batch}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return journal, False
+    if int(args.accum_tokens) < 0:
+        print(
+            f"[pretrain] ОТКАЗ: --accum-tokens должен быть >= 0 (0 = выключено), "
+            f"получено {args.accum_tokens}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return journal, False
+    loader_batch = int(args.micro_batch) if args.micro_batch else int(args.batch_size)
+    planned_batch = int(args.batch_size)
+    if int(args.accum_tokens) > 0:
+        seq = max(1, int(args.seq_len))
+        planned_batch = max(1, -(-int(args.accum_tokens) // seq))
+
     # --- H4: resume пиннит параметры прогона -------------------------------
     mismatch = validate_resume_pins(
         cursor_run,
@@ -993,7 +1041,7 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
         decay_plan = tl.decay_window_plan(
             total_steps=horizon,
             decay_ratio=decay_ratio,
-            batch_size=args.batch_size,
+            batch_size=planned_batch,
             seq_len=args.seq_len,
             available_tokens=available_q,
         )
@@ -1026,7 +1074,7 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
                 tokens_root=paths["tokens_root"],
                 streams=streams,
                 seq_len=args.seq_len,
-                batch_size=args.batch_size,
+                batch_size=loader_batch,
                 mix=mix,
                 cursor=data_cursor,
                 decay_stream=args.decay_stream,
@@ -1039,7 +1087,7 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
                 streams=streams,
                 encode=tokenizer.encode,
                 seq_len=args.seq_len,
-                batch_size=args.batch_size,
+                batch_size=loader_batch,
                 seed=args.seed,
                 mix=mix,
                 shuffle_window=args.shuffle_window,
@@ -1066,6 +1114,10 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
         "streaming": True,
         "seq_len": args.seq_len,
         "batch_size": args.batch_size,
+        "loader_batch": loader_batch,
+        "micro_batch": args.micro_batch,
+        "accum_tokens": args.accum_tokens,
+        "planned_batch": planned_batch,
         "decay": (
             {
                 "stream": args.decay_stream,
@@ -1121,6 +1173,8 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
         stop_file=stop_file,
         stop_check_every=args.stop_check_every,
         data_kind=data_kind,
+        micro_batch=loader_batch,
+        accum_tokens=args.accum_tokens,
     )
     journal["loop"] = {
         "steps_requested": args.steps,
@@ -1144,6 +1198,13 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
         "stop_file": sft_stage.repo_rel(stop_file, repo_root) if stop_file else None,
         "resume": bool(args.resume),
         "data_kind": data_kind,
+        "micro_batch": loader_batch,
+        "accum_tokens": args.accum_tokens,
+        "planned_batch": planned_batch,
+        "tokens_per_step": (
+            int(args.accum_tokens) if int(args.accum_tokens) > 0
+            else loader_batch * int(args.seq_len)
+        ),
     }
     journal["gpu"] = {
         "peak_tflops": args.peak_tflops,
@@ -1152,7 +1213,8 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
     }
     print(
         f"[pretrain] {args.model_preset}: vocab={cfg.vocab_size}, "
-        f"T={args.seq_len}, B={args.batch_size}, шагов {args.steps}, "
+        f"T={args.seq_len}, B={args.batch_size} (micro={loader_batch}, "
+        f"accum={args.accum_tokens or 'off'}), шагов {args.steps}, "
         f"grad-checkpointing={bool(grad_checkpointing)}, "
         f"токенизатор={tokenizer_info['hash'][:16]}…",
         flush=True,

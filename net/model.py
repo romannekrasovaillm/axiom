@@ -208,7 +208,13 @@ def _block_delta(
     """
     hn = rms_norm(h, block.norm_attn)
     if is_kda:
-        attn_out = jax.vmap(lambda xb: kda_mod.apply_chunked(block.attn, cfg, xb, chunk_size))(hn)
+        # ``cfg.kda_impl`` selects the KDA primitive (ADR-031 delta A):
+        # ``chunked`` — the pre-delta associative-scan form (default), ``wyut``
+        # — the WY/UT chunkwise form.  ``apply_kda`` keeps the branch in one
+        # place so the two implementations stay swappable and cross-checked.
+        attn_out = jax.vmap(
+            lambda xb: kda_mod.apply_kda(block.attn, cfg, xb, chunk_size)
+        )(hn)
     else:
         attn_out, pool = mla_mod.apply_with_pool(block.attn, cfg, hn, pool=pool, mode=mode)
     h1 = h + attn_out

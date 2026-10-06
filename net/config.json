@@ -52,6 +52,8 @@
   "grad_ckpt_policy": "per_layer",
   "ce_chunk_tokens": 1024,
   "kda_chunked_backward": true,
+  "kda_impl": "chunked",
+  "kda_wyut_chunk": 64,
   "scan_layers": true,
   "swa_window": 128,
   "swa_share_kda_projections": true,

@@ -1,10 +1,10 @@
 ---
-id: ADR-031
+id: ADR-032
 type: adr
 title: "KDA на WY/UT-алгоритме, ток/с — главный KPI претрейна, батч ~256K токенов/шаг"
 status: "accepted"
 affects: [CMP-002, CMP-004]
-source: "docs/adr/ADR-031-kda-wyut-tok-s-kpi-bolshoy-batch.md"
+source: "docs/adr/ADR-032-kda-wyut-tok-s-kpi-bolshoy-batch.md"
 ---
 
 Чанковый KDA переписывается на WY/UT-форму Kimi Linear (arXiv 2510.26692 §3.1):

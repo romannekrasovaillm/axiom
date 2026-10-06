@@ -1,0 +1,7 @@
+[
+  {
+    "run": "kda-wyut-delta",
+    "kpi_tok_s_baseline": 86,
+    "threshold": 800
+  }
+]

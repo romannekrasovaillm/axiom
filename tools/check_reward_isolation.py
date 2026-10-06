@@ -10,31 +10,34 @@
   награды — судья допустим только как отдельная калиброванная метрика вне
   контура (ADR-002, ADR-005);
 * (c) печатает, какие файлы считаются контуром награды и на каком основании
-  (маркеры сидов + импорт-замыкание).
+  (объявленные корни + импорт-замыкание), а какие — нет.
 
 Границы контура (объявлены, не подразумеваются)
 -----------------------------------------------
 
 AD-2 связывает «среда ↔ verifier'ы ↔ награда RL-контура»: награда — функция
-вердикта, вердикт собирают механические гейты. Поэтому контуром принят
-**пакет, в котором определена награда** (в кейсе — ``env/``: ``reward.py``,
-``verifier.py``, ``run.py``), а не отдельный «файл с функцией reward»:
-правило «судьи нет в пути награды» должно ловить и обвязку, где вердикт
-превращается в награду. Пакет определяется маркерами (имя модуля ``reward``,
-класс ``Reward``, функция с ``reward`` в имени, ``def compute(...)`` рядом с
-упоминанием reward) — сработавшие маркеры печатаются.
+вердикта, вердикт собирают механические гейты. Контур пути награды объявлен
+**списком корней** :data:`REWARD_PATH_ROOTS` (``env/reward.py``,
+``env/verifier.py``, ``env/run.py``) — награда, вердикт и обвязка запуска;
+так он и записан в SPEC AD-2. Корень проверяется вместе с пакетным
+``__init__`` (он исполняется при импорте корня, значит лежит в пути награды) и
+транзитивным импорт-замыканием: если награда ходит в помощника, судейский
+вызов не должен прятаться за ним.
 
-Дополнительно берётся импорт-замыкание по локальным модулям (зависимости
-контура): если награда ходит в помощника, судейский вызов не должен
-прятаться за ним. Замыкание печатается отдельным списком — это **не** контур,
-а то, что он вызывает.
+Импорты, ведущие за пределы пакета корней (``env/``) — например, helper в
+другом пакете, — идут отдельным списком «импорт-зависимости» и проверяются
+наравне с контуром: в них тоже нельзя прятать судью или LLM-клиента.
 
-Что заведомо вне проверки (граница, а не пробел): транзитивные зависимости
-вне дерева репозитория (пакеты из site-packages); вызовы, собранные из
-нестроковых выражений (например, URL из переменной окружения); намеренная
-обфускация (``eval``/``exec`` над собранной строкой). Инструмент не сканирует
-сам себя (``tools/check_reward_isolation.py``): он не контур награды, а его
-текст содержит маркеры, которые он ищет.
+Что заведомо вне проверки (граница, а не пробел): модули, **не достижимые из
+корней по импортам**, — приборы пакета среды (``env/eval_*.py``,
+``env/calibrate.py``, ``env/main.py``, ``env/openai_adapter.py`` — порт без
+HTTP) и пакет ``clients/`` (httpx-транспорт, отдельный домен: механизм
+внешнего endpoint'а, а не контур награды). Достижимый помощник проверяется,
+где бы он ни лежал; недостижимый — нет. Транзитивные зависимости вне дерева
+репозитория (site-packages); вызовы, собранные из нестроковых выражений
+(URL из переменной окружения); намеренная обфускация (``eval``/``exec``) —
+тоже граница. Инструмент не сканирует сам себя
+(``tools/check_reward_isolation.py``).
 
 Ложный PASS запрещён: если контур награды не найден, скрипт возвращает
 ``EXIT_NOT_VERIFIED`` и печатает «НЕ ПРОВЕРЕНО: контур награды не найден»
@@ -70,6 +73,17 @@ EXIT_NOT_VERIFIED = 2
 #: Текст, обязанный попасть в вывод при ненайденном контуре (ложный PASS запрещён).
 NOT_VERIFIED_MESSAGE = "НЕ ПРОВЕРЕНО: контур награды не найден"
 
+#: Объявленные корни пути награды (ADR-033 амендмент; SPEC AD-2 — «пакет среды
+#: env/: reward.py, verifier.py, run.py»). Контур — import-замыкание от них, а
+#: не весь пакет ``env/``: приборы (``eval_*``, ``calibrate``, ``main``,
+#: ``openai_adapter``) контуром награды не являются, и httpx-транспорт в
+#: ``clients/`` по этой границе вне проверки. Пути — от корня кейса.
+REWARD_PATH_ROOTS: tuple[str, ...] = (
+    "env/reward.py",
+    "env/verifier.py",
+    "env/run.py",
+)
+
 
 # --- что не является контуром награды ---------------------------------------
 
@@ -90,15 +104,6 @@ _EXCLUDED_DIRS = frozenset(
     }
 )
 _EXCLUDED_FILE_RE = re.compile(r"^(test_.*\.py|.*_test\.py|conftest\.py)$")
-
-
-# --- маркеры сидов: где определена награда ----------------------------------
-
-_NAME_SEED_RE = re.compile(r"reward", re.IGNORECASE)
-_CLASS_REWARD_RE = re.compile(r"(?m)^\s*class\s+\w*Reward\w*\s*[\(:]")
-_DEF_REWARD_RE = re.compile(r"(?m)^\s*def\s+\w*[Rr]eward\w*\s*\(")
-_DEF_COMPUTE_RE = re.compile(r"(?m)^\s*def\s+compute\s*\(")
-_WORD_REWARD_RE = re.compile(r"(?i)\breward\b")
 
 
 # --- запрещённое в пути награды ---------------------------------------------
@@ -261,7 +266,7 @@ class Report:
     """Результат прогона стража."""
 
     root: Path
-    seeds: list[tuple[str, str]] = field(default_factory=list)
+    roots: list[CircuitFile] = field(default_factory=list)
     core: list[CircuitFile] = field(default_factory=list)
     dependencies: list[CircuitFile] = field(default_factory=list)
     judge_modules: list[tuple[str, str]] = field(default_factory=list)
@@ -270,8 +275,8 @@ class Report:
 
     @property
     def verified(self) -> bool:
-        """Контур награды найден — иначе вердикт «НЕ ПРОВЕРЕНО»."""
-        return bool(self.seeds)
+        """Хотя бы один объявленный корень есть — иначе «НЕ ПРОВЕРЕНО»."""
+        return bool(self.roots)
 
     @property
     def ok(self) -> bool:
@@ -353,20 +358,6 @@ def load_source(path: Path, root: Path) -> SourceFile:
         tree=tree,
         imports=_iter_imports(tree),
     )
-
-
-def seed_reasons(source: SourceFile) -> list[str]:
-    """Маркеры, по которым модуль признаётся определением награды."""
-    reasons: list[str] = []
-    if _NAME_SEED_RE.search(source.path.stem):
-        reasons.append(f"маркер имени: '{source.path.name}' содержит 'reward'")
-    if _CLASS_REWARD_RE.search(source.text):
-        reasons.append("маркер контента: объявлен класс Reward")
-    if _DEF_REWARD_RE.search(source.text):
-        reasons.append("маркер контента: объявлена функция с 'reward' в имени")
-    if _DEF_COMPUTE_RE.search(source.text) and _WORD_REWARD_RE.search(source.text):
-        reasons.append("маркер контента: def compute(...) рядом с упоминанием reward")
-    return reasons
 
 
 def package_dir(path: Path, root: Path) -> Path:
@@ -539,20 +530,27 @@ def _resolve(
 
 
 def build_report(root: Path) -> Report:
-    """Полный прогон: сиды → пакет контура → импорт-замыкание → проверки."""
+    """Полный прогон: объявленные корни → пакетный ``__init__`` → импорт-замыкание → проверки."""
     report = Report(root=root)
     sources = [load_source(path, root) for path in scan_candidates(root)]
     index: dict[str, SourceFile] = {}
+    by_rel: dict[str, SourceFile] = {}
     for source in sources:
         index.setdefault(source.module, source)
+        by_rel.setdefault(source.rel, source)
 
-    seeds: list[SourceFile] = []
-    for source in sources:
-        reasons = seed_reasons(source)
-        if reasons:
-            seeds.append(source)
-            report.seeds.append((source.rel, "; ".join(reasons)))
-    if not seeds:
+    # Корни пути награды объявлены (:data:`REWARD_PATH_ROOTS`), а не выведены
+    # маркерами: «весь пакет env/» — шире контура (приборы в него не входят).
+    core: dict[str, SourceFile] = {}
+    basis: dict[str, str] = {}
+    for rel in REWARD_PATH_ROOTS:
+        source = by_rel.get(rel)
+        if source is None:
+            continue
+        core[rel] = source
+        basis[rel] = "объявленный корень пути награды (env/reward.py, env/verifier.py, env/run.py)"
+        report.roots.append(CircuitFile(rel, basis[rel]))
+    if not report.roots:
         return report
 
     judges: dict[str, str] = {}
@@ -562,22 +560,25 @@ def build_report(root: Path) -> Report:
             judges[source.rel] = "; ".join(reasons)
     report.judge_modules = sorted(judges.items())
 
-    packages = {package_dir(seed.path, root) for seed in seeds}
-    seed_basis = {seed.rel: report.seeds[i][1] for i, seed in enumerate(seeds)}
-    core: dict[str, SourceFile] = {}
-    for source in sources:
-        if package_dir(source.path, root) in packages:
-            core[source.rel] = source
-            if source.rel in seed_basis:
-                basis = f"сид: {seed_basis[source.rel]}"
-            else:
-                package = package_dir(source.path, root).relative_to(root).as_posix()
-                basis = f"пакет контура {package}/ (сиды: {', '.join(sorted(seed_basis))})"
-            report.core.append(CircuitFile(source.rel, basis))
+    # Пакетный ``__init__`` исполняется при импорте корня — тоже путь награды.
+    root_packages = {package_dir(source.path, root) for source in core.values()}
+    for package in sorted(root_packages):
+        init = package / "__init__.py"
+        try:
+            rel = init.relative_to(root).as_posix()
+        except ValueError:  # pragma: no cover — пакет вне корня кейса
+            continue
+        source = by_rel.get(rel)
+        if source is not None and rel not in core:
+            core[rel] = source
+            basis[rel] = (
+                f"__init__ пакета контура {package.relative_to(root).as_posix()}/ "
+                "(исполняется при импорте корня)"
+            )
 
-    # Импорт-замыкание: то, что контур вызывает (не контур, но в пути награды).
+    # Импорт-замыкание: что вызывают корни. Модули внутри пакета корней — часть
+    # контура; ведущие наружу (helper в другом пакете) — импорт-зависимости.
     dependencies: dict[str, SourceFile] = {}
-    dependency_basis: dict[str, str] = {}
     queue = list(core.values())
     while queue:
         current = queue.pop()
@@ -585,14 +586,22 @@ def build_report(root: Path) -> Report:
             for target in _resolve(ref, current, index):
                 if target.rel in core or target.rel in dependencies:
                     continue
-                dependencies[target.rel] = target
-                dependency_basis[target.rel] = f"← {current.rel}: {ref.text}"
+                if package_dir(target.path, root) in root_packages:
+                    core[target.rel] = target
+                    basis[target.rel] = f"← {current.rel}: {ref.text}"
+                else:
+                    dependencies[target.rel] = target
+                    basis[target.rel] = f"← {current.rel}: {ref.text}"
                 queue.append(target)
+
+    report.core = [CircuitFile(rel, basis[rel]) for rel in sorted(core)]
     report.dependencies = [
-        CircuitFile(rel, dependency_basis[rel]) for rel in sorted(dependencies)
+        CircuitFile(rel, basis[rel]) for rel in sorted(dependencies)
     ]
 
-    checked = list(core.values()) + [dependencies[rel] for rel in sorted(dependencies)]
+    checked = [core[rel] for rel in sorted(core)] + [
+        dependencies[rel] for rel in sorted(dependencies)
+    ]
     imported_judges: set[str] = set()
     for source in checked:
         report.findings.extend(_check_imports(source, index, judges, imported_judges))
@@ -620,15 +629,15 @@ def render(report: Report) -> str:
     out = [
         "C-039 · контур награды RL (AD-2): LLM-судья и внешние API вне пути награды",
         f"Каталог: {report.root}",
-        "Область сканирования: **/*.py (кроме .git, __pycache__, tests/, test_*.py, conftest.py, самого инструмента)",
+        "Область сканирования: **/*.py; проверяются корни пути награды и их импорт-замыкание",
     ]
 
     if not report.verified:
         out.append("")
         out.append(
-            f"{NOT_VERIFIED_MESSAGE} — ни один модуль не объявляет награду "
-            "(маркеры: имя 'reward', класс Reward, функция с 'reward', "
-            "def compute(...) рядом с reward)."
+            f"{NOT_VERIFIED_MESSAGE} — ни один объявленный корень пути награды "
+            f"не найден ({', '.join(REWARD_PATH_ROOTS)}); пакет env/ без них "
+            "контуром не считается."
         )
         out.append(
             "Проверка не выполнена: PASS не выдаётся (ложный PASS запрещён)."
@@ -636,18 +645,23 @@ def render(report: Report) -> str:
         return "\n".join(out)
 
     out.append("")
-    out.append(f"Сиды контура ({len(report.seeds)}) — на каком основании:")
-    out.extend(f"  {rel} — {basis}" for rel, basis in report.seeds)
+    out.append(
+        f"Корни пути награды ({len(report.roots)}) — объявлены, не подразумеваются:"
+    )
+    out.extend(f"  {item.rel} — {item.basis}" for item in report.roots)
 
     out.append("")
-    out.append(f"Файлы контура награды ({len(report.core)}):")
+    out.append(
+        f"Файлы контура награды ({len(report.core)}) — корни, пакетный __init__ "
+        "и транзитивные импорты внутри пакета:"
+    )
     out.extend(f"  {item.rel} — {item.basis}" for item in report.core)
 
     out.append("")
     if report.dependencies:
         out.append(
             f"Импорт-зависимости контура ({len(report.dependencies)}) — "
-            "не контур, но вызываются из него, поэтому проверяются:"
+            "импортируются корнями за пределами пакета, поэтому проверяются:"
         )
         out.extend(f"  {item.rel} {item.basis}" for item in report.dependencies)
     else:

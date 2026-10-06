@@ -5,7 +5,7 @@
 ломала trace (12× ad-not-verified: 12 model/AD ссылаются на case-скоуп правила,
 отсутствовавшие в 5-правильном наборе; §9: редукция R<10 запрещена) и делала
 атомы порчи невидимыми песочнице. R-1' возвращает полный ruleset в снапшот, а
-машинонезависимость даёт фильтр: ``command_succeeds``-правила (C-032…C-045)
+машинонезависимость даёт фильтр: ``command_succeeds``-правила (C-032…C-046)
 проверяют контур ВНЕ воркспейса (tools/, evidence/, .arch-handoff, стенд GB10)
 и в изоляции неисполнимы.
 
@@ -66,10 +66,10 @@ def test_snapshot_carries_full_case_ruleset(case_dir, tmp_path):
 
 
 def test_excluded_infra_rules_detected_dynamically(case_dir):
-    """Динамический детектор `type: command_succeeds` == реестровый пин (14)."""
+    """Динамический детектор `type: command_succeeds` == реестровый пин (15)."""
     detected = detect_excluded_infra_rules(case_dir / "CONSTRAINTS.yaml")
     assert detected == EXCLUDED_INFRA_RULES
-    assert len(detected) == 14
+    assert len(detected) == 15
 
 
 def test_clean_case_verdict_passes(case_dir, tmp_path, arch_ml):
@@ -145,6 +145,24 @@ def test_filter_removes_infra_violation_but_keeps_it_transparent(case_dir):
     f2, _ = filter_fitness_report(only_infra, case_dir / "CONSTRAINTS.yaml")
     assert f2["passed"] is True
     assert f2["raw_passed"] is False
+
+
+def test_filter_neutralises_performance_roofline_rule_c046(case_dir):
+    """C-046 (performance-roofline, стенд/KPI) — нейтрален в песочнице: не в вердикте."""
+    assert "C-046" in EXCLUDED_INFRA_RULES
+    report = {
+        "passed": False,
+        "issues": [
+            {"rule": "C-046", "file": "ws", "line": 0, "message": "roofline",
+             "severity": "error"},
+        ],
+    }
+    filtered, excluded = filter_fitness_report(report, case_dir / "CONSTRAINTS.yaml")
+
+    assert filtered["issues"] == []
+    assert filtered["passed"] is True
+    assert filtered["raw_passed"] is False
+    assert [it["rule"] for it in excluded] == ["C-046"]
 
 
 def test_filter_is_deterministic(case_dir):

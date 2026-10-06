@@ -75,15 +75,102 @@ def test_clean_reward_circuit_passes(tmp_path: Path, capsys) -> None:
     assert "Итог: PASS" in out
 
 
-def test_marker_basis_is_printed(tmp_path: Path, capsys) -> None:
+def test_declared_root_basis_is_printed(tmp_path: Path, capsys) -> None:
     """(c) основание включения в контур печатается, а не подразумевается."""
     case = _clean_case(tmp_path)
 
+    report = guard.build_report(case)
     _, out = _run(case, capsys)
 
-    assert "Сиды контура" in out
-    assert "маркер имени" in out
+    assert [item.rel for item in report.roots] == ["env/reward.py"]
+    assert "Корни пути награды" in out
+    assert "объявленный корень" in out
     assert "Файлы контура награды" in out
+
+
+# --- сужение контура: import-замыкание, а не весь пакет env/ -----------------
+
+
+def test_whole_env_package_is_not_the_circuit(tmp_path: Path) -> None:
+    """Прибор в env/ вне import-замыкания награды не проверяется (сужение C-039)."""
+    case = _clean_case(
+        tmp_path,
+        {
+            # «Прибор»: импортирует HTTP-клиент, но награда (корень) его не зовёт.
+            "env/eval_probe.py": "import httpx\n\n\ndef probe():\n    return httpx\n",
+        },
+    )
+
+    report = guard.build_report(case)
+    rels = {item.rel for item in report.core} | {item.rel for item in report.dependencies}
+
+    assert "env/eval_probe.py" not in rels
+    assert report.ok, [finding.message for finding in report.findings]
+    assert report.exit_code == guard.EXIT_PASS
+
+
+def test_clients_package_is_outside_reward_path(tmp_path: Path) -> None:
+    """clients/ (httpx-механизм) — отдельный домен, стражем награды не проверяется."""
+    case = _clean_case(
+        tmp_path,
+        {
+            "clients/__init__.py": "",
+            "clients/openai_http.py": (
+                '"""httpx-транспорт."""\n\nimport httpx\n\n\n'
+                "def build():\n    return httpx.Client()\n"
+            ),
+        },
+    )
+
+    report = guard.build_report(case)
+    rels = {item.rel for item in report.core} | {item.rel for item in report.dependencies}
+
+    assert not any(rel.startswith("clients/") for rel in rels)
+    assert report.ok, [finding.message for finding in report.findings]
+    assert report.exit_code == guard.EXIT_PASS
+
+
+def test_openai_port_in_env_is_not_a_finding(tmp_path: Path) -> None:
+    """env/openai_adapter.py (порт без httpx) — не корень и не находка."""
+    case = _clean_case(
+        tmp_path,
+        {
+            "env/openai_adapter.py": (
+                '"""Порт OpenAI-совместимого адаптера: без HTTP-библиотеки."""\n\n'
+                'DEFAULT_BASE_URL = "http://127.0.0.1:8080"\n\n\n'
+                "class OpenAIModelAdapter:\n"
+                "    def generate(self, messages):\n"
+                "        raise NotImplementedError\n"
+            ),
+        },
+    )
+
+    report = guard.build_report(case)
+    assert {item.rel for item in report.core} == {"env/__init__.py", "env/reward.py"}
+    assert report.ok, [finding.message for finding in report.findings]
+
+
+def test_httpx_import_in_reward_root_is_a_finding(tmp_path: Path) -> None:
+    """Мутант: httpx в корне награды — находка (граница не сместилась)."""
+    case = _clean_case(
+        tmp_path, {"env/reward.py": "import httpx\n\n\n" + CLEAN_REWARD}
+    )
+
+    report = guard.build_report(case)
+
+    assert report.exit_code == guard.EXIT_VIOLATION
+    assert {f.rel for f in report.findings} == {"env/reward.py"}
+    assert "REWARD-PATH-EXTERNAL-API" in {f.code for f in report.findings}
+
+
+def test_httpx_import_in_declared_verifier_root_is_a_finding(tmp_path: Path) -> None:
+    """Объявленный корень env/verifier.py тоже проверяется (не только reward.py)."""
+    case = _clean_case(tmp_path, {"env/verifier.py": "import httpx\n"})
+
+    report = guard.build_report(case)
+
+    assert report.exit_code == guard.EXIT_VIOLATION
+    assert {f.rel for f in report.findings} == {"env/verifier.py"}
 
 
 # --- (ii) судья и LLM-клиенты в контуре награды ------------------------------
@@ -241,11 +328,15 @@ def test_case_reward_circuit_passes_and_lists_files(capsys) -> None:
     report = guard.build_report(CASE_DIR)
     code, out = _run(CASE_DIR, capsys)
     rels = {item.rel for item in report.core}
+    checked = rels | {item.rel for item in report.dependencies}
 
     assert report.ok, [finding.message for finding in report.findings]
     assert code == guard.EXIT_PASS
     assert {"env/reward.py", "env/verifier.py", "env/run.py"} <= rels
     assert "tools/check_reward_isolation.py" not in rels
+    # Приборы env/ и пакет clients/ — вне import-замыкания награды.
+    assert "env/openai_adapter.py" not in checked
+    assert not any(rel.startswith("clients/") for rel in checked)
     assert "env/reward.py" in out and "Итог: PASS" in out
 
 

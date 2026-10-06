@@ -34,7 +34,7 @@ import pytest
 from conftest import small_config
 
 from net import kda, model
-from net.config import ModelConfig, load_config, validate_config
+from net.config import load_config, validate_config
 
 #: The case's declarative config (``kda_impl`` is declared there).
 CONFIG_PATH = Path(__file__).resolve().parents[1] / "config.json"

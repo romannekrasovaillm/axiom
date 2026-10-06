@@ -51,3 +51,10 @@
 - ADR-027/029 (три ветки — финальный вердикт на нашей базе; track-2 репетирует их механики), ADR-022 (substrate), ADR-017 (стек JAX; инференс — исключение), AD-6/AD-7, ENVIRONMENT-V1 §9–10
 - Tunix (github.com/google/tunix, Apache-2.0; туториал Gemma-3 GRPO); llama.cpp function-calling (Qwen3 поддержан); RUNBOOK-GB10 §7 (окна)
 - Сводка линии-2: адаптер OpenAI-совместимого клиента в env/ — RESULTS §18
+
+## Амендмент (05-06.10, архитектор): порт/механизм и сужение C-039
+
+1. **Пункт 1 уточняется**: «адаптер OpenAI-совместимого клиента в env/» реализуется как **порт** (env/openai_adapter.py — интерфейс §13 без HTTP-библиотеки) + **механизм** в новом пакете `clients/` (httpx-транспорт, `clients/calibrate_openai.py` — калибровка лесенки через внешний endpoint). Основание: C-039/AD-2 (critical) — контур награды = пакет env/, импорт httpx внутрь env/ = внешний API в контуре награды (доказано check_reward_isolation). Конфликт разрешён портом/механизмом, не ослаблением C-039.
+2. **Флаг `--adapter openai` в env.main не вводится** (транзитный импорт HTTP-клиента в env/); запуск Stage A: `python3 -m clients.calibrate_openai`.
+3. **C-039 сужается до import-замыкания фактического пути награды** (reward.py, verifier.py, run.py + транзитивные импорты) вместо «весь пакет env/»: приборы (eval_*, calibrate, main) не являются контуром награды; защита от внешних API в награде — критическая и остаётся (severity critical, страж тот же).
+4. Пиннинг модели Stage A (конкретный GGUF-файл Qwen3-4B-Instruct) — при скачивании, линия-1.

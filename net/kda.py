@@ -386,7 +386,6 @@ def wyut_chunk_step(
     inter-chunk state transfer is a matmul, the intra-chunk correction is the
     ``C x C`` score matrix ``A = Tril((Gamma . Q)(K / Gamma)^T)``.
     """
-    H, dk, dv = cfg.num_heads, cfg.kda_dk, cfg.kda_dv
     C = x.shape[0]
     proj = _project(params, cfg, x)
     qp, kp, vp = proj["qp"], proj["kp"], proj["vp"]

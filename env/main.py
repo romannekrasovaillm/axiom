@@ -128,15 +128,15 @@ def _build_model_factory(args):
         # Внешний OpenAI-совместимый endpoint (track-2 Stage A, ADR-033):
         # llama-server + GGUF открытой модели. Сеть в момент сборки фабрики не
         # трогается — адаптер конструируется лениво, на каждый эпизод.
-        from .openai_adapter import DEFAULT_BASE_URL, DEFAULT_SERVED_MODEL, OpenAIAdapter
+        from . import openai_adapter as _oa
 
-        base_url = getattr(args, "base_url", None) or DEFAULT_BASE_URL
-        served_model = getattr(args, "served_model", None) or DEFAULT_SERVED_MODEL
+        base_url = getattr(args, "base_url", None) or _oa.DEFAULT_BASE_URL
+        served_model = getattr(args, "served_model", None) or _oa.DEFAULT_SERVED_MODEL
         api_key = getattr(args, "api_key", None)
         model_seed = args.model_seed
 
         def openai_factory():
-            return OpenAIAdapter(
+            return _oa.OpenAIAdapter(
                 base_url=base_url, model=served_model, api_key=api_key, seed=model_seed,
             )
 

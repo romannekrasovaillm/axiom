@@ -456,14 +456,21 @@ def canonical_tokenizer():
     return tok, tok.vocab_hash()
 
 
-def config_tokenizer_pin() -> str:
-    """Пин токенизатора из ``net/config.json`` (может быть коротким префиксом).
+def config_tokenizer_pin(config_path: Optional[Path] = None) -> str:
+    """Пин токенизатора из конфига прогона (по умолчанию ``net/config.json``).
 
     Пин объявлен как 16-hex префикс sha256 файла-артефакта корпусного BPE
     (``tools/bpe_train.py``), поэтому сравнение обязано быть префиксным, а не
     на равенство: полный хеш манифеста ``tokens/`` длиннее пина.
+
+    ``config_path`` — явный конфиг прогона (``--config-path``, ревизия
+    VERIFICATION-LEG): пин обязан читаться из того же файла, чью архитектуру
+    строит лоадер, иначе сверка данных проверяла бы чужой файл.  Без аргумента
+    поведение прежнее (пин ``net/config.json``) — аргумент добавлен с дефолтом,
+    поэтому вызовы и подмены без него не меняются.
     """
-    config = json.loads((CASE_DIR / "net" / "config.json").read_text(encoding="utf-8"))
+    path = Path(config_path) if config_path is not None else (CASE_DIR / "net" / "config.json")
+    config = json.loads(path.read_text(encoding="utf-8"))
     pinned = config.get("tokenizer_hash")
     return str(pinned).strip() if isinstance(pinned, str) else ""
 
@@ -569,6 +576,29 @@ def load_l3_full_config():
     from net.config import load_config
 
     return load_config(L3_CONFIG_PATH)
+
+
+def load_config_path(config_path) -> object:
+    """Конфиг из явного ``--config-path`` (ревизия VERIFICATION-LEG).
+
+    Читается тем же загрузчиком ``net.config.load_config``, что и пресет
+    ``l3-full``: декларативное поле ``layer_composition`` (в т.ч.
+    ``dense-standard``) и валидация схемы — одни и те же, отдельного пути для
+    «другого» конфига нет.  Подмена ``net/config.json`` при этом запрещена
+    (пин скелета), поэтому переопределение пути — единственная точка выбора.
+    """
+    from net.config import load_config
+
+    return load_config(Path(config_path))
+
+
+def config_path_report(config_path) -> dict[str, Any]:
+    """След явного конфига в журнал: относительный путь и канонический sha256."""
+    path = Path(config_path)
+    return {
+        "path": repo_rel(path, detect_repo_root()),
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+    }
 
 
 def l3_config_report() -> dict[str, Any]:
@@ -776,7 +806,9 @@ def l3_full_notes(estimate: dict[str, Any], report: dict[str, Any]) -> list[str]
     return notes
 
 
-def build_model_config(vocab_size: int, preset: str, qat_weights: bool = True):
+def build_model_config(
+    vocab_size: int, preset: str, qat_weights: bool = True, config_path=None
+):
     """Конфиг скелета L3 для смоука.
 
     ``small``/``tiny`` — численные смоук-конфиги ``net/tests/conftest.py``
@@ -785,12 +817,21 @@ def build_model_config(vocab_size: int, preset: str, qat_weights: bool = True):
     шёл по той же архитектуре, что пиннута в конфиге, а не по её уменьшенной
     копии.
 
+    ``config_path`` — явный конфиг (ревизия VERIFICATION-LEG, флаг
+    ``--config-path``): путь имеет приоритет над пресетом, потому что пресеты
+    ``small``/``tiny``/``l3-full`` заморожены и не трогаются, а прогон
+    A/B (dense-124M vs arch-124M) обязан идти по своему файлу.  ``None`` —
+    прежнее поведение (выбор по пресету), поэтому старые вызовы не меняются;
+    проверяется механически (``tools/tests/test_run_sft_smoke_config_path.py``).
+
     ``qat_enabled`` выставляется вместе с флагом прогона: QAT включается со
     стадии SFT (ADR-005 п. 7), поэтому конфиг стадии обязан нести включённый
     признак — иначе журнал и конфиг противоречили бы друг другу.
     """
     conftest = _load_acceptance_conftest()  # ADR-010: пиннинг до импорта net.*
-    if preset == "tiny":
+    if config_path is not None:
+        base = load_config_path(config_path)
+    elif preset == "tiny":
         base = conftest.tiny_config()
     elif preset == L3_FULL_PRESET:
         base = load_l3_full_config()
@@ -984,6 +1025,12 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
                         help="small/tiny — смоук-конфиги приёмки сети "
                              "(net/tests/conftest.py); l3-full — полный конфиг "
                              "скелета L3 из net/config.json (AD-9/C-035)")
+    parser.add_argument("--config-path", type=Path, default=None,
+                        help="явный путь конфига модели (ревизия VERIFICATION-LEG): "
+                             "имеет приоритет над --model-preset; подмена "
+                             "net/config.json запрещена, поэтому путь задаётся "
+                             "здесь. По умолчанию (не задан) — прежнее поведение "
+                             "пресетов small/tiny/l3-full")
     parser.add_argument("--qat-weights", dest="qat_weights", action="store_true",
                         default=True, help="QAT fake-quant MXFP4 весов (ADR-005 п.7)")
     parser.add_argument("--no-qat-weights", dest="qat_weights", action="store_false")
@@ -1137,7 +1184,10 @@ def run_stage(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
         return journal, False
 
     # --- 3. цикл ---------------------------------------------------------
-    cfg = build_model_config(vocab_size, args.model_preset, args.qat_weights)
+    config_path = getattr(args, "config_path", None)
+    cfg = build_model_config(
+        vocab_size, args.model_preset, args.qat_weights, config_path=config_path
+    )
     journal["model_config"] = {
         "preset": args.model_preset,
         "qat_enabled": bool(cfg.qat_enabled),
@@ -1147,6 +1197,7 @@ def run_stage(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
         "num_layers": cfg.num_layers,
         "num_kda_layers": cfg.num_kda_layers,
         "num_mla_layers": cfg.num_mla_layers,
+        "dense_standard_layers": int(cfg.dense_standard_layers),
         "num_heads": cfg.num_heads,
         "head_dim": cfg.head_dim,
         "dtype": "bf16",
@@ -1155,10 +1206,23 @@ def run_stage(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
             "MTP, LatentMoE, AttnRes), в смоук-масштабе net/tests/conftest.py"
         ),
     }
+    # Явный конфиг (--config-path, VERIFICATION-LEG): источник заменяет пресет,
+    # и это видно в журнале — путь относительный (ADR-014 п. 8) + sha256.
+    if config_path is not None:
+        report = config_path_report(config_path)
+        journal["model_config"]["config_source"] = report["path"]
+        journal["model_config"]["config_sha256"] = report["sha256"]
+        journal["model_config"]["note"] = (
+            "конфиг модели задан явным --config-path (ревизия VERIFICATION-LEG): "
+            f"{report['path']}; пресет {args.model_preset} для выбора конфига не "
+            "использован (замороженные пресеты small/tiny/l3-full не тронуты)"
+        )
     # Пресет l3-full: полный конфиг из декларативного net/config.json + оценка
     # ресурсов до старта обучения (шаги 1 и 3 дельты).  Численные пресеты
-    # small/tiny этой ветки не касаются — их поведение заморожено.
-    if args.model_preset == L3_FULL_PRESET:
+    # small/tiny этой ветки не касаются — их поведение заморожено.  Явный
+    # --config-path эту ветку выключает: иначе она перезаписала бы источник
+    # конфига ссылкой на net/config.json, по которому прогон НЕ шёл.
+    if args.model_preset == L3_FULL_PRESET and config_path is None:
         report = l3_config_report()
         estimate = assess_l3_resources(cfg, report)
         journal["model_config"]["config_source"] = report["path"]

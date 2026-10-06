@@ -3,8 +3,8 @@
   "hidden": 768,
   "tie_embeddings": true,
   "num_layers": 12,
-  "num_kda_layers": 9,
-  "num_mla_layers": 3,
+  "num_kda_layers": 0,
+  "num_mla_layers": 0,
   "num_heads": 12,
   "head_dim": 64,
   "kda_dk": 64,
@@ -17,7 +17,7 @@
   "mlp_intermediate": 3072,
   "siti_beta_gate": 4.0,
   "siti_beta_up": 25.0,
-  "moe_dense_layers": 1,
+  "moe_dense_layers": 12,
   "moe_latent_dim": 768,
   "moe_num_routed": 12,
   "moe_num_shared": 2,
@@ -29,7 +29,7 @@
   "mtp_layers": 1,
   "mtp_loss_weight": 0.1,
   "attnres_blocks": 2,
-  "attnres_block_size": 12,
+  "attnres_block_size": 6,
   "vit_patch": 14,
   "vit_hidden": 384,
   "vit_depth": 12,
@@ -54,7 +54,7 @@
   "kda_chunked_backward": true,
   "kda_impl": "chunked",
   "kda_wyut_chunk": 64,
-  "scan_layers": true,
+  "scan_layers": false,
   "swa_window": 128,
   "swa_share_kda_projections": true,
   "mla_top_k": 512,
@@ -66,27 +66,24 @@
   "attn_fused_assembly": true,
   "attn_topk_exact": false,
   "mla_pool_block": 64,
-  "mla_pool_size": 16,
-  "mla_layer_modes": [
-    "full",
-    "reindex",
-    "reindex"
-  ],
+  "mla_pool_size": 0,
+  "mla_layer_modes": [],
   "mla_block_merge": {
-    "enabled": true,
+    "enabled": false,
     "block": 16
   },
-  "actual_param_count": 353971849,
-  "active_params_per_token": 100483068,
-  "active_params_definition": "Backbone per-token compute parameters: all attention (including the delta v1.5 Mla indexer and the SWA branch, whose dedicated MLA K/V projections are per-token compute; the KDA window adds no matrix parameters because it shares the delta-rule q/k/v) + dense layer-0 MLP + per LatentMoE layer (latent projections, router, top-2 routed experts, all shared experts) + norms and AttnRes. Excludes the tied embedding (a lookup, not per-token compute), the ViT (active on image tokens only) and the MTP auxiliary head (training-only, dropped at inference).",
+  "actual_param_count": 292642201,
+  "active_params_per_token": 136474380,
+  "active_params_definition": "Backbone per-token compute parameters of the dense-standard backbone: every layer's dense attention oracle (the existing net/mla.py:_dense_apply projections, incl. the projections the oracle does not read — see deviations) + its dense SiTU-GLU MLP + norms and AttnRes. There is no KDA recurrence and no LatentMoE dispatch, so every declared parameter is active per token except the tied embedding (a lookup), the ViT (image tokens only) and the MTP auxiliary head (training-only).",
   "layer_composition": {
-    "kda": 9,
-    "mla": 3,
-    "ratio": "3:1"
+    "dense-standard": 12,
+    "kda": 0,
+    "mla": 0,
+    "ratio": "dense-only"
   },
   "moe_composition": {
-    "dense": 1,
-    "latent_moe": 11,
+    "dense": 12,
+    "latent_moe": 0,
     "routed": 12,
     "shared": 2,
     "top_k": 2,
@@ -95,8 +92,11 @@
   "tokenizer_vocab": 160000,
   "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac",
   "deviations": [
-    "This file is the dense-reference derivation of net/config.json for the verification leg (docs/specs/VERIFICATION-LEG.ru.md): the same skeleton scaled to GPT-2-class width — 12 layers x 12 heads x d_model 768 (head_dim 64, kda_dk = kda_dv = 64, mla_head_dim = 64), mlp_intermediate 3072 = 4 x 768 — with attn_dense_reference = true selecting the existing dense attention oracle (net/mla.py: _dense_apply; net/kda.py: the SWA window branch is disabled). Only values were changed, no structure and no net/*.py code: the schema invariants (num_heads * head_dim == hidden, kda_dk == kda_dv == head_dim, mla_head_dim == head_dim, num_kda_layers + num_mla_layers == num_layers, num_layers % 4 == 0) hold, verified by net.config.validate_config. Layer modes are trimmed to the 3 MLA layers actually present (['full', 'reindex', 'reindex'], ADR-012 layout preserved).",
-    "attn_dense_reference = true selects the dense *attention oracle* (dense MLA instead of the sparse+window path, and no KDA window branch); it does NOT turn the backbone into a pure GPT-2 transformer. The 9 KDA layers remain delta-rule recurrent layers and the 3 MLA layers remain gated-MLA with its latent projection, and the Stable LatentMoE channel mixing stays (1 dense + 11 LatentMoE layer-mixing). A pure GPT-2-class dense backbone would require a new layer type in net/model.py, which the task forbids; this is escalated as an open question, not worked around.",
-    "actual_param_count = 353,971,849 and active_params_per_token = 100,483,068 are measured for THIS config with net.model.param_count / active_param_count (shape-only, jax.eval_shape). The total exceeds classical GPT-2 124M (50K vocab) for two declared reasons: the 160K tokenizer vocabulary (embedding 160000 x 768 = 122.9M vs GPT-2's 38.4M) and the skeleton's extra machinery (KDA/MLA projections, AttnRes over all layers, LatentMoE experts, ViT, MTP). The comparison with GPT-2 124M is therefore by BPB, not by parameter count (VERIFICATION-LEG.ru.md, 'Метрика и эталон')."
+    "This file is the DENSE arm of the verification leg (docs/specs/VERIFICATION-LEG.ru.md, decision of 06.10 on escalation E-4: dense-only build). All 12 layers are of the diagnostic layer type 'dense-standard' — a standard block (dense attention through the EXISTING oracle net/mla.py:_dense_apply + a dense SiTU-GLU MLP), declared as layer_composition = {'dense-standard': 12} and read by net.config.load_config into the schema field dense_standard_layers. The production composition of the skeleton (18 KDA + 6 MLA, net/config.json) is NOT changed: with dense_standard_layers = 0 the layer-kind function reproduces the pinned [K,K,K,M] pattern bit-for-bit (regression pinned in net/tests/test_28_dense_standard.py). Width/depth are GPT-2-class by width — 12 layers x 12 heads x d_model 768 (head_dim 64, kda_dk = kda_dv = 64, mla_head_dim = 64), mlp_intermediate 3072 = 4 x 768 — while the 160K vocabulary and the skeleton machinery mean the parameter count is NOT 124M (declared below and measured); the comparison against GPT-2 is by BPB.",
+    "dense_standard_layers = 12 means num_kda_layers = num_mla_layers = 0 and moe_dense_layers = 12 (the dense SiTU-GLU MLP on every layer, no LatentMoE dispatch): the dense-standard block is dense by definition, that is the point of the leg. The declared layer_composition carries kda = 0 and mla = 0, cross-checked against the schema fields by net.config.load_config; mla_layer_modes is empty, mla_pool_size = 0 and mla_block_merge is off, because the mechanisms they describe (ADR-012 pool, ADR-018 merging) live on the sparse MLA path, which this arm does not build — declaring them enabled would describe code that is never reached.",
+    "The dense-standard layer reuses the existing attention oracle's parameter tree (net/mla.py:MLAParams via init_mla) instead of introducing a second, standard-QKV attention implementation: the task of the leg is to test the PIPELINE on a dense model, so the attention math must be the one already under test, not a new one. Consequence, declared honestly: the oracle does not read the sparse/window projections of that tree (W_swa_k, W_swa_v, W_idx_q, W_idx_k), so they are allocated and not used by this arm. They are part of the measured actual_param_count below; the BPB verdict does not depend on the parameter count (VERIFICATION-LEG.ru.md, section 'Метрика и эталон').",
+    "scan_layers = false: the group-scan collapses the repeated [K,K,K,M] tail into one shared body and is meaningless for a uniform dense stack. The guard in net/model.py also rejects a dense-standard composition explicitly (a journal line, not a wrong graph), so even a config that declares scan_layers = true cannot be scanned — that path is covered by net/tests/test_28_dense_standard.py.",
+    "attn_dense_reference = true is declared for symmetry with the arch arm and for the tokenizer/decoding-side checks; the dense-standard layer itself always runs the dense oracle regardless of the switch (net/model.py:_block_delta selects it by layer kind, not by attn_dense_reference), so the flag cannot silently turn this arm sparse. attnres_block_size = 6 is S = L/N for the 12-layer depth and is declarative metadata only (net/attnres.py integrates the full form and does not consume the block size).",
+    "actual_param_count = 292,642,201 and active_params_per_token = 136,474,380 are measured for THIS config with net.model.param_count / active_param_count (shape-only, jax.eval_shape) and are kept in sync by tools/tests/test_config_dense124m.py. The total exceeds classical GPT-2 124M (50K vocab) because of the 160K tokenizer vocabulary (embedding 160000 x 768 = 122.9M vs GPT-2's 38.4M) and the reused oracle/MTP/ViT parameter trees; the active count is dominated by the 12 dense attention + MLP blocks. All other deviations (LatentMoE counts, QB term, AttnRes form, mla_top_k/indexer scaling, KDA/MLA details) are inherited from net/config.json and are inert in this arm: none of those paths is built by a dense-standard composition."
   ]
 }

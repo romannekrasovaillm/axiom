@@ -127,6 +127,13 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
                         help="сид шаффла decay-шарда (по умолчанию --seed)")
     parser.add_argument("--model-preset", choices=sft_stage.SMOKE_PRESETS + (sft_stage.L3_FULL_PRESET,),
                         default="small")
+    parser.add_argument("--config-path", type=Path, default=None,
+                        help="явный путь конфига модели (ревизия VERIFICATION-LEG, "
+                             "SPEC §Раннер): имеет приоритет над --model-preset. "
+                             "Подмена net/config.json запрещена (пин скелета), поэтому "
+                             "конфиг ноги A/B задаётся путём, а пресеты small/tiny/"
+                             "l3-full остаются нетронутыми. По умолчанию — прежнее "
+                             "поведение (выбор по пресету)")
     parser.add_argument("--steps", type=int, default=30, help="шагов в этой ноге")
     parser.add_argument("--total-steps", type=int, default=None,
                         help="горизонт расписания (по умолчанию = --steps)")
@@ -383,7 +390,16 @@ def build_tokenizer_and_config(args: argparse.Namespace) -> tuple[Any, Any, dict
     выводится из фактически испускаемых id загруженного токенизатора (пресет —
     масштаб, а не словарь): иначе embedding читался бы по неверным индексам.
     """
-    pinned = sft_stage.config_tokenizer_pin()
+    # Пин читается из конфига ПРОГОНА: с явным --config-path это его файл
+    # (иначе сверяли бы данные против чужого конфига), без него — прежний
+    # net/config.json.  Вызов без аргумента сохранён как отдельная ветка:
+    # подмена ``config_tokenizer_pin`` нулевой лямбдой в тестах остаётся рабочей.
+    config_path = getattr(args, "config_path", None)
+    pinned = (
+        sft_stage.config_tokenizer_pin(config_path)
+        if config_path is not None
+        else sft_stage.config_tokenizer_pin()
+    )
     paths = resolve_paths(args)
     streams = tuple(name.strip() for name in getattr(args, "streams", "W,C").split(",") if name.strip())
     # Packed-путь берёт токенизатор из манифестов tokens/ (``_packed_tokenizer_pin``)
@@ -407,7 +423,10 @@ def build_tokenizer_and_config(args: argparse.Namespace) -> tuple[Any, Any, dict
         )
     max_emitted = max(3 + 256 - 1, max_id)
     vocab_size = 1 << max(10, int(max_emitted).bit_length())
-    cfg = sft_stage.build_model_config(vocab_size, args.model_preset, qat_weights=False)
+    cfg = sft_stage.build_model_config(
+        vocab_size, args.model_preset, qat_weights=False,
+        config_path=getattr(args, "config_path", None),
+    )
     merges = tokenizer.merges if isinstance(tokenizer.merges, int) else len(tokenizer.merges)
     info = {
         "hash": tokenizer_hash,
@@ -859,7 +878,10 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
         # Канон — пин net/config.json (ADR-004 амендмент п.2), а не заглушка
         # скелета, которую build_tokenizer_and_config даёт на стенде без
         # корпусного токенизатора.  Пина нет — прежнее поведение.
-        cfg = sft_stage.build_model_config(pin["vocab_size"], args.model_preset, qat_weights=False)
+        cfg = sft_stage.build_model_config(
+            pin["vocab_size"], args.model_preset, qat_weights=False,
+            config_path=getattr(args, "config_path", None),
+        )
         tokenizer_info, canonical_warning = packed_tokenizer_info(
             tokenizer_info, pin, model_vocab_size=int(cfg.vocab_size)
         )
@@ -875,6 +897,13 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
         "param_dtype": args.param_dtype,
         "chunk_size": args.chunk_size,
     }
+    # Явный конфиг (--config-path, VERIFICATION-LEG): источник ноги A/B обязан
+    # быть виден и запинен в журнале — путь относительный (ADR-014 п. 8) + sha256.
+    if getattr(args, "config_path", None) is not None:
+        journal["model"]["config_source"] = sft_stage.repo_rel(args.config_path, repo_root)
+        journal["model"]["config_sha256"] = hashlib.sha256(
+            Path(args.config_path).read_bytes()
+        ).hexdigest()
 
     journal["backend"] = backend_block(tokenizer, cfg, repo_root)
     # Хеш токенизатора в блоке бэкенда обязан называть тот, чем размечены данные.
@@ -1020,13 +1049,28 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
     # Сверка идёт последней из «дешёвых» отказов (после бюджета/grad/seed):
     # это контракт данных, а не стартовая гигиена, и она не должна маскировать
     # отказы сметы или resume.
-    if args.model_preset == sft_stage.L3_FULL_PRESET:
-        pinned = sft_stage.config_tokenizer_pin()
+    # Явный --config-path делает эту сверку обязательной и для ноги A/B
+    # (VERIFICATION-LEG): она идёт по производственному конфигу, поэтому данные
+    # обязаны быть размечены ровно тем токенизатором, который в нём запинен;
+    # пин читается из того же файла, а не из net/config.json.
+    config_path = getattr(args, "config_path", None)
+    if args.model_preset == sft_stage.L3_FULL_PRESET or config_path is not None:
+        pinned = (
+            sft_stage.config_tokenizer_pin(config_path)
+            if config_path is not None
+            else sft_stage.config_tokenizer_pin()
+        )
         actual_hash = str(tokenizer_info.get("hash") or "")
         if not sft_stage.tokenizer_hash_matches(actual_hash, pinned):
+            pin_source = (
+                "net/config.json"
+                if config_path is None
+                else sft_stage.repo_rel(config_path, repo_root)
+            )
+            label = args.model_preset if config_path is None else f"--config-path {pin_source}"
             reason = (
-                f"токенизатор l3-full {actual_hash[:16]}… не совпал с пином "
-                f"net/config.json {pinned[:16]}…: данные размечены не каноническим "
+                f"токенизатор {label} {actual_hash[:16]}… не совпал с пином "
+                f"{pin_source} {pinned[:16]}…: данные размечены не каноническим "
                 "BPE (ADR-4) — пересоберите tokens/ каноническим токенизатором"
             )
             journal["refusal"] = reason

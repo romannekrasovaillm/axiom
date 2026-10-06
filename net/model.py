@@ -10,6 +10,14 @@ Composition (MODEL-L3-SKELETON.md section 1):
 * MTP (1 layer) with a shared (tied) output head
 * ViT-S vision encoder (native path, projected into ``hidden``)
 * NoPE: no positional embeddings anywhere in the backbone.
+
+Diagnostic composition (VERIFICATION-LEG): a config may declare a leading
+``dense-standard`` prefix (``layer_composition["dense-standard"]`` →
+``cfg.dense_standard_layers``) — a standard block (dense attention through the
+existing oracle of ``net/mla.py:_dense_apply`` + a dense SiTU-GLU MLP) that
+separates pipeline bugs from the price of the KDA/MLA architecture.  The
+production composition is the default and is not affected: with a zero-length
+prefix :func:`layer_kind` reproduces the pinned ``[K,K,K,M]`` pattern exactly.
 """
 
 from __future__ import annotations
@@ -68,6 +76,12 @@ class ModelParams(NamedTuple):
     vit: vit_mod.ViTParams
 
 
+#: Layer kinds the backbone can build.  ``kda``/``mla`` are the pinned
+#: ``[K,K,K,M]`` production pattern; ``dense-standard`` is the diagnostic block
+#: of VERIFICATION-LEG (see :func:`layer_kind`).
+LAYER_KINDS = ("kda", "mla", "dense-standard")
+
+
 def _layer_is_kda(index: int) -> bool:
     """KDA for the first three layers of each 4-layer group; MLA for the 4th."""
     return (index % 4) != 3
@@ -80,6 +94,49 @@ def _mla_ordinal(index: int) -> int:
     is indexed by MLA-layer order, not by backbone depth.
     """
     return index // 4
+
+
+def layer_kind(cfg: ModelConfig, index: int) -> str:
+    """Kind of backbone layer ``index`` — one of :data:`LAYER_KINDS`.
+
+    The leading ``cfg.dense_standard_layers`` layers are the *diagnostic*
+    ``dense-standard`` blocks of the verification leg
+    (``docs/specs/VERIFICATION-LEG.ru.md`` §«Конфигурация dense-reference»):
+    a standard block — dense attention through the existing oracle
+    (:func:`net.mla._dense_apply`) plus a dense SiTU-GLU MLP — used to separate
+    pipeline bugs (data, packing, tokenisation, optimisation, resume, QAT) from
+    the measured price of the KDA/MLA architecture.  The remaining tail keeps
+    the pinned ``[K,K,K,M]`` pattern verbatim, indexed *relative to the prefix*,
+    so the MLA ordinals of ``mla_layer_modes`` (ADR-012) stay aligned.
+
+    ``dense_standard_layers = 0`` (the schema default, and every production
+    config) returns exactly the pre-delta pattern: the business path is
+    unchanged, and the regression is pinned by ``net/tests``.
+    """
+    prefix = int(cfg.dense_standard_layers)
+    if index < prefix:
+        return "dense-standard"
+    return "mla" if not _layer_is_kda(index - prefix) else "kda"
+
+
+def layer_kinds(cfg: ModelConfig) -> tuple[str, ...]:
+    """Kind of every backbone layer, in depth order (see :func:`layer_kind`)."""
+    return tuple(layer_kind(cfg, i) for i in range(cfg.num_layers))
+
+
+def _mla_ordinal_at(cfg: ModelConfig, index: int) -> int:
+    """MLA ordinal of backbone layer ``index`` (prefix-relative)."""
+    return _mla_ordinal(index - int(cfg.dense_standard_layers))
+
+
+def _layer_uses_dense_mlp(cfg: ModelConfig, index: int) -> bool:
+    """Whether layer ``index`` keeps the dense SiTU-GLU MLP (no LatentMoE).
+
+    A diagnostic ``dense-standard`` block is dense by definition (that is the
+    point of the leg), whatever ``moe_dense_layers`` says; every other layer
+    follows the pinned ``moe_dense_layers`` prefix.
+    """
+    return layer_kind(cfg, index) == "dense-standard" or _layer_is_dense(cfg, index)
 
 
 def _layer_is_dense(cfg: ModelConfig, index: int) -> bool:
@@ -122,9 +179,20 @@ def _group_scan_units(cfg: ModelConfig) -> tuple[int, str] | None:
       (criterion-13 fast path, merged layer) and a built pool, so its
       *structure* is not stable across iterations.  Under the dense oracle the
       pool is never built (``apply_with_pool`` returns it untouched), which is
-      exactly the pinned ``net/config.json`` layout.
+      exactly the pinned ``net/config.json`` layout;
+    * a declared diagnostic ``dense_standard_layers`` prefix (VERIFICATION-LEG):
+      the shared body below hard-codes the ``[K,K,K,M]`` sub-layer kinds, so it
+      cannot reproduce a layer that is neither — the dense build runs unrolled.
     """
     if not bool(getattr(cfg, "scan_layers", False)):
+        return None
+    if int(getattr(cfg, "dense_standard_layers", 0)) > 0:
+        _log.warning(
+            "group-scan: %d diagnostic dense-standard layer(s) declared — the "
+            "shared [K,K,K,M] body cannot reproduce them; falling back to the "
+            "unrolled path",
+            cfg.dense_standard_layers,
+        )
         return None
     if int(cfg.num_layers) % _LAYERS_PER_UNIT != 0:
         return None
@@ -165,12 +233,20 @@ def init_params(key, cfg: ModelConfig) -> ModelParams:
     emb = jax.random.normal(keys[0], (cfg.vocab_size, hid)) * 0.02
     layers = []
     for i in range(cfg.num_layers):
-        is_kda = _layer_is_kda(i)
-        if is_kda:
+        kind = layer_kind(cfg, i)
+        if kind == "kda":
             attn = kda_mod.init_kda(keys[i + 1], cfg)
         else:
+            # ``mla`` and the diagnostic ``dense-standard`` block share the MLA
+            # parameter tree: the dense-standard block reads it through the
+            # existing dense oracle (``net/mla.py:_dense_apply``) instead of the
+            # sparse+window path, so no second attention implementation is added.
             attn = mla_mod.init_mla(keys[i + 1], cfg)
-        mlp = mlp_mod.init_mlp(keys[i + 1], cfg) if _layer_is_dense(cfg, i) else moe_mod.init_moe(keys[i + 1], cfg)
+        mlp = (
+            mlp_mod.init_mlp(keys[i + 1], cfg)
+            if _layer_uses_dense_mlp(cfg, i)
+            else moe_mod.init_moe(keys[i + 1], cfg)
+        )
         layers.append(
             BlockParams(
                 norm_attn=jnp.ones((hid,)),
@@ -198,6 +274,7 @@ def _block_delta(
     collect_qb: bool = False,
     mode: str = "full",
     pool: attn_sparse_mod.CandidatePool | None = None,
+    dense_standard: bool = False,
 ):
     """The residual delta of one backbone layer (attention + MLP/MoE).
 
@@ -205,9 +282,17 @@ def _block_delta(
     a LatentMoE block and ``collect_qb`` is set.  ``pool`` is the ADR-012
     candidate pool: an MLA layer in mode ``full`` replaces it, any other MLA
     layer consumes it unchanged, KDA layers pass it through untouched.
+
+    ``dense_standard`` marks the diagnostic VERIFICATION-LEG block: it runs the
+    *dense* attention oracle (``net/mla.py:_dense_apply``) unconditionally —
+    not through the ``attn_dense_reference`` switch, which is a property of the
+    sparse path's A/B, not of this layer type — and passes the pool through
+    untouched (like KDA, it neither builds nor consumes one).
     """
     hn = rms_norm(h, block.norm_attn)
-    if is_kda:
+    if dense_standard:
+        attn_out = mla_mod._dense_apply(block.attn, cfg, hn)
+    elif is_kda:
         # ``cfg.kda_impl`` selects the KDA primitive (ADR-031 delta A):
         # ``chunked`` — the pre-delta associative-scan form (default), ``wyut``
         # — the WY/UT chunkwise form.  ``apply_kda`` keeps the branch in one
@@ -245,6 +330,7 @@ def _layer_transition(
     index: int,
     is_kda: bool,
     mode: str,
+    dense_standard: bool = False,
 ):
     """One backbone layer's transition, factored out of :func:`forward`.
 
@@ -252,10 +338,11 @@ def _layer_transition(
     prefix (embedding + every prior layer's delta) — the unrolled reference the
     group-scan reproduces with its masked fixed-shape form.  Returns
     ``(h_next, delta, qb, pool_next)``; ``qb`` is None unless the layer is a
-    LatentMoE block and ``collect_qb`` is set.
+    LatentMoE block and ``collect_qb`` is set.  ``dense_standard`` selects the
+    diagnostic VERIFICATION-LEG block (see :func:`_block_delta`).
     """
     delta, qb, pool_out = _block_delta(
-        block, is_kda, cfg, h, chunk_size, collect_qb, mode, pool
+        block, is_kda, cfg, h, chunk_size, collect_qb, mode, pool, dense_standard
     )
     if use_attnres and index > 0:
         sources = jnp.stack([embed_src, *prior_deltas], axis=0)  # (N, B, T, hidden)
@@ -342,31 +429,42 @@ def forward(
         index: int,
         is_kda: bool,
         mode: str,
+        dense_standard: bool,
     ):
         """One backbone layer's transition — the remat unit.
 
         Takes the layer's parameters and the full live set (``h``, the pool
         carry, the previous deltas that AttnRes mixes) and returns the next
         ``h``, this layer's delta, its QB term and the updated pool.
-        ``index``/``is_kda``/``mode`` are static and captured by the caller.
+        ``index``/``is_kda``/``mode``/``dense_standard`` are static and captured
+        by the caller.
         """
         return _layer_transition(
             block, attnres_w, h, pool, prior_deltas, embed_src,
             cfg=cfg, chunk_size=chunk_size, collect_qb=collect_qb,
             use_attnres=use_attnres, index=index, is_kda=is_kda, mode=mode,
+            dense_standard=dense_standard,
         )
 
     for i, block in enumerate(params.layers):
-        is_kda = _layer_is_kda(i)
-        mode = "full" if is_kda else mla_mod.layer_mode(cfg, _mla_ordinal(i))
+        kind = layer_kind(cfg, i)
+        is_kda = kind == "kda"
+        dense_standard = kind == "dense-standard"
+        # Only the KDA/MLA pattern reads ``mla_layer_modes`` (ADR-012); a KDA or
+        # a diagnostic dense-standard layer carries no selection mode at all.
+        mode = (
+            mla_mod.layer_mode(cfg, _mla_ordinal_at(cfg, i))
+            if kind == "mla"
+            else "full"
+        )
 
         def step(
             block, attnres_w, h, pool, prior_deltas, embed_src,
-            _i=i, _is_kda=is_kda, _mode=mode,
+            _i=i, _is_kda=is_kda, _mode=mode, _dense=dense_standard,
         ):
             return _layer_step(
                 block, attnres_w, h, pool, prior_deltas, embed_src,
-                index=_i, is_kda=_is_kda, mode=_mode,
+                index=_i, is_kda=_is_kda, mode=_mode, dense_standard=_dense,
             )
 
         if remat:
@@ -763,7 +861,7 @@ def active_param_count(cfg: ModelConfig) -> int:
     total = _size(shapes.attnres) + _size(shapes.norm_final)
     for i, block in enumerate(shapes.layers):
         total += _size(block.norm_attn) + _size(block.attn) + _size(block.norm_mlp)
-        if _layer_is_dense(cfg, i):
+        if _layer_uses_dense_mlp(cfg, i):
             total += _size(block.mlp)
             continue
         inactive = 0

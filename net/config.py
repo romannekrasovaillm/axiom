@@ -17,6 +17,10 @@ from pathlib import Path
 #: Key of the declared block-wise token merging switch (ADR-018) in the config.
 BLOCK_MERGE_KEY = "mla_block_merge"
 
+#: Key of the declared layer composition (metadata; VERIFICATION-LEG declares
+#: the diagnostic dense-standard prefix there as ``{"dense-standard": N}``).
+LAYER_COMPOSITION_KEY = "layer_composition"
+
 #: The case's declarative config — the file the reader below reads.  It is the
 #: *switch* (spine AD-9: "конфиг первичен"): turning a declared mechanism on is
 #: an edit of this file, not of the code path that consumes it.
@@ -55,6 +59,19 @@ class ModelConfig:
     num_mla_layers: int = 6
     num_heads: int = 12
     head_dim: int = 128  # dk == dv == head_dim for the skeleton
+
+    # --- diagnostic dense-standard prefix (VERIFICATION-LEG) -----------------
+    # Number of *leading* backbone layers of the diagnostic ``dense-standard``
+    # type: a standard block (dense attention through the existing oracle of
+    # ``net/mla.py:_dense_apply`` + a dense SiTU-GLU MLP) used to separate
+    # pipeline bugs from the price of the KDA/MLA architecture
+    # (docs/specs/VERIFICATION-LEG.ru.md, "Конфигурация dense-reference").
+    # Declared in the JSON as ``layer_composition: {"dense-standard": N}`` and
+    # read by ``load_config`` (spine AD-9 / C-035 form: the file is the switch,
+    # the layer type is not selected by editing ``net/model.py``).
+    # ``0`` — the production skeleton: the whole backbone is the pinned
+    # ``[K,K,K,M]`` KDA/MLA pattern and every path is bit-for-bit what it was.
+    dense_standard_layers: int = 0
 
     # --- KDA (kda-formulas.md section 1) ------------------------------------
     kda_dk: int = 128
@@ -277,8 +294,34 @@ def validate_config(cfg: ModelConfig) -> None:
     assert cfg.num_heads * cfg.head_dim == cfg.hidden, "num_heads * head_dim must equal hidden"
     assert cfg.kda_dk == cfg.kda_dv == cfg.head_dim, "kda_dk == kda_dv == head_dim"
     assert cfg.mla_head_dim == cfg.head_dim, "mla_head_dim == head_dim"
-    assert cfg.num_kda_layers + cfg.num_mla_layers == cfg.num_layers
-    assert cfg.num_layers % 4 == 0, "layers must form whole [K,K,K,M] blocks"
+
+    # Layer composition.  The leading ``dense_standard_layers`` are the
+    # diagnostic dense-standard blocks of VERIFICATION-LEG (see the field's
+    # docstring); the *tail* past them is the pinned ``[K,K,K,M]`` KDA/MLA
+    # pattern, so its length has to be a whole number of blocks and the declared
+    # KDA/MLA counts have to describe exactly that tail — a count that does not
+    # match the pattern the layers actually build is a declared number without a
+    # guard.  A pure dense-standard build (``dense_standard_layers ==
+    # num_layers``) has no KDA/MLA layers at all, hence a zero-length tail.
+    assert isinstance(cfg.dense_standard_layers, int) and not isinstance(
+        cfg.dense_standard_layers, bool
+    ), f"dense_standard_layers must be an int, got {cfg.dense_standard_layers!r}"
+    assert 0 <= cfg.dense_standard_layers <= cfg.num_layers, (
+        "dense_standard_layers must be within [0, num_layers], got "
+        f"{cfg.dense_standard_layers} of {cfg.num_layers}"
+    )
+    tail = cfg.num_layers - cfg.dense_standard_layers
+    assert tail % 4 == 0, "the KDA/MLA tail must form whole [K,K,K,M] blocks"
+    assert cfg.num_kda_layers + cfg.num_mla_layers == tail, (
+        f"num_kda_layers + num_mla_layers ({cfg.num_kda_layers} + "
+        f"{cfg.num_mla_layers}) must equal the tail past the dense-standard "
+        f"prefix ({tail} of {cfg.num_layers})"
+    )
+    assert cfg.num_mla_layers == tail // 4 and cfg.num_kda_layers == 3 * (tail // 4), (
+        "the tail pattern is fixed 3 KDA : 1 MLA, so a tail of "
+        f"{tail} layers declares {3 * (tail // 4)} KDA + {tail // 4} MLA, got "
+        f"{cfg.num_kda_layers} + {cfg.num_mla_layers}"
+    )
     assert 1 <= cfg.moe_dense_layers <= cfg.num_layers
     assert 1 <= cfg.moe_top_k <= cfg.moe_num_routed
     assert cfg.moe_latent_dim > 0 and cfg.moe_expert_intermediate > 0
@@ -423,6 +466,70 @@ def declared_block_merge(path: str | Path | None = None) -> int:
     return block
 
 
+def _apply_declared_dense_standard(data: dict, filtered: dict) -> None:
+    """Fold ``layer_composition: {"dense-standard": N}`` into the schema.
+
+    The dense-standard prefix (VERIFICATION-LEG) is *declared* in the JSON as a
+    member of the ``layer_composition`` metadata object, next to the KDA/MLA
+    counts the pilot config already carries; the schema field it maps to is
+    ``dense_standard_layers``.  An explicit ``dense_standard_layers`` key wins
+    over the composition object (one source of truth, no guessing which one the
+    caller meant).  A malformed declaration raises instead of silently leaving
+    the prefix at ``0``: a config that *says* it is dense-standard but cannot be
+    read as one would build the production KDA/MLA backbone and mislabel it.
+    """
+    if "dense_standard_layers" in filtered:
+        return
+    declared = data.get(LAYER_COMPOSITION_KEY)
+    if declared is None:
+        return
+    if not isinstance(declared, dict):
+        raise ValueError(
+            f"{LAYER_COMPOSITION_KEY} must be an object, got {type(declared).__name__}"
+        )
+    n_dense = declared.get("dense-standard")
+    if n_dense is None:
+        return
+    if not isinstance(n_dense, int) or isinstance(n_dense, bool) or n_dense < 0:
+        raise ValueError(
+            f'{LAYER_COMPOSITION_KEY}["dense-standard"] must be a non-negative '
+            f"integer, got {n_dense!r}"
+        )
+    filtered["dense_standard_layers"] = n_dense
+
+
+def _check_declared_composition(data: dict, cfg: ModelConfig) -> None:
+    """Cross-check the declared KDA/MLA counts against the schema fields.
+
+    ``layer_composition`` is metadata (it is not a ``ModelConfig`` field), so
+    nothing else would notice it drifting from ``num_kda_layers`` /
+    ``num_mla_layers`` — and a declared composition that disagrees with the
+    counts ``validate_config`` uses is exactly the "declared number without a
+    guard" this project rejects.  Absent keys are not checked; a present key
+    must be a non-negative integer that matches.
+    """
+    declared = data.get(LAYER_COMPOSITION_KEY)
+    if not isinstance(declared, dict):
+        return
+    for key, actual in (
+        ("kda", cfg.num_kda_layers),
+        ("mla", cfg.num_mla_layers),
+    ):
+        value = declared.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise ValueError(
+                f'{LAYER_COMPOSITION_KEY}["{key}"] must be a non-negative '
+                f"integer, got {value!r}"
+            )
+        if value != actual:
+            raise ValueError(
+                f'{LAYER_COMPOSITION_KEY}["{key}"] = {value} disagrees with '
+                f"num_{key}_layers = {actual}"
+            )
+
+
 def load_config(path: str | Path = "config.json") -> ModelConfig:
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
@@ -447,7 +554,14 @@ def load_config(path: str | Path = "config.json") -> ModelConfig:
         if not isinstance(block, int) or isinstance(block, bool):
             raise ValueError(f"mla_block_merge.block must be an integer, got {block!r}")
         filtered["mla_block_merge"] = BlockMergeConfig(enabled=enabled, block=block)
-    return ModelConfig(**filtered)
+    # The diagnostic dense-standard prefix (VERIFICATION-LEG): declared as
+    # ``layer_composition["dense-standard"]`` and folded into the schema field.
+    _apply_declared_dense_standard(data, filtered)
+    cfg = ModelConfig(**filtered)
+    # The KDA/MLA counts of the same declaration are metadata, not schema
+    # fields — they are checked against the fields the schema validates.
+    _check_declared_composition(data, cfg)
+    return cfg
 
 
 def save_config(cfg: ModelConfig, path: str | Path) -> None:

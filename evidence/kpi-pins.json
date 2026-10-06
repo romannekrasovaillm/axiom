@@ -1,7 +1,12 @@
-[
-  {
-    "run": "kda-wyut-delta",
-    "kpi_tok_s_baseline": 86,
-    "threshold": 800
-  }
-]
+{
+  "version": 1,
+  "pins": [
+    {
+      "run": "kda-wyut-delta",
+      "kpi_tok_s_baseline": 86,
+      "threshold": 800,
+      "source": "ADR-032 (директива владельца: ток/с главный KPI, базис 80-86 ток/с endurance-ноги l3-full, приёмка WY/UT от >=800 = 10x)",
+      "note": "Пин активен; metrics-файл evidence/kda-wyut/metrics.jsonl появится после прогона WY/UT-дельты — до этого страж neutral"
+    }
+  ]
+}

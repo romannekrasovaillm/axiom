@@ -418,6 +418,15 @@ constraints:
     scope: case
     kind: behavioural
     evidence: "tools/check_gb10_single_load.py → nvidia-smi (compute-процессы с памятью >= 1 ГиБ) + реестр локов ~/gb10-shared/.locks; три исхода OK/FAIL/НЕ ПРОВЕРЕНО"
+  - id: C-046
+    name: "Performance-roofline гейт: KPI-объявленный прогон не деградирует ниже пина (самоулучшение по rubric axiom_fitness_blind_spot_assessment 4.88/5 — слепое пятно «MFU<1% прошло все 45 правил»)"
+    type: command_succeeds
+    command: 'python3 tools/check_performance_roofline.py --run kda-wyut-delta --metrics evidence/kda-wyut/metrics.jsonl --pins evidence/kpi-pins.json --quiet'
+    timeout_secs: 60
+    severity: high
+    scope: case
+    kind: behavioural
+    evidence: "tools/check_performance_roofline.py → медиана tok_s последнего окна (>=10 записей) против порога пина evidence/kpi-pins.json (baseline 86, приёмка >=800 — ADR-032); порог — данные пина, правило-вызов без дублирования числа; семантика: ок/neutral (прогон не выполнялся или не пиннут)/fail-closed (прогон начат, данных нет или скорость ниже пина); evidence/kpi-pins.json защищён от правок (опустошение пина = обход стража)"
   - id: C-041
     name: "AD-8: смета прогона существует до запуска и не превышает лимит (behavioural-страж лимита стоимости)"
     type: command_succeeds

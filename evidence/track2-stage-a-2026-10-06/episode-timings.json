@@ -1,0 +1,122 @@
+{
+  "corruption-l0-00": {
+    "level": "L0",
+    "source": "corruption",
+    "elapsed_secs": 16.105,
+    "error": null
+  },
+  "corruption-l0-01": {
+    "level": "L0",
+    "source": "corruption",
+    "elapsed_secs": 241.944,
+    "error": null
+  },
+  "corruption-l0-02": {
+    "level": "L0",
+    "source": "corruption",
+    "elapsed_secs": 16.215,
+    "error": null
+  },
+  "corruption-l0-03": {
+    "level": "L0",
+    "source": "corruption",
+    "elapsed_secs": 26.298,
+    "error": null
+  },
+  "corruption-l0-04": {
+    "level": "L0",
+    "source": "corruption",
+    "elapsed_secs": 16.712,
+    "error": null
+  },
+  "corruption-l1-00": {
+    "level": "L1",
+    "source": "corruption",
+    "elapsed_secs": 16.047,
+    "error": null
+  },
+  "corruption-l1-01": {
+    "level": "L1",
+    "source": "corruption",
+    "elapsed_secs": 121.006,
+    "error": null
+  },
+  "corruption-l1-02": {
+    "level": "L1",
+    "source": "corruption",
+    "elapsed_secs": 16.059,
+    "error": null
+  },
+  "corruption-l1-03": {
+    "level": "L1",
+    "source": "corruption",
+    "elapsed_secs": 150.973,
+    "error": null
+  },
+  "corruption-l1-04": {
+    "level": "L1",
+    "source": "corruption",
+    "elapsed_secs": 22.342,
+    "error": null
+  },
+  "real-l0-00": {
+    "level": "L0",
+    "source": "real",
+    "elapsed_secs": 16.085,
+    "error": null
+  },
+  "real-l0-01": {
+    "level": "L0",
+    "source": "real",
+    "elapsed_secs": 15.961,
+    "error": null
+  },
+  "real-l0-02": {
+    "level": "L0",
+    "source": "real",
+    "elapsed_secs": 17.783,
+    "error": null
+  },
+  "real-l0-03": {
+    "level": "L0",
+    "source": "real",
+    "elapsed_secs": 18.089,
+    "error": null
+  },
+  "real-l0-04": {
+    "level": "L0",
+    "source": "real",
+    "elapsed_secs": 18.165,
+    "error": null
+  },
+  "real-l1-00": {
+    "level": "L1",
+    "source": "real",
+    "elapsed_secs": 17.902,
+    "error": null
+  },
+  "real-l1-01": {
+    "level": "L1",
+    "source": "real",
+    "elapsed_secs": 17.704,
+    "error": null
+  },
+  "real-l1-02": {
+    "level": "L1",
+    "source": "real",
+    "elapsed_secs": 18.328,
+    "error": null
+  },
+  "real-l1-03": {
+    "level": "L1",
+    "source": "real",
+    "elapsed_secs": 18.269,
+    "error": null
+  },
+  "real-l1-04": {
+    "level": "L1",
+    "source": "real",
+    "elapsed_secs": 17.738,
+    "error": null
+  }
+}

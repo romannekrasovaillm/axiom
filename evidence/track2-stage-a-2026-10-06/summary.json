@@ -1,0 +1,21 @@
+{
+  "wall_secs": 820.19,
+  "by_level": {
+    "L0": {
+      "n": 10,
+      "passed": 0,
+      "errors": 0,
+      "pass_rate": 0.0,
+      "mean_secs": 40.34
+    },
+    "L1": {
+      "n": 10,
+      "passed": 0,
+      "errors": 0,
+      "pass_rate": 0.0,
+      "mean_secs": 41.64
+    }
+  },
+  "aggregate_pass_rate": 0.0,
+  "errors_total": 0
+}

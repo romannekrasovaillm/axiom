@@ -20,11 +20,21 @@
 Вердикты
 --------
 * ``ok``        — пин есть, медиана ``tok_s ≥ threshold`` → exit 0;
-* ``neutral``   — прогон не объявлен KPI-пином (нет записи) → exit 0;
+* ``neutral``   — прогон не объявлен KPI-пином (нет записи) либо файл метрик
+  отсутствует (``--metrics`` не существует: прогон не выполнялся, предмета
+  проверки нет) → exit 0;
 * ``regression``— пин есть, медиана ``tok_s < threshold`` → exit 1
   (печать: пин, факт, кратность недобора ``threshold / median``);
-* ``no-data``   — пин есть, а метрик нет/пусто/нечитаемо → exit 1 (fail-closed:
-  «не оценён» ≠ «чисто»; молчаливый зелёный на отсутствии данных запрещён).
+* ``no-data``   — пин есть, файл метрик существует, но пуст/бит/нечитаем → exit 1
+  (fail-closed: «не оценён» ≠ «чисто»; прогон начат — молчаливый зелёный на
+  отсутствии данных запрещён).
+
+Граница отсутствия/пустоты
+--------------------------
+Отсутствующий файл метрик — не провал прогона, а его отсутствие: KPI-пин
+(ADR-032) активен до прогона WY/UT, и fail-closed на несуществующий предмет
+превратил бы гейт в вечный красный («запланированный красный» — отвергнутая
+практика). Поэтому нет файла → ``neutral``; существует, но без данных → ``no-data``.
 
 Коды возврата
 -------------
@@ -48,6 +58,10 @@ from typing import Any, Iterable
 
 #: Схема отчёта.
 REPORT_SCHEMA = "axiom-performance-roofline/1"
+
+#: Причина нейтрального вердикта, когда предмета проверки ещё нет (прогон не
+#: выполнялся).  Точная формулировка — часть контракта отчёта.
+REASON_NOT_RUN = "прогон не выполнялся — файл метрик отсутствует"
 
 EXIT_OK = 0
 EXIT_FAIL = 1
@@ -247,10 +261,9 @@ def run_check(
 
     metrics = Path(metrics_path)
     if not metrics.exists():
-        return EXIT_FAIL, _fail_closed(
-            run, "no-data", f"нет данных: файл метрик отсутствует: {metrics}",
-            resolved_pins, metrics_path, window, pin=pin,
-        )
+        # Прогон не выполнялся: предмета проверки ещё нет.  KPI-пин активен до
+        # прогона, поэтому fail-closed здесь был бы вечным красным — нейтрально.
+        return EXIT_OK, _neutral_not_run(run, resolved_pins, metrics, window, pin=pin)
 
     try:
         values = _iter_tok_s(metrics)
@@ -338,6 +351,35 @@ def _fail_closed(
         "shortfall_factor": None,
         "reason": reason,
         "message": reason,
+    }
+
+
+def _neutral_not_run(
+    run: str,
+    pins_path: Path,
+    metrics_path: Path,
+    window: int,
+    *,
+    pin: dict[str, Any],
+) -> dict[str, Any]:
+    """Нейтральный отчёт: файл метрик отсутствует — прогон не выполнялся."""
+    return {
+        "schema": REPORT_SCHEMA,
+        "verdict": "neutral",
+        "run": run,
+        "pin": pin,
+        "pins_file": str(pins_path),
+        "metrics_file": str(metrics_path),
+        "window": max(window, MIN_WINDOW),
+        "records": 0,
+        "samples": 0,
+        "tok_s_median": None,
+        "threshold": pin["threshold"],
+        "kpi_tok_s_baseline": pin["kpi_tok_s_baseline"],
+        "speedup_vs_baseline": None,
+        "shortfall_factor": None,
+        "reason": REASON_NOT_RUN,
+        "message": REASON_NOT_RUN,
     }
 
 
@@ -453,11 +495,17 @@ def run_selftest() -> int:
         checks.append(("пустые метрики → диагностика «нет данных»",
                        "нет данных" in report_e["message"]))
 
-        # Отсутствующий файл метрик и отсутствующий пин-файл — тоже fail-closed.
-        checks.append(
-            ("нет файла метрик → exit 1",
-             run_check("kda-wyut-delta", root / "nope.jsonl", pins_path=pins)[0] == EXIT_FAIL)
+        # Отсутствующий файл метрик — прогон не выполнялся → neutral (exit 0);
+        # существующий, но пустой — fail-closed (проверено выше).
+        code_absent, report_absent = run_check(
+            "kda-wyut-delta", root / "nope.jsonl", pins_path=pins
         )
+        checks.append(("нет файла метрик → exit 0", code_absent == EXIT_OK))
+        checks.append(("нет файла метрик → verdict neutral",
+                       report_absent["verdict"] == "neutral"))
+        checks.append(("нет файла метрик → reason «прогон не выполнялся»",
+                       report_absent["reason"] == REASON_NOT_RUN))
+        # Отсутствующий пин-файл — по-прежнему fail-closed.
         checks.append(
             ("нет пин-файла → exit 1",
              run_check("kda-wyut-delta", slow, pins_path=root / "no-pins.json")[0] == EXIT_FAIL)
@@ -529,8 +577,9 @@ def run_selftest() -> int:
     for label, passed in checks:
         print(f"[selftest] {'PASS' if passed else 'FAIL'}: {label}")
     print(
-        f"[selftest] {'PASS' if ok else 'FAIL'}: ниже порога — регрессия, нет пина — "
-        "нейтрально, пусто/нечитаемо — fail-closed, медиана детерминирована"
+        f"[selftest] {'PASS' if ok else 'FAIL'}: ниже порога — регрессия, нет пина "
+        "или нет файла метрик — нейтрально, пусто/нечитаемо — fail-closed, "
+        "медиана детерминирована"
     )
     return EXIT_OK if ok else EXIT_FAIL
 

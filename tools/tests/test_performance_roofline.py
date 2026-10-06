@@ -4,8 +4,11 @@ The guard closes the fitness blind spot named by
 ``axiom_fitness_blind_spot_assessment``: no rule compared measured speed against
 the declared KPI.  It must redden when a KPI-pinned run comes in below the pinned
 threshold, stay neutral for runs that carry no pin, pass when the median clears
-the bar, and fail closed (never silently pass) when the metrics are absent,
-empty, or unreadable.  The median window is deterministic (≥10 last records).
+the bar, and fail closed (never silently pass) when a *present* metrics file is
+empty or unreadable.  A metrics file that does not exist at all means the run
+has not happened yet: the pin is active before the run, so absence is neutral
+(exit 0) rather than a permanent red.  The median window is deterministic
+(≥10 last records).
 
 The four mutants of the task are exercised individually, plus determinism of the
 median and the window semantics.
@@ -176,11 +179,43 @@ def test_empty_metrics_fails_closed(tmp_path: Path) -> None:
     assert "нет данных" in report["message"]
 
 
-def test_missing_metrics_file_fails_closed(tmp_path: Path) -> None:
+def test_missing_metrics_file_is_neutral(tmp_path: Path) -> None:
+    """A non-existent metrics file means the run has not happened yet.
+
+    The KPI pin (ADR-032) is active *before* the WY/UT run; fail-closing on an
+    absent subject would make the gate a permanent red.  Absence is neutral —
+    the pin's subject simply has not been produced.
+    """
     pins = write_pins(tmp_path / "pins.json")
     code, report = perf.run_check(RUN, tmp_path / "absent.jsonl", pins_path=pins)
+    assert code == perf.EXIT_OK
+    assert report["verdict"] == "neutral"
+    assert report["reason"] == perf.REASON_NOT_RUN
+    assert report["pin"]["run"] == RUN
+    assert report["records"] == 0
+    assert report["tok_s_median"] is None
+
+
+def test_present_but_empty_metrics_still_fails_closed(tmp_path: Path) -> None:
+    """The run started (the file exists) but produced no data — fail closed."""
+    pins = write_pins(tmp_path / "pins.json")
+    empty = tmp_path / "present-empty.jsonl"
+    empty.write_text("", encoding="utf-8")
+    assert empty.exists()
+    code, report = perf.run_check(RUN, empty, pins_path=pins)
     assert code == perf.EXIT_FAIL
     assert report["verdict"] == "no-data"
+
+
+def test_missing_metrics_file_exit_code_boundary(tmp_path: Path) -> None:
+    """Absence → neutral exit 0 must not be confused with the empty-file FAIL."""
+    pins = write_pins(tmp_path / "pins.json")
+    absent_code, _ = perf.run_check(RUN, tmp_path / "absent.jsonl", pins_path=pins)
+    empty = tmp_path / "empty.jsonl"
+    empty.write_text("\n", encoding="utf-8")
+    empty_code, _ = perf.run_check(RUN, empty, pins_path=pins)
+    assert absent_code == perf.EXIT_OK
+    assert empty_code == perf.EXIT_FAIL
 
 
 def test_no_metrics_argument_fails_closed(tmp_path: Path) -> None:
@@ -337,6 +372,19 @@ def test_cli_regression_exits_one_and_prints_shortfall(tmp_path: Path) -> None:
     assert "FAIL" in result.stderr
     assert "регрессия" in result.stderr
     assert "недобор" in result.stderr
+
+
+def test_cli_missing_metrics_file_is_neutral(tmp_path: Path) -> None:
+    """The CLI must exit 0 and not print FAIL when the run has not happened."""
+    pins = write_pins(tmp_path / "pins.json")
+    result = run_cli(
+        "--run", RUN, "--metrics", str(tmp_path / "absent.jsonl"), "--pins", str(pins)
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "FAIL" not in result.stderr
+    report = json.loads(result.stdout)
+    assert report["verdict"] == "neutral"
+    assert report["reason"] == perf.REASON_NOT_RUN
 
 
 def test_cli_writes_report(tmp_path: Path) -> None:

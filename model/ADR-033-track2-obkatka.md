@@ -1,10 +1,10 @@
 ---
-id: ADR-030
+id: ADR-033
 type: adr
 title: "Track-2 «обкатка RL на открытой модели»: двухступенчатый стенд 4080 → GB10"
 status: "accepted"
 affects: [CMP-005, CMP-006]
-source: "docs/adr/ADR-030-track2-obkatka-na-otkrytoy-modeli.md"
+source: "docs/adr/ADR-033-track2-obkatka-na-otkrytoy-modeli.md"
 ---
 
 Репетиционный трек, не заменяет вердикт ADR-027 на нашей базе. Stage A

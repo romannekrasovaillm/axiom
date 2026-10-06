@@ -1,0 +1,158 @@
+{
+  "report": "track-2-stage-a-calibration",
+  "adr": "ADR-033",
+  "title": "Track-2 Stage A: обкатка среды axiom на готовой открытой модели (inference-only)",
+  "date": "2026-10-06",
+  "status": "complete",
+  "status_note": "Все 20 эпизодов матрицы отработали без ошибок адаптера/транспорта (errors_total=0). Получен нулевой pass-rate на обоих уровнях; вскрыт дефект постановки семейства real (см. defects) — ADR-033 метрика (г).",
+
+  "subject_of_measurement": {
+    "model_name_in_report": "qwen3-4b-stage-a",
+    "served_model_in_request": "local-model",
+    "model_seed": 7,
+    "gguf_path": "/home/roman/models/qwen3-4b/Qwen3-4B-Q4_K_M.gguf",
+    "gguf_sha256": "7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5",
+    "quantization": "Q4_K_M",
+    "policy_version_reported": "openai-local-model",
+    "checkpoint_sha256": "",
+    "note_checkpoint": "AD-4 пин локального чекпойнта пуст: предмет замера — внешняя модель за endpoint'ом (адаптер §13 без локального веса)."
+  },
+
+  "proxy_conditions": {
+    "inference_endpoint": "http://127.0.0.1:8091/v1",
+    "server": "llama.cpp llama-server",
+    "server_commit": "a5822222909b785f23ddc74ce3c8f85bd0e38562",
+    "server_cmdline": "./llama.cpp/llama-server -m /home/roman/models/qwen3-4b/Qwen3-4B-Q4_K_M.gguf --port 8091 --ctx-size 32768 -ngl 99 --reasoning off",
+    "ctx_size": 32768,
+    "reasoning": "off",
+    "n_gpu_layers": 99,
+    "sampling": "temperature=0 (greedy), seed=7, stream=false, logprobs=true",
+    "adapter_module": "env/openai_adapter.py (порт §13, транспорт инъектируется)",
+    "transport_module": "clients/openai_http.py (HttpxTransport, trust_env=False, httpx 0.28.1)",
+    "tokenization": "прокси: UTF-8-байты текста (env.openai_adapter.encode) — бюджеты хода, не точная разбивка сервера",
+    "gpu": "NVIDIA GeForce RTX 4080 SUPER, 16376 MiB total, 8669 MiB used, driver 560.35.03",
+    "harness": "tools/rollout_harness.py (пиннутый §13), arm=laguna, n_min=2, max_rollout_tokens=16384",
+    "tasks_dir": "env/data (pool, seed=5): public 20 задач + holdout 50 спеков",
+    "workspace_total_bytes": 74094116
+  },
+
+  "hardware_boundary": {
+    "one_gpu_load": true,
+    "note": "Единственная нагрузка GPU на 4080 — llama-server (AD-7 соблюдён; GB10 не трогали)."
+  },
+
+  "calibration_pinning": {
+    "arch_ml_build": "4a29304742c38237e5bdc251896d7f11588cf3d73f130c24ab76b09cb1d801a8",
+    "constraints_sha256": "da17ec21fa35fe8b82e510281a12c08c500dd3cca968bbaa28fcf23ca1a95825",
+    "hidden_constraints_sha256": "fa7a348278d67bfd6b4a77f113a043800346c10f7cbc286b8359d3192ea2d488",
+    "excluded_infra_rules": ["C-032","C-033","C-034","C-035","C-036","C-037","C-038","C-039","C-040","C-041","C-042","C-043","C-044","C-045","C-046"]
+  },
+
+  "metrics": {
+    "pass_rate_L0": 0.0,
+    "pass_rate_L1": 0.0,
+    "aggregate_pass_rate": 0.0,
+    "pass_rate_range_corridor": [0.10, 0.90],
+    "ready": false,
+    "mean_reward": -0.035,
+    "reward_stdev": 0.04769696007084728,
+    "mean_attempts_used": 1.1,
+    "errors_total": 0
+  },
+
+  "by_level_detail": {
+    "L0": {
+      "n": 10,
+      "passed": 0,
+      "errors": 0,
+      "pass_rate": 0.0,
+      "mean_secs": 40.34,
+      "sources": {
+        "real": {"n": 5, "passed": 0, "termination": {"finish": 5}},
+        "corruption": {"n": 5, "passed": 0, "termination": {"finish": 3, "tokens": 2}}
+      }
+    },
+    "L1": {
+      "n": 10,
+      "passed": 0,
+      "errors": 0,
+      "pass_rate": 0.0,
+      "mean_secs": 41.64,
+      "sources": {
+        "real": {"n": 5, "passed": 0, "termination": {"finish": 5}},
+        "corruption": {"n": 5, "passed": 0, "termination": {"finish": 3, "tokens": 2}}
+      }
+    }
+  },
+
+  "timings": {
+    "wall_secs_total": 820.19,
+    "note": "mean_secs по уровню искажён эпизодами, исчерпавшими бюджет токенов (121–242 с); «обычные» эпизоды завершаются за 16–26 с.",
+    "per_level_mean_secs": {"L0": 40.34, "L1": 41.64},
+    "per_episode_secs": {
+      "corruption-l0-00": 16.105, "corruption-l0-01": 241.944, "corruption-l0-02": 16.215,
+      "corruption-l0-03": 26.298, "corruption-l0-04": 16.712,
+      "corruption-l1-00": 16.047, "corruption-l1-01": 121.006, "corruption-l1-02": 16.059,
+      "corruption-l1-03": 150.973, "corruption-l1-04": 22.342,
+      "real-l0-00": 16.085, "real-l0-01": 15.961, "real-l0-02": 17.783,
+      "real-l0-03": 18.089, "real-l0-04": 18.165,
+      "real-l1-00": 17.902, "real-l1-01": 17.704, "real-l1-02": 18.328,
+      "real-l1-03": 18.269, "real-l1-04": 17.738
+    },
+    "artifact": "evidence/track2-stage-a-2026-10-06/episode-timings.json"
+  },
+
+  "observations": {
+    "real_family_identical_trajectory": "Все 10 задач семейства real дали БАЙТ-идентичный ход: turns=5, tokens_used=1213, 4 tool-call'а (list_files \"cases\" → error; list_files \".\"; run_gates architecture; run_gates test) и finish. Ни одной правки файла. Идентичность объяснима: верхнеуровневый листинг и вывод гейтов (уже зелёных) детерминированы и одинаковы для всех копий кейса.",
+    "corruption_family_behavior": "Модель ПЫТАЕТСЯ чинить: на corruption-l0-00 после run_gates architectural (fitness=false, нарушение ADR-024 про явную обратимость) она 4 раза подряд шлёт один и тот же edit_file old=\"reversible\" → каждый раз error «найдено 0 совпадений», НЕ вызывая read_file; затем 1 parse_error и finish.",
+    "gate_signal_blind": "run_gates возвращает tests_passed=false для real-задач, но не раскрывает, ЧТО за задачa-тест и какой артефакт ожидается. У модели нет сигнала, ведущего к правке."
+  },
+
+  "defects": [
+    {
+      "id": "DEF-1",
+      "severity": "critical",
+      "family": "real (kind=keep-gates-implement)",
+      "summary": "Задачный артефакт IMPLEMENTATION.md не сообщается агенту НИГДЕ (system prompt, user prompt, содержимое workspace).",
+      "evidence": "objective.tests_cmd = `grep -qF real-l0-00 IMPLEMENTATION.md && grep -qF '## Решение' IMPLEMENTATION.md`; prompt = «Реализуй поставленную задачу…, добившись прохождения задачных тестов» (env/generate.py:_prompt); `grep -r IMPLEMENTATION` и `grep -r '## Решение'` по workspace real-l0-00 → 0 совпадений. Эталонное содержимое задано внутренней функцией генератора env/generate.py:real_impl_content() — агенту не видно.",
+      "impact": "pass_rate на всех 10 real-задачах жёстко зафиксирован в 0 независимо от способностей модели → L0/L1-числа НЕ являются замером возможностей модели на семействе real. ADR-035 ожидание «компетентная 4B даёт L0 заметно > 0» на этом наборе неопровержимо невыполнимо.",
+      "type": "environment/task-spec defect (не упущение модели)",
+      "recommendation": "Либо вшить требование артефакта в prompt/objective (указать имя файла и маркеры), либо положить в workspace задание (TASK.md), описывающее ожидаемый IMPLEMENTATION.md — силами владельца кейса (env/, зона линии-2)."
+    },
+    {
+      "id": "DEF-2",
+      "severity": "info",
+      "family": "интеграция рантайма",
+      "summary": "Режим «thinking» Qwen3 по умолчанию переполняет контекст раннего/дефолтного сервера.",
+      "evidence": "При ctx=8192 первый же ход ушёл в reasoning_content и дал HTTP 400: «request (8222 tokens) exceeds the available context size (8192)». Потребовался перезапуск с `--reasoning off` и `--ctx-size 32768`; второй инцидент — 17763 > 16384 при ctx=16384.",
+      "impact": "Дефолты адаптера (TIMEOUT/размеры) и типовой запуск llama-server без --reasoning/большого ctx несовместимы с Qwen3 thinking.",
+      "type": "environment-integration defect (recording per ADR-033 (г))",
+      "recommendation": "Задокументировать в runbook Stage A обязательные флаги сервера (`--reasoning off`, ctx ≥ 32768) для thinking-моделей."
+    },
+    {
+      "id": "DEF-3",
+      "severity": "minor",
+      "family": "harness/наблюдаемость",
+      "summary": "run_gates не даёт агенту указателя на задачa-тест.",
+      "evidence": "Вывод run_gates: {\"gates\":{...},\"passed\":true,\"tests_passed\":false,\"violations\":[]} — tests_passed=false без описания теста.",
+      "impact": "Даже при корректном понимании задачи модель не может осмысленно приблизиться к выполнению tests_cmd.",
+      "type": "observability gap",
+      "recommendation": "Опционально отдавать в наблюдении короткое имя/цель задачa-теста (без раскрытия eval-секретов)."
+    }
+  ],
+
+  "interpretation": "Нулевой pass-rate на L0/L1 не даёт основания судить о способности Qwen3-4B решать среду: семейство real детерминированно невыполнимо из-за DEF-1 (артефакт не сообщён), а на corruption-семействе наблюдается реальная слабость модели (слепые повторные правки без read_file, уход в исчерпание токенов). Для измерения L0/L1-возможностей модели среду нужно сначала починить по DEF-1, затем повторить прогон.",
+
+  "open_questions": [
+    "Пройти ли L0 после починки DEF-1 (сообщить агенту про IMPLEMENTATION.md) — то есть была ли нулевая доля следствием только дефекта постановки?",
+    "Нужен ли отдельный дешёвый «smoke»-эпизод в CLI калибровки, чтобы ловить переполнение контекста thinking-модели до полного прогона матрицы?",
+    "Считать ли DEF-3 (tests_passed без указателя) частью постановки или улучшением наблюдаемости?"
+  ],
+
+  "artifacts": [
+    "evidence/track2-stage-a-2026-10-06/calibration-qwen3-4b-stage-a.json",
+    "evidence/track2-stage-a-2026-10-06/episode-timings.json",
+    "evidence/track2-stage-a-2026-10-06/summary.json",
+    "evidence/track2-stage-a-2026-10-06/calibration.json"
+  ]
+}

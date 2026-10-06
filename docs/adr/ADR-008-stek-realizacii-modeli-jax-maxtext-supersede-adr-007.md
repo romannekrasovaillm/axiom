@@ -10,6 +10,7 @@ ADR-007 зафиксировал PyTorch + Triton/FLA по решению вла
 
 Факты по первоисточникам (проверено 12.09.2026):
 
+- **Амендмент ADR-034 (05.10):** распределённость претрейна — DP через jax.sharding на собственном лупе (не конфигурацией MaxText); миграция в форк MaxText отложена отдельным решением (триггеры в ADR-034 п. 3).
 - **MaxText** (github.com/google/maxtext, README прочитан): high-performance LLM-библиотека на чистом Python/JAX, таргет TPU **и GPU**, претрейн до десятков тысяч чипов, официальный путь «building models from scratch — fork and modify MaxText». Стек: Flax (NNX), Tunix (пост-тренинг), Orbax (чекпойнты), Optax, Grain.
 - **Kimi-семейство поддержано**: K2 + MuonClip-оптимизатор (04/2026), K2-Thinking / K2.5 / K2.6 text (05/2026, `Run_Kimi.md`) — конверсия чекпойнтов и рецепты существуют; **Muon** в MaxText с 12/2025.
 - **Пост-тренинг из коробки**: SFT, **GRPO и GSPO** (Tunix), multi-host RL-туториалы; MTP-тренинг (07/2025 — у K3 MTP-слой есть); MoE-кернелы Tokamax GMM v2 (08/2026); нативная мультимодальность (Gemma 4, Llama 4 VLM); расширяемость кастомными архитектурами показана поддержкой Engram/mHC от DeepSeek-AI (03/2026).

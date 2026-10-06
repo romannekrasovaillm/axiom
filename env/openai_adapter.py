@@ -1,36 +1,42 @@
 """OpenAI-совместимый адаптер модели — интерфейс §13 (ENVIRONMENT-V1, ADR-033).
 
-Track-2 Stage A: локальный ``llama-server`` + GGUF открытой instruct-модели
-(inference-only обкатка среды, калибровка лесенки L0–L3).  Адаптер переводит
+Track-2 Stage A: обкатка среды на готовой открытой модели через внешний
+inference-endpoint (llama-server + GGUF), без тренировки.  Адаптер переводит
 контракт роллаутов §13::
 
     generate(messages, seed, max_tokens) -> {text, token_ids, behavior_logprobs}
 
 в POST ``{base_url}/chat/completions`` совместимого сервера.  Сообщения
-передаются **как есть** (формат v12 §13 уже совпадает с OpenAI chat-форматом),
-декодирование детерминировано: ``temperature=0`` и явный ``seed``.
+передаются **как есть** (формат v12 §13 совпадает с форматом чата), декодирование
+детерминировано: ``temperature=0`` и явный ``seed``.
 
-Почему формат результата переиспользует :class:`~env.jaxlm_adapter.GenerationResult`
-(а не свой): интерфейс §13 обязан быть ИДЕНТИЧНЫМ прибору JaxLMAdapter, и
-структура ответа (состав/порядок полей) уже запиннена тестом структуры.  Для
-внешней модели ``behavior_logprobs`` — справочные (тренировка своей политики
-идёт на своём чекпойнте); если endpoint их не отдаёт — возвращается пустой
-список, а не выдуманные числа.
+Границы (порт и адаптер)
+------------------------
 
-Гигиена сети (C-011): клиент создаётся с ``trust_env=False`` — прокси-остатки
-окружения (``HTTP_PROXY``/``ALL_PROXY``) НЕ наследуются.  Таймауты осознаны по
-p99.9: короткий connect и длинный read (генерация длинного хода).  Ретрай —
-один, только на ошибку установления соединения; повтор чтения после таймаута не
-делается (правило контура: таймауты по p99.9, ретраи в одном слое).  Запасных
-endpoint'ов нет (fallback запрещён — расширяет аварию).
+Этот модуль — **порт**: политика (формат запроса, таймауты, ретраи, разбор
+ответа, коды ошибок) без привязки к HTTP-библиотеке.  Механизм — конкретный
+транспорт — поставляется вызывающим (``transport=``), потому что пакет ``env/``
+признан контуром награды RL (C-039/AD-2): импорт HTTP-клиента сюда недопустим.
+Готовый транспорт на httpx с ``trust_env=False`` живёт вне контура —
+:mod:`clients.openai_http`; он же даёт фабрику для калибровки.
+
+Таймауты по p99.9: короткий connect и длинный read (генерация длинного хода).
+Ретрай — один, только на ошибку установления соединения; повтор чтения после
+таймаута не делается (правило контура: таймауты по p99.9, ретраи в одном слое).
+Запасных endpoint'ов нет (fallback расширяет аварию).
+
+Почему результат переиспользует :class:`~env.jaxlm_adapter.GenerationResult`:
+интерфейс §13 обязан быть ИДЕНТИЧНЫМ прибору JaxLMAdapter, и структура ответа
+(состав/порядок полей) уже запиннена тестом структуры.  Для внешней модели
+``behavior_logprobs`` — справочные; если endpoint их не отдаёт, возвращается
+пустой список (не выдуманные числа), а не ``None``: журнал роллаута итерирует
+поле (``list(gen.behavior_logprobs)``), ``None`` уронил бы эпизод.
 """
 
 from __future__ import annotations
 
 import json
-from typing import Any, Optional, Sequence
-
-import httpx
+from typing import Any, Optional, Protocol, Sequence, runtime_checkable
 
 from .jaxlm_adapter import RESULT_FIELDS, GenerationResult
 
@@ -40,12 +46,11 @@ from .jaxlm_adapter import RESULT_FIELDS, GenerationResult
 DEFAULT_BASE_URL = "http://127.0.0.1:8080/v1"
 
 #: Имя модели по умолчанию в теле запроса: llama-server модель из поля не
-#: выбирает (она задана запуском), но OpenAI-схема требует непустое значение.
+#: выбирает (она задана запуском), но схема чата требует непустое значение.
 DEFAULT_SERVED_MODEL = "local-model"
 
-#: Таймауты по p99.9 (комментарий обязателен — правило контура): установление
-#: соединения к локальному серверу — секунды, чтение ответа — генерация хода
-#: может идти минуты, поэтому лимиты разнесены.
+#: Таймауты по p99.9: установление соединения к локальному серверу — секунды,
+#: чтение ответа — генерация хода может идти минуты, поэтому лимиты разнесены.
 TIMEOUT_CONNECT_SECS = 5.0
 TIMEOUT_READ_SECS = 120.0
 
@@ -69,7 +74,43 @@ class OpenAIResponseError(OpenAIAdapterError):
     """Endpoint ответил не-2xx или телом, которое не разбирается как ответ чата."""
 
 
-def _build_payload(
+# ── Порт транспорта ────────────────────────────────────────────────────────
+# Транспорт поставляет вызывающий (вне контура награды). Он обязан перевести
+# сбои своей библиотеки в эти типы, чтобы политика ретраев осталась здесь.
+
+
+class TransportError(Exception):
+    """Сбой транспорта (базовый)."""
+
+
+class TransportConnectError(TransportError):
+    """Не удалось установить соединение (единственный ретраируемый случай)."""
+
+
+class TransportReadTimeout(TransportError):
+    """Ответ не пришёл в лимит чтения (не ретраируется)."""
+
+
+@runtime_checkable
+class HttpResponse(Protocol):
+    """Минимальный ответ транспорта (совместим с ``httpx.Response``)."""
+
+    status_code: int
+    text: str
+
+    def json(self) -> Any:  # pragma: no cover - протокол
+        ...
+
+
+@runtime_checkable
+class HttpTransport(Protocol):
+    """Минимальный POST-транспорт (совместим с httpx-обёрткой clients/)."""
+
+    def post(self, url: str, *, json: dict[str, Any], headers: dict[str, str]) -> HttpResponse:
+        ...  # pragma: no cover - протокол
+
+
+def build_payload(
     model: str,
     messages: Sequence[dict[str, str]],
     seed: int,
@@ -86,14 +127,13 @@ def _build_payload(
         # seed прокидывается в sampling-параметры, если endpoint его понимает.
         "seed": int(seed),
         "max_tokens": int(max_tokens),
-        # llama-server поддерживает поэлементные logprobs — просим их; endpoint
-        # без поддержки просто не вернёт блок (обрабатывается в _extract_logprobs).
+        # Поэлементные logprobs: endpoint без поддержки просто не вернёт блок.
         "logprobs": True,
         "stream": False,
     }
 
 
-def _extract_text_and_logprobs(data: dict[str, Any]) -> tuple[str, list[float]]:
+def extract_text_and_logprobs(data: dict[str, Any]) -> tuple[str, list[float]]:
     """Разбор ответа чата: текст хода и (если есть) поэлементные logprobs."""
     choices = data.get("choices")
     if not isinstance(choices, list) or not choices:
@@ -121,9 +161,9 @@ def _extract_text_and_logprobs(data: dict[str, Any]) -> tuple[str, list[float]]:
 class OpenAIAdapter:
     """Адаптер §13 поверх OpenAI-совместимого endpoint (внешняя модель).
 
-    Конструирование клиента — ленивое по отношению к сети (никаких вызовов в
-    ``__init__``).  Для тестов принимается готовый ``transport`` (например,
-    ``httpx.MockTransport``) или собранный ``client`` — тогда сеть не трогается.
+    Сети в конструкторе не трогает: HTTP делает переданный ``transport``.
+    Без транспорта генерация честно отказывает
+    :class:`OpenAIAdapterError` (а не падает ImportError'ом библиотеки).
     """
 
     def __init__(
@@ -137,8 +177,7 @@ class OpenAIAdapter:
         connect_timeout: float = TIMEOUT_CONNECT_SECS,
         read_timeout: float = TIMEOUT_READ_SECS,
         policy_version: Optional[str] = None,
-        transport: Optional[httpx.BaseTransport] = None,
-        client: Optional[httpx.Client] = None,
+        transport: Optional[HttpTransport] = None,
     ) -> None:
         self.base_url = str(base_url).rstrip("/")
         self.model = str(model)
@@ -148,22 +187,7 @@ class OpenAIAdapter:
         self.connect_timeout = float(connect_timeout)
         self.read_timeout = float(read_timeout)
         self._policy_version = policy_version
-
-        if client is not None and transport is not None:
-            raise ValueError("укажите либо client, либо transport, не оба")
-        if client is not None:
-            self._client = client
-        else:
-            # trust_env=False — не наследовать прокси окружения (C-011).
-            timeout = httpx.Timeout(
-                self.read_timeout,
-                connect=self.connect_timeout,
-                write=self.connect_timeout,
-                pool=self.connect_timeout,
-            )
-            self._client = httpx.Client(
-                transport=transport, timeout=timeout, trust_env=False
-            )
+        self.transport = transport
 
     # -- §13 ----------------------------------------------------------------
 
@@ -200,12 +224,12 @@ class OpenAIAdapter:
     ) -> GenerationResult:
         """Один ход ассистента через внешний endpoint (§13)."""
         effective_seed = self.seed if seed is None else int(seed)
-        payload = _build_payload(
+        payload = build_payload(
             self.model, messages, effective_seed, int(max_tokens), self.temperature
         )
         data = self._post_chat(payload)
-        text, logprobs = _extract_text_and_logprobs(data)
-        # Точных token_ids сервер в OpenAI-схеме не отдаёт — фиксируем
+        text, logprobs = extract_text_and_logprobs(data)
+        # Точных token_ids схема ответа чата не отдаёт — фиксируем
         # детерминированную прокси-разбивку (см. encode); behavior_logprobs
         # собираются, только если endpoint прислал блок logprobs.
         return GenerationResult(
@@ -216,7 +240,9 @@ class OpenAIAdapter:
         )
 
     def close(self) -> None:
-        self._client.close()
+        close = getattr(self.transport, "close", None)
+        if callable(close):
+            close()
 
     def __enter__(self) -> "OpenAIAdapter":
         return self
@@ -228,6 +254,12 @@ class OpenAIAdapter:
 
     def _post_chat(self, payload: dict[str, Any]) -> dict[str, Any]:
         """POST ``/chat/completions``: один ретрай на connect, без fallback."""
+        if self.transport is None:
+            raise OpenAIAdapterError(
+                "не задан HTTP-транспорт: пакет env/ — контур награды (C-039), "
+                "HTTP-клиент сюда не импортируется. Передайте transport= "
+                "(готовый httpx-транспорт — clients.openai_http.HttpxTransport)."
+            )
         url = f"{self.base_url}/chat/completions"
         headers = {"Content-Type": "application/json"}
         if self._api_key:
@@ -236,8 +268,8 @@ class OpenAIAdapter:
         attempts = 0
         while True:
             try:
-                response = self._client.post(url, json=payload, headers=headers)
-            except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+                response = self.transport.post(url, json=payload, headers=headers)
+            except TransportConnectError as exc:
                 if attempts < CONNECT_RETRIES:
                     attempts += 1
                     continue
@@ -245,14 +277,14 @@ class OpenAIAdapter:
                     f"не удалось установить соединение с {self.base_url} "
                     f"(после {CONNECT_RETRIES + 1} попыток): {exc}"
                 ) from exc
-            except httpx.ReadTimeout as exc:
+            except TransportReadTimeout as exc:
                 raise OpenAIReadTimeoutError(
                     f"чтение ответа {self.base_url} превысило "
                     f"{self.read_timeout:.0f} с (p99.9); повтор не делается"
                 ) from exc
-            except httpx.TimeoutException as exc:  # запись/пул — тоже отказ
+            except TransportError as exc:
                 raise OpenAIAdapterError(
-                    f"таймаут обращения к {self.base_url}: {exc}"
+                    f"сбой транспорта при обращении к {self.base_url}: {exc}"
                 ) from exc
             break
 
@@ -276,6 +308,8 @@ __all__ = [
     "CONNECT_RETRIES",
     "DEFAULT_BASE_URL",
     "DEFAULT_SERVED_MODEL",
+    "HttpResponse",
+    "HttpTransport",
     "OpenAIAdapter",
     "OpenAIAdapterError",
     "OpenAIReadTimeoutError",
@@ -284,4 +318,9 @@ __all__ = [
     "RESULT_FIELDS",
     "TIMEOUT_CONNECT_SECS",
     "TIMEOUT_READ_SECS",
+    "TransportConnectError",
+    "TransportError",
+    "TransportReadTimeout",
+    "build_payload",
+    "extract_text_and_logprobs",
 ]

@@ -124,23 +124,6 @@ def _build_model_factory(args):
     """
     if args.adapter == "stub":
         return None
-    if args.adapter == "openai":
-        # Внешний OpenAI-совместимый endpoint (track-2 Stage A, ADR-033):
-        # llama-server + GGUF открытой модели. Сеть в момент сборки фабрики не
-        # трогается — адаптер конструируется лениво, на каждый эпизод.
-        from . import openai_adapter as _oa
-
-        base_url = getattr(args, "base_url", None) or _oa.DEFAULT_BASE_URL
-        served_model = getattr(args, "served_model", None) or _oa.DEFAULT_SERVED_MODEL
-        api_key = getattr(args, "api_key", None)
-        model_seed = args.model_seed
-
-        def openai_factory():
-            return _oa.OpenAIAdapter(
-                base_url=base_url, model=served_model, api_key=api_key, seed=model_seed,
-            )
-
-        return openai_factory
     if args.adapter != "jaxlm":  # защита от расширения choices без ветки
         raise ValueError(f"неизвестный адаптер: {args.adapter!r}")
     if args.checkpoint is None:
@@ -218,19 +201,13 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--hidden-constraints", type=Path, default=None)
     r.set_defaults(fn=cmd_reward)
 
-    c = sub.add_parser(
-        "calibrate",
-        help="кальбровка (заглушка | jaxlm | openai) → отчёт в evidence",
-    )
+    c = sub.add_parser("calibrate", help="кальбровка (заглушка | jaxlm) → отчёт в evidence")
     c.add_argument("--tasks", type=Path, required=True, help="каталог с public/ и holdout/")
     c.add_argument("--case", type=Path, default=CASE_DIR)
     c.add_argument("--out", type=Path, required=True, help="каталог evidence/")
     c.add_argument(
-        "--adapter", choices=("stub", "jaxlm", "openai"), default="stub",
-        help=(
-            "источник эпизодов: stub (детерминированная заглушка) | "
-            "jaxlm (реальная модель §13) | openai (внешний endpoint, ADR-033)"
-        ),
+        "--adapter", choices=("stub", "jaxlm"), default="stub",
+        help="источник эпизодов: stub (детерминированная заглушка) | jaxlm (реальная модель §13)",
     )
     c.add_argument(
         "--checkpoint", type=Path, default=None,
@@ -246,18 +223,6 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument(
         "--config", default=None,
         help="ModelConfig JSON для --adapter jaxlm (по умолчанию net/config.json кейса)",
-    )
-    c.add_argument(
-        "--base-url", default=None,
-        help="base URL внешнего OpenAI-совместимого endpoint (для --adapter openai)",
-    )
-    c.add_argument(
-        "--served-model", default=None,
-        help="имя модели в теле запроса к endpoint (для --adapter openai)",
-    )
-    c.add_argument(
-        "--api-key", default=None,
-        help="ключ endpoint, если требуется (llama-server работает без ключа)",
     )
     c.add_argument("--model-name", default=None, help="имя модели в отчёте (по умолчанию = --adapter)")
     c.add_argument("--model-seed", type=int, default=7)

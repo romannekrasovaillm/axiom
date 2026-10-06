@@ -1,5 +1,6 @@
 # environment v1 — минимальные зависимости (обучение вне скоупа среды)
 pyyaml>=6.0
 pytest>=7.0
-# Внешний OpenAI-совместимый адаптер модели (track-2 Stage A, ADR-033).
+# Внешний endpoint моделей (track-2 Stage A, ADR-033): используется пакетом
+# clients/ — порт в env/openai_adapter.py остаётся без HTTP-клиента (C-039).
 httpx>=0.27

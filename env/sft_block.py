@@ -129,11 +129,83 @@ THINK_FINISH = (
 # ── Порча (только восстановимая 4 инструментами) ───────────────────────────
 
 
+#: Ходы эталонной траектории атома ``drift_config_value`` (ADR-037, дельта D7):
+#: гейты → ADR → конфиг → правка → гейты → finish. Значение берётся из ADR
+#: В ВОРКСПЕЙСЕ, а не из чистой копии (урок DEF-1: артефакт сообщён).
+CONFIG_DRIFT_SEQUENCE = (
+    "run_gates", "read_file", "read_file", "edit_file", "run_gates", "finish",
+)
+
+
+def _config_leaf(dotted: str) -> str:
+    return dotted.split(".")[-1]
+
+
+def _expected_from_adr(adr_text: str, value: Any) -> Any:
+    """Подтверждает ожидаемое значение по тексту ADR воркспейса.
+
+    Поддерживает числовое и булево представление; не найдено — ValueError
+    (траектория не выдумывает значение из чистой копии).
+    """
+    reps = [str(value), str(value).lower(), json.dumps(value)]
+    if isinstance(value, bool):
+        reps += ["true" if value else "false", "True" if value else "False"]
+    for rep in reps:
+        if rep and rep in adr_text:
+            return value
+    raise ValueError(f"значение {value!r} не подтверждено ADR воркспейса")
+
+
+def build_config_drift_trajectory(
+    ws_dir: Path,
+    verifier: Any,
+    *,
+    claim: dict[str, Any],
+    adr_rel: str,
+) -> list[dict[str, Any]]:
+    """Эталонная SFT-траектория починки атома ``drift_config_value`` (§D7).
+
+    Последовательность ``CONFIG_DRIFT_SEQUENCE``: ``run_gates`` → ``read_file``
+    ADR → ``read_file`` конфига → ``edit_file`` → ``run_gates`` → ``finish``.
+    Ожидаемое значение берётся из ADR **в воркспейсе** (не из чистой копии).
+    """
+    import sys as _sys
+
+    if str(ROOT / "tools") not in _sys.path:
+        _sys.path.insert(0, str(ROOT / "tools"))
+    import rollout_harness as rh
+
+    binding = claim.get("binding") or {}
+    config_rel = str(binding.get("file"))
+    key = str(binding.get("path"))
+    leaf = _config_leaf(key)
+    tools = rh.WorkspaceTools(ws_dir, verifier)
+    traj = _Trajectory(tools)
+    traj.start(PROMPT_S2)
+
+    traj.step("Run the gates to see the verdict.", "run_gates", {})
+    adr_text = traj.step("Read the ADR the message named.", "read_file", {"path": adr_rel})
+    expected = _expected_from_adr(adr_text, binding.get("value"))
+    config_text = traj.step("Read the config binding.", "read_file", {"path": config_rel})
+    current = json.loads(config_text)
+    for part in key.split("."):
+        current = current[part]
+    old = f'"{leaf}": {json.dumps(current)}'
+    new = f'"{leaf}": {json.dumps(expected)}'
+    traj.step("Restore the value the ADR fixes.", "edit_file",
+              {"path": config_rel, "old": old, "new": new})
+    traj.step("Re-run the gates to confirm.", "run_gates", {})
+    traj.finish("The binding matches the ADR again.", "Gates verdict confirmed.")
+    return traj.messages
+
+
 def _damage_effective(clean_root: Path, damage: corruption_mod.Damage) -> bool:
     """Порча реально применима (иначе мутатор молча ничего не сделал)."""
     target = clean_root / damage.file
     if not target.is_file():
         return False
+    if damage.kind == "drift_config_value":
+        return damage.path is not None and damage.new_value is not None
     text = target.read_text(encoding="utf-8")
     if damage.kind == "remove_adr_section":
         return damage.section is not None and damage.section in text
@@ -143,15 +215,17 @@ def _damage_effective(clean_root: Path, damage: corruption_mod.Damage) -> bool:
     return False
 
 
-def plan_repairable(clean_root: Path, seed: int, level: str) -> list[corruption_mod.Damage]:
+def plan_repairable(
+    clean_root: Path, seed: int, level: str, atoms_version: str = "v1"
+) -> list[corruption_mod.Damage]:
     """Damage-лист мутатора, суженный до восстановимого 4 инструментами §13.
 
     ``break_ad_link`` (удаление файла) исключается: интерфейс агента v1 не несёт
     инструмента создания файла, поэтому такое повреждение конструктивно
-    невосстановимо. L0 (1 атом) восстановим полностью; L1 сужается до
-    восстановимого подмножества атомов.
+    невосстановимо. ``drift_config_value`` (``atoms_version: v2``) восстановим:
+    ``edit_file`` правит значение ``net/config.json`` по тексту ADR из воркспейса.
     """
-    planned = corruption_mod.plan_damages(clean_root, seed, level)
+    planned = corruption_mod.plan_damages(clean_root, seed, level, atoms_version=atoms_version)
     out = [
         d
         for d in planned

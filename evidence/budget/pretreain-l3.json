@@ -10,5 +10,9 @@
  "approved_by": "architect",
  "provider": "vast.ai",
  "instance_type": "interruptible (bid-кап ставится; преемпшн = стоп, resume с курсора)",
+ "requires_verdicts": [
+  {"guard": "performance-roofline", "run": "kda-wyut-delta"},
+  {"claim": "CL-019"}
+ ],
  "watchdog": "tools/vast_watchdog.py — внешний килл-свитч: раз в 10 мин сверяет spend инстанса со сметой, на $225 создаёт stop-файл, на $260 вызывает vast stop"
 }

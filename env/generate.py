@@ -134,6 +134,7 @@ def _make_spec(
     hidden_sha: str,
     public_rules: int,
     gates_sha: dict[str, str],
+    atoms_version: str = "v1",
 ) -> dict[str, Any]:
     kind = "restore-gates" if source in ("corruption", "holdout") else "keep-gates-implement"
     tests_cmd = "true" if kind == "restore-gates" else real_tests_cmd(task_id)
@@ -155,6 +156,9 @@ def _make_spec(
         # Verifier сверяет финал воркспейса против этого пина (основной путь);
         # рантайм base_ws — только fallback для спек без пина.
         "gates_sha256": gates_sha,
+        # ADR-037 (дельта D5, обратно совместимо): v1 — по умолчанию; v2 добавляет
+        # атом drift_config_value и пин claims-пары (§D6). Задачи v1 — побайтово.
+        "atoms_version": atoms_version,
         "budget_seconds": 1800,
         "max_tokens": 131072,
         "thinking_budget": 8192,
@@ -169,17 +173,24 @@ def _make_spec(
     }
 
 
-def gates_sha256(clean_dir: Path) -> dict[str, str]:
+def gates_sha256(clean_dir: Path, atoms_version: str = "v1") -> dict[str, str]:
     """Пин гейтовых файлов §10 из clean-состояния задачи (E-3.3).
 
     ``{constraints, spine}`` — sha256 CONSTRAINTS.yaml и ARCHITECTURE-SPINE.md
     чистого кейса. Порча (corruption) гейтовые файлы не трогает, поэтому пин
     равен и снапшоту задачи (real/corruption), и clean-состоянию holdout.
+
+    Для ``atoms_version: v2`` (ADR-037 дельта D6) добавляются ``claims``
+    (model/claims.yaml) и ``claims_checker`` (tools/check_claims.py).
     """
-    return {
+    pins = {
         "constraints": sha256_file(clean_dir / CONSTRAINTS_FILE),
         "spine": sha256_file(clean_dir / SPINE_FILE),
     }
+    if atoms_version == "v2":
+        pins["claims"] = sha256_file(clean_dir / "model" / "claims.yaml")
+        pins["claims_checker"] = sha256_file(clean_dir / "tools" / "check_claims.py")
+    return pins
 
 
 def _workspace_digest(ws_dir: Path) -> dict[str, Any]:
@@ -197,17 +208,18 @@ def _build_public_task(
     hidden_sha: str,
     public_rules: int,
     gates_sha: dict[str, str],
+    atoms_version: str = "v1",
 ) -> dict[str, Any]:
     ws_dir = public_dir / task_id
     if source == "corruption":
-        corruption.corrupt(clean_dir, ws_dir, seed, level)
+        corruption.corrupt(clean_dir, ws_dir, seed, level, atoms_version=atoms_version)
     else:
         copy_case_snapshot(clean_dir, ws_dir)
     # Гейт объёма: снапшот после исключений обязан укладываться в кап (§7, §11(8)).
     workspace_size_cap(ws_dir)
     spec = _make_spec(
         task_id, source, level, seed, _workspace_digest(ws_dir),
-        count_case_volume(ws_dir), hidden_sha, public_rules, gates_sha,
+        count_case_volume(ws_dir), hidden_sha, public_rules, gates_sha, atoms_version,
     )
     write_json(public_dir / f"{task_id}.json", spec)
     return spec
@@ -219,8 +231,14 @@ def generate(
     seed: int = 0,
     grid: tuple[tuple[str, str, int], ...] = PUBLIC_GRID,
     holdout_count: int = HOLDOUT_COUNT,
+    atoms_version: str = "v1",
 ) -> dict[str, Any]:
-    """Генерирует публичный набор и holdout-пул. Возвращает сводку."""
+    """Генерирует публичный набор и holdout-пул. Возвращает сводку.
+
+    ``atoms_version`` (ADR-037 дельта D5): ``v1`` по умолчанию (побайтовое
+    воспроизведение прежних задач); ``v2`` включает атом ``drift_config_value``
+    и пин claims-пары.
+    """
     public_dir = out_dir / "public"
     holdout_dir = out_dir / "holdout"
     public_dir.mkdir(parents=True, exist_ok=True)
@@ -229,7 +247,7 @@ def generate(
     public_rules = count_public_rules(clean_dir / "CONSTRAINTS.yaml")
     # H-слой (§10, E-3.3): пин гейтовых файлов из clean-состояния — один для
     # всего набора (порча гейтов не трогает; holdout-воркспейс не строится).
-    gates_sha = gates_sha256(clean_dir)
+    gates_sha = gates_sha256(clean_dir, atoms_version)
 
     # Скрытый набор правил — вне workspace (в holdout/).
     hidden_yaml = render_hidden_constraints()
@@ -250,7 +268,7 @@ def generate(
             hsha = EMPTY_HIDDEN_SHA256 if level == "L0" else hidden_sha
             spec = _build_public_task(
                 clean_dir, public_dir, task_id, source, level, tseed, hsha, public_rules,
-                gates_sha,
+                gates_sha, atoms_version,
             )
             summary["public"].append({"id": task_id, "seed": spec["seed"], "level": level})
 
@@ -264,7 +282,7 @@ def generate(
         workspace = {"format": "git-bundle", "bundle_sha256": held_hash, "base_commit": held_hash[:40]}
         spec = _make_spec(
             task_id, "holdout", level, tseed, workspace,
-            count_case_volume(clean_dir), hsha, public_rules, gates_sha,
+            count_case_volume(clean_dir), hsha, public_rules, gates_sha, atoms_version,
         )
         write_json(holdout_dir / f"{task_id}.json", spec)
         summary["holdout"].append({"id": task_id, "seed": spec["seed"], "level": level})

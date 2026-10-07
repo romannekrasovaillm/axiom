@@ -65,6 +65,8 @@ REASON_NOT_RUN = "прогон не выполнялся — файл метри
 
 EXIT_OK = 0
 EXIT_FAIL = 1
+#: ``--require-verified``: недоказанное не открывает расход (ADR-037, дельта E1).
+EXIT_UNVERIFIED = 3
 
 #: Минимальный размер окна медианы (детерминизм: ≥10 последних записей).
 MIN_WINDOW = 10
@@ -215,7 +217,7 @@ def _find_pin(pins: list[dict[str, Any]], run: str) -> dict[str, Any] | None:
     return None
 
 
-def run_check(
+def _run_check_impl(
     run: str,
     metrics_path: str | Path | None = None,
     *,
@@ -324,6 +326,72 @@ def run_check(
     return EXIT_FAIL, report
 
 
+#: Класс вердикта по строке отчёта (ADR-037, дельта E1).
+_VERDICT_CLASS = {
+    "ok": "ok",
+    "regression": "regression",
+    "neutral": "unverified",
+    "no-data": "no-data",
+}
+
+
+def _facts_tok_s(run: str, facts_dir: str | Path | None) -> float | None:
+    """Ток/с из факта S-012 для того же ``run_ref`` (если есть — иначе None)."""
+    try:
+        import sys as _sys
+
+        root = Path(__file__).resolve().parents[1]
+        if str(root) not in _sys.path:
+            _sys.path.insert(0, str(root))
+        from tools.sensors.fact import read_latest
+
+        record = read_latest(
+            "S-012", "tok_s_median_window", ["run_ref"],
+            out_dir=facts_dir, subject={"run_ref": run},
+        )
+        if record and record.get("status") == "ok" and isinstance(record.get("value"), (int, float)):
+            return float(record["value"])
+    except Exception:  # noqa: BLE001 — нет фактов = прежний путь
+        return None
+    return None
+
+
+def run_check(
+    run: str,
+    metrics_path: str | Path | None = None,
+    *,
+    pins_path: str | Path | None = None,
+    window: int = WINDOW,
+    require_verified: bool = False,
+    facts_dir: str | Path | None = None,
+) -> tuple[int, dict[str, Any]]:
+    """Обёртка над :func:`_run_check_impl` с классом вердикта и политикой E1.
+
+    Без ``require_verified`` поведение прежнее (нейтраль → 0). С флагом
+    ``neutral`` → ``exit 3`` (unverified), ``no-data`` → ``exit 1``. Ток/с из
+    факта S-012 (тот же ``run_ref``) добавляется в отчёт; расхождение с метриками
+    помечается ``source_divergence`` — без смены вердикта.
+    """
+    code, report = _run_check_impl(run, metrics_path, pins_path=pins_path, window=window)
+    report["verdict_class"] = _VERDICT_CLASS.get(str(report.get("verdict")), report.get("verdict"))
+    fact_tok = _facts_tok_s(run, facts_dir)
+    if fact_tok is not None:
+        report["tok_s_facts"] = fact_tok
+        median = report.get("tok_s_median")
+        if isinstance(median, (int, float)) and abs(median - fact_tok) > 0.01 * max(1.0, abs(fact_tok)):
+            report["source_divergence"] = True
+            report["message"] = (
+                str(report.get("message", ""))
+                + f" [расхождение источников: метрики {median} vs факт S-012 {fact_tok}]"
+            ).strip()
+    if require_verified:
+        if report.get("verdict") == "neutral":
+            code = EXIT_UNVERIFIED
+        elif report.get("verdict") == "no-data":
+            code = EXIT_FAIL
+    return code, report
+
+
 def _fail_closed(
     run: str,
     verdict: str,
@@ -415,6 +483,10 @@ def main(argv: list[str] | None = None) -> int:
                              f"(по умолчанию {WINDOW})")
     parser.add_argument("--json", dest="json_path", default=None,
                         help="куда записать отчёт")
+    parser.add_argument("--require-verified", action="store_true",
+                        help="недоказанное не открывает расход: neutral → exit 3, no-data → exit 1 (ADR-037)")
+    parser.add_argument("--facts-dir", default=None,
+                        help="каталог фактов (evidence/facts) для сверки ток/с с S-012")
     parser.add_argument("--quiet", action="store_true", help="не печатать отчёт в stdout")
     parser.add_argument("--selftest", action="store_true",
                         help="синтетический selftest с мутантами (tmp; реальные данные не трогаются)")
@@ -426,7 +498,8 @@ def main(argv: list[str] | None = None) -> int:
     if not args.run:
         parser.error("--run обязателен (кроме --selftest)")
     code, report = run_check(
-        args.run, args.metrics, pins_path=args.pins_path, window=args.window
+        args.run, args.metrics, pins_path=args.pins_path, window=args.window,
+        require_verified=args.require_verified, facts_dir=args.facts_dir,
     )
     report["exit_code"] = code
     _emit(report, args.json_path, args.quiet)
@@ -572,6 +645,29 @@ def run_selftest() -> int:
                  and armed["threshold"] == 800.0
                  and armed["kpi_tok_s_baseline"] == 86.0)
             )
+
+        # (E1) --require-verified: недоказанное не открывает расход.
+        code_neutral_flag, rep_nf = run_check(
+            "kda-wyut-delta", root / "nope.jsonl", pins_path=pins, require_verified=True
+        )
+        checks.append(
+            ("require-verified: прогон не выполнялся → exit 3 (unverified)",
+             code_neutral_flag == EXIT_UNVERIFIED
+             and rep_nf.get("verdict_class") == "unverified")
+        )
+        code_nodata_flag, rep_nd = run_check(
+            "kda-wyut-delta", empty, pins_path=pins, require_verified=True
+        )
+        checks.append(
+            ("require-verified: пустые метрики → exit 1 (no-data)",
+             code_nodata_flag == EXIT_FAIL and rep_nd.get("verdict_class") == "no-data")
+        )
+        # Без флага поведение прежнее (нейтраль не валит).
+        code_neutral_noflag, _ = run_check("kda-wyut-delta", root / "nope.jsonl", pins_path=pins)
+        checks.append(
+            ("без флага нейтраль → exit 0 (C-046 не отменяется)",
+             code_neutral_noflag == EXIT_OK)
+        )
 
     ok = all(passed for _, passed in checks)
     for label, passed in checks:

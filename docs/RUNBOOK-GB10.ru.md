@@ -82,3 +82,20 @@ cd ~/axiom && ~/venv-axiom/bin/python tools/pretrain_run.py \
 **Правило выбора:** эксперимент стартует на самой низкой ступени, где его вопрос осмыслен; подъём — только с зелёным гейтом предыдущей. Инвариант лесенки — фичевая парность (все ступени несут полный набор фич l3, отличаясь только размерностями; композиция KDA:MLA = 3:1 везде) — гарантирует переносимость выводов по механике (провод, гейты, профили), НЕ по качеству (BPB на M2 не предсказывает BPB на M3). Dense-124m — не ступень, а ортогональный A/B-инструмент (verification-leg).
 
 Грабля-напоминание: смоук на l3-full ≈ 8 мин компиляции + 100–500 с/шаг (ночь 06/07.10) — если вопрос решается на M1, M3 запрещён правилом.
+
+## 9. Датчики поведенческого слоя (ADR-037)
+
+В окне стенда (после C-040 — стенд свободен), только чтение, шаг 5–10 с:
+
+```bash
+python3 -m tools.sensors.power_thermal --samples 6 --interval 5      # S-020
+python3 -m tools.sensors.device_memory_external --run                 # S-021
+python3 -m tools.sensors.peak_tflops_bench --allow-device             # S-025 (микробенч bf16)
+python3 -m tools.sensors.drift_probe --allow-device                   # S-026 (drift-проба)
+python3 -m tools.sensors.wrap_pretrain_metrics --metrics <metrics.jsonl> --journal <journal.json>  # S-012/S-013
+python3 -m tools.sensors.wrap_gb10_load                               # S-018 (пиннутое чтение стенда)
+python3 -m tools.sensors.probe                                        # класс по каждому датчику
+```
+
+Датчик, которому недоступен предмет (нет окна/поля `nvidia-smi`), пишет `unverified`
+с причиной — не подставляет число.

@@ -18,6 +18,14 @@ _OBJECTIVE_KINDS = ("restore-gates", "keep-gates-implement")
 _LEVELS = ("L0", "L1", "L2", "L3")
 #: Логические ключи пина гейтовых файлов Task Spec (§10, E-3.3).
 _GATE_PIN_KEYS = ("constraints", "spine")
+#: Версии набора атомов порчи (ADR-037, дельта D5): v1 — по умолчанию; v2
+#: добавляет пин реестра утверждений и самого стража утверждений (H-слой D6).
+_ATOMS_VERSIONS = ("v1", "v2")
+_GATE_PIN_KEYS_V2 = ("constraints", "spine", "claims", "claims_checker")
+
+
+def _gate_pin_keys(atoms_version: Any) -> tuple[str, ...]:
+    return _GATE_PIN_KEYS_V2 if atoms_version == "v2" else _GATE_PIN_KEYS
 
 
 def _errs(errs: list[str], path: str, cond: bool, msg: str) -> None:
@@ -74,15 +82,20 @@ def validate_task_spec(spec: Any) -> list[str]:
         e.append("verifier: должен быть объектом")
 
     # H-слой (§10, E-3.3): обязательный пин гейтовых файлов из clean-состояния.
+    # ``atoms_version`` (ADR-037 дельта D5, обратно совместимо): v1 — по умолчанию,
+    # прежний набор ключей; v2 добавляет ``claims`` и ``claims_checker`` (D6).
+    atoms_version = spec.get("atoms_version", "v1")
+    _errs(e, "atoms_version", atoms_version in _ATOMS_VERSIONS, f"atoms_version — один из {_ATOMS_VERSIONS}")
+    expected_keys = _gate_pin_keys(atoms_version)
     gates = spec.get("gates_sha256")
     if isinstance(gates, dict):
-        for key in _GATE_PIN_KEYS:
+        for key in expected_keys:
             _errs(e, f"gates_sha256.{key}", is_sha256_hex(gates.get(key)), f"gates_sha256.{key} — sha256")
-        extra = sorted(k for k in gates if k not in _GATE_PIN_KEYS)
+        extra = sorted(k for k in gates if k not in expected_keys)
         if extra:
-            e.append(f"gates_sha256: неизвестные ключи {extra} (ожидаются {list(_GATE_PIN_KEYS)})")
+            e.append(f"gates_sha256: неизвестные ключи {extra} (ожидаются {list(expected_keys)})")
     else:
-        e.append("gates_sha256: должен быть объектом {constraints, spine} (H-слой §10)")
+        e.append("gates_sha256: должен быть объектом (H-слой §10)")
 
     _errs(e, "budget_seconds", _is_int(spec.get("budget_seconds")) and spec["budget_seconds"] > 0, "budget_seconds — целое > 0")
     _errs(e, "max_tokens", _is_int(spec.get("max_tokens")) and spec["max_tokens"] > 0, "max_tokens — целое > 0")

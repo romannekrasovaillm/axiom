@@ -10,6 +10,12 @@
 #   bound          — ограничение (≤/≥);
 #   obligation     — обязательство (должно быть true);
 #   config_binding — декларация конфига (сверяется в --mode config-bindings).
+#
+# property/params (ADR-039, дельта P3): если задан property, --evaluate
+# применяет шаблон каталога (tools/properties/**), а predicate игнорируется.
+# Прежний predicate сохранён для сверки перевода (дельта P4) и обратной
+# совместимости. CL-017 остаётся на predicate: свойство «значение снято»
+# (presence) вне каталога — кандидат на тринадцатый шаблон (open_questions).
 
 - id: CL-001
   source: {file: docs/adr/ADR-032-kda-wyut-tok-s-kpi-bolshoy-batch.md, anchor: "**≥800 ток/с** (10×, порог приёмки дельты WY/UT+батча)"}
@@ -23,6 +29,13 @@
     unit: tok_s
     tolerance: 0.05
     window: {stat: median, n: 50, skip_warmup: 20}
+    tolerance_source: {decision: "ADR-032 KPI + прецедент политики допусков _SCAN_FORM_ATOL"}
+  property: bounds
+  params:
+    fact: S-012.tok_s_median_window
+    min: 800
+    window: {stat: median, n: 50, skip_warmup: 20}
+    tolerance: 0.05
     tolerance_source: {decision: "ADR-032 KPI + прецедент политики допусков _SCAN_FORM_ATOL"}
   conditions:
     - {fact: S-018.model_loads_count, op: "==", value: 1}
@@ -40,6 +53,10 @@
   sensor: S-002
   fact: params_total
   predicate: {op: "==", value: 1009632913, unit: count, tolerance: null}
+  property: declared_equals_actual
+  params:
+    declared: {file: net/config.json, key: actual_param_count}
+    actual: {fact: S-002.params_total}
   subject_match: [config_sha256]
   rule: null
   binding: null
@@ -53,6 +70,10 @@
   sensor: S-002
   fact: params_active
   predicate: {op: "==", value: 502399236, unit: count, tolerance: null}
+  property: declared_equals_actual
+  params:
+    declared: {file: net/config.json, key: active_params_per_token}
+    actual: {fact: S-002.params_active}
   subject_match: [config_sha256]
   rule: null
   binding: null
@@ -66,6 +87,10 @@
   sensor: S-003
   fact: replica_bytes_total
   predicate: {op: "<=", value: 17179869184, unit: bytes, tolerance: null}
+  property: bounds
+  params:
+    fact: S-003.replica_bytes_total
+    max: 17179869184
   subject_match: [config_sha256]
   rule: null
   binding: null
@@ -79,6 +104,11 @@
   sensor: S-028
   fact: eta_hours
   predicate: {op: between, value: [7, 11], unit: hours, tolerance: null}
+  property: bounds
+  params:
+    fact: S-028.eta_hours
+    min: 7
+    max: 11
   subject_match: [run_ref]
   rule: null
   binding: null
@@ -92,6 +122,10 @@
   sensor: S-014
   fact: block_merge_cost_ratio
   predicate: {op: "<=", value: 0.95, unit: ratio, tolerance: null}
+  property: bounds
+  params:
+    fact: S-014.block_merge_cost_ratio
+    max: 0.95
   e2e_pair: CL-001
   subject_match: []
   rule: null
@@ -117,6 +151,11 @@
   sensor: S-005
   fact: corpus_tokens_total
   predicate: {op: approx, value: 17840000000, unit: count, tolerance: 0.01}
+  property: declared_equals_actual
+  params:
+    declared: {value: 17840000000}
+    actual: {fact: S-005.corpus_tokens_total}
+    tolerance: 0.01
   subject_match: [dataset_ref]
   rule: null
   binding: null
@@ -130,6 +169,10 @@
   sensor: S-004
   fact: matches_config_hash
   predicate: {op: "==", value: true, unit: bool, tolerance: null}
+  property: declared_equals_actual
+  params:
+    declared: {value: true}
+    actual: {fact: S-004.matches_config_hash}
   subject_match: [config_sha256]
   rule: null
   binding: null
@@ -143,6 +186,10 @@
   sensor: S-001
   fact: num_kda_layers
   predicate: {op: "==", value: 18, unit: count, tolerance: null}
+  property: declared_equals_actual
+  params:
+    declared: {file: net/config.json, key: num_kda_layers}
+    actual: {fact: S-001.num_kda_layers}
   subject_match: [config_sha256]
   rule: C-049
   binding: {file: net/config.json, path: num_kda_layers, value: 18}
@@ -156,6 +203,10 @@
   sensor: S-001
   fact: num_mla_layers
   predicate: {op: "==", value: 6, unit: count, tolerance: null}
+  property: declared_equals_actual
+  params:
+    declared: {file: net/config.json, key: num_mla_layers}
+    actual: {fact: S-001.num_mla_layers}
   subject_match: [config_sha256]
   rule: C-049
   binding: {file: net/config.json, path: num_mla_layers, value: 6}
@@ -169,6 +220,10 @@
   sensor: S-001
   fact: moe_top_k
   predicate: {op: "==", value: 2, unit: count, tolerance: null}
+  property: declared_equals_actual
+  params:
+    declared: {file: net/config.json, key: moe_top_k}
+    actual: {fact: S-001.moe_top_k}
   subject_match: [config_sha256]
   rule: C-049
   binding: {file: net/config.json, path: moe_top_k, value: 2}
@@ -182,6 +237,10 @@
   sensor: S-001
   fact: vocab_size
   predicate: {op: "==", value: 160000, unit: count, tolerance: null}
+  property: declared_equals_actual
+  params:
+    declared: {file: net/config.json, key: vocab_size}
+    actual: {fact: S-001.vocab_size}
   subject_match: [config_sha256]
   rule: C-049
   binding: {file: net/config.json, path: vocab_size, value: 160000}
@@ -195,6 +254,10 @@
   sensor: S-006
   fact: snapshot_bytes
   predicate: {op: "<=", value: 67108864, unit: bytes, tolerance: null}
+  property: bounds
+  params:
+    fact: S-006.snapshot_bytes
+    max: 67108864
   subject_match: []
   rule: null
   binding: null
@@ -208,6 +271,10 @@
   sensor: S-009
   fact: verdict_identical
   predicate: {op: "==", value: true, unit: bool, tolerance: null}
+  property: declared_equals_actual
+  params:
+    declared: {value: true}
+    actual: {fact: S-009.verdict_identical}
   subject_match: []
   rule: null
   binding: null
@@ -226,6 +293,14 @@
     unit: fraction
     tolerance: 0.10
     window: {stat: median, n: 50, skip_warmup: 20}
+    tolerance_source: {decision: "ADR-034 п.: 343 TFLOP/s эффективных на H800 ≈ 35 % MFU"}
+  property: bounds
+  params:
+    fact: S-027.mfu_measured
+    min: 0.25
+    max: 0.45
+    window: {stat: median, n: 50, skip_warmup: 20}
+    tolerance: 0.10
     tolerance_source: {decision: "ADR-034 п.: 343 TFLOP/s эффективных на H800 ≈ 35 % MFU"}
   series: true
   subject_match: [run_ref]
@@ -254,6 +329,11 @@
   sensor: S-016
   fact: overlap_count
   predicate: {op: "==", value: 0, unit: count, tolerance: null}
+  property: bounds
+  params:
+    fact: S-016.overlap_count
+    min: 0
+    max: 0
   subject_match: [dataset_ref]
   rule: null
   binding: null
@@ -267,6 +347,10 @@
   sensor: S-029
   fact: replica_fits_device
   predicate: {op: "==", value: true, unit: bool, tolerance: null}
+  property: declared_equals_actual
+  params:
+    declared: {value: true}
+    actual: {fact: S-029.replica_fits_device}
   subject_match: [config_sha256]
   rule: null
   binding: null
@@ -285,6 +369,13 @@
     unit: ratio
     tolerance: 0.05
     window: {stat: median, n: 30, skip_warmup: 10}
+    tolerance_source: {decision: "_SCAN_FORM_ATOL (процентный допуск сканера как прецедент политики допусков)"}
+  property: bounds
+  params:
+    fact: S-014.kda_component_speedup
+    min: 4.0
+    window: {stat: median, n: 30, skip_warmup: 10}
+    tolerance: 0.05
     tolerance_source: {decision: "_SCAN_FORM_ATOL (процентный допуск сканера как прецедент политики допусков)"}
   series: true
   e2e_pair: CL-001

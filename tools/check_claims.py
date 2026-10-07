@@ -308,7 +308,37 @@ def _conditions_unmet(claim: dict[str, Any], out_dir: Optional[Path]) -> Optiona
     return None
 
 
-def evaluate_claim(claim: dict[str, Any], root: Path, out_dir: Optional[Path]) -> dict[str, Any]:
+def _evaluate_property(claim: dict[str, Any], root: Path, out_dir: Optional[Path]) -> Optional[dict[str, Any]]:
+    """Применяет шаблон каталога (``property``+``params``) вместо предиката (P3).
+
+    Возвращает результат или ``None``, если шаблон не объявлен/не найден —
+    тогда работает прежняя логика ``predicate`` (обратная совместимость).
+    """
+    name = claim.get("property")
+    if not name:
+        return None
+    from tools.properties import Facts, get_property
+
+    base = {"id": claim.get("id"), "statement": claim.get("statement")}
+    template = get_property(str(name))
+    if template is None:
+        return {**base, "verdict": "unverified", "sensor": claim.get("sensor"),
+                "fact": claim.get("fact"), "reason": f"шаблон {name!r} не найден в каталоге"}
+    facts = Facts(
+        root, out_dir=out_dir,
+        subject_match=claim.get("subject_match") or [],
+        subject=reference_subject(root),
+    )
+    verdict = template.evaluate(claim.get("params") or {}, facts)
+    return {
+        **base, "verdict": verdict.cls, "sensor": claim.get("sensor"), "fact": claim.get("fact"),
+        "value": verdict.value, "reason": verdict.reason, "evidence": list(verdict.evidence),
+    }
+
+
+def evaluate_claim(
+    claim: dict[str, Any], root: Path, out_dir: Optional[Path], *, use_property: bool = True
+) -> dict[str, Any]:
     cid = claim.get("id")
     base = {"id": cid, "statement": claim.get("statement")}
     if claim.get("pending") is not None:
@@ -317,6 +347,10 @@ def evaluate_claim(claim: dict[str, Any], root: Path, out_dir: Optional[Path]) -
     if condition_reason:
         return {**base, "verdict": "unverified", "sensor": claim.get("sensor"),
                 "fact": claim.get("fact"), "reason": condition_reason}
+    if use_property and claim.get("property"):
+        result = _evaluate_property(claim, root, out_dir)
+        if result is not None:
+            return result
     sensor = claim.get("sensor")
     fact = claim.get("fact")
     keys = claim.get("subject_match") or []

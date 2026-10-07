@@ -1,0 +1,22 @@
+{
+  "openapi": "3.0.3",
+  "info": {"title": "pets", "version": "1.0.0"},
+  "security": [],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {"type": "http", "scheme": "bearer"}
+    }
+  },
+  "paths": {
+    "/pets": {
+      "get": {"security": [{"bearerAuth": []}], "responses": {"200": {"description": "ok"}}},
+      "post": {"security": [{"bearerAuth": []}], "responses": {"201": {"description": "ok"}}}
+    },
+    "/pets/{id}": {
+      "get": {"responses": {"200": {"description": "ok"}}}
+    },
+    "/health": {
+      "get": {"responses": {"200": {"description": "ok"}}}
+    }
+  }
+}

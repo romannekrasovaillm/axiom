@@ -1,8 +1,9 @@
-# model/sensors.yaml — реестр датчиков поведенческого слоя Spine (ADR-037).
+# model/sensors.yaml — реестр датчиков поведенческого слоя Spine (ADR-037, ADR-038).
 #
 # Датчик измеряет и пишет запись факта (evidence/facts/<S-id>.jsonl); вердикт
 # выносит предикат утверждения (model/claims.yaml, tools/check_claims.py).
 # Проверка исполнения реестра: python3 -m tools.sensors.probe
+# Происхождение до сырья: python3 -m tools.sensors.probe --raw (ADR-038, дельта F).
 #
 # Статусы:
 #   active  — датчик реализован; probe требует файл фактов по контракту;
@@ -10,6 +11,14 @@
 #             probe даёт unverified, а не подстановку (C-007).
 # freshness_max_h: null = факт привязан к пину предмета (git sha/хеш), а не ко
 #   времени; число = часы, после которых запись считается устаревшей.
+#
+# pack: доменный пакет (дельта G) — существующие датчики остаются в ядре и
+#   помечаются pack: ml; новые экспортёры живут в tools/sensors/packs/<pack>/.
+# raw: происхождение факта (дельта F) — {path, format, retention_days, in_git}
+#   или {note} для датчиков без отдельного сырья (derived/таймирование/обход ФС).
+#   path может быть glob; retention_days: null = бессрочно; in_git: false —
+#   тяжёлое сырьё вне git (C-032). Селектор фрагмента задаётся в записи факта
+#   (raw_ref.selector: 'lines A-B' | 'key <dotted>' | пусто = весь файл).
 
 - id: S-001
   name: "исполняемый конфиг модели"
@@ -21,6 +30,8 @@
   freshness_max_h: null
   zone: line-1
   status: active
+  pack: ml
+  raw: {path: net/config.json, format: json, retention_days: null, in_git: true}
 
 - id: S-002
   name: "число параметров модели (всего и активных на токен)"
@@ -32,6 +43,8 @@
   freshness_max_h: null
   zone: line-1
   status: active
+  pack: ml
+  raw: {path: net/config.json, format: json, retention_days: null, in_git: true}
 
 - id: S-003
   name: "байты реплики: параметры и состояние оптимизатора"
@@ -43,6 +56,8 @@
   freshness_max_h: null
   zone: line-2
   status: active
+  pack: ml
+  raw: {note: "чистая арифметика от объявленной конфигурации (S-001/S-002); отдельного сырья нет"}
 
 - id: S-004
   name: "артефакт токенизатора: sha256 и словарь"
@@ -54,6 +69,8 @@
   freshness_max_h: null
   zone: line-2
   status: active
+  pack: ml
+  raw: {path: "/home/roman/gb10-shared/datasets/axiom-pretrain-l3/tokens-v2/tokenizer/tokenizer.model", format: text, retention_days: null, in_git: false}
 
 - id: S-005
   name: "токены корпуса претрейна по шардам"
@@ -65,6 +82,8 @@
   freshness_max_h: null
   zone: line-2
   status: active
+  pack: ml
+  raw: {path: "/home/roman/gb10-shared/datasets/axiom-pretrain-l3/tokens-v2/**/manifest*.json", format: json, retention_days: null, in_git: false}
 
 - id: S-006
   name: "объём снапшота чистого кейса"
@@ -76,6 +95,8 @@
   freshness_max_h: null
   zone: line-2
   status: active
+  pack: ml
+  raw: {note: "обход файловой системы снапшота; отдельного файла сырья нет"}
 
 - id: S-007
   name: "выполнимость задач лесенки: доля сошедшихся"
@@ -87,6 +108,8 @@
   freshness_max_h: null
   zone: line-2
   status: active
+  pack: ml
+  raw: {note: "исполняемая лесенка: сырьё — генератор задач env/ с сидом; отдельного файла нет"}
 
 - id: S-008
   name: "время вердикта arch-ml на CPU"
@@ -98,6 +121,8 @@
   freshness_max_h: null
   zone: line-2
   status: active
+  pack: ml
+  raw: {note: "таймирование прогона стража; сырьё — сам прогон, файла нет"}
 
 - id: S-009
   name: "детерминизм вердикта: совпадение канонизированного JSON"
@@ -109,6 +134,8 @@
   freshness_max_h: null
   zone: line-2
   status: active
+  pack: ml
+  raw: {note: "два прогона стража сравниваются между собой; отдельного файла нет"}
 
 - id: S-010
   name: "доли коммитов по кучкам и коллизии нумерации ADR"
@@ -120,6 +147,8 @@
   freshness_max_h: null
   zone: line-2
   status: active
+  pack: ml
+  raw: {path: ".git", format: text, retention_days: null, in_git: true}
 
 - id: S-011
   name: "объём временных каталогов pytest/воркспейсов"
@@ -131,6 +160,8 @@
   freshness_max_h: null
   zone: line-2
   status: active
+  pack: ml
+  raw: {note: "обход временных каталогов файловой системы; отдельного файла нет"}
 
 - id: S-012
   name: "обёртка метрик претрейна: ток/с, шаг, MFU от объявленного пика"
@@ -142,6 +173,8 @@
   freshness_max_h: null
   zone: line-1
   status: active
+  pack: ml
+  raw: {path: evidence/kda-wyut/metrics.jsonl, format: jsonl, retention_days: null, in_git: true}
 
 - id: S-013
   name: "обёртка peak_rss_mb журнала: память ХОСТ-процесса"
@@ -153,6 +186,8 @@
   freshness_max_h: null
   zone: line-1
   status: active
+  pack: ml
+  raw: {path: "runs/**/*.log", format: text, retention_days: null, in_git: false}
 
 - id: S-014
   name: "обёртка бенчмарков block-merge и KDA WY/UT"
@@ -164,6 +199,8 @@
   freshness_max_h: null
   zone: line-1
   status: active
+  pack: ml
+  raw: {path: "evidence/block-merge-bench-*.json", format: json, retention_days: null, in_git: true}
 
 - id: S-015
   name: "обёртка калибровки Track-2: pass_rate по уровням и дефекты"
@@ -175,6 +212,8 @@
   freshness_max_h: null
   zone: line-2
   status: active
+  pack: ml
+  raw: {path: "evidence/**/calibration*.json", format: json, retention_days: null, in_git: true}
 
 - id: S-016
   name: "обёртка check_eval_leak: пересечение holdout и обучающего"
@@ -186,6 +225,8 @@
   freshness_max_h: null
   zone: line-2
   status: active
+  pack: ml
+  raw: {path: "/home/roman/gb10-shared/datasets/**/eval*/**", format: jsonl, retention_days: null, in_git: false}
 
 - id: S-017
   name: "обёртка check_sft_structure: доли дефектов набора"
@@ -197,6 +238,8 @@
   freshness_max_h: null
   zone: line-2
   status: active
+  pack: ml
+  raw: {path: "/home/roman/gb10-shared/datasets/sft_train_v12.jsonl", format: jsonl, retention_days: null, in_git: false}
 
 - id: S-018
   name: "обёртка check_gb10_single_load: число загрузок модели"
@@ -208,6 +251,8 @@
   freshness_max_h: null
   zone: line-1
   status: active
+  pack: ml
+  raw: {path: "evidence/gb10-single-load-*.txt", format: text, retention_days: null, in_git: true}
 
 - id: S-019
   name: "обёртка A5-drift: побитовая идентичность артефактов"
@@ -219,6 +264,8 @@
   freshness_max_h: null
   zone: line-1
   status: active
+  pack: ml
+  raw: {path: "evidence/a5-drift-report-*.json", format: json, retention_days: null, in_git: true}
 
 - id: S-020
   name: "внешний сэмплер стенда: мощность, частота, температура, утилизация"
@@ -230,6 +277,8 @@
   freshness_max_h: 1
   zone: line-1
   status: pending  # окно GB10 (AD-7): на исполнителе только unverified-записи
+  pack: ml
+  raw: {path: evidence/power-thermal/, format: csv, retention_days: 90, in_git: false}
 
 - id: S-021
   name: "память устройства по процессу (внешний сэмплер)"
@@ -241,6 +290,8 @@
   freshness_max_h: 1
   zone: line-1
   status: pending  # окно GB10 (AD-7): на исполнителе только unverified-записи
+  pack: ml
+  raw: {path: evidence/power-thermal/, format: csv, retention_days: 90, in_git: false}
 
 - id: S-022
   name: "расход аренды по API: spend, ставка, баланс, инстанс"
@@ -252,6 +303,8 @@
   freshness_max_h: 1
   zone: line-1
   status: pending
+  pack: ml
+  raw: {path: evidence/rental/, format: jsonl, retention_days: 180, in_git: false}
 
 - id: S-023
   name: "фазы шага учебного цикла (встраиваемый таймер)"
@@ -263,6 +316,8 @@
   freshness_max_h: null
   zone: line-1
   status: pending
+  pack: ml
+  raw: {note: "встроенный таймер in-process; отдельного сырья нет"}
 
 - id: S-024
   name: "память устройства JAX (peak/in-use)"
@@ -274,6 +329,8 @@
   freshness_max_h: null
   zone: line-1
   status: pending
+  pack: ml
+  raw: {note: "запрос памяти устройства in-process; отдельного сырья нет"}
 
 - id: S-025
   name: "измеренный пик bf16-матмула (микробенч)"
@@ -285,6 +342,8 @@
   freshness_max_h: null
   zone: line-1
   status: active
+  pack: ml
+  raw: {note: "микробенч: измерение на устройстве, отдельного файла нет"}
 
 - id: S-026
   name: "побитовая идентичность коротких прогонов (drift-проба)"
@@ -296,6 +355,8 @@
   freshness_max_h: null
   zone: line-1
   status: active
+  pack: ml
+  raw: {note: "сравнение двух прогонов между собой; отдельного файла нет"}
 
 - id: S-027
   name: "MFU по измеренному пику (производный)"
@@ -307,6 +368,8 @@
   freshness_max_h: null
   zone: line-2
   status: active
+  pack: ml
+  raw: {note: "derived: происхождение даёт inputs (S-012 + S-025)"}
 
 - id: S-028
   name: "ETA прогона для заданной D и машины (производный)"
@@ -318,6 +381,8 @@
   freshness_max_h: null
   zone: line-2
   status: active
+  pack: ml
+  raw: {note: "derived: происхождение даёт inputs (S-002 + S-027)"}
 
 - id: S-029
   name: "реплика помещается в устройство (производный)"
@@ -329,6 +394,8 @@
   freshness_max_h: null
   zone: line-2
   status: active
+  pack: ml
+  raw: {note: "derived: происхождение даёт inputs (S-003 + S-024/S-021)"}
 
 - id: S-030
   name: "публичная карточка HF сходится с фактами (производный)"
@@ -340,3 +407,5 @@
   freshness_max_h: null
   zone: line-2
   status: active
+  pack: ml
+  raw: {note: "derived: сверка карточки HF с фактами; происхождение даёт inputs"}

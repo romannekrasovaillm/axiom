@@ -24,6 +24,7 @@ from .registry import (
     probe_sensor,
     validate_sensors,
 )
+from .subject import REPO_ROOT
 
 
 def _print_row(row: dict) -> None:
@@ -157,13 +158,53 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--out-dir", default=None, help="каталог фактов (evidence/facts)")
     parser.add_argument("--json", dest="json_path", default=None, help="куда записать отчёт")
     parser.add_argument("--selftest", action="store_true", help="синтетический selftest с мутантами")
+    parser.add_argument(
+        "--raw", action="store_true",
+        help="проверка происхождения фактов до сырья (дельта F, ADR-038)",
+    )
+    parser.add_argument(
+        "--selftest-raw", action="store_true",
+        help="selftest происхождения сырья (мутанты: подмена истории, недоступное внешнее)",
+    )
     return parser
+
+
+def _print_raw_row(row: dict) -> None:
+    mark = {"pass": "PASS", "fail": "FAIL", "unverified": "UNVERIFIED"}.get(
+        row["verdict"], row["verdict"].upper()
+    )
+    print(f"  [{row['id']}] {mark}: {row['reason']}")
+
+
+def run_raw(sensors: list[dict], out_dir: Optional[str], *, repo_root=None) -> int:
+    from .raw import probe_raw_all
+
+    rows = probe_raw_all(sensors, out_dir=out_dir, repo_root=repo_root or REPO_ROOT)
+    print(f"Происхождение сырья ({len(rows)}):")
+    for row in rows:
+        _print_raw_row(row)
+    fails = [r for r in rows if r["verdict"] == "fail"]
+    present = [r for r in rows if r["verdict"] == "pass"]
+    unverified = [r for r in rows if r["verdict"] == "unverified"]
+    print(
+        f"\nИтог: сырьё на месте {len(present)}, "
+        f"unverified {len(unverified)}, fail {len(fails)}"
+    )
+    if fails:
+        for row in fails:
+            print(f"[probe --raw] FAIL: {row['reason']}", file=sys.stderr)
+        return 1
+    return 0
 
 
 def main(argv: Optional[list[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     if args.selftest:
         return run_selftest()
+    if args.selftest_raw:
+        from .raw import run_selftest as run_raw_selftest
+
+        return run_raw_selftest()
 
     try:
         sensors = load_sensors(args.registry)
@@ -176,6 +217,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         for err in errors:
             print(f"  - {err}", file=sys.stderr)
         return 1
+
+    if args.raw:
+        return run_raw(sensors, args.out_dir)
 
     if args.sensor:
         wanted = set(args.sensor)

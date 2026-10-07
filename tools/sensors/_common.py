@@ -41,11 +41,13 @@ def emit(
     inputs: Optional[list[dict[str, Any]]] = None,
     status: str = "ok",
     note: str = "",
+    raw_ref: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Пишет одну запись факта (тонкая обёртка над :func:`tools.sensors.fact.write_fact`)."""
     return write_fact(
         sensor, fact, value, unit=unit, quality=quality, method=method,
         subject=subject, out_dir=out_dir, inputs=inputs, status=status, note=note,
+        raw_ref=raw_ref,
     )
 
 

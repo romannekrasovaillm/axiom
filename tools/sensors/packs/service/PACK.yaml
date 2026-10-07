@@ -1,0 +1,8 @@
+pack: service
+title: "Сервисные артефакты: OpenAPI-поверхность и экспозиция Prometheus"
+exporters:
+  - module: openapi_surface
+    class: OpenApiSurfaceExporter
+  - module: prom_scrape
+    class: PromScrapeExporter
+fixtures: fixtures

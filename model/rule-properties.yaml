@@ -1,0 +1,133 @@
+# model/rule-properties.yaml — сопоставление правил-стражей шаблонам (ADR-039, дельта R1).
+#
+# Для каждого правила CONSTRAINTS.yaml с kind ∈ {behavioural, structural} и для
+# тестов-стражей из evidence/incidents.yaml: какой шаблон каталога выражает его
+# свойство и как — full | wrapped | not_applicable.
+#   full           — свойство целиком выражается шаблоном над фактами;
+#   wrapped        — страж читает сырьё, которого датчики пока не покрывают;
+#                    шаблон применяется к обёрнутому факту выхода стража;
+#   not_applicable — свойство вне каталога (кандидат на тринадцатый шаблон),
+#                    reason обязателен.
+# Проверка: tools/check_claims.py --verify-properties. Команды правил в
+# CONSTRAINTS.yaml НЕ переключаются: переключение — решение владельца (R3).
+# Теневой прогон full-стражей — tools/properties/shadow.py (S-038).
+
+- rule: C-014
+  property: null
+  migration: not_applicable
+  reason: "file_exists (наличие документа ADR) — не поведенческое свойство; файловое существование вне каталога"
+
+- rule: C-032
+  property: safety
+  params: {forbidden: {fact: S-033.gate_preflight, op: "==", value: null}}
+  migration: wrapped
+  reason: "страж обходит файловую систему (симлинки против копий весов); шаблон safety применим к обёрнутому факту обхода, датчик его пока не публикует"
+
+- rule: C-033
+  property: bounds
+  params: {fact: S-006.snapshot_bytes, max: 536870912}
+  migration: wrapped
+  reason: "кап размера файлов (>500 МБ запрещены); предел — константа правила, факт обхода ФС датчик не публикует"
+
+- rule: C-034
+  property: null
+  migration: not_applicable
+  reason: "file_exists (наличие документа ADR-009) — не поведенческое свойство"
+
+- rule: C-035
+  property: null
+  migration: not_applicable
+  reason: "дельта не активирована (ADR-009 pending); потребует declared_equals_actual над будущим фактом config↔code"
+
+- rule: C-036
+  property: null
+  migration: not_applicable
+  reason: "мета-правило над конфигурацией правил (kind/evidence у severity high|critical), а не над фактом системы"
+
+- rule: C-037
+  property: identity
+  params: {artifact: {fact: S-033.gate_preflight}, declared: {file: CONSTRAINTS.yaml, key: constraints}}
+  migration: wrapped
+  reason: "identity двух ruleset-файлов (рабочий ↔ пакетный) по sha256; шаблон применим к обёрнутому факту пары хешей, датчик пары не публикует"
+
+- rule: C-038
+  property: declared_equals_actual
+  params: {declared: {file: evidence/a4-skeleton-run-manifest.json, key: pipeline_complete}, actual: {fact: S-033.gate_preflight}}
+  migration: wrapped
+  reason: "манифест A4: намерение — declared_equals_actual/identity над полями манифеста; факт манифеста датчиком пока не публикуется"
+
+- rule: C-039
+  property: safety
+  params: {forbidden: {fact: S-034.fail_open, op: "==", value: true}}
+  migration: wrapped
+  reason: "запрещённый импорт в контуре награды — свойство import-замыкания; шаблон safety применим к обёрнутому факту замыкания, датчик не публикует"
+
+- rule: C-040
+  property: safety
+  params: {forbidden: {fact: S-018.model_loads_count, op: ">", value: 1}}
+  migration: wrapped
+  reason: "одна модельная нагрузка за раз; страж читает реестр локов ~/gb10-shared/.locks вне песочницы, теневой прогон невозможен без стенда (AD-7) — переключение после сверки факта S-018"
+
+- rule: C-041
+  property: bounds
+  params: {fact: S-022.spend_usd, max: null}
+  migration: wrapped
+  reason: "предел лимита — поле сметы evidence/budget/<run>.json; шаблон bounds применим к обёрнутому факту пары (расход, лимит), датчик пары не публикует"
+
+- rule: C-042
+  property: null
+  migration: not_applicable
+  reason: "runtime-конфигурация JAX (бэкенд/точность/детерминизм), а не значение факта; кандидат safety над будущим фактом конфигурации"
+
+- rule: C-043
+  property: safety
+  params: {forbidden: {fact: S-016.overlap_count, op: "!=", value: 0}}
+  migration: wrapped
+  reason: "чистота eval-набора — нулевое пересечение; страж --selftest не зависит от факта S-016, шаблон safety применим к обёрнутому факту пересечения"
+
+- rule: C-044
+  property: safety
+  params: {forbidden: {fact: S-017.sft_defect_shares, op: "==", value: null}}
+  migration: wrapped
+  reason: "структурные дефекты SFT (доли по классам) — dict-факт; шаблон safety применим к производной «есть дефект», датчик её не публикует"
+
+- rule: C-045
+  property: monotonic_trend
+  params: {series: {fact: S-036.claim_verdict_history}, direction: up}
+  migration: wrapped
+  reason: "здоровье ряда награды RL (вырождение/энтропия); ряд публикуется прогоном RL, шаблон применим к обёрнутому ряду"
+
+- rule: C-046
+  property: bounds
+  params: {fact: S-012.tok_s_median_window, min: 800, window: {stat: median, n: 50}, tolerance_source: {decision: "ADR-032"}}
+  migration: full
+  probe: "python3 tools/check_performance_roofline.py --run kda-wyut-delta --metrics evidence/kda-wyut/metrics.jsonl --pins evidence/kpi-pins.json"
+  reason: null
+
+- rule: C-047
+  property: declared_equals_actual
+  params: {declared: {file: net/config.json, key: num_kda_layers}, actual: {fact: S-001.num_kda_layers}}
+  migration: full
+  reason: null
+
+- rule: C-048
+  property: safety
+  params: {forbidden: {fact: S-022.spend_usd, op: ">", value: null}}
+  migration: wrapped
+  reason: "блокировка аренды при unmet KPI — свойство «одобренная смета при unmet»; шаблон safety применим к обёрнутому факту сметы, страж читает сырьё evidence/budget"
+
+- rule: C-049
+  property: declared_equals_actual
+  params: {declared: {file: net/config.json, key: num_kda_layers}, actual: {fact: S-001.num_kda_layers}}
+  migration: wrapped
+  reason: "правило покрывает N config-привязок; шаблон declared_equals_actual применим к каждой, но обёрнутый факт «все привязки сошлись» датчик не публикует"
+
+- rule: C-050
+  property: null
+  migration: not_applicable
+  reason: "мета-правило над вердиктами утверждений (ни одного fail), а не свойство системы"
+
+- rule: C-051
+  property: null
+  migration: not_applicable
+  reason: "согласованность реестров слоя — мета-свойство конфигурации, а не факт системы"

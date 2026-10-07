@@ -33,6 +33,10 @@ class MiniYamlError(ValueError):
 
 def load(text: str) -> Any:
     """Разбирает документ. Пустой текст → ``None``."""
+    stripped = text.strip()
+    if stripped[:1] in ("[", "{"):
+        # Верхнеуровневый flow (в частном случае — JSON, который есть подмножество YAML).
+        return _parse_scalar(stripped, 0)
     lines = _preprocess(text)
     if not lines:
         return None

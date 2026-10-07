@@ -270,7 +270,13 @@ def read_latest(
         if isinstance(subject_filter, (list, tuple)):
             if subject is None:
                 return True
-            return all(rec_subject.get(k) == (subject or {}).get(k) for k in subject_filter)
+            for key in subject_filter:
+                ref_value = (subject or {}).get(key)
+                if ref_value is None:
+                    continue  # неизвестный конец фильтра не объявляем несовпадением
+                if rec_subject.get(key) != ref_value:
+                    return False
+            return True
         return True
 
     for record in reversed(records):

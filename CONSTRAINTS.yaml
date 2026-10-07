@@ -546,3 +546,15 @@ constraints:
     evidence: "tools/check_claims.py --verify-layer → покрытие model/rule-lineage.yaml по всем 30 documentary-правилам (successor существует и не documentary; none/pending с причиной), stake money|irreversible|public с датчиком или pending, решения model/claims-triage.yaml по кандидатам --scan-adr, состав model/opening-gates.yaml (fail-open страж только с require_verified), уровень end_to_end у утверждений гейтов и высоких правил (кроме config_binding), наличие e2e_pair у компонентных ускорений/сжатия, окна/tolerance/tolerance_source у рядовых предикатов. Правило проверяет согласованность реестров, а не поведение системы; реестры гейтов, сырья и истории не нужны в песочнице RL, а атомы порчи их не касаются, поэтому правило инфраструктурное (EXCLUDED_INFRA_RULES)"
     adr: ADR-038
     owner: архитектор
+
+  - id: C-052
+    name: "Проверки проверены: утверждения через шаблоны каталога валидны, гейтовые утверждения убивают все неэквивалентные мутанты, стражи сопоставлены шаблонам, генераторы не в пути вердикта (ADR-039)"
+    type: command_succeeds
+    command: 'python3 tools/check_claims.py --verify-properties'
+    timeout_secs: 60
+    severity: high
+    scope: case
+    kind: structural
+    evidence: "tools/check_claims.py --verify-properties → params каждого утверждения с property проходят param_schema шаблона (tools/properties/**), уровни фактов допустимы для шаблона, мета-правило M4 (утверждение из requires гейта или правила severity>=high обязано иметь mutation_score=1.0 — tools/properties/mutate.py), каждое behavioural/structural правило сопоставлено в model/rule-properties.yaml (full|wrapped|not_applicable с reason), реестр model/candidates.yaml валиден (rejected/deferred с reason, accepted с ref на CL), тест графа импортов G5 (proposer вне пути вердикта, по образцу C-039). Реестры кандидатов, мутаций и матрицы возбуждений не нужны в песочнице RL, поэтому правило инфраструктурное (EXCLUDED_INFRA_RULES)"
+    adr: ADR-039
+    owner: архитектор

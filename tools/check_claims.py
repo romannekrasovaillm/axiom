@@ -907,6 +907,171 @@ def verify_layer(root: Path) -> list[str]:
     return errors
 
 
+# ── проверка самих проверок (дельта N/X, ADR-039) ───────────────────────────
+
+RULE_PROPERTIES_FILE = "model/rule-properties.yaml"
+CANDIDATES_FILE = "model/candidates.yaml"
+_MIGRATIONS = ("full", "wrapped", "not_applicable")
+
+
+def load_rule_properties(root: Path) -> Optional[list[dict[str, Any]]]:
+    return _load_registry(root, RULE_PROPERTIES_FILE)
+
+
+def _proposer_in_verdict_path(root: Path) -> bool:
+    """Импорт-замыкание пути вердикта: входит ли в него ``proposer`` (G5)."""
+    import ast
+
+    roots = [
+        "tools/check_claims.py", "tools/preflight.py", "tools/properties/base.py",
+        "env/verifier.py",
+    ]
+    prop_dir = root / "tools" / "properties"
+    if prop_dir.is_dir():
+        for path in sorted(prop_dir.glob("*.py")):
+            if path.name not in ("proposer.py", "candidates.py", "generate_declared.py",
+                                 "generate_observed.py", "generate_telemetry.py",
+                                 "generate_incidents.py", "generate_candidates.py",
+                                 "mutate.py", "chaos.py", "shadow.py", "selftest.py"):
+                roots.append(path.relative_to(root).as_posix())
+
+    def names(path: Path) -> set[str]:
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except (OSError, SyntaxError):
+            return set()
+        out: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                out.update(a.name for a in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                out.add(node.module)
+        return out
+
+    def resolve(module: str) -> Optional[Path]:
+        rel = module.replace(".", "/")
+        for cand in (root / rel, root / (rel + ".py"), root / rel / "__init__.py"):
+            if cand.is_file():
+                return cand
+        return None
+
+    seen: set[str] = set()
+    queue = list(roots)
+    while queue:
+        rel = queue.pop()
+        if rel in seen or not (root / rel).is_file():
+            continue
+        seen.add(rel)
+        for module in names(root / rel):
+            target = resolve(module)
+            if target is not None:
+                queue.append(target.relative_to(root).as_posix())
+    return "tools/properties/proposer.py" in seen
+
+
+def _verify_candidates(root: Path, claims_ids: set[str]) -> list[str]:
+    errors: list[str] = []
+    from tools.properties.base import property_fingerprint
+    from tools.properties.candidates import STATUSES, load_candidates
+
+    seen: set[str] = set()
+    for cand in load_candidates(root):
+        fp = str(cand.get("fp", ""))
+        if not fp:
+            errors.append("candidates: запись без fp")
+            continue
+        if fp in seen:
+            errors.append(f"candidates: дубль fp {fp[:12]}…")
+        seen.add(fp)
+        prop = cand.get("property")
+        try:
+            expected = property_fingerprint(str(prop), cand.get("params") or {})
+        except Exception:  # noqa: BLE001
+            expected = None
+        if expected is not None and fp != expected:
+            errors.append(f"candidates: fp {fp[:12]}… не совпадает с отпечатком params")
+        status = cand.get("status")
+        if status not in STATUSES:
+            errors.append(f"candidates {fp[:12]}…: status={status!r} вне {STATUSES}")
+        if status in ("rejected", "deferred") and not str(cand.get("reason") or "").strip():
+            errors.append(f"candidates {fp[:12]}…: {status} требует reason")
+        if status == "accepted":
+            ref = cand.get("ref")
+            if not ref or str(ref) not in claims_ids:
+                errors.append(f"candidates {fp[:12]}…: accepted без ref на существующее утверждение")
+    return errors
+
+
+def verify_properties(root: Path) -> list[str]:
+    """Проверки самих проверок (ADR-039, C-052)."""
+    errors: list[str] = []
+    from tools.properties import all_properties, get_property, validate_params
+
+    all_properties()  # прогрев реестра шаблонов
+    levels = _sensor_levels(root)
+
+    for claim in load_claims(root):
+        name = claim.get("property")
+        if not name:
+            continue
+        cid = str(claim.get("id"))
+        template = get_property(str(name))
+        if template is None:
+            errors.append(f"{cid}: шаблон {name!r} не найден в каталоге")
+            continue
+        for err in validate_params(template.param_schema, claim.get("params") or {}):
+            errors.append(f"{cid}: {err}")
+        level = levels.get((claim.get("sensor"), claim.get("fact")))
+        if level is not None and level not in template.levels:
+            errors.append(
+                f"{cid}: уровень факта {level!r} недопустим для шаблона {name} "
+                f"(допустимы {sorted(template.levels)})"
+            )
+
+    # мета-правило M4
+    try:
+        from tools.properties.mutate import gate_violations
+
+        errors.extend(gate_violations(root))
+    except Exception as exc:  # noqa: BLE001 — отказ расчёта = нарушение, не pass
+        errors.append(f"M4: мутационный счёт не посчитан: {exc}")
+
+    # покрытие behavioural/structural правил
+    rules = load_rule_properties(root)
+    if rules is None:
+        errors.append(f"{RULE_PROPERTIES_FILE}: реестр сопоставления отсутствует")
+    else:
+        seen: set[str] = set()
+        for entry in rules:
+            rid = str(entry.get("rule", "?"))
+            if rid in seen:
+                errors.append(f"{rid}: дубль в {RULE_PROPERTIES_FILE}")
+            seen.add(rid)
+            migration = entry.get("migration")
+            if migration not in _MIGRATIONS:
+                errors.append(f"{rid}: migration={migration!r} вне {_MIGRATIONS}")
+            if migration in ("full", "wrapped"):
+                if not entry.get("property"):
+                    errors.append(f"{rid}: migration {migration} без property")
+                elif get_property(str(entry["property"])) is None:
+                    errors.append(f"{rid}: шаблон {entry['property']!r} не найден")
+            if migration == "not_applicable" and not str(entry.get("reason") or "").strip():
+                errors.append(f"{rid}: not_applicable требует reason")
+        kinds = rule_ids_and_kinds(root)
+        for rid, kind in kinds.items():
+            if kind in ("behavioural", "structural") and rid not in seen:
+                errors.append(f"{rid}: {kind}-правило не сопоставлено в {RULE_PROPERTIES_FILE}")
+
+    # реестр кандидатов
+    claims_ids = {str(c.get("id")) for c in load_claims(root)}
+    errors.extend(_verify_candidates(root, claims_ids))
+
+    # граф импортов G5
+    if _proposer_in_verdict_path(root):
+        errors.append("G5: proposer входит в путь вердикта (граф импортов)")
+    return errors
+
+
 # ── очередь работ (дельта J3) ───────────────────────────────────────────────
 
 
@@ -1097,6 +1262,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--report", action="store_true")
     parser.add_argument("--verify-layer", action="store_true",
                         help="согласованность реестров слоя (ADR-038, дельта I/J)")
+    parser.add_argument("--verify-properties", dest="verify_properties", action="store_true",
+                        help="проверки самих проверок: шаблоны, мутации, сопоставление (ADR-039, C-052)")
     parser.add_argument("--queue", action="store_true",
                         help="очередь работ: pending и measurable_pending по ставке (дельта J3)")
     parser.add_argument("--selftest", action="store_true")
@@ -1113,6 +1280,17 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.selftest:
         return run_selftest()
     try:
+        if args.verify_properties:
+            errors = verify_properties(root)
+            for err in errors:
+                print(f"[claims] PROPERTIES-FAIL: {err}")
+            print(f"verify-properties: {'OK' if not errors else f'{len(errors)} нарушений'}")
+            if args.json_path:
+                Path(args.json_path).write_text(
+                    json.dumps({"mode": "verify-properties", "errors": errors}, ensure_ascii=False, indent=1) + "\n",
+                    encoding="utf-8",
+                )
+            return 1 if errors else 0
         if args.verify_layer:
             errors = verify_layer(root)
             for err in errors:

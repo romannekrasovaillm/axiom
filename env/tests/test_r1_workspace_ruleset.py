@@ -74,9 +74,10 @@ def test_excluded_infra_rules_detected_dynamically(case_dir):
     """
     detected = detect_excluded_infra_rules(case_dir / "CONSTRAINTS.yaml")
     assert detected == EXCLUDED_INFRA_RULES
-    assert len(detected) == 19
+    assert len(detected) == 20
     assert "C-050" in EXCLUDED_INFRA_RULES
     assert "C-051" in EXCLUDED_INFRA_RULES
+    assert "C-052" in EXCLUDED_INFRA_RULES
     assert "C-049" not in EXCLUDED_INFRA_RULES
 
 

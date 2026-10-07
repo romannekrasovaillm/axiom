@@ -159,7 +159,7 @@
   sensor: S-006
   fact: snapshot_bytes
   predicate: {op: "<=", value: 67108864, unit: bytes, tolerance: null}
-  subject_match: [git_sha]
+  subject_match: []
   rule: null
   binding: null
 
@@ -170,7 +170,7 @@
   sensor: S-009
   fact: verdict_identical
   predicate: {op: "==", value: true, unit: bool, tolerance: null}
-  subject_match: [git_sha]
+  subject_match: []
   rule: null
   binding: null
 

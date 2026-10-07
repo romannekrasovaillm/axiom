@@ -1,0 +1,342 @@
+# model/sensors.yaml — реестр датчиков поведенческого слоя Spine (ADR-036).
+#
+# Датчик измеряет и пишет запись факта (evidence/facts/<S-id>.jsonl); вердикт
+# выносит предикат утверждения (model/claims.yaml, tools/check_claims.py).
+# Проверка исполнения реестра: python3 -m tools.sensors.probe
+#
+# Статусы:
+#   active  — датчик реализован; probe требует файл фактов по контракту;
+#   pending — датчик объявлен, но не исполнялся (нет источника/окна/линии);
+#             probe даёт unverified, а не подстановку (C-007).
+# freshness_max_h: null = факт привязан к пину предмета (git sha/хеш), а не ко
+#   времени; число = часы, после которых запись считается устаревшей.
+
+- id: S-001
+  name: "исполняемый конфиг модели"
+  facts: [num_kda_layers, num_mla_layers, moe_top_k, moe_routed, moe_shared, vocab_size, kda_impl_selected]
+  context: "cpu | gpu-window | stand-sampler | rental | live-probe | repo"
+  producer: "python3 -m tools.sensors.runtime_config"
+  output: evidence/facts/S-001.jsonl
+  quality: measured
+  freshness_max_h: null
+  zone: line-1
+  status: pending
+
+- id: S-002
+  name: "число параметров модели (всего и активных на токен)"
+  facts: [params_total, params_active]
+  context: "cpu | gpu-window | rental"
+  producer: "python3 -m tools.sensors.param_count"
+  output: evidence/facts/S-002.jsonl
+  quality: measured
+  freshness_max_h: null
+  zone: line-1
+  status: pending
+
+- id: S-003
+  name: "байты реплики: параметры и состояние оптимизатора"
+  facts: [replica_bytes_params, replica_bytes_opt_state, replica_bytes_total]
+  context: "cpu"
+  producer: "python3 -m tools.sensors.replica_bytes"
+  output: evidence/facts/S-003.jsonl
+  quality: measured
+  freshness_max_h: null
+  zone: line-2
+  status: pending
+
+- id: S-004
+  name: "артефакт токенизатора: sha256 и словарь"
+  facts: [tokenizer_sha256, tokenizer_vocab_size, matches_config_hash]
+  context: "cpu | repo"
+  producer: "python3 -m tools.sensors.tokenizer_artifact"
+  output: evidence/facts/S-004.jsonl
+  quality: measured
+  freshness_max_h: null
+  zone: line-2
+  status: pending
+
+- id: S-005
+  name: "токены корпуса претрейна по шардам"
+  facts: [corpus_tokens_total, corpus_tokens_w, corpus_tokens_c, corpus_tokens_q, bins_spotcheck_ok]
+  context: "cpu | repo"
+  producer: "python3 -m tools.sensors.corpus_tokens"
+  output: evidence/facts/S-005.jsonl
+  quality: measured
+  freshness_max_h: null
+  zone: line-2
+  status: pending
+
+- id: S-006
+  name: "объём снапшота чистого кейса"
+  facts: [snapshot_bytes]
+  context: "cpu | repo"
+  producer: "python3 -m tools.sensors.snapshot_size"
+  output: evidence/facts/S-006.jsonl
+  quality: measured
+  freshness_max_h: null
+  zone: line-2
+  status: pending
+
+- id: S-007
+  name: "выполнимость задач лесенки: доля сошедшихся"
+  facts: [feasibility_rate, n_tasks, infeasible_tasks]
+  context: "cpu"
+  producer: "python3 -m tools.sensors.task_feasibility"
+  output: evidence/facts/S-007.jsonl
+  quality: measured
+  freshness_max_h: null
+  zone: line-2
+  status: pending
+
+- id: S-008
+  name: "время вердикта arch-ml на CPU"
+  facts: [verdict_seconds_p50, verdict_seconds_p90]
+  context: "cpu"
+  producer: "python3 -m tools.sensors.verifier_latency"
+  output: evidence/facts/S-008.jsonl
+  quality: measured
+  freshness_max_h: null
+  zone: line-2
+  status: pending
+
+- id: S-009
+  name: "детерминизм вердикта: совпадение канонизированного JSON"
+  facts: [verdict_identical]
+  context: "cpu"
+  producer: "python3 -m tools.sensors.verifier_determinism"
+  output: evidence/facts/S-009.jsonl
+  quality: measured
+  freshness_max_h: null
+  zone: line-2
+  status: pending
+
+- id: S-010
+  name: "доли коммитов по кучкам и коллизии нумерации ADR"
+  facts: [docs_share, behaviour_share, work_share, adr_numbering_collisions, collision_fix_commits]
+  context: "repo"
+  producer: "python3 -m tools.sensors.process_piles"
+  output: evidence/facts/S-010.jsonl
+  quality: measured
+  freshness_max_h: null
+  zone: line-2
+  status: pending
+
+- id: S-011
+  name: "объём временных каталогов pytest/воркспейсов"
+  facts: [pytest_tmp_bytes, env_workspace_bytes, staging_bytes]
+  context: "cpu | repo"
+  producer: "python3 -m tools.sensors.disk_usage"
+  output: evidence/facts/S-011.jsonl
+  quality: measured
+  freshness_max_h: null
+  zone: line-2
+  status: pending
+
+- id: S-012
+  name: "обёртка метрик претрейна: ток/с, шаг, MFU от объявленного пика"
+  facts: [tok_s_median_window, step_seconds_median, mfu_declared_peak, loss_median_window, loss_slope_window]
+  context: "repo | rental | gpu-window"
+  producer: "python3 -m tools.sensors.wrap_pretrain_metrics"
+  output: evidence/facts/S-012.jsonl
+  quality: wrapped
+  freshness_max_h: null
+  zone: line-1
+  status: pending
+
+- id: S-013
+  name: "обёртка peak_rss_mb журнала: память ХОСТ-процесса"
+  facts: [host_rss_peak_mb]
+  context: "repo | rental | gpu-window"
+  producer: "python3 -m tools.sensors.wrap_rss"
+  output: evidence/facts/S-013.jsonl
+  quality: wrapped
+  freshness_max_h: null
+  zone: line-1
+  status: pending
+
+- id: S-014
+  name: "обёртка бенчмарков block-merge и KDA WY/UT"
+  facts: [block_merge_cost_ratio, block_merge_recall, kda_component_speedup, kda_component_mem_ratio]
+  context: "repo"
+  producer: "python3 -m tools.sensors.wrap_bench"
+  output: evidence/facts/S-014.jsonl
+  quality: wrapped
+  freshness_max_h: null
+  zone: line-1
+  status: pending
+
+- id: S-015
+  name: "обёртка калибровки Track-2: pass_rate по уровням и дефекты"
+  facts: [pass_rate, model_checkpoint_sha256, defects]
+  context: "repo"
+  producer: "python3 -m tools.sensors.wrap_calibration"
+  output: evidence/facts/S-015.jsonl
+  quality: wrapped
+  freshness_max_h: null
+  zone: line-2
+  status: pending
+
+- id: S-016
+  name: "обёртка check_eval_leak: пересечение holdout и обучающего"
+  facts: [overlap_count, holdout_sha256]
+  context: "repo"
+  producer: "python3 -m tools.sensors.wrap_eval_leak"
+  output: evidence/facts/S-016.jsonl
+  quality: wrapped
+  freshness_max_h: null
+  zone: line-2
+  status: pending
+
+- id: S-017
+  name: "обёртка check_sft_structure: доли дефектов набора"
+  facts: [sft_defect_shares, dataset_sha256]
+  context: "repo"
+  producer: "python3 -m tools.sensors.wrap_sft_structure"
+  output: evidence/facts/S-017.jsonl
+  quality: wrapped
+  freshness_max_h: null
+  zone: line-2
+  status: pending
+
+- id: S-018
+  name: "обёртка check_gb10_single_load: число загрузок модели"
+  facts: [model_loads_count, verdict_raw]
+  context: "repo | cpu"
+  producer: "python3 -m tools.sensors.wrap_gb10_load"
+  output: evidence/facts/S-018.jsonl
+  quality: wrapped
+  freshness_max_h: null
+  zone: line-1
+  status: pending
+
+- id: S-019
+  name: "обёртка A5-drift: побитовая идентичность артефактов"
+  facts: [bitwise_identical]
+  context: "repo"
+  producer: "python3 -m tools.sensors.wrap_drift"
+  output: evidence/facts/S-019.jsonl
+  quality: wrapped
+  freshness_max_h: null
+  zone: line-1
+  status: pending
+
+- id: S-020
+  name: "внешний сэмплер стенда: мощность, частота, температура, утилизация"
+  facts: [power_draw_w, sm_clock_mhz, temperature_c, sm_util_pct]
+  context: "gpu-window | stand-sampler"
+  producer: "python3 -m tools.sensors.power_thermal"
+  output: evidence/facts/S-020.jsonl
+  quality: measured
+  freshness_max_h: 1
+  zone: line-1
+  status: pending
+
+- id: S-021
+  name: "память устройства по процессу (внешний сэмплер)"
+  facts: [device_mem_used_mb]
+  context: "gpu-window | stand-sampler"
+  producer: "python3 -m tools.sensors.device_memory_external"
+  output: evidence/facts/S-021.jsonl
+  quality: measured
+  freshness_max_h: 1
+  zone: line-1
+  status: pending
+
+- id: S-022
+  name: "расход аренды по API: spend, ставка, баланс, инстанс"
+  facts: [spend_usd, rate_usd_h, balance_usd, instance_id]
+  context: "rental"
+  producer: "tools/vast_watchdog.py (write_fact параллельно логу)"
+  output: evidence/facts/S-022.jsonl
+  quality: measured
+  freshness_max_h: 1
+  zone: line-1
+  status: pending
+
+- id: S-023
+  name: "фазы шага учебного цикла (встраиваемый таймер)"
+  facts: [step_phase_seconds, timer_overhead_pct]
+  context: "live-probe | gpu-window"
+  producer: "tools/sensors/inproc.py::PhaseTimer"
+  output: evidence/facts/S-023.jsonl
+  quality: measured
+  freshness_max_h: null
+  zone: line-1
+  status: pending
+
+- id: S-024
+  name: "память устройства JAX (peak/in-use)"
+  facts: [device_peak_bytes, device_bytes_in_use]
+  context: "live-probe | gpu-window"
+  producer: "tools/sensors/inproc.py::DeviceMemory"
+  output: evidence/facts/S-024.jsonl
+  quality: measured
+  freshness_max_h: null
+  zone: line-1
+  status: pending
+
+- id: S-025
+  name: "измеренный пик bf16-матмула (микробенч)"
+  facts: [measured_peak_tflops_bf16]
+  context: "gpu-window | rental"
+  producer: "python3 -m tools.sensors.peak_tflops_bench"
+  output: evidence/facts/S-025.jsonl
+  quality: measured
+  freshness_max_h: null
+  zone: line-1
+  status: pending
+
+- id: S-026
+  name: "побитовая идентичность коротких прогонов (drift-проба)"
+  facts: [short_run_bitwise_identical]
+  context: "gpu-window"
+  producer: "python3 -m tools.sensors.drift_probe"
+  output: evidence/facts/S-026.jsonl
+  quality: measured
+  freshness_max_h: null
+  zone: line-1
+  status: pending
+
+- id: S-027
+  name: "MFU по измеренному пику (производный)"
+  facts: [mfu_measured]
+  context: "cpu | repo"
+  producer: "python3 -m tools.sensors.derived_mfu"
+  output: evidence/facts/S-027.jsonl
+  quality: derived
+  freshness_max_h: null
+  zone: line-2
+  status: pending
+
+- id: S-028
+  name: "ETA прогона для заданной D и машины (производный)"
+  facts: [eta_hours]
+  context: "cpu | repo"
+  producer: "python3 -m tools.sensors.derived_eta"
+  output: evidence/facts/S-028.jsonl
+  quality: derived
+  freshness_max_h: null
+  zone: line-2
+  status: pending
+
+- id: S-029
+  name: "реплика помещается в устройство (производный)"
+  facts: [replica_fits_device]
+  context: "cpu | repo"
+  producer: "python3 -m tools.sensors.derived_fit"
+  output: evidence/facts/S-029.jsonl
+  quality: derived
+  freshness_max_h: null
+  zone: line-2
+  status: pending
+
+- id: S-030
+  name: "публичная карточка HF сходится с фактами (производный)"
+  facts: [public_card_matches_facts, public_card_mismatches]
+  context: "repo"
+  producer: "python3 -m tools.sensors.public_claims"
+  output: evidence/facts/S-030.jsonl
+  quality: derived
+  freshness_max_h: null
+  zone: line-2
+  status: pending

@@ -1958,6 +1958,205 @@ def mfu(flops: float, *, seconds: float, peak_tflops: float | None) -> float | N
 
 
 # ---------------------------------------------------------------------------
+# 9-бис. Пофазовый профиль шага (opt-in, диагностика)
+# ---------------------------------------------------------------------------
+#
+# Фазы kda/mla/moe/ce fused внутри одного ``jax.jit(jax.value_and_grad(loss_fn))``
+# (см. ``train`` ниже).  Разделение их на отдельные jit меняет граф вычислений, а
+# вместе с ним — числа (loss/grads/tree_hash): это не дефект, а физика JIT.
+# Поэтому профиль **не** режет штатный граф.  Он исполняет ДОПОЛНИТЕЛЬНЫЙ
+# декомпозированный прогон тех же входов отдельными jitted-функциями, меряет
+# каждую ногу host-таймером ``perf_counter`` + ``jax.block_until_ready`` (та же
+# конвенция, что в ``net/tests/cost_method.py``) и выбрасывает результат:
+# тренировка идёт штатным fused-путём, веса не меняются (паритет T-PP-3).
+#
+# Фазы меряются изолированными проходами по своему стеку слоёв — ``sec_kda``
+# (все KDA-слои), ``sec_mla`` (все MLA, с пробросом пула ADR-012), ``sec_moe``
+# (все канальные MLP/MoE), ``sec_ce`` (головы NTP+MTP), ``sec_backopt`` (шаг
+# оптимизатора).  Проходы берут те же входы (батч, параметры), но не
+# интерливаются, как в ``model.forward``: профиль отвечает на вопрос «какой
+# компонент доминирует», а не «сколько стоит шаг по частям», поэтому сумма фаз
+# не равна времени fused-шага и не выдаётся за него (AttnRes-коррекция и
+# остаточная арифметика между фазами в разбиении не участвуют).  Фаза, которую
+# собрать или исполнить не удалось, записывается ``null``: неизмеренное не
+# выдаётся за измеренное (ADR-011).
+
+#: Поля фаз в записи метрик (контракт дельты) — в порядке вывода.
+PHASE_PROFILE_FIELDS = ("sec_kda", "sec_mla", "sec_moe", "sec_ce", "sec_backopt")
+
+
+def _phase_kda_stack(params, cfg, input_ids, chunk_size):
+    """KDA-фаза: проход по всем KDA-слоям на тех же входах (диагностика)."""
+    import jax
+
+    from net import kda as kda_mod
+    from net import model as model_mod
+    from net.norm import rms_norm
+
+    h = params.embedding[input_ids]
+    for index, block in enumerate(params.layers):
+        if model_mod.layer_kind(cfg, index) != "kda":
+            continue
+        attn = jax.vmap(lambda xb: kda_mod.apply_kda(block.attn, cfg, xb, chunk_size))(
+            rms_norm(h, block.norm_attn)
+        )
+        h = h + attn
+    return h
+
+
+def _phase_mla_stack(params, cfg, input_ids):
+    """MLA-фаза: проход по всем MLA-слоям; пул ADR-012 пробрасывается, как в модели.
+
+    Режим слоя читается у ``mla_mod.layer_mode`` по тому же порядковому номеру
+    MLA-слоя, что и ``model._mla_ordinal_at`` (порядковый — со сдвигом на
+    диагностический dense-standard-префикс).
+    """
+    from net import mla as mla_mod
+    from net import model as model_mod
+    from net.norm import rms_norm
+
+    h = params.embedding[input_ids]
+    pool = None
+    prefix = int(cfg.dense_standard_layers)
+    for index, block in enumerate(params.layers):
+        kind = model_mod.layer_kind(cfg, index)
+        if kind == "kda":
+            continue
+        x = rms_norm(h, block.norm_attn)
+        if kind == "dense-standard":
+            # Диагностический блок VERIFICATION-LEG идёт плотным оракулом
+            # безусловно (та же ветка, что в ``model._block_delta``).
+            out = mla_mod._dense_apply(block.attn, cfg, x)
+        else:
+            out, pool = mla_mod.apply_with_pool(
+                block.attn,
+                cfg,
+                x,
+                pool=pool,
+                mode=mla_mod.layer_mode(cfg, (index - prefix) // 4),
+            )
+        h = h + out
+    return h
+
+
+def _phase_moe_stack(params, cfg, input_ids):
+    """MoE-фаза: проход по канальному микшеру всех слоёв (dense MLP и LatentMoE)."""
+    from net import mlp as mlp_mod
+    from net import moe as moe_mod
+    from net.norm import rms_norm
+
+    h = params.embedding[input_ids]
+    for block in params.layers:
+        x = rms_norm(h, block.norm_mlp)
+        if isinstance(block.mlp, moe_mod.LatentMoEParams):
+            h = h + moe_mod.apply(block.mlp, cfg, x)
+        else:
+            h = h + mlp_mod.apply(block.mlp, cfg, x)
+    return h
+
+
+def _phase_ce_head(params, cfg, hidden, input_ids, chunk_size, ce_tokens):
+    """CE-фаза: головы NTP (chunked или наивная) + MTP — та же формула, что в loss."""
+    from net import model as model_mod
+
+    if ce_tokens > 0:
+        ntp = model_mod._chunked_cross_entropy(
+            hidden[:, :-1], input_ids[:, 1:], params.embedding, ce_tokens
+        )
+    else:
+        ntp = model_mod._cross_entropy(
+            hidden[:, :-1] @ params.embedding.T, input_ids[:, 1:]
+        )
+    aux = model_mod.mtp_loss(
+        params, cfg, hidden, input_ids, chunk_size, ce_chunk_tokens=ce_tokens
+    )
+    return ntp + aux
+
+
+class _PhaseProfiler:
+    """Декомпозированный прогон фаз с host-таймерами (только opt-in).
+
+    Строится лишь в профильном режиме: дефолтный путь не платит ни компиляцией,
+    ни временем.  Jitted-функции фаз создаются один раз; первый вызов каждой ноги
+    компилирует граф, поэтому перед первым замером идёт прогревочный прогон, чьё
+    время в замер не попадает (иначе в ``sec_*`` попала бы компиляция, а не
+    стоимость фазы на шаге).  Отказ любой ноги (нет хука, ошибка компиляции) —
+    ``null`` в её поле, а не падение тренировки: профиль диагностический.
+    """
+
+    def __init__(self, cfg, train_config):
+        import jax
+
+        chunk_size = int(train_config.chunk_size)
+        ce_tokens = int(cfg.ce_chunk_tokens)
+        self._warmed = False
+        # ``cfg`` захвачен замыканием (статическая константа графа), а не передан
+        # аргументом jit: конфиг модели — не данные шага.
+        self._fns = {
+            "kda": jax.jit(lambda p, ids: _phase_kda_stack(p, cfg, ids, chunk_size)),
+            "mla": jax.jit(lambda p, ids: _phase_mla_stack(p, cfg, ids)),
+            "moe": jax.jit(lambda p, ids: _phase_moe_stack(p, cfg, ids)),
+            "ce": jax.jit(
+                lambda p, hidden, ids: _phase_ce_head(
+                    p, cfg, hidden, ids, chunk_size, ce_tokens
+                )
+            ),
+        }
+
+    def measure(self, *, params, batch, grads, master, state, lr, step_fn):
+        """Секунды фаз дополнительного прогона; недоступная фаза — ``None``."""
+        if not self._warmed:
+            self._warmed = True
+            self._sweep(
+                params=params, batch=batch, grads=grads, master=master,
+                state=state, lr=lr, step_fn=step_fn, time_it=False,
+            )
+        return self._sweep(
+            params=params, batch=batch, grads=grads, master=master,
+            state=state, lr=lr, step_fn=step_fn, time_it=True,
+        )
+
+    def _sweep(self, *, params, batch, grads, master, state, lr, step_fn, time_it):
+        import jax
+
+        record: dict[str, float | None] = {name: None for name in PHASE_PROFILE_FIELDS}
+
+        def run(thunk):
+            if not time_it:
+                value = thunk()
+                jax.block_until_ready(value)
+                return None, value
+            start = time.perf_counter()
+            value = thunk()
+            jax.block_until_ready(value)
+            return time.perf_counter() - start, value
+
+        def attempt(field, thunk):
+            try:
+                elapsed, value = run(thunk)
+            except Exception:
+                return None
+            if elapsed is not None:
+                record[field] = elapsed
+            return value
+
+        # Скрытое состояние для CE-ноги — выход канального прохода: настоящая
+        # активация той же формы (B, T, hidden), поэтому голова меряется без
+        # второго прохода по бэкбону; её стоимость задаётся формой
+        # (B, T, vocab, ce_chunk_tokens), а не значениями.
+        hidden = None
+        for field, name in (("sec_kda", "kda"), ("sec_mla", "mla"), ("sec_moe", "moe")):
+            value = attempt(field, lambda name=name: self._fns[name](params, batch))
+            if name == "moe" and value is not None:
+                hidden = value
+        if hidden is None:
+            hidden = params.embedding[batch]
+        attempt("sec_ce", lambda: self._fns["ce"](params, hidden, batch))
+        attempt("sec_backopt", lambda: step_fn(master, grads, state, lr))
+        return record
+
+
+# ---------------------------------------------------------------------------
 # 10. Цикл претрейна
 # ---------------------------------------------------------------------------
 
@@ -1995,6 +2194,14 @@ class TrainConfig:
     #: последним ``kpi_window`` шагам (носитель KPI — ``metrics.jsonl``).
     kpi_every: int = 20
     kpi_window: int = 20
+    #: Opt-in пофазовый профиль шага (диагностика узкого места).  ``False`` —
+    #: продакшн-путь: ни jit-функций фаз, ни host-таймеров, ни полей в метриках.
+    #: ``True`` — на каждом kpi-интервальном шаге исполняется **дополнительный**
+    #: декомпозированный прогон тех же входов (см. раздел «9-бис»), его числа
+    #: уезжают в ``metrics.jsonl`` полями ``sec_*``/``phase_profile`` и
+    #: выбрасываются: градиенты и шаг оптимизатора берутся штатным fused-путём,
+    #: поэтому веса и ``tree_hash`` профильного прогона совпадают с дефолтным.
+    phase_profile: bool = False
     #: ``True`` — remat графа: память активаций падает ценой пересчёта.
     grad_checkpointing: bool = False
     #: ``full`` (nothing_saveable) | ``selective`` (dots без batch-осей).
@@ -2082,6 +2289,15 @@ def train(
 
     ``loader`` нужен только для курсора resume: он отдаёт позицию потока данных
     на момент чекпойнта.  Без него чекпойнт восстанавливает веса, но не данные.
+
+    **Профильный режим** (``train_config.phase_profile``, opt-in).  С флагом на
+    каждом kpi-интервальном шаге исполняется ДОПОЛНИТЕЛЬНЫЙ декомпозированный
+    прогон тех же входов (раздел «9-бис»), и его секунды уезжают в метрики полями
+    ``sec_*`` + ``phase_profile: true``.  Числа фаз диагностические: результат
+    декомпозиции выбрасывается, тренировка идёт штатным fused-путём (один
+    ``jax.jit(value_and_grad(loss_fn))``), поэтому веса и ``tree_hash`` не зависят
+    от флага.  Без флага не строится ни одной jit-функции фазы и не заводится ни
+    одного host-таймера — продакшн-ветка байт-в-байт прежняя.
     """
     import jax
     import jax.numpy as jnp
@@ -2179,6 +2395,12 @@ def train(
     params = working_params(master)
     active_params = model.active_param_count(cfg)
     metrics = MetricsWriter(train_config.metrics_path) if train_config.metrics_path else None
+    # Профильный режим (opt-in, ``phase_profile``): точка ветвления.  С флагом
+    # каждый kpi-интервальный шаг исполняет ДОПОЛНИТЕЛЬНО декомпозированный
+    # прогон фаз — числа фаз диагностические, тренировка идёт штатным fused-путём
+    # (раздел «9-бис»).  Без флага ``profiler is None``: ни jit-функций фаз, ни
+    # host-таймеров, ни полей в метриках — продакшн-ветка не тронута.
+    profiler = _PhaseProfiler(cfg, train_config) if train_config.phase_profile else None
     if train_config.ckpt_dir is not None:
         manager = CheckpointManager(train_config.ckpt_dir, keep_last=train_config.keep_last)
 
@@ -2268,6 +2490,23 @@ def train(
         if index == 0:
             first_tick = elapsed
 
+        # Профиль шага: только под флагом и только на kpi-интервале (там же, где
+        # печатается KPI-строка).  Исполняется ПОСЛЕ ``elapsed`` — иначе время
+        # декомпозиции попало бы в ток/с штатного шага и испортило KPI.  Входы —
+        # те же (первый микробатч группы, параметры и градиенты штатного шага);
+        # результат выбрасывается, веса остаются из fused-пути (паритет T-PP-3).
+        phase_record: dict[str, Any] | None = None
+        if profiler is not None and (index + 1) % max(1, int(train_config.kpi_every)) == 0:
+            phase_record = profiler.measure(
+                params=params,
+                batch=group[0],
+                grads=grads,
+                master=master,
+                state=state,
+                lr=lr_at(absolute - 1),
+                step_fn=step_fn,
+            )
+
         losses.append(loss_value)
         lr_history.append(lr_at(absolute - 1))
         step_seconds.append(elapsed)
@@ -2284,28 +2523,32 @@ def train(
             else PHASE_STABLE
         )
         if metrics is not None:
-            metrics.log(
-                {
-                    "step": absolute,
-                    "loss": loss_value,
-                    "lr": lr_history[-1],
-                    "phase": phase,
-                    "tokens": batch_tokens,
-                    "tokens_seen": tokens_seen,
-                    "step_seconds": elapsed,
-                    "tokens_per_sec": batch_tokens / elapsed if elapsed > 0 else None,
-                    "tflops_achieved": tflops_achieved(
-                        step_flops(active_params, batch_tokens), seconds=elapsed
-                    ),
-                    "mfu": mfu(
-                        step_flops(active_params, batch_tokens),
-                        seconds=elapsed,
-                        peak_tflops=train_config.peak_tflops,
-                    ),
-                    "mfu_params_only": True,
-                    "gpu_hours": gpu_hours,
-                }
-            )
+            record: dict[str, Any] = {
+                "step": absolute,
+                "loss": loss_value,
+                "lr": lr_history[-1],
+                "phase": phase,
+                "tokens": batch_tokens,
+                "tokens_seen": tokens_seen,
+                "step_seconds": elapsed,
+                "tokens_per_sec": batch_tokens / elapsed if elapsed > 0 else None,
+                "tflops_achieved": tflops_achieved(
+                    step_flops(active_params, batch_tokens), seconds=elapsed
+                ),
+                "mfu": mfu(
+                    step_flops(active_params, batch_tokens),
+                    seconds=elapsed,
+                    peak_tflops=train_config.peak_tflops,
+                ),
+                "mfu_params_only": True,
+                "gpu_hours": gpu_hours,
+            }
+            # Поля фаз — только на профильных (kpi-интервальных) шагах: дефолтная
+            # запись остаётся ровно прежней.
+            if phase_record is not None:
+                record["phase_profile"] = True
+                record.update(phase_record)
+            metrics.log(record)
         if train_config.log_every and (
             index == 0 or absolute % train_config.log_every == 0
         ):
@@ -2328,6 +2571,15 @@ def train(
                 f"микробатч={micro_batch}, накопление={accum_tokens or 'off'})",
                 flush=True,
             )
+            if phase_record is not None:
+                rendered = ", ".join(
+                    f"{name}={'null' if phase_record[name] is None else format(phase_record[name], '.3f')}"
+                    for name in PHASE_PROFILE_FIELDS
+                )
+                print(
+                    f"[pretrain] фазы, с (декомпозированный прогон, диагностика): {rendered}",
+                    flush=True,
+                )
 
         if train_config.ckpt_dir is not None:
             by_steps = bool(train_config.checkpoint_every) and (

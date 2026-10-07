@@ -401,14 +401,14 @@ constraints:
     kind: behavioural
     evidence: "evidence/a4-skeleton-run-manifest.json"
   - id: C-039
-    name: "AD-2: LLM-судья, LLM-клиенты и внешние API вне контура награды RL (проверка кода среды, не прозы)"
+    name: "AD-2: LLM-судья, LLM-клиенты и внешние API вне контура награды RL (import-замыкание пути награды)"
     type: command_succeeds
     command: 'python3 tools/check_reward_isolation.py'
     timeout_secs: 60
     severity: critical
     scope: case
     kind: behavioural
-    evidence: "tools/check_reward_isolation.py → контур награды: env/ (reward.py, verifier.py, run.py — пакет среды); отсутствие импортов/вызовов судейских модулей, LLM-клиентов и внешних API в пути награды"
+    evidence: "tools/check_reward_isolation.py → контур = import-замыкание от корней REWARD_PATH_ROOTS (env/reward.py, env/verifier.py, env/run.py) транзитивно (включая helpers вне env/); отсутствие импортов/вызовов судейских модулей, LLM-клиентов и внешних API в замыкании; приборы env/ (eval_*, calibrate, main) и clients/ — вне контура (амендмент ADR-033 06.10, E-5.1 84533d4: замыкание 1401→5 файлов)"
   - id: C-040
     name: "Ресурсный инвариант GB10: одна модельная нагрузка за раз (AD-7, поведенческий страж)"
     type: command_succeeds
@@ -485,3 +485,15 @@ constraints:
     adr: ADR-023
     owner: архитектор
 
+
+  - id: C-047
+    name: "Страж согласованности ADR↔конфиг: числа, заявленные в ADR, совпадают с носителем (config/pin) по декларативным картам; selftest с мутантами (дрейф config-стороны, дрейф ADR-стороны, исчезновение паттерна = fail-closed, list-путь); мутатор L2/L3 (numeric_drift/config_drift) строит порчу по тем же картам — один носитель соответствий для стража и генератора задач"
+    type: command_succeeds
+    command: 'python3 tools/check_adr_config_consistency.py --selftest && python3 tools/check_adr_config_consistency.py --quiet && python3 tools/check_adr_config_consistency.py --map tools/adr_config_map_a032.yaml --quiet'
+    timeout_secs: 60
+    severity: high
+    scope: case
+    kind: structural
+    evidence: "tools/check_adr_config_consistency.py: карта 1 — ADR-009↔net/config.json (8 соответствий), карта 2 — ADR-032↔evidence/kpi-pins.json (2 соответствия, list-путь pins.0.x); selftest 5/5; паттерн не найден в ADR → adr-unverifiable (fail-closed); план ENVIRONMENT-V1 §9"
+    adr: ADR-032
+    owner: архитектор

@@ -409,3 +409,29 @@
   status: active
   pack: ml
   raw: {note: "derived: сверка карточки HF с фактами; происхождение даёт inputs"}
+
+- id: S-031
+  name: "покрытие поведенческого слоя: две доли как факты и нерешённые кандидаты"
+  facts: [share_measurable_claims_with_sensor, share_incidents_guarded, untriaged_candidates, measurable_claims_numerator, measurable_claims_denominator, incidents_guarded_numerator, incidents_denominator]
+  context: "repo | cpu"
+  producer: "python3 -m tools.sensors.run_exporter --id S-031"
+  output: evidence/facts/S-031.jsonl
+  quality: derived
+  freshness_max_h: null
+  zone: line-2
+  status: active
+  pack: spine
+  raw: {note: "derived: происхождение даёт inputs (sha256 реестров claims/triage/incidents)"}
+
+- id: S-032
+  name: "понедельный тренд долей кучек (документы/поведение/работа)"
+  facts: [weekly_docs_share, weekly_behaviour_share, weekly_work_share, weeks, n_weeks]
+  context: "repo"
+  producer: "python3 -m tools.sensors.run_exporter --id S-032"
+  output: evidence/facts/S-032.jsonl
+  quality: measured
+  freshness_max_h: null
+  zone: line-2
+  status: active
+  pack: spine
+  raw: {path: ".git", format: text, retention_days: null, in_git: true}

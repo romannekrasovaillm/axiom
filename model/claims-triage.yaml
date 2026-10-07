@@ -1,0 +1,164 @@
+# model/claims-triage.yaml — решения по кандидатам check_claims --scan-adr (ADR-038, дельта H1).
+#
+# Кандидат (дословная строка ADR) получает решение: claim (→ ref на CL-NNN),
+# measurable_pending (измеримо, датчика пока нет → owner, since),
+# not_measurable или not_a_claim (→ reason). Число нерешённых кандидатов —
+# информационный факт (S-031 untriaged_candidates), порога нет.
+
+- file: docs/adr/ADR-001-masshtabnyy-klass-i-os-pobedy-modeli-s-nulya.md
+  anchor: "- «Движущаяся цель»: к моменту результата выйдет K4/GLM-6/Qwen-4. Митигация — победа на оси против воспроизводимого baseline, а не над снапшотом модели."
+  disposition: not_a_claim
+  reason: "проза о митигации движущейся цели — не проверяемое утверждение"
+
+- file: docs/adr/ADR-003-arhitektura-modeli-i-ispolnenie-na-dgx-spark.md
+  anchor: "5. **Деградацию от 4-бит измеряем в среде**, а не принимаем на веру: 4-бит — часть архитектурного решения, значит должно быть проверено как решение."
+  disposition: measurable_pending
+  owner: "line-1"
+  since: "2026-10-07"
+
+- file: docs/adr/ADR-004-konveyer-pretreyna-dannye-arenda-gpu-i-stadiynost.md
+  anchor: "**Reversibility.** Пин в `config.json` — однострочная правка (Two-way). Пакет tokens-v2 — Costly (переупаковка). Нога, начатая на v2, необратимо продолжается на v2 (несовместимость словарей)."
+  disposition: not_a_claim
+  reason: "секция обратимости ADR-004 — навигация, не утверждение о факте"
+
+- file: docs/adr/ADR-005-post-trenirovka-sft-grpo-i-agentnyy-kontur.md
+  anchor: "6. **Этапность**: SFT → короткий RL → замер на стенде → решение о продлении RL. Продолжение обучения без положительной дельты на holdout прекращается (стоп-правило)."
+  disposition: measurable_pending
+  owner: "line-1"
+  since: "2026-10-07"
+
+- file: docs/adr/ADR-006-domen-osi-pobedy-arhitekturnye-geyty-sobstvennogo-kontura.md
+  anchor: "- Гейты тяжелее юнит-тестов (fitness+trace+spine на каждый вердикт) — бюджет `budget_seconds` в task spec должен учитывать это; иначе деградирует доля состоявшихся прогонов."
+  disposition: measurable_pending
+  owner: "line-1"
+  since: "2026-10-07"
+
+- file: docs/adr/ADR-009-import-kv-dlinnokontekstnoy-discipliny-deepseek-v4-1-flash-v-skelet-l3-swa-vetka-v-kazhdom-sloe-sparse-vybor-v-mla-sloyah-fp4-na-latentnom-keshe.md
+  anchor: "- **Рост поверхности тестов:** паритет с плотным путём, эквивалентность при `k ≥ N`, чувствительность FP4, стоимость на 8K против 64K — 4 новых механических критерия (см. ниже)."
+  disposition: measurable_pending
+  owner: "line-2"
+  since: "2026-10-07"
+
+- file: docs/adr/ADR-009-import-kv-dlinnokontekstnoy-discipliny-deepseek-v4-1-flash-v-skelet-l3-swa-vetka-v-kazhdom-sloe-sparse-vybor-v-mla-sloyah-fp4-na-latentnom-keshe.md
+  anchor: "4. **FP4 латента:** дельта экстраполяционного recall против FP8‑бейзлайна ≤ 2 п.п. (порог NFR‑004); при провале FP4‑ветка латента откатывается, весовая ветка QAT сохраняется."
+  disposition: measurable_pending
+  owner: "line-2"
+  since: "2026-10-07"
+
+- file: docs/adr/ADR-010-bekend-i-politika-tochnosti-matmulov-pinnutsya-v-priyomochnyh-testah-seti-verdikt-geyta-ne-zavisit-ot-okruzheniya.md
+  anchor: "2. **Политика точности.** Критерий 2 (паритет рекуррентной и чанкованной форм KDA, порог 1e-4)"
+  disposition: measurable_pending
+  owner: "line-1"
+  since: "2026-10-07"
+
+- file: docs/adr/ADR-010-bekend-i-politika-tochnosti-matmulov-pinnutsya-v-priyomochnyh-testah-seti-verdikt-geyta-ne-zavisit-ot-okruzheniya.md
+  anchor: "1.3e-06, при любом chunk≥2 сразу 3.3e-04 и не растёт ни с размером чанка, ни с длиной —"
+  disposition: not_a_claim
+  reason: "проза о наблюдённом расхождении 1.3e-06 — иллюстрация, не утверждение"
+
+- file: docs/adr/ADR-010-bekend-i-politika-tochnosti-matmulov-pinnutsya-v-priyomochnyh-testah-seti-verdikt-geyta-ne-zavisit-ot-okruzheniya.md
+  anchor: "**алгоритм**, а не политику точности железа. Порог критерия 2 (1e-4) остаётся неизменным."
+  disposition: not_a_claim
+  reason: "оговорка о природе критерия (алгоритм, не политика железа)"
+
+- file: docs/adr/ADR-010-bekend-i-politika-tochnosti-matmulov-pinnutsya-v-priyomochnyh-testah-seti-verdikt-geyta-ne-zavisit-ot-okruzheniya.md
+  anchor: "ожидаемое расхождение против рекуррентного эталона больше и порог 1e-4 к ней не применим. Это"
+  disposition: not_a_claim
+  reason: "оговорка о неприменимости порога к другой форме"
+
+- file: docs/adr/ADR-012-ierarhicheskiy-razrezhennyy-indeksator-obschiy-pul-kandidatov-import-2-3-2-istochnika-v-skelet-l3.md
+  anchor: "5. **Порог критерия 16 не меняется** (8K ≤ 1.05×, 64K строго лучше) и методика замера не меняется."
+  disposition: not_a_claim
+  reason: "методическая оговорка о неизменности порога критерия 16"
+
+- file: docs/adr/ADR-012-ierarhicheskiy-razrezhennyy-indeksator-obschiy-pul-kandidatov-import-2-3-2-istochnika-v-skelet-l3.md
+  anchor: "- При успехе критерий 16 закрывается честно, без сдвига порогов и без сокрытия короткой длины — A4 разблокируется по существу, а не по формулировке."
+  disposition: not_a_claim
+  reason: "проза о честности закрытия критерия"
+
+- file: docs/adr/ADR-012-ierarhicheskiy-razrezhennyy-indeksator-obschiy-pul-kandidatov-import-2-3-2-istochnika-v-skelet-l3.md
+  anchor: "- **Не гарантирует достижения 1.05×.** Пул снимает часть дефицита (`top_k` 50%), но gather+attention (39%) не затрагивает. Если цель не берётся — честный отчёт с профилем, а не правка порога."
+  disposition: not_a_claim
+  reason: "отрицательное последствие: не гарантирует достижения цели"
+
+- file: docs/adr/ADR-013-determinizm-vychisleniy-na-gpu-dlya-a5-xla-gpu-deterministic-ops-v-geytovom-profile.md
+  anchor: "4. A5-приёмка (два прогона → идентичный манифест) выполняется на GPU в гейтовом профиле; повторная проверка стабильности — не менее 3 прогонов подряд без расхождения."
+  disposition: measurable_pending
+  owner: "line-1"
+  since: "2026-10-07"
+
+- file: docs/adr/ADR-013-determinizm-vychisleniy-na-gpu-dlya-a5-xla-gpu-deterministic-ops-v-geytovom-profile.md
+  anchor: "5. Изменение не касается порогов критериев, методики замеров и точности оракулов."
+  disposition: not_a_claim
+  reason: "оговорка об отсутствии изменений порогов и точности"
+
+- file: docs/adr/ADR-015-metodika-zamera-ceny-kriteriy-16-pinning-chastot-cheredovanie-nog-mediana-s-razbrosom-zapret-verdikta-po-shumu.md
+  anchor: "3. **Прогрев обеих ног** до стабилизации частот, затем фиксированное число раундов **≥5**."
+  disposition: measurable_pending
+  owner: "line-1"
+  since: "2026-10-07"
+
+- file: docs/adr/ADR-015-metodika-zamera-ceny-kriteriy-16-pinning-chastot-cheredovanie-nog-mediana-s-razbrosom-zapret-verdikta-po-shumu.md
+  anchor: "- Вердикт критерия 16 перестаёт зависеть от порядка измерения и от состояния карты: то, что мы сегодня приняли за «1.06× при пороге 1.05×», будет либо подтверждено, либо снято как шум."
+  disposition: measurable_pending
+  owner: "line-1"
+  since: "2026-10-07"
+
+- file: docs/adr/ADR-015-metodika-zamera-ceny-kriteriy-16-pinning-chastot-cheredovanie-nog-mediana-s-razbrosom-zapret-verdikta-po-shumu.md
+  anchor: "- **Гейт станет медленнее:** прогрев + ≥5 чередующихся раундов вместо нескольких прогонов. Для 8K/64K это десятки минут вместо единиц."
+  disposition: not_a_claim
+  reason: "отрицательное последствие: гейт станет медленнее"
+
+- file: docs/adr/ADR-016-skoup-geytov-pravila-keysa-ne-primenyayutsya-k-snapshotu-zadachi-workspace.md
+  anchor: "5. **Прогон калибровки пересчитывается** после внедрения: `pass-rate` должен измерять решение задач, а не наличие артефактов кейса. Коридор `[10%, 90%]` при этом не меняется."
+  disposition: measurable_pending
+  owner: "line-2"
+  since: "2026-10-07"
+
+- file: docs/adr/ADR-016-skoup-geytov-pravila-keysa-ne-primenyayutsya-k-snapshotu-zadachi-workspace.md
+  anchor: "- Калибровка (и любой прогон среды) снова измеряет то, что должен: решение задачи, а не наличие артефактов кейса."
+  disposition: not_a_claim
+  reason: "описание эффекта калибровки на прогон"
+
+- file: docs/adr/ADR-017-vychislitelnyy-stek-ostayotsya-jax-rust-tolko-tochechno-cherez-ffi-i-na-inferense.md
+  anchor: "прирост (критерий: p99 шага претрейна, ≥10%)."
+  disposition: measurable_pending
+  owner: "line-1"
+  since: "2026-10-07"
+
+- file: docs/adr/ADR-018-block-wise-token-merging-v-mla-sloyah-skeleta-zaimstvovanie-step-5.md
+  anchor: "CSA2-lite в 6 MLA-слоях (лёгкий индексатор → top_k, цель 512), FP4 латентный KV; ADR-012 —"
+  disposition: not_a_claim
+  reason: "описание конфигурации CSA2-lite, не утверждение с предикатом"
+
+- file: docs/adr/ADR-018-block-wise-token-merging-v-mla-sloyah-skeleta-zaimstvovanie-step-5.md
+  anchor: "recall-in-context не хуже baseline CSA2-lite в пределах порогов критериев и цена 8K/64K"
+  disposition: measurable_pending
+  owner: "line-1"
+  since: "2026-10-07"
+
+- file: docs/adr/ADR-020-domenovyy-dataset-axiom-agentnye-epizody-koncepty-iz-statey.md
+  anchor: "при пороге 0.55, максимум оконного Jaccard 0.3524 — карточки и дистилляты суть разные формы"
+  disposition: measurable_pending
+  owner: "line-2"
+  since: "2026-10-07"
+
+- file: docs/adr/ADR-030-hf-kanal-publikacii-artefaktov-axiom.md
+  anchor: "1. **Публиковать от `Roman12322`** — отклонено: решение владельца — целевой профиль `Rob1234567` (два аккаунта — факт; канал должен быть закреплён за профилем эксперимента)."
+  disposition: not_a_claim
+  reason: "решение о профиле публикации, не измеряемое утверждение"
+
+- file: docs/adr/ADR-031-tretya-vetka-ornith-samoscaffolding.md
+  anchor: "- Три попарных сравнения требуют поправки Бонферрони — порог различимости растёт."
+  disposition: not_a_claim
+  reason: "методическая поправка Бонферрони"
+
+- file: docs/adr/ADR-034-multi-gpu-dp-jax-sharding.md
+  anchor: "- **С ядром WY/UT** (MFU ≥ 10 %, калибр ADR-008: 343 TFLOP/s эффективных на H800 ≈ 35 % MFU): 20B токенов × 6 × 502M = 6,0e19 FLOPs → на 8×H100 при 20–30 % MFU ≈ 7–11 ч счёта, ориентир $300–600;"
+  disposition: claim
+  ref: "CL-005"
+
+- file: docs/adr/ADR-036-model-ladder-bystrogo-prototipirovaniya.md
+  anchor: "Обратимость: высокая — реестр аддитивен, раннеры продолжают работать без него; удаление реестра возвращает статус-кво. Пресеты tiny/small/l3-full не меняются."
+  disposition: not_a_claim
+  reason: "оценка обратимости ADR-036"

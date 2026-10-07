@@ -366,10 +366,64 @@ def config_bindings(root: Path) -> list[dict[str, Any]]:
     return results
 
 
-# ── scan-adr / report ───────────────────────────────────────────────────────
+# ── реестры слоя (дельта H/I/J, ADR-038) ────────────────────────────────────
+
+TRIAGE_FILE = "model/claims-triage.yaml"
+LINEAGE_FILE = "model/rule-lineage.yaml"
+GATES_FILE = "model/opening-gates.yaml"
+
+#: Решения кандидата-триажа (дельта H1).
+DISPOSITIONS: tuple[str, ...] = ("claim", "measurable_pending", "not_measurable", "not_a_claim")
+
+#: Ставки утверждения (дельта J1): цена ошибки.
+STAKES: tuple[str, ...] = ("money", "irreversible", "public", "internal")
+_STAKE_ORDER = {"money": 0, "irreversible": 1, "public": 2, "internal": 3}
+
+
+def _load_registry(root: Path, rel: str) -> Optional[list[dict[str, Any]]]:
+    """Читает список-реестр; отсутствие файла — ``None``, пустой/не список — ошибка."""
+    path = root / rel
+    if not path.is_file():
+        return None
+    data = _load(path)
+    if isinstance(data, dict):
+        for key in (Path(rel).stem, "entries", "items"):
+            candidate = data.get(key)
+            if isinstance(candidate, list):
+                data = candidate
+                break
+    if data is None:
+        return []
+    if not isinstance(data, list):
+        raise ClaimsError(f"{rel}: ожидался список")
+    return [item for item in data if isinstance(item, dict)]
+
+
+def load_triage(root: Path) -> Optional[list[dict[str, Any]]]:
+    return _load_registry(root, TRIAGE_FILE)
+
+
+def load_lineage(root: Path) -> Optional[list[dict[str, Any]]]:
+    return _load_registry(root, LINEAGE_FILE)
+
+
+def adr_candidates(root: Path) -> list[dict[str, Any]]:
+    """Кандидаты-утверждения из ADR: строки с маркерами долга/порога (дельта H1)."""
+    out: list[dict[str, Any]] = []
+    adr_dir = root / "docs" / "adr"
+    if not adr_dir.is_dir():
+        return out
+    for path in sorted(adr_dir.glob("*.md")):
+        rel = path.relative_to(root).as_posix()
+        for line in path.read_text(encoding="utf-8").splitlines():
+            text = line.strip()
+            if text and _ADR_KEYWORDS_RE.search(text) and 20 <= len(text) <= 200:
+                out.append({"file": rel, "anchor": text})
+    return out
 
 
 def scan_adr(root: Path) -> dict[str, Any]:
+    """Кандидаты ADR и доля нерешённых (число — информационный факт, порога нет)."""
     anchors_files = {str(c.get("source", {}).get("file")) for c in load_claims(root)}
     files = []
     for path in sorted((root / "docs" / "adr").glob("*.md")):
@@ -377,7 +431,50 @@ def scan_adr(root: Path) -> dict[str, Any]:
         hits = [ln.strip() for ln in text.splitlines() if _ADR_KEYWORDS_RE.search(ln)]
         rel = path.relative_to(root).as_posix()
         files.append({"file": rel, "hits": len(hits), "covered": rel in anchors_files})
-    return {"files": files}
+    decided: dict[tuple[str, str], Any] = {}
+    for entry in load_triage(root) or []:
+        if entry.get("file") and entry.get("anchor"):
+            decided[(str(entry["file"]), str(entry["anchor"]))] = entry.get("disposition")
+    candidates = [
+        {**cand, "disposition": decided.get((cand["file"], cand["anchor"]))}
+        for cand in adr_candidates(root)
+    ]
+    unresolved = [c for c in candidates if c["disposition"] is None]
+    return {
+        "files": files,
+        "candidates": candidates,
+        "unresolved": unresolved,
+        "unresolved_count": len(unresolved),
+    }
+
+
+def shares(root: Path) -> dict[str, Any]:
+    """Две доли и их числители/знаменатели (дельта H2/H4). Порогов нет."""
+    claims = load_claims(root)
+    triage = load_triage(root) or []
+    with_sensor = sum(1 for c in claims if c.get("sensor"))
+    measurable_pending = sum(1 for t in triage if t.get("disposition") == "measurable_pending")
+    denom_claims = with_sensor + measurable_pending
+    incidents = load_incidents(root)
+    guarded = sum(
+        1 for i in incidents
+        if isinstance(i.get("guard"), dict) and ("rule" in i["guard"] or "test" in i["guard"])
+    )
+    scan = scan_adr(root)
+    return {
+        "share_measurable_claims_with_sensor": {
+            "value": (with_sensor / denom_claims if denom_claims else None),
+            "numerator": with_sensor,
+            "denominator": denom_claims,
+        },
+        "share_incidents_guarded": {
+            "value": (guarded / len(incidents) if incidents else None),
+            "numerator": guarded,
+            "denominator": len(incidents),
+        },
+        "measurable_pending_candidates": measurable_pending,
+        "untriaged_candidates": scan["unresolved_count"],
+    }
 
 
 def report(root: Path, out_dir: Optional[Path] = None) -> dict[str, Any]:
@@ -392,7 +489,7 @@ def report(root: Path, out_dir: Optional[Path] = None) -> dict[str, Any]:
         1 for i in incidents
         if isinstance(i.get("guard"), dict) and ("rule" in i["guard"] or "test" in i["guard"])
     )
-    return {
+    payload = {
         "claims_total": len(claims),
         "claims_with_sensor": sum(1 for c in claims if c.get("sensor")),
         "claims_pending": sum(1 for c in claims if c.get("pending")),
@@ -402,6 +499,179 @@ def report(root: Path, out_dir: Optional[Path] = None) -> dict[str, Any]:
         "sensors_active": sum(1 for s in sensors if s.get("status") == "active"),
         "sensors_pending": sum(1 for s in sensors if s.get("status") == "pending"),
     }
+    payload.update(shares(root))
+    return payload
+
+
+def format_shares(payload: dict[str, Any]) -> list[str]:
+    """Две доли первыми строками — с числителем и знаменателем (дельта H4)."""
+    lines = []
+    for key, title in (
+        ("share_measurable_claims_with_sensor", "доля утверждений с датчиком"),
+        ("share_incidents_guarded", "доля инцидентов под стражем"),
+    ):
+        block = payload.get(key) or {}
+        value = block.get("value")
+        shown = "n/a" if value is None else f"{value:.4f}"
+        lines.append(
+            f"{key} = {shown} ({block.get('numerator')}/{block.get('denominator')}) — {title}"
+        )
+    lines.append(f"untriaged_candidates = {payload.get('untriaged_candidates')} (информационно, порога нет)")
+    return lines
+
+
+# ── verify-layer: согласованность реестров (дельта I/J, ADR-038) ─────────────
+
+
+def _verify_lineage(root: Path) -> list[str]:
+    errors: list[str] = []
+    kinds = rule_ids_and_kinds(root)
+    documentary = {rid for rid, kind in kinds.items() if kind == "documentary"}
+    lineage = load_lineage(root)
+    if lineage is None:
+        return [f"{LINEAGE_FILE}: реестр наследования отсутствует"]
+    seen: set[str] = set()
+    for entry in lineage:
+        rid = str(entry.get("rule", "?"))
+        if rid in seen:
+            errors.append(f"{rid}: дубль в {LINEAGE_FILE}")
+        seen.add(rid)
+        if rid not in kinds:
+            errors.append(f"{rid}: правила нет в CONSTRAINTS.yaml")
+            continue
+        present = [k for k in ("successor", "none", "pending") if entry.get(k) is not None]
+        if len(present) != 1:
+            errors.append(f"{rid}: ровно одно из successor|none|pending, найдено {present}")
+            continue
+        key = present[0]
+        if key == "successor":
+            succ = str(entry["successor"])
+            if succ not in kinds:
+                errors.append(f"{rid}: наследник {succ} не существует в CONSTRAINTS.yaml")
+            elif kinds.get(succ) == "documentary":
+                errors.append(f"{rid}: наследник {succ} — documentary (нужен поведенческий/структурный)")
+        elif key == "none":
+            reason = entry["none"]
+            if not (isinstance(reason, dict) and str(reason.get("reason", "")).strip()):
+                errors.append(f"{rid}: none требует непустую причину")
+        else:
+            pending = entry["pending"]
+            if not (
+                isinstance(pending, dict)
+                and str(pending.get("reason", "")).strip()
+                and pending.get("owner")
+                and pending.get("since")
+            ):
+                errors.append(f"{rid}: pending требует reason, owner, since")
+    for rid in sorted(documentary - seen):
+        errors.append(f"{rid}: documentary-правило не покрыто реестром {LINEAGE_FILE}")
+    return errors
+
+
+def _verify_claims_stake(root: Path) -> list[str]:
+    errors: list[str] = []
+    for claim in load_claims(root):
+        cid = str(claim.get("id", "?"))
+        stake = claim.get("stake")
+        if stake is None:
+            errors.append(f"{cid}: нет поля stake (дельта J)")
+            continue
+        if stake not in STAKES:
+            errors.append(f"{cid}: stake={stake!r} вне {STAKES}")
+            continue
+        if stake in ("money", "irreversible", "public"):
+            has_sensor = claim.get("sensor") is not None
+            pending = claim.get("pending")
+            pending_ok = isinstance(pending, dict) and pending.get("owner") and pending.get("since")
+            if not has_sensor and not pending_ok:
+                errors.append(
+                    f"{cid}: ставка {stake} без датчика и без pending с owner/since"
+                )
+    return errors
+
+
+def _verify_triage(root: Path) -> list[str]:
+    errors: list[str] = []
+    claims_ids = {str(c.get("id")) for c in load_claims(root)}
+    triage = load_triage(root)
+    if triage is None:
+        return [f"{TRIAGE_FILE}: реестр триажа отсутствует"]
+    seen: set[tuple[str, str]] = set()
+    for entry in triage:
+        rel = entry.get("file")
+        anchor = entry.get("anchor")
+        if not rel or not anchor:
+            errors.append("triage: file и anchor обязательны")
+            continue
+        rel, anchor = str(rel), str(anchor)
+        key = (rel, anchor)
+        if key in seen:
+            errors.append(f"triage: дубль записи {rel}: {anchor[:40]}")
+        seen.add(key)
+        disposition = entry.get("disposition")
+        if disposition not in DISPOSITIONS:
+            errors.append(f"triage {rel}: disposition={disposition!r} вне {DISPOSITIONS}")
+            continue
+        path = root / rel
+        if not path.is_file():
+            errors.append(f"triage: файл не существует: {rel}")
+            continue
+        if anchor not in path.read_text(encoding="utf-8"):
+            errors.append(f"triage: anchor не найден дословно в {rel}: {anchor[:50]}")
+        if not (20 <= len(anchor) <= 200):
+            errors.append(f"triage: длина anchor {len(anchor)} вне 20–200")
+        if disposition == "claim":
+            if str(entry.get("ref")) not in claims_ids:
+                errors.append(f"triage {rel}: claim без ref на существующее утверждение")
+        elif disposition == "measurable_pending":
+            if not (entry.get("owner") and entry.get("since")):
+                errors.append(f"triage {rel}: measurable_pending требует owner и since")
+        elif not str(entry.get("reason", "")).strip():
+            errors.append(f"triage {rel}: {disposition} требует reason")
+    return errors
+
+
+def verify_layer(root: Path) -> list[str]:
+    """Согласованность реестров слоя (дельта I/J; K/L/M добавляются далее)."""
+    errors: list[str] = []
+    errors.extend(_verify_lineage(root))
+    errors.extend(_verify_claims_stake(root))
+    errors.extend(_verify_triage(root))
+    return errors
+
+
+# ── очередь работ (дельта J3) ───────────────────────────────────────────────
+
+
+def queue(root: Path) -> list[dict[str, Any]]:
+    """``pending`` и ``measurable_pending``, отсортированные по ставке и возрасту."""
+    items: list[dict[str, Any]] = []
+    for claim in load_claims(root):
+        pending = claim.get("pending")
+        if not isinstance(pending, dict):
+            continue
+        items.append({
+            "kind": "claim",
+            "id": str(claim.get("id")),
+            "stake": str(claim.get("stake", "internal")),
+            "since": str(pending.get("since") or ""),
+            "owner": str(pending.get("owner") or ""),
+            "reason": str(pending.get("reason") or ""),
+        })
+    for entry in load_triage(root) or []:
+        if entry.get("disposition") != "measurable_pending":
+            continue
+        items.append({
+            "kind": "triage",
+            "id": str(entry.get("file")) + ": " + str(entry.get("anchor", ""))[:60],
+            "stake": str(entry.get("stake", "internal")),
+            "since": str(entry.get("since") or ""),
+            "owner": str(entry.get("owner") or ""),
+            "reason": "measurable_pending",
+        })
+    items.sort(key=lambda item: (_STAKE_ORDER.get(item["stake"], 9), item["since"]))
+    return items
+
 
 
 # ── selftest (мутанты) ──────────────────────────────────────────────────────
@@ -536,6 +806,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mode", choices=["config-bindings"], default=None)
     parser.add_argument("--scan-adr", action="store_true")
     parser.add_argument("--report", action="store_true")
+    parser.add_argument("--verify-layer", action="store_true",
+                        help="согласованность реестров слоя (ADR-038, дельта I/J)")
+    parser.add_argument("--queue", action="store_true",
+                        help="очередь работ: pending и measurable_pending по ставке (дельта J3)")
     parser.add_argument("--selftest", action="store_true")
     parser.add_argument("--fail-on", choices=["fail", "unverified"], default=None)
     parser.add_argument("--json", dest="json_path", default=None)
@@ -550,6 +824,28 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.selftest:
         return run_selftest()
     try:
+        if args.verify_layer:
+            errors = verify_layer(root)
+            for err in errors:
+                print(f"[claims] LAYER-FAIL: {err}")
+            print(f"verify-layer: {'OK' if not errors else f'{len(errors)} нарушений'}")
+            if args.json_path:
+                Path(args.json_path).write_text(
+                    json.dumps({"mode": "verify-layer", "errors": errors}, ensure_ascii=False, indent=1) + "\n",
+                    encoding="utf-8",
+                )
+            return 1 if errors else 0
+        if args.queue:
+            items = queue(root)
+            payload = {"mode": "queue", "items": items}
+            if args.json_path:
+                Path(args.json_path).write_text(
+                    json.dumps(payload, ensure_ascii=False, indent=1) + "\n", encoding="utf-8"
+                )
+            print(f"Очередь работ ({len(items)}): ставка → возраст")
+            for item in items:
+                print(f"  [{item['stake']}] {item['id']} (owner={item['owner']}, since={item['since']}): {item['reason'][:80]}")
+            return 0
         if args.verify or args.mode == "config-bindings":
             failed = False
             payload: dict[str, Any] = {"mode": args.mode or "verify"}
@@ -596,6 +892,8 @@ def main(argv: Optional[list[str]] = None) -> int:
             return 0
         if args.report:
             payload = report(root, out_dir)
+            for line in format_shares(payload):
+                print(line)
             print(json.dumps(payload, ensure_ascii=False, indent=1))
             return 0
     except ClaimsError as exc:

@@ -1,0 +1,8 @@
+pack: spine
+title: "Слой Spine: покрытие утверждений/инцидентов и тренд долей кучек"
+exporters:
+  - module: coverage
+    class: SpineCoverageExporter
+  - module: piles_trend
+    class: PilesTrendExporter
+fixtures: fixtures

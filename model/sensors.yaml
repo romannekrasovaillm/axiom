@@ -20,7 +20,7 @@
   quality: measured
   freshness_max_h: null
   zone: line-1
-  status: pending
+  status: active
 
 - id: S-002
   name: "число параметров модели (всего и активных на токен)"
@@ -31,7 +31,7 @@
   quality: measured
   freshness_max_h: null
   zone: line-1
-  status: pending
+  status: active
 
 - id: S-003
   name: "байты реплики: параметры и состояние оптимизатора"
@@ -42,7 +42,7 @@
   quality: measured
   freshness_max_h: null
   zone: line-2
-  status: pending
+  status: active
 
 - id: S-004
   name: "артефакт токенизатора: sha256 и словарь"
@@ -53,7 +53,7 @@
   quality: measured
   freshness_max_h: null
   zone: line-2
-  status: pending
+  status: active
 
 - id: S-005
   name: "токены корпуса претрейна по шардам"
@@ -64,7 +64,7 @@
   quality: measured
   freshness_max_h: null
   zone: line-2
-  status: pending
+  status: active
 
 - id: S-006
   name: "объём снапшота чистого кейса"
@@ -75,7 +75,7 @@
   quality: measured
   freshness_max_h: null
   zone: line-2
-  status: pending
+  status: active
 
 - id: S-007
   name: "выполнимость задач лесенки: доля сошедшихся"
@@ -86,7 +86,7 @@
   quality: measured
   freshness_max_h: null
   zone: line-2
-  status: pending
+  status: active
 
 - id: S-008
   name: "время вердикта arch-ml на CPU"
@@ -97,7 +97,7 @@
   quality: measured
   freshness_max_h: null
   zone: line-2
-  status: pending
+  status: active
 
 - id: S-009
   name: "детерминизм вердикта: совпадение канонизированного JSON"
@@ -108,7 +108,7 @@
   quality: measured
   freshness_max_h: null
   zone: line-2
-  status: pending
+  status: active
 
 - id: S-010
   name: "доли коммитов по кучкам и коллизии нумерации ADR"
@@ -119,7 +119,7 @@
   quality: measured
   freshness_max_h: null
   zone: line-2
-  status: pending
+  status: active
 
 - id: S-011
   name: "объём временных каталогов pytest/воркспейсов"
@@ -130,7 +130,7 @@
   quality: measured
   freshness_max_h: null
   zone: line-2
-  status: pending
+  status: active
 
 - id: S-012
   name: "обёртка метрик претрейна: ток/с, шаг, MFU от объявленного пика"
@@ -141,7 +141,7 @@
   quality: wrapped
   freshness_max_h: null
   zone: line-1
-  status: pending
+  status: active
 
 - id: S-013
   name: "обёртка peak_rss_mb журнала: память ХОСТ-процесса"
@@ -152,7 +152,7 @@
   quality: wrapped
   freshness_max_h: null
   zone: line-1
-  status: pending
+  status: active
 
 - id: S-014
   name: "обёртка бенчмарков block-merge и KDA WY/UT"
@@ -163,7 +163,7 @@
   quality: wrapped
   freshness_max_h: null
   zone: line-1
-  status: pending
+  status: active
 
 - id: S-015
   name: "обёртка калибровки Track-2: pass_rate по уровням и дефекты"
@@ -174,7 +174,7 @@
   quality: wrapped
   freshness_max_h: null
   zone: line-2
-  status: pending
+  status: active
 
 - id: S-016
   name: "обёртка check_eval_leak: пересечение holdout и обучающего"
@@ -185,7 +185,7 @@
   quality: wrapped
   freshness_max_h: null
   zone: line-2
-  status: pending
+  status: active
 
 - id: S-017
   name: "обёртка check_sft_structure: доли дефектов набора"
@@ -196,7 +196,7 @@
   quality: wrapped
   freshness_max_h: null
   zone: line-2
-  status: pending
+  status: active
 
 - id: S-018
   name: "обёртка check_gb10_single_load: число загрузок модели"
@@ -207,7 +207,7 @@
   quality: wrapped
   freshness_max_h: null
   zone: line-1
-  status: pending
+  status: active
 
 - id: S-019
   name: "обёртка A5-drift: побитовая идентичность артефактов"
@@ -218,7 +218,7 @@
   quality: wrapped
   freshness_max_h: null
   zone: line-1
-  status: pending
+  status: active
 
 - id: S-020
   name: "внешний сэмплер стенда: мощность, частота, температура, утилизация"

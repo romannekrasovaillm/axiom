@@ -388,6 +388,12 @@ class Property:
                 transform: Callable[[list[dict]], list[dict]], expected: str = "fail") -> Mutant:
         records = [dict(r) for r in facts.series(spec)]
         mutated = transform(records)
+        # Мутант инъектирует измерение: запись с подменённым значением считается
+        # снятой (status ok), иначе проверка не дойдёт до предиката и мутант уйдёт
+        # в unverified независимо от того, ловит ли его шаблон.
+        for record in mutated:
+            if record.get("status") != "ok":
+                record["status"] = "ok"
         return Mutant(
             fingerprint=mutant_fingerprint(self.name, params, description),
             description=f"{self.name}: {description}",

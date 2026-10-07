@@ -7,4 +7,6 @@ exporters:
     class: PilesTrendExporter
   - module: fail_open_audit
     class: FailOpenAuditExporter
+  - module: flapping
+    class: FlappingExporter
 fixtures: fixtures

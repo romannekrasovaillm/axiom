@@ -17,7 +17,16 @@
   kind: bound
   sensor: S-012
   fact: tok_s_median_window
-  predicate: {op: ">=", value: 800, unit: tok_s, tolerance: null}
+  predicate:
+    op: ">="
+    value: 800
+    unit: tok_s
+    tolerance: 0.05
+    window: {stat: median, n: 50, skip_warmup: 20}
+    tolerance_source: {decision: "ADR-032 KPI + прецедент политики допусков _SCAN_FORM_ATOL"}
+  conditions:
+    - {fact: S-018.model_loads_count, op: "==", value: 1}
+  series: true
   subject_match: [run_ref]
   rule: C-050
   binding: null
@@ -83,6 +92,7 @@
   sensor: S-014
   fact: block_merge_cost_ratio
   predicate: {op: "<=", value: 0.95, unit: ratio, tolerance: null}
+  e2e_pair: CL-001
   subject_match: []
   rule: null
   binding: null
@@ -210,7 +220,14 @@
   kind: number
   sensor: S-027
   fact: mfu_measured
-  predicate: {op: approx, value: 0.35, unit: fraction, tolerance: 0.10}
+  predicate:
+    op: approx
+    value: 0.35
+    unit: fraction
+    tolerance: 0.10
+    window: {stat: median, n: 50, skip_warmup: 20}
+    tolerance_source: {decision: "ADR-034 п.: 343 TFLOP/s эффективных на H800 ≈ 35 % MFU"}
+  series: true
   subject_match: [run_ref]
   rule: null
   binding: null
@@ -268,3 +285,24 @@
   binding: null
   stake: public
   stake_note: "канал публикации: неверная карточка = неверные публичные числа (ADR-030)"
+
+- id: CL-021
+  source: {file: docs/RESULTS-2026-10-05.ru.md, anchor: "**4,35× скорость, 2,74× меньше scratch** (parity 32 зелёных)"}
+  statement: "KDA-компонент после WY/UT быстрее чанкового ≥4× (компонентная метрика, не KPI)"
+  kind: bound
+  sensor: S-014
+  fact: kda_component_speedup
+  predicate:
+    op: ">="
+    value: 4.0
+    unit: ratio
+    tolerance: 0.05
+    window: {stat: median, n: 30, skip_warmup: 10}
+    tolerance_source: {decision: "_SCAN_FORM_ATOL (процентный допуск сканера как прецедент политики допусков)"}
+  series: true
+  e2e_pair: CL-001
+  subject_match: []
+  rule: null
+  binding: null
+  stake: internal
+  stake_note: "компонентное ускорение — прокси: не открывает гейт без сквозного ток/с (L3)"

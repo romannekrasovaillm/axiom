@@ -31,6 +31,7 @@
   zone: line-1
   status: active
   pack: ml
+  level: end_to_end
   raw: {path: net/config.json, format: json, retention_days: null, in_git: true}
 
 - id: S-002
@@ -44,6 +45,7 @@
   zone: line-1
   status: active
   pack: ml
+  level: component
   raw: {path: net/config.json, format: json, retention_days: null, in_git: true}
 
 - id: S-003
@@ -57,6 +59,7 @@
   zone: line-2
   status: active
   pack: ml
+  level: component
   raw: {note: "чистая арифметика от объявленной конфигурации (S-001/S-002); отдельного сырья нет"}
 
 - id: S-004
@@ -70,6 +73,7 @@
   zone: line-2
   status: active
   pack: ml
+  level: component
   raw: {path: "/home/roman/gb10-shared/datasets/axiom-pretrain-l3/tokens-v2/tokenizer/tokenizer.model", format: text, retention_days: null, in_git: false}
 
 - id: S-005
@@ -83,6 +87,7 @@
   zone: line-2
   status: active
   pack: ml
+  level: component
   raw: {path: "/home/roman/gb10-shared/datasets/axiom-pretrain-l3/tokens-v2/**/manifest*.json", format: json, retention_days: null, in_git: false}
 
 - id: S-006
@@ -96,6 +101,7 @@
   zone: line-2
   status: active
   pack: ml
+  level: component
   raw: {note: "обход файловой системы снапшота; отдельного файла сырья нет"}
 
 - id: S-007
@@ -109,6 +115,7 @@
   zone: line-2
   status: active
   pack: ml
+  level: component
   raw: {note: "исполняемая лесенка: сырьё — генератор задач env/ с сидом; отдельного файла нет"}
 
 - id: S-008
@@ -122,6 +129,7 @@
   zone: line-2
   status: active
   pack: ml
+  level: diagnostic
   raw: {note: "таймирование прогона стража; сырьё — сам прогон, файла нет"}
 
 - id: S-009
@@ -135,6 +143,7 @@
   zone: line-2
   status: active
   pack: ml
+  level: end_to_end
   raw: {note: "два прогона стража сравниваются между собой; отдельного файла нет"}
 
 - id: S-010
@@ -148,6 +157,7 @@
   zone: line-2
   status: active
   pack: ml
+  level: component
   raw: {path: ".git", format: text, retention_days: null, in_git: true}
 
 - id: S-011
@@ -161,6 +171,7 @@
   zone: line-2
   status: active
   pack: ml
+  level: diagnostic
   raw: {note: "обход временных каталогов файловой системы; отдельного файла нет"}
 
 - id: S-012
@@ -174,6 +185,8 @@
   zone: line-1
   status: active
   pack: ml
+  level: end_to_end
+  fact_levels: {step_seconds_median: diagnostic, mfu_declared_peak: diagnostic, loss_median_window: component, loss_slope_window: component}
   raw: {path: evidence/kda-wyut/metrics.jsonl, format: jsonl, retention_days: null, in_git: true}
 
 - id: S-013
@@ -187,6 +200,7 @@
   zone: line-1
   status: active
   pack: ml
+  level: diagnostic
   raw: {path: "runs/**/*.log", format: text, retention_days: null, in_git: false}
 
 - id: S-014
@@ -200,6 +214,7 @@
   zone: line-1
   status: active
   pack: ml
+  level: component
   raw: {path: "evidence/block-merge-bench-*.json", format: json, retention_days: null, in_git: true}
 
 - id: S-015
@@ -213,6 +228,8 @@
   zone: line-2
   status: active
   pack: ml
+  level: end_to_end
+  fact_levels: {model_checkpoint_sha256: diagnostic, defects: diagnostic}
   raw: {path: "evidence/**/calibration*.json", format: json, retention_days: null, in_git: true}
 
 - id: S-016
@@ -226,6 +243,8 @@
   zone: line-2
   status: active
   pack: ml
+  level: end_to_end
+  fact_levels: {holdout_sha256: diagnostic}
   raw: {path: "/home/roman/gb10-shared/datasets/**/eval*/**", format: jsonl, retention_days: null, in_git: false}
 
 - id: S-017
@@ -239,6 +258,7 @@
   zone: line-2
   status: active
   pack: ml
+  level: component
   raw: {path: "/home/roman/gb10-shared/datasets/sft_train_v12.jsonl", format: jsonl, retention_days: null, in_git: false}
 
 - id: S-018
@@ -252,6 +272,7 @@
   zone: line-1
   status: active
   pack: ml
+  level: end_to_end
   raw: {path: "evidence/gb10-single-load-*.txt", format: text, retention_days: null, in_git: true}
 
 - id: S-019
@@ -265,6 +286,7 @@
   zone: line-1
   status: active
   pack: ml
+  level: end_to_end
   raw: {path: "evidence/a5-drift-report-*.json", format: json, retention_days: null, in_git: true}
 
 - id: S-020
@@ -278,6 +300,7 @@
   zone: line-1
   status: pending  # окно GB10 (AD-7): на исполнителе только unverified-записи
   pack: ml
+  level: diagnostic
   raw: {path: evidence/power-thermal/, format: csv, retention_days: 90, in_git: false}
 
 - id: S-021
@@ -291,6 +314,7 @@
   zone: line-1
   status: pending  # окно GB10 (AD-7): на исполнителе только unverified-записи
   pack: ml
+  level: diagnostic
   raw: {path: evidence/power-thermal/, format: csv, retention_days: 90, in_git: false}
 
 - id: S-022
@@ -304,6 +328,7 @@
   zone: line-1
   status: pending
   pack: ml
+  level: end_to_end
   raw: {path: evidence/rental/, format: jsonl, retention_days: 180, in_git: false}
 
 - id: S-023
@@ -317,6 +342,7 @@
   zone: line-1
   status: pending
   pack: ml
+  level: diagnostic
   raw: {note: "встроенный таймер in-process; отдельного сырья нет"}
 
 - id: S-024
@@ -330,6 +356,7 @@
   zone: line-1
   status: pending
   pack: ml
+  level: diagnostic
   raw: {note: "запрос памяти устройства in-process; отдельного сырья нет"}
 
 - id: S-025
@@ -343,6 +370,7 @@
   zone: line-1
   status: active
   pack: ml
+  level: component
   raw: {note: "микробенч: измерение на устройстве, отдельного файла нет"}
 
 - id: S-026
@@ -356,6 +384,7 @@
   zone: line-1
   status: active
   pack: ml
+  level: end_to_end
   raw: {note: "сравнение двух прогонов между собой; отдельного файла нет"}
 
 - id: S-027
@@ -369,6 +398,7 @@
   zone: line-2
   status: active
   pack: ml
+  level: component
   raw: {note: "derived: происхождение даёт inputs (S-012 + S-025)"}
 
 - id: S-028
@@ -382,6 +412,7 @@
   zone: line-2
   status: active
   pack: ml
+  level: component
   raw: {note: "derived: происхождение даёт inputs (S-002 + S-027)"}
 
 - id: S-029
@@ -395,6 +426,7 @@
   zone: line-2
   status: active
   pack: ml
+  level: end_to_end
   raw: {note: "derived: происхождение даёт inputs (S-003 + S-024/S-021)"}
 
 - id: S-030
@@ -408,6 +440,7 @@
   zone: line-2
   status: active
   pack: ml
+  level: end_to_end
   raw: {note: "derived: сверка карточки HF с фактами; происхождение даёт inputs"}
 
 - id: S-031
@@ -421,6 +454,7 @@
   zone: line-2
   status: active
   pack: spine
+  level: end_to_end
   raw: {note: "derived: происхождение даёт inputs (sha256 реестров claims/triage/incidents)"}
 
 - id: S-032
@@ -434,6 +468,7 @@
   zone: line-2
   status: active
   pack: spine
+  level: component
   raw: {path: ".git", format: text, retention_days: null, in_git: true}
 
 - id: S-033
@@ -447,6 +482,7 @@
   zone: line-2
   status: active
   pack: spine
+  level: end_to_end
   raw: {note: "отчёт по запуску preflight; отдельного файла сырья нет"}
 
 - id: S-034
@@ -460,4 +496,47 @@
   zone: line-2
   status: active
   pack: spine
+  level: diagnostic
   raw: {note: "пробы во временном каталоге: запуск стражей без входа (K4)"}
+
+- id: S-035
+  name: "шум железа: коэффициент вариации рядов и рекомендованный допуск"
+  facts: [cv_tok_s, cv_step_seconds, recommended_tolerance, window_n, k_sigma]
+  context: "repo | cpu | gpu-window"
+  producer: "python3 -m tools.sensors.run_exporter --id S-035"
+  output: evidence/facts/S-035.jsonl
+  quality: measured
+  freshness_max_h: null
+  zone: line-2
+  status: active
+  pack: ml
+  level: diagnostic
+  raw: {path: evidence/kda-wyut/metrics.jsonl, format: jsonl, retention_days: null, in_git: true}
+
+- id: S-036
+  name: "история вердиктов утверждений (каждый прогон --evaluate)"
+  facts: [claim_verdict_history]
+  context: "repo | cpu"
+  producer: "python3 tools/check_claims.py --evaluate"
+  output: evidence/facts/S-036.jsonl
+  quality: measured
+  freshness_max_h: null
+  zone: line-2
+  status: active
+  pack: spine
+  level: diagnostic
+  raw: {note: "запись вердиктов прогона --evaluate; отдельного файла сырья нет"}
+
+- id: S-037
+  name: "детектор флапания вердиктов"
+  facts: [flapping, switches, window_n, threshold]
+  context: "repo | cpu"
+  producer: "python3 -m tools.sensors.run_exporter --id S-037"
+  output: evidence/facts/S-037.jsonl
+  quality: derived
+  freshness_max_h: null
+  zone: line-2
+  status: active
+  pack: spine
+  level: diagnostic
+  raw: {note: "derived: история S-036 (происхождение даёт inputs)"}

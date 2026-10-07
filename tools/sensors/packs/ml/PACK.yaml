@@ -1,0 +1,6 @@
+pack: ml
+title: "Ядро ML: шум железа (коэффициент вариации и рекомендованный допуск)"
+exporters:
+  - module: noise_baseline
+    class: NoiseBaselineExporter
+fixtures: fixtures

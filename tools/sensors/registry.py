@@ -49,6 +49,9 @@ STATUSES: tuple[str, ...] = ("active", "pending")
 #: Допустимые зоны (ADR-025/028).
 ZONES: tuple[str, ...] = ("line-1", "line-2")
 
+#: Уровни измерения факта (дельта L, ADR-038).
+LEVELS: tuple[str, ...] = ("end_to_end", "component", "diagnostic")
+
 
 class RegistryError(ValueError):
     """Реестр не читается или нарушает схему."""
@@ -119,6 +122,20 @@ def validate_sensors(sensors: list[dict[str, Any]]) -> list[str]:
         if fresh is not None:
             if isinstance(fresh, bool) or not isinstance(fresh, (int, float)) or fresh <= 0:
                 errors.append(f"{label}: freshness_max_h — null или число > 0")
+
+        level = entry.get("level")
+        if level is not None and level not in LEVELS:
+            errors.append(f"{label}: level={level!r} вне {LEVELS}")
+        fact_levels = entry.get("fact_levels")
+        if fact_levels is not None:
+            if not isinstance(fact_levels, dict):
+                errors.append(f"{label}: fact_levels — объект {{факт: уровень}}")
+            else:
+                for fact, lvl in fact_levels.items():
+                    if lvl not in LEVELS:
+                        errors.append(f"{label}: fact_levels[{fact}]={lvl!r} вне {LEVELS}")
+                    elif isinstance(facts, list) and fact not in facts:
+                        errors.append(f"{label}: fact_levels[{fact}] не объявлен в facts")
 
         for field in ("name", "context", "producer", "output"):
             value = entry.get(field)

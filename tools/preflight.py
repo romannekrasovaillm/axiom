@@ -68,12 +68,26 @@ def _claim_cache(root: Path) -> dict[str, dict[str, Any]]:
     return {r["id"]: r for r in cc.evaluate(root)}
 
 
+def _flapping_map(root: Path) -> dict[str, Any]:
+    """Карта флапания утверждений из факта S-037 (пусто, если истории нет)."""
+    from tools.sensors.fact import read_latest
+
+    try:
+        record = read_latest("S-037", "flapping")
+        if record and record.get("status") == "ok" and isinstance(record.get("value"), dict):
+            return record["value"]
+    except Exception:  # noqa: BLE001 — нет факта = нечего сверять
+        return {}
+    return {}
+
+
 def evaluate_requirement(
     requirement: dict[str, Any],
     root: Path,
     claims: dict[str, dict[str, Any]],
     *,
     facts_dir: Optional[str] = None,
+    flapping: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Вердикт одного требования: ``pass | fail | unverified`` + причина."""
     entry: dict[str, Any] = {"requirement": requirement}
@@ -82,6 +96,11 @@ def evaluate_requirement(
         result = claims.get(cid)
         if result is None:
             return {**entry, "verdict": "fail", "reason": f"утверждение {cid} не найдено"}
+        if flapping and flapping.get(cid) is True:
+            return {
+                **entry, "verdict": "unverified", "claim": cid,
+                "reason": f"{cid}: вердикт флапает — допуск требует перепиннинга, гейт не открыт (M4)",
+            }
         return {
             **entry, "verdict": result["verdict"], "claim": cid,
             "reason": result.get("reason") or f"{cid}: {result['verdict']}",
@@ -116,9 +135,10 @@ def preflight(
     root = Path(root).resolve()
     gate = find_gate(root, gate_name)
     claims = _claim_cache(root)
+    flapping = _flapping_map(root)
     requirements = gate.get("requires") or []
     results = [
-        evaluate_requirement(req, root, claims, facts_dir=facts_dir)
+        evaluate_requirement(req, root, claims, facts_dir=facts_dir, flapping=flapping)
         for req in requirements
         if isinstance(req, dict)
     ]

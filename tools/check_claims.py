@@ -35,7 +35,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from tools.miniyaml import MiniYamlError, load_file  # noqa: E402
-from tools.sensors.fact import DEFAULT_FACTS_DIR, read_latest  # noqa: E402
+from tools.sensors.fact import DEFAULT_FACTS_DIR, read_latest, write_fact  # noqa: E402
 
 CLAIMS_FILE = "model/claims.yaml"
 INCIDENTS_FILE = "evidence/incidents.yaml"
@@ -282,11 +282,41 @@ def apply_predicate(predicate: dict[str, Any], value: Any) -> Optional[bool]:
     return None
 
 
+def _conditions_unmet(claim: dict[str, Any], out_dir: Optional[Path]) -> Optional[str]:
+    """Проверка ``conditions`` (M3). ``None`` — условия выполнены/нет условий.
+
+    Невыполненное или неподтверждённое условие даёт ``unverified`` с причиной,
+    а не ``fail``: система не измерялась в объявленных условиях.
+    """
+    for cond in claim.get("conditions") or []:
+        if not isinstance(cond, dict):
+            continue
+        spec = str(cond.get("fact") or "")
+        if "." not in spec:
+            continue
+        sensor_id, fact_name = spec.split(".", 1)
+        record = read_latest(sensor_id, fact_name, out_dir=out_dir)
+        if record is None:
+            return f"условия замера не подтверждены: нет факта {spec}"
+        if record.get("status") != "ok":
+            return f"условия замера не подтверждены: {spec} unverified"
+        ok = apply_predicate({"op": cond.get("op"), "value": cond.get("value")}, record.get("value"))
+        if ok is None:
+            return f"условия замера не подтверждены: предикат {spec} не применим"
+        if not ok:
+            return f"условие замера не выполнено: {spec}={record.get('value')!r}"
+    return None
+
+
 def evaluate_claim(claim: dict[str, Any], root: Path, out_dir: Optional[Path]) -> dict[str, Any]:
     cid = claim.get("id")
     base = {"id": cid, "statement": claim.get("statement")}
     if claim.get("pending") is not None:
         return {**base, "verdict": "unverified", "reason": "pending: " + str((claim["pending"] or {}).get("reason", ""))}
+    condition_reason = _conditions_unmet(claim, out_dir)
+    if condition_reason:
+        return {**base, "verdict": "unverified", "sensor": claim.get("sensor"),
+                "fact": claim.get("fact"), "reason": condition_reason}
     sensor = claim.get("sensor")
     fact = claim.get("fact")
     keys = claim.get("subject_match") or []
@@ -691,13 +721,151 @@ def _verify_gates(root: Path) -> list[str]:
     return errors
 
 
+#: Факты компонентных ускорений/сжатия — обязаны иметь e2e_pair (L3).
+_COMPONENT_PERF_FACTS: tuple[str, ...] = (
+    "kda_component_speedup", "block_merge_cost_ratio", "kda_component_mem_ratio",
+)
+
+_SEVERITY_RE = re.compile(r"^\s+severity:\s*(\S+)")
+
+
+def rule_severities(root: Path) -> dict[str, str]:
+    """id → severity из CONSTRAINTS.yaml (regex, как rule_ids_and_kinds)."""
+    text = (root / CONSTRAINTS_FILE).read_text(encoding="utf-8")
+    sev: dict[str, str] = {}
+    current: Optional[str] = None
+    for line in text.splitlines():
+        m = _RULE_ID_RE.match(line)
+        if m:
+            current = m.group(1)
+            sev.setdefault(current, "")
+            continue
+        if current:
+            ms = _SEVERITY_RE.match(line)
+            if ms:
+                sev[current] = ms.group(1)
+    return sev
+
+
+def _sensor_levels(root: Path) -> dict[tuple[str, str], Any]:
+    """Карта ``(датчик, факт) → уровень`` с переопределением ``fact_levels``."""
+    levels: dict[tuple[str, str], Any] = {}
+    for sensor in load_sensors(root):
+        sid = sensor.get("id")
+        base = sensor.get("level")
+        overrides = sensor.get("fact_levels") or {}
+        for fact in sensor.get("facts") or []:
+            levels[(sid, fact)] = overrides.get(fact, base)
+    return levels
+
+
+def gate_claim_ids(root: Path) -> set[str]:
+    ids: set[str] = set()
+    for gate in load_gates(root) or []:
+        for req in gate.get("requires") or []:
+            if isinstance(req, dict) and isinstance(req.get("claim"), str):
+                ids.add(req["claim"])
+    return ids
+
+
+def _verify_levels(root: Path) -> list[str]:
+    """L2: утверждение, открывающее гейт или под высоким rule, — end_to_end."""
+    errors: list[str] = []
+    levels = _sensor_levels(root)
+    kinds = rule_ids_and_kinds(root)
+    sev = rule_severities(root)
+    gated = gate_claim_ids(root)
+    for claim in load_claims(root):
+        cid = str(claim.get("id"))
+        rule = claim.get("rule")
+        high_rule = bool(
+            rule
+            and kinds.get(str(rule)) != "documentary"
+            and str(sev.get(str(rule), "")).lower() in ("high", "critical")
+        )
+        if cid not in gated and not high_rule:
+            continue
+        if claim.get("kind") == "config_binding":
+            continue  # точное равенство декларации, не прокси (L2)
+        level = levels.get((claim.get("sensor"), claim.get("fact")))
+        if level != "end_to_end":
+            errors.append(
+                f"{cid}: факт {claim.get('sensor')}/{claim.get('fact')} уровня {level!r} — "
+                "требуется end_to_end (L2)"
+            )
+    return errors
+
+
+def _verify_e2e_pairs(root: Path) -> list[str]:
+    """L3: компонентное ускорение/сжатие обязано ссылаться на сквозное утверждение."""
+    errors: list[str] = []
+    levels = _sensor_levels(root)
+    claims = {str(c.get("id")): c for c in load_claims(root)}
+    for cid, claim in claims.items():
+        if claim.get("fact") not in _COMPONENT_PERF_FACTS or claim.get("sensor") is None:
+            continue
+        pair = claim.get("e2e_pair")
+        if not pair:
+            errors.append(f"{cid}: компонентное утверждение ({claim.get('fact')}) обязано иметь e2e_pair (L3)")
+            continue
+        target = claims.get(str(pair))
+        if target is None:
+            errors.append(f"{cid}: e2e_pair {pair} не существует")
+            continue
+        level = levels.get((target.get("sensor"), target.get("fact")))
+        if level != "end_to_end":
+            errors.append(f"{cid}: e2e_pair {pair} не end_to_end ({level!r})")
+    return errors
+
+
+def _verify_predicate_windows(root: Path) -> list[str]:
+    """M1: предикат по ряду обязан нести window, tolerance и tolerance_source."""
+    errors: list[str] = []
+    for claim in load_claims(root):
+        if not claim.get("series"):
+            continue
+        cid = str(claim.get("id"))
+        predicate = claim.get("predicate") or {}
+        window = predicate.get("window")
+        if not isinstance(window, dict) or "n" not in window or "stat" not in window:
+            errors.append(f"{cid}: series-предикат без window {{stat, n, skip_warmup}} (M1)")
+        if predicate.get("tolerance") is None:
+            errors.append(f"{cid}: series-предикат без tolerance (M1)")
+        source = predicate.get("tolerance_source")
+        if not isinstance(source, dict) or not (source.get("fact") or source.get("decision")):
+            errors.append(f"{cid}: tolerance_source без fact|decision (M1)")
+    return errors
+
+
+def proxy_divergences(results: list[dict[str, Any]], root: Path) -> list[str]:
+    """Строки «прокси-расхождение»: компонент pass, а сквозное — не pass (L3)."""
+    by_id = {r["id"]: r for r in results}
+    lines: list[str] = []
+    for claim in load_claims(root):
+        cid = str(claim.get("id"))
+        pair = claim.get("e2e_pair")
+        if not pair:
+            continue
+        component = by_id.get(cid, {}).get("verdict")
+        e2e = by_id.get(str(pair), {}).get("verdict")
+        if component == "pass" and e2e != "pass":
+            lines.append(
+                f"прокси-расхождение: компонент {cid} pass при сквозном {pair} {e2e} — "
+                "компонентная метрика не открывает гейт (L3)"
+            )
+    return lines
+
+
 def verify_layer(root: Path) -> list[str]:
-    """Согласованность реестров слоя (дельты I/J/K; L/M добавляются далее)."""
+    """Согласованность реестров слоя (дельты I/J/K/L/M, ADR-038)."""
     errors: list[str] = []
     errors.extend(_verify_lineage(root))
     errors.extend(_verify_claims_stake(root))
     errors.extend(_verify_triage(root))
     errors.extend(_verify_gates(root))
+    errors.extend(_verify_levels(root))
+    errors.extend(_verify_e2e_pairs(root))
+    errors.extend(_verify_predicate_windows(root))
     return errors
 
 
@@ -848,6 +1016,26 @@ def run_selftest() -> int:
 # ── CLI ─────────────────────────────────────────────────────────────────────
 
 
+def _record_history(root: Path, results: list[dict[str, Any]], out_dir: Optional[Path]) -> None:
+    """Пишет вердикт по каждому утверждению фактом S-036 (дельта M4).
+
+    История не должна ронять прогон: недоступный каталог фактов — не причина
+    для отказа вердикта (сам вердикт уже посчитан).
+    """
+    try:
+        subject = reference_subject(root)
+        for result in results:
+            write_fact(
+                "S-036", "claim_verdict_history",
+                {"claim": result["id"], "verdict": result["verdict"], "reason": result.get("reason")},
+                unit="", quality="measured",
+                method="check_claims --evaluate (ADR-038, дельта M4)",
+                subject=subject, out_dir=out_dir,
+            )
+    except Exception:  # noqa: BLE001 — история вторична к вердикту
+        pass
+
+
 def _print_summary(results: list[dict[str, Any]]) -> None:
     counts = {"pass": 0, "fail": 0, "unverified": 0}
     for r in results:
@@ -864,6 +1052,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--out-dir", default=None, help="каталог фактов (evidence/facts)")
     parser.add_argument("--verify", action="store_true")
     parser.add_argument("--evaluate", action="store_true")
+    parser.add_argument("--no-history", dest="no_history", action="store_true",
+                        help="не писать историю вердиктов фактом S-036 (M4)")
     parser.add_argument("--mode", choices=["config-bindings"], default=None)
     parser.add_argument("--scan-adr", action="store_true")
     parser.add_argument("--report", action="store_true")
@@ -937,9 +1127,15 @@ def main(argv: Optional[list[str]] = None) -> int:
         if args.evaluate:
             results = evaluate(root, out_dir)
             payload = {"claims": results}
+            if not args.no_history:
+                _record_history(root, results, out_dir)
+            divergences = proxy_divergences(results, root)
+            payload["proxy_divergences"] = divergences
             if args.json_path:
                 Path(args.json_path).write_text(json.dumps(payload, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
             _print_summary(results)
+            for line in divergences:
+                print(line)
             if args.fail_on:
                 fails = [r for r in results if r["verdict"] == "fail"]
                 if args.fail_on == "fail" and fails:

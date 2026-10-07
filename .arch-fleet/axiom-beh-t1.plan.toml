@@ -1,0 +1,244 @@
+# Раунд 1 поведенческого слоя axiom: TASK.md (ADR-036) — турнир полного флота.
+# 7 харнессов независимо выполняют TASK.md в изолированных worktree;
+# детерминированный судья выбирает первый узел, прошедший гейты;
+# интеграция — только гейтом владельца (fleet merge).
+id = "axiom-beh-t1"
+package = "axiom-behavioral-layer"
+pattern = "tournament"
+repo = "/home/roman/axiom"
+
+[policy]
+max_parallel = 7
+stop_on_gate_fail = false
+require_worktree = true
+merge_gate = "owner"
+autonomy = "R2"
+
+[policy.budget]
+max_node_secs = 0
+max_attempts = 1
+
+[defaults]
+route = "critical"
+timeout_from_manifest = false
+gates = [
+  { contract = { allow = ["complete", "partial"] } },
+  { command = { cmd = "test -f tools/sensors/fact.py && test -f model/sensors.yaml && ls docs/adr/ADR-036-*.md >/dev/null && /home/roman/venv-axiom/bin/python -m py_compile tools/sensors/fact.py tools/sensors/subject.py tools/sensors/registry.py && timeout 240 /home/roman/venv-axiom/bin/python -m tools.sensors.probe --selftest", timeout_secs = 300 } },
+]
+
+[[nodes]]
+id = "t1-claude"
+agent = "claude-code"
+group = "t1"
+timeout_secs = 7200
+spec = '''
+ЗАДАНИЕ: выполни задание для кодового харнесса из файла
+/home/roman/Загрузки/Axiom_Spine_v1/TASK.md — прочти файл целиком первым
+действием (333 строки) и следуй ему буквально, включая разделы «Приёмка»,
+«Финализация» и «Контракт результата».
+
+Контекст площадки:
+- Ты работаешь в изолированном git worktree репозитория axiom (основная
+  копия — /home/roman/axiom, baseline HEAD = 6f50ec6). Все пути в TASK.md
+  относительные — от корня твоего worktree.
+- git push ЗАПРЕЩЁН: работа забирается из локальных коммитов ветки worktree.
+- Файл .arch-handoff/TASK.md в worktree — от другой линии работ, игнорируй
+  его; твоё задание — только TASK.md из Загрузки (путь выше).
+- Python с зависимостями проекта: /home/roman/venv-axiom/bin/python
+  (jax, pytest — там; системный python3 для тестов не используй).
+- GPU и стенд GB10 не трогать (AD-7): GPU-датчики проверяются на фикстурах
+  и CPU-бэкенде; сеть не нужна; заглушки и TODO запрещены (C-007).
+- Объём большой по замыслу: волны 1→5, по коммиту на волну
+  (git add -A -- . ':!.arch-handoff'). Не укладываешься — честный partial:
+  незавершённую волну не коммить, перечень выполненных волн — в assumptions.
+- Контракт результата: финальный ответ завершается JSON-объектом
+  {"status": "...", "assumptions": [], "open_questions": [],
+  "conflicts_with_prior_decisions": []} и тем же JSON файлом
+  .arch-handoff/result.json (в git не входит).
+'''
+
+[[nodes]]
+id = "t1-codewhale"
+agent = "codewhale"
+group = "t1"
+timeout_secs = 7200
+spec = '''
+ЗАДАНИЕ: выполни задание для кодового харнесса из файла
+/home/roman/Загрузки/Axiom_Spine_v1/TASK.md — прочти файл целиком первым
+действием (333 строки) и следуй ему буквально, включая разделы «Приёмка»,
+«Финализация» и «Контракт результата».
+
+Контекст площадки:
+- Ты работаешь в изолированном git worktree репозитория axiom (основная
+  копия — /home/roman/axiom, baseline HEAD = 6f50ec6). Все пути в TASK.md
+  относительные — от корня твоего worktree.
+- git push ЗАПРЕЩЁН: работа забирается из локальных коммитов ветки worktree.
+- Файл .arch-handoff/TASK.md в worktree — от другой линии работ, игнорируй
+  его; твоё задание — только TASK.md из Загрузки (путь выше).
+- Python с зависимостями проекта: /home/roman/venv-axiom/bin/python
+  (jax, pytest — там; системный python3 для тестов не используй).
+- GPU и стенд GB10 не трогать (AD-7): GPU-датчики проверяются на фикстурах
+  и CPU-бэкенде; сеть не нужна; заглушки и TODO запрещены (C-007).
+- Объём большой по замыслу: волны 1→5, по коммиту на волну
+  (git add -A -- . ':!.arch-handoff'). Не укладываешься — честный partial:
+  незавершённую волну не коммить, перечень выполненных волн — в assumptions.
+- Контракт результата: финальный ответ завершается JSON-объектом
+  {"status": "...", "assumptions": [], "open_questions": [],
+  "conflicts_with_prior_decisions": []} и тем же JSON файлом
+  .arch-handoff/result.json (в git не входит).
+'''
+
+[[nodes]]
+id = "t1-hermes"
+agent = "hermes"
+group = "t1"
+timeout_secs = 7200
+spec = '''
+ЗАДАНИЕ: выполни задание для кодового харнесса из файла
+/home/roman/Загрузки/Axiom_Spine_v1/TASK.md — прочти файл целиком первым
+действием (333 строки) и следуй ему буквально, включая разделы «Приёмка»,
+«Финализация» и «Контракт результата».
+
+Контекст площадки:
+- Ты работаешь в изолированном git worktree репозитория axiom (основная
+  копия — /home/roman/axiom, baseline HEAD = 6f50ec6). Все пути в TASK.md
+  относительные — от корня твоего worktree.
+- git push ЗАПРЕЩЁН: работа забирается из локальных коммитов ветки worktree.
+- Файл .arch-handoff/TASK.md в worktree — от другой линии работ, игнорируй
+  его; твоё задание — только TASK.md из Загрузки (путь выше).
+- Python с зависимостями проекта: /home/roman/venv-axiom/bin/python
+  (jax, pytest — там; системный python3 для тестов не используй).
+- GPU и стенд GB10 не трогать (AD-7): GPU-датчики проверяются на фикстурах
+  и CPU-бэкенде; сеть не нужна; заглушки и TODO запрещены (C-007).
+- Объём большой по замыслу: волны 1→5, по коммиту на волну
+  (git add -A -- . ':!.arch-handoff'). Не укладываешься — честный partial:
+  незавершённую волну не коммить, перечень выполненных волн — в assumptions.
+- Контракт результата: финальный ответ завершается JSON-объектом
+  {"status": "...", "assumptions": [], "open_questions": [],
+  "conflicts_with_prior_decisions": []} и тем же JSON файлом
+  .arch-handoff/result.json (в git не входит).
+'''
+
+[[nodes]]
+id = "t1-kimi"
+agent = "kimi-code"
+group = "t1"
+timeout_secs = 7200
+spec = '''
+ЗАДАНИЕ: выполни задание для кодового харнесса из файла
+/home/roman/Загрузки/Axiom_Spine_v1/TASK.md — прочти файл целиком первым
+действием (333 строки) и следуй ему буквально, включая разделы «Приёмка»,
+«Финализация» и «Контракт результата».
+
+Контекст площадки:
+- Ты работаешь в изолированном git worktree репозитория axiom (основная
+  копия — /home/roman/axiom, baseline HEAD = 6f50ec6). Все пути в TASK.md
+  относительные — от корня твоего worktree.
+- git push ЗАПРЕЩЁН: работа забирается из локальных коммитов ветки worktree.
+- Файл .arch-handoff/TASK.md в worktree — от другой линии работ, игнорируй
+  его; твоё задание — только TASK.md из Загрузки (путь выше).
+- Python с зависимостями проекта: /home/roman/venv-axiom/bin/python
+  (jax, pytest — там; системный python3 для тестов не используй).
+- GPU и стенд GB10 не трогать (AD-7): GPU-датчики проверяются на фикстурах
+  и CPU-бэкенде; сеть не нужна; заглушки и TODO запрещены (C-007).
+- Объём большой по замыслу: волны 1→5, по коммиту на волну
+  (git add -A -- . ':!.arch-handoff'). Не укладываешься — честный partial:
+  незавершённую волну не коммить, перечень выполненных волн — в assumptions.
+- Контракт результата: финальный ответ завершается JSON-объектом
+  {"status": "...", "assumptions": [], "open_questions": [],
+  "conflicts_with_prior_decisions": []} и тем же JSON файлом
+  .arch-handoff/result.json (в git не входит).
+'''
+
+[[nodes]]
+id = "t1-openclaw"
+agent = "openclaw"
+group = "t1"
+timeout_secs = 7200
+spec = '''
+ЗАДАНИЕ: выполни задание для кодового харнесса из файла
+/home/roman/Загрузки/Axiom_Spine_v1/TASK.md — прочти файл целиком первым
+действием (333 строки) и следуй ему буквально, включая разделы «Приёмка»,
+«Финализация» и «Контракт результата».
+
+Контекст площадки:
+- Ты работаешь в изолированном git worktree репозитория axiom (основная
+  копия — /home/roman/axiom, baseline HEAD = 6f50ec6). Все пути в TASK.md
+  относительные — от корня твоего worktree.
+- git push ЗАПРЕЩЁН: работа забирается из локальных коммитов ветки worktree.
+- Файл .arch-handoff/TASK.md в worktree — от другой линии работ, игнорируй
+  его; твоё задание — только TASK.md из Загрузки (путь выше).
+- Python с зависимостями проекта: /home/roman/venv-axiom/bin/python
+  (jax, pytest — там; системный python3 для тестов не используй).
+- GPU и стенд GB10 не трогать (AD-7): GPU-датчики проверяются на фикстурах
+  и CPU-бэкенде; сеть не нужна; заглушки и TODO запрещены (C-007).
+- Объём большой по замыслу: волны 1→5, по коммиту на волну
+  (git add -A -- . ':!.arch-handoff'). Не укладываешься — честный partial:
+  незавершённую волну не коммить, перечень выполненных волн — в assumptions.
+- Контракт результата: финальный ответ завершается JSON-объектом
+  {"status": "...", "assumptions": [], "open_questions": [],
+  "conflicts_with_prior_decisions": []} и тем же JSON файлом
+  .arch-handoff/result.json (в git не входит).
+'''
+
+[[nodes]]
+id = "t1-qwen"
+agent = "qwen-code"
+group = "t1"
+timeout_secs = 7200
+spec = '''
+ЗАДАНИЕ: выполни задание для кодового харнесса из файла
+/home/roman/Загрузки/Axiom_Spine_v1/TASK.md — прочти файл целиком первым
+действием (333 строки) и следуй ему буквально, включая разделы «Приёмка»,
+«Финализация» и «Контракт результата».
+
+Контекст площадки:
+- Ты работаешь в изолированном git worktree репозитория axiom (основная
+  копия — /home/roman/axiom, baseline HEAD = 6f50ec6). Все пути в TASK.md
+  относительные — от корня твоего worktree.
+- git push ЗАПРЕЩЁН: работа забирается из локальных коммитов ветки worktree.
+- Файл .arch-handoff/TASK.md в worktree — от другой линии работ, игнорируй
+  его; твоё задание — только TASK.md из Загрузки (путь выше).
+- Python с зависимостями проекта: /home/roman/venv-axiom/bin/python
+  (jax, pytest — там; системный python3 для тестов не используй).
+- GPU и стенд GB10 не трогать (AD-7): GPU-датчики проверяются на фикстурах
+  и CPU-бэкенде; сеть не нужна; заглушки и TODO запрещены (C-007).
+- Объём большой по замыслу: волны 1→5, по коммиту на волну
+  (git add -A -- . ':!.arch-handoff'). Не укладываешься — честный partial:
+  незавершённую волну не коммить, перечень выполненных волн — в assumptions.
+- Контракт результата: финальный ответ завершается JSON-объектом
+  {"status": "...", "assumptions": [], "open_questions": [],
+  "conflicts_with_prior_decisions": []} и тем же JSON файлом
+  .arch-handoff/result.json (в git не входит).
+'''
+
+[[nodes]]
+id = "t1-theseus"
+agent = "theseus"
+group = "t1"
+timeout_secs = 7200
+spec = '''
+ЗАДАНИЕ: выполни задание для кодового харнесса из файла
+/home/roman/Загрузки/Axiom_Spine_v1/TASK.md — прочти файл целиком первым
+действием (333 строки) и следуй ему буквально, включая разделы «Приёмка»,
+«Финализация» и «Контракт результата».
+
+Контекст площадки:
+- Ты работаешь в изолированном git worktree репозитория axiom (основная
+  копия — /home/roman/axiom, baseline HEAD = 6f50ec6). Все пути в TASK.md
+  относительные — от корня твоего worktree.
+- git push ЗАПРЕЩЁН: работа забирается из локальных коммитов ветки worktree.
+- Файл .arch-handoff/TASK.md в worktree — от другой линии работ, игнорируй
+  его; твоё задание — только TASK.md из Загрузки (путь выше).
+- Python с зависимостями проекта: /home/roman/venv-axiom/bin/python
+  (jax, pytest — там; системный python3 для тестов не используй).
+- GPU и стенд GB10 не трогать (AD-7): GPU-датчики проверяются на фикстурах
+  и CPU-бэкенде; сеть не нужна; заглушки и TODO запрещены (C-007).
+- Объём большой по замыслу: волны 1→5, по коммиту на волну
+  (git add -A -- . ':!.arch-handoff'). Не укладываешься — честный partial:
+  незавершённую волну не коммить, перечень выполненных волн — в assumptions.
+- Контракт результата: финальный ответ завершается JSON-объектом
+  {"status": "...", "assumptions": [], "open_questions": [],
+  "conflicts_with_prior_decisions": []} и тем же JSON файлом
+  .arch-handoff/result.json (в git не входит).
+'''

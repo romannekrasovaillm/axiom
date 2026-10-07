@@ -39,6 +39,24 @@ HTTP) и пакет ``clients/`` (httpx-транспорт, отдельный �
 тоже граница. Инструмент не сканирует сам себя
 (``tools/check_reward_isolation.py``).
 
+Область сканирования — **только git-tracked файлы** (``git ls-files --cached``)
+-----------------------------------------------------------------------------
+
+Кодовая база — то, что закоммичено, а не то, что лежит на диске: рабочий каталог
+засоряется мусором прогонов (артефакты Stage A: десятки тысяч ``*.py`` под
+``env/``/``data/``/``evidence/``), и он не должен влиять ни на вердикт, ни на
+время прогона. Наблюдение 13.09.2026: страж на засорённом дереве считался
+60–78 с (таймаут-фейл правила C-039, ``timeout_secs: 60``) против 0.97 с на
+чистом экспорте HEAD, а находки колебались 3↔2 на неизменном дереве — прямое
+доказательство зависимости вердикта от нагрузки на каталог, а не от кода.
+
+Поэтому кандидаты сканирования — пересечение git-индекса (``--cached``) с
+``*.py``; untracked-файлы (в том числе gitignored) не читаются вовсе и в
+import-замыкание не попадают. **Fallback:** если git недоступен, каталог не
+репозиторий или команда завершилась ошибкой, работаем как раньше — по файловой
+системе (``**/*.py``), — но с явным предупреждением ``SCAN-FALLBACK-FILESYSTEM``
+в отчёте: честная деградация вместо тихого пропуска сканирования.
+
 Ложный PASS запрещён: если контур награды не найден, скрипт возвращает
 ``EXIT_NOT_VERIFIED`` и печатает «НЕ ПРОВЕРЕНО: контур награды не найден»
 (это же сообщение уходит в гейт кейса как красный вердикт).
@@ -56,7 +74,9 @@ from __future__ import annotations
 
 import argparse
 import ast
+import os
 import re
+import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -72,6 +92,16 @@ EXIT_NOT_VERIFIED = 2
 
 #: Текст, обязанный попасть в вывод при ненайденном контуре (ложный PASS запрещён).
 NOT_VERIFIED_MESSAGE = "НЕ ПРОВЕРЕНО: контур награды не найден"
+
+#: Предупреждение отката: git недоступен — скан по файловой системе, не по индексу.
+SCAN_FALLBACK_CODE = "SCAN-FALLBACK-FILESYSTEM"
+SCAN_FALLBACK_MESSAGE = (
+    "git недоступен или каталог не репозиторий — скан по файловой системе "
+    "(**/*.py), включая untracked-файлы; фильтр tracked-only не применён"
+)
+
+#: Таймаут git-команд, секунды: индекс читается миллисекунды, зависание = откат.
+_GIT_TIMEOUT_SEC = 10.0
 
 #: Объявленные корни пути награды (ADR-033 амендмент; SPEC AD-2 — «пакет среды
 #: env/: reward.py, verifier.py, run.py»). Контур — import-замыкание от них, а
@@ -164,7 +194,9 @@ _PROVIDER_RE = re.compile(
     r"(?i)\b(openai|anthropic|azure[_-]?openai|gemini|cohere|mistral|litellm"
     r"|dashscope|zhipu|moonshot|deepseek)[a-z0-9_]*"
 )
-_CREDENTIAL_RE = re.compile(r"(?i)(api[_-]?key|apikey|access[_-]?token|secret|base[_-]?url)")
+_CREDENTIAL_RE = re.compile(
+    r"(?i)(api[_-]?key|apikey|access[_-]?token|secret|base[_-]?url)"
+)
 
 #: Судейский модуль: имя или содержимое объявляет LLM-судью.
 _JUDGE_NAME_RE = re.compile(
@@ -324,23 +356,94 @@ def _iter_imports(tree: ast.Module) -> tuple[ImportRef, ...]:
     return tuple(refs)
 
 
-def scan_candidates(root: Path) -> list[Path]:
-    """Все ``*.py`` кейса, кроме служебных каталогов, тестов и самого инструмента."""
-    out: list[Path] = []
-    for path in sorted(root.rglob("*.py")):
-        try:
-            resolved = path.resolve()
-        except OSError:  # pragma: no cover — битый симлинк
-            continue
-        if resolved == TOOL_PATH:
-            continue
+def _is_candidate(path: Path, root: Path) -> bool:
+    """Файл годится в кандидаты: ``*.py`` под корнем, не служебный, не сам инструмент."""
+    if path.suffix != ".py":
+        return False
+    try:
         rel = path.relative_to(root)
-        if any(part in _EXCLUDED_DIRS for part in rel.parts[:-1]):
+    except ValueError:
+        return False
+    if any(part in _EXCLUDED_DIRS for part in rel.parts[:-1]):
+        return False
+    if _EXCLUDED_FILE_RE.match(path.name):
+        return False
+    if not path.is_file():
+        # Индекс может опережать рабочее дерево (файл удалён, но не застейджен).
+        return False
+    try:
+        if path.resolve() == TOOL_PATH:
+            return False
+    except OSError:  # pragma: no cover — битый симлинк
+        return False
+    return True
+
+
+def _filesystem_candidates(root: Path) -> list[Path]:
+    """Прежнее поведение: обход ``**/*.py`` по диску (режим отката без git)."""
+    return [path for path in sorted(root.rglob("*.py")) if _is_candidate(path, root)]
+
+
+def _git_tracked_paths(root: Path) -> list[str] | None:
+    """Пути git-индекса (``ls-files --cached``) относительно ``root``.
+
+    ``None`` — git недоступен, каталог не репозиторий или команда не удалась:
+    вызывающий переходит в режим отката. Untracked-файлы в индекс не попадают
+    именно потому, что мусор прогонов — не кодовая база (см. докстринг модуля).
+    """
+    root = root.resolve()
+    try:
+        top = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            errors="surrogateescape",
+            timeout=_GIT_TIMEOUT_SEC,
+        )
+        if top.returncode != 0 or not top.stdout.strip():
+            return None
+        toplevel = Path(top.stdout.strip()).resolve()
+        listing = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "--cached", "--full-name", "-z"],
+            capture_output=True,
+            text=True,
+            errors="surrogateescape",
+            timeout=_GIT_TIMEOUT_SEC,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if listing.returncode != 0:
+        return None
+
+    rels: list[str] = []
+    for name in listing.stdout.split("\0"):
+        if not name:
             continue
-        if _EXCLUDED_FILE_RE.match(path.name):
+        try:
+            # Лексически, без разыменования: tracked-симлинк остаётся собой.
+            rel = Path(os.path.normpath(toplevel / name)).relative_to(root)
+        except ValueError:
+            # Путь вне корня кейса (root — подкаталог репозитория).
             continue
-        out.append(path)
-    return out
+        rels.append(rel.as_posix())
+    return sorted(rels)
+
+
+def scan_plan(root: Path) -> tuple[list[Path], str | None]:
+    """(кандидаты, предупреждение об откате): tracked-only либо файловая система."""
+    tracked = _git_tracked_paths(root)
+    if tracked is None:
+        paths = _filesystem_candidates(root)
+        note: str | None = SCAN_FALLBACK_MESSAGE
+    else:
+        paths = [root / rel for rel in tracked]
+        note = None
+    return [path for path in paths if _is_candidate(path, root)], note
+
+
+def scan_candidates(root: Path) -> list[Path]:
+    """``*.py``-кандидаты кейса: только git-tracked; без git — обход диска (откат)."""
+    return scan_plan(root)[0]
 
 
 def load_source(path: Path, root: Path) -> SourceFile:
@@ -532,7 +635,10 @@ def _resolve(
 def build_report(root: Path) -> Report:
     """Полный прогон: объявленные корни → пакетный ``__init__`` → импорт-замыкание → проверки."""
     report = Report(root=root)
-    sources = [load_source(path, root) for path in scan_candidates(root)]
+    candidates, fallback = scan_plan(root)
+    if fallback is not None:
+        report.warnings.append(Warning(SCAN_FALLBACK_CODE, ".", fallback))
+    sources = [load_source(path, root) for path in candidates]
     index: dict[str, SourceFile] = {}
     by_rel: dict[str, SourceFile] = {}
     for source in sources:
@@ -548,7 +654,9 @@ def build_report(root: Path) -> Report:
         if source is None:
             continue
         core[rel] = source
-        basis[rel] = "объявленный корень пути награды (env/reward.py, env/verifier.py, env/run.py)"
+        basis[rel] = (
+            "объявленный корень пути награды (env/reward.py, env/verifier.py, env/run.py)"
+        )
         report.roots.append(CircuitFile(rel, basis[rel]))
     if not report.roots:
         return report
@@ -595,9 +703,7 @@ def build_report(root: Path) -> Report:
                 queue.append(target)
 
     report.core = [CircuitFile(rel, basis[rel]) for rel in sorted(core)]
-    report.dependencies = [
-        CircuitFile(rel, basis[rel]) for rel in sorted(dependencies)
-    ]
+    report.dependencies = [CircuitFile(rel, basis[rel]) for rel in sorted(dependencies)]
 
     checked = [core[rel] for rel in sorted(core)] + [
         dependencies[rel] for rel in sorted(dependencies)
@@ -626,10 +732,19 @@ def build_report(root: Path) -> Report:
 
 
 def render(report: Report) -> str:
+    fallback = any(w.code == SCAN_FALLBACK_CODE for w in report.warnings)
+    scope = (
+        "Область сканирования: файловая система (**/*.py) — режим отката без git; "
+        "проверяются корни пути награды и их импорт-замыкание"
+        if fallback
+        else "Область сканирования: git-tracked *.py (git ls-files --cached); "
+        "untracked-мусор прогонов не читается, проверяются корни пути награды "
+        "и их импорт-замыкание"
+    )
     out = [
         "C-039 · контур награды RL (AD-2): LLM-судья и внешние API вне пути награды",
         f"Каталог: {report.root}",
-        "Область сканирования: **/*.py; проверяются корни пути награды и их импорт-замыкание",
+        scope,
     ]
 
     if not report.verified:
@@ -639,9 +754,7 @@ def render(report: Report) -> str:
             f"не найден ({', '.join(REWARD_PATH_ROOTS)}); пакет env/ без них "
             "контуром не считается."
         )
-        out.append(
-            "Проверка не выполнена: PASS не выдаётся (ложный PASS запрещён)."
-        )
+        out.append("Проверка не выполнена: PASS не выдаётся (ложный PASS запрещён).")
         return "\n".join(out)
 
     out.append("")

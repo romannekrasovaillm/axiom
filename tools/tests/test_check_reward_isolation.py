@@ -10,11 +10,20 @@
   (i)   чистая фикстура (награда без LLM)                        -> PASS;
   (ii)  фикстура с импортом LLM/судьи в контур награды           -> FAIL;
   (iii) отсутствие контура награды                               -> FAIL «НЕ ПРОВЕРЕНО».
+
+Отдельный полюс дельты E-5.2 — область сканирования: страж читает **только
+git-tracked файлы** (``git ls-files --cached``). Untracked-мусор прогонов (тысячи
+``*.py`` под ``env/``) не входит в кодовую базу: он не должен ни давать находок,
+ни замедлять прогон до таймаута правила C-039 (60 с). Без git — честный откат на
+файловую систему с предупреждением ``SCAN-FALLBACK-FILESYSTEM``.
 """
 
 from __future__ import annotations
 
+import shutil
+import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -27,6 +36,11 @@ import check_reward_isolation as guard  # noqa: E402  (путь добавляе
 CASE_DIR = Path(__file__).resolve().parents[2]
 
 CLEAN_REWARD = "def compute(passed):\n    return 1.0 if passed else 0.0\n"
+
+requires_git = pytest.mark.skipif(
+    shutil.which("git") is None,
+    reason="git недоступен — сценарии tracked-only пропущены",
+)
 
 
 # --- построение фикстурного кейса -------------------------------------------
@@ -55,6 +69,137 @@ def _run(root: Path, capsys: pytest.CaptureFixture[str]) -> tuple[int, str]:
 
 def _codes(root: Path) -> set[str]:
     return {finding.code for finding in guard.build_report(root).findings}
+
+
+def _git_repo(root: Path) -> Path:
+    """Фикстура становится git-репозиторием: уже записанное — tracked (индекс).
+
+    Коммит не нужен: ``git ls-files --cached`` читает индекс, а всё записанное
+    после ``git add -A`` остаётся untracked — ровно то, что моделирует мусор прогонов.
+    """
+    subprocess.run(["git", "init", "-q", str(root)], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(root), "add", "-A"], check=True, capture_output=True
+    )
+    return root
+
+
+def _untracked_junk(index: int) -> str:
+    """Мусор прогона: LLM-клиент + маркер судьи — под старым сканом это находка."""
+    noise = "".join(
+        f"def noise_{index}_{n}(x):\n    return x + {n}  # llm-судья\n\n"
+        for n in range(40)
+    )
+    return "import httpx\n\n\n" + noise
+
+
+# --- E-5.2: область сканирования — только git-tracked файлы -------------------
+
+
+@requires_git
+def test_untracked_module_with_httpx_is_not_a_finding(tmp_path: Path) -> None:
+    """(а) untracked py с httpx в env/ — мусор прогона, не находка и не код контура."""
+    _clean_case(
+        tmp_path,
+        {"env/reward.py": "from .helper import compute\n\n\n" + CLEAN_REWARD},
+    )
+    _git_repo(tmp_path)
+    # Записано ПОСЛЕ git add: untracked, в индекс не входит.
+    _write(
+        tmp_path, "env/helper.py", "import httpx\n\n\ndef compute(x):\n    return x\n"
+    )
+
+    report = guard.build_report(tmp_path)
+    circuit = {item.rel for item in report.core} | {
+        item.rel for item in report.dependencies
+    }
+
+    assert "env/helper.py" not in circuit
+    assert report.ok, [finding.message for finding in report.findings]
+    assert report.exit_code == guard.EXIT_PASS
+
+
+@requires_git
+def test_tracked_module_with_httpx_is_still_a_finding(tmp_path: Path) -> None:
+    """(а) контроль: тот же модуль, но tracked — находка (граница не сместилась)."""
+    _clean_case(
+        tmp_path,
+        {
+            "env/reward.py": "from .helper import compute\n\n\n" + CLEAN_REWARD,
+            "env/helper.py": "import httpx\n\n\ndef compute(x):\n    return x\n",
+        },
+    )
+    _git_repo(tmp_path)
+
+    report = guard.build_report(tmp_path)
+
+    assert report.exit_code == guard.EXIT_VIOLATION
+    assert "env/helper.py" in {finding.rel for finding in report.findings}
+    assert "REWARD-PATH-EXTERNAL-API" in {finding.code for finding in report.findings}
+
+
+@requires_git
+def test_untracked_junk_does_not_slow_the_guard(tmp_path: Path) -> None:
+    """(б) 1000 untracked py под env/ — страж не читает их: < 5 с, находок нет."""
+    _clean_case(tmp_path)
+    _git_repo(tmp_path)
+    for index in range(1000):
+        _write(tmp_path, f"env/junk_{index:04d}.py", _untracked_junk(index))
+
+    started = time.perf_counter()
+    report = guard.build_report(tmp_path)
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < 5.0, f"страж читал untracked-мусор: {elapsed:.1f} с на 1000 файлов"
+    assert report.exit_code == guard.EXIT_PASS
+    # Мусор не сканировался: ни судей, ни находок из него.
+    assert report.judge_modules == []
+    assert report.findings == []
+    # Механизм, а не только секундомер: в кандидаты попали ровно tracked-файлы.
+    candidates, note = guard.scan_plan(tmp_path)
+    assert note is None
+    assert {path.relative_to(tmp_path).as_posix() for path in candidates} == {
+        "env/__init__.py",
+        "env/reward.py",
+    }
+
+
+def test_git_unavailable_falls_back_to_filesystem_with_warning(
+    tmp_path: Path, capsys
+) -> None:
+    """Без git (не репозиторий) — прежний обход диска, но с предупреждением."""
+    _clean_case(
+        tmp_path,
+        {
+            "env/reward.py": "from helpers.scoring import compute_score\n\n\n"
+            "def compute(x):\n    return compute_score(x)\n",
+            "helpers/__init__.py": "",
+            "helpers/scoring.py": "import anthropic\n\n\n"
+            "def compute_score(x):\n    return x\n",
+        },
+    )
+
+    report = guard.build_report(tmp_path)
+    code, out = _run(tmp_path, capsys)
+
+    assert any(w.code == guard.SCAN_FALLBACK_CODE for w in report.warnings)
+    # Откат не отключает проверку: находка в untracked-помощнике находится.
+    assert "REWARD-PATH-LLM-IMPORT" in {finding.code for finding in report.findings}
+    assert code == guard.EXIT_VIOLATION
+    assert guard.SCAN_FALLBACK_CODE in out
+    assert "режим отката без git" in out
+
+
+@requires_git
+def test_case_dir_scan_is_tracked_only_and_fast() -> None:
+    """Рабочий кейс — git-репозиторий: скан tracked-only, без отката, ~секунда."""
+    started = time.perf_counter()
+    report = guard.build_report(CASE_DIR)
+    elapsed = time.perf_counter() - started
+
+    assert not any(w.code == guard.SCAN_FALLBACK_CODE for w in report.warnings)
+    assert report.exit_code == guard.EXIT_PASS
+    assert elapsed < 5.0, f"страж на рабочем дереве шёл {elapsed:.1f} с"
 
 
 # --- (i) чистая награда без LLM ---------------------------------------------
@@ -102,7 +247,9 @@ def test_whole_env_package_is_not_the_circuit(tmp_path: Path) -> None:
     )
 
     report = guard.build_report(case)
-    rels = {item.rel for item in report.core} | {item.rel for item in report.dependencies}
+    rels = {item.rel for item in report.core} | {
+        item.rel for item in report.dependencies
+    }
 
     assert "env/eval_probe.py" not in rels
     assert report.ok, [finding.message for finding in report.findings]
@@ -123,7 +270,9 @@ def test_clients_package_is_outside_reward_path(tmp_path: Path) -> None:
     )
 
     report = guard.build_report(case)
-    rels = {item.rel for item in report.core} | {item.rel for item in report.dependencies}
+    rels = {item.rel for item in report.core} | {
+        item.rel for item in report.dependencies
+    }
 
     assert not any(rel.startswith("clients/") for rel in rels)
     assert report.ok, [finding.message for finding in report.findings]
@@ -152,9 +301,7 @@ def test_openai_port_in_env_is_not_a_finding(tmp_path: Path) -> None:
 
 def test_httpx_import_in_reward_root_is_a_finding(tmp_path: Path) -> None:
     """Мутант: httpx в корне награды — находка (граница не сместилась)."""
-    case = _clean_case(
-        tmp_path, {"env/reward.py": "import httpx\n\n\n" + CLEAN_REWARD}
-    )
+    case = _clean_case(tmp_path, {"env/reward.py": "import httpx\n\n\n" + CLEAN_REWARD})
 
     report = guard.build_report(case)
 

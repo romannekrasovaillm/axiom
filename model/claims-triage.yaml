@@ -163,3 +163,33 @@
   anchor: "Обратимость: высокая — реестр аддитивен, раннеры продолжают работать без него; удаление реестра возвращает статус-кво. Пресеты tiny/small/l3-full не меняются."
   disposition: not_a_claim
   reason: "оценка обратимости ADR-036"
+
+- file: docs/adr/ADR-039-katalog-svoystv-generatory-proverka-proverok.md
+  anchor: "домена остаётся привязка: какой шаблон, к какому предмету, с каким порогом и откуда"
+  disposition: not_a_claim
+  reason: "прозаическая формулировка решения ADR-039 (универсальность слоёв вокруг проверки)"
+
+- file: docs/adr/ADR-039-katalog-svoystv-generatory-proverka-proverok.md
+  anchor: "контрпримеров, диапазон всегда «по выборке», порог с запасом), `generate_telemetry.py`"
+  disposition: not_a_claim
+  reason: "описание правила вывода генератора кандидатов (G2/G3), не измеряемое утверждение"
+
+- file: docs/adr/ADR-039-katalog-svoystv-generatory-proverka-proverok.md
+  anchor: "открывающего гейта или из правила `severity ≥ high` обязано иметь"
+  disposition: not_a_claim
+  reason: "описание мета-правила M4 — часть decision ADR-039, проверяется C-052"
+
+- file: docs/adr/ADR-039-katalog-svoystv-generatory-proverka-proverok.md
+  anchor: "а не кодом: домен задаёт шаблон, предмет, порог и источник порога."
+  disposition: not_a_claim
+  reason: "прозаическое следствие решения ADR-039"
+
+- file: docs/adr/ADR-039-katalog-svoystv-generatory-proverka-proverok.md
+  anchor: "- Вывод инвариантов из наблюдений шумит при малой выборке; пороги-кандидаты"
+  disposition: not_a_claim
+  reason: "раздел Negative ADR-039 — оценка риска, не проверяемое утверждение"
+
+- file: docs/adr/ADR-039-katalog-svoystv-generatory-proverka-proverok.md
+  anchor: "сопоставление правил и матрица возмущений должны обновляться вместе с кодом."
+  disposition: not_a_claim
+  reason: "раздел Negative ADR-039 — оценка стоимости поддержки, не проверяемое утверждение"

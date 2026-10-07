@@ -540,3 +540,59 @@
   pack: spine
   level: diagnostic
   raw: {note: "derived: история S-036 (происхождение даёт inputs)"}
+
+- id: S-038
+  name: "теневое согласие стражей и экземпляров шаблонов (full-миграция)"
+  facts: [guard_shadow_agreement]
+  context: "repo | cpu"
+  producer: "python3 -m tools.properties.shadow"
+  output: evidence/facts/S-038.jsonl
+  quality: measured
+  freshness_max_h: null
+  zone: line-2
+  status: active
+  pack: spine
+  level: component
+  raw: {note: "прогон исходного стража и шаблона на одном состоянии в git worktree; отдельного файла сырья нет"}
+
+- id: S-039
+  name: "мутационный счёт: убитые / все неэквивалентные мутанты (по утверждению и правилу)"
+  facts: [mutation_score]
+  context: "repo | cpu"
+  producer: "python3 -m tools.properties.mutate"
+  output: evidence/facts/S-039.jsonl
+  quality: derived
+  freshness_max_h: null
+  zone: line-2
+  status: active
+  pack: spine
+  level: diagnostic
+  raw: {note: "derived: факты утверждений и реестр свойств; происхождение даёт inputs"}
+
+- id: S-040
+  name: "сводка мутаций: распределение по шаблонам и список выживших"
+  facts: [mutation_summary]
+  context: "repo | cpu"
+  producer: "python3 -m tools.properties.mutate"
+  output: evidence/facts/S-040.jsonl
+  quality: derived
+  freshness_max_h: null
+  zone: line-2
+  status: active
+  pack: spine
+  level: diagnostic
+  raw: {note: "derived: результат мутационного исполнителя; происхождение даёт inputs"}
+
+- id: S-041
+  name: "матрица обнаружения возмущений: поймали бы мы это"
+  facts: [detection_matrix]
+  context: "repo | cpu"
+  producer: "python3 -m tools.properties.chaos"
+  output: evidence/facts/S-041.jsonl
+  quality: measured
+  freshness_max_h: null
+  zone: line-2
+  status: active
+  pack: spine
+  level: diagnostic
+  raw: {note: "сценарии в копии репо (git worktree); отдельного файла сырья нет"}

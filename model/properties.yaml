@@ -1,0 +1,75 @@
+# model/properties.yaml — каталог свойств-шаблонов (ADR-039, дельта P2).
+#
+# Двенадцать видов поведенческих свойств, верных для любой системы. Реализация —
+# tools/properties/<name>.py (selftest: tools/tests/test_property_<name>.py;
+# прогон: python3 -m tools.properties.selftest). Привязка «шаблон → предмет →
+# порог → источник порога» живёт не здесь, а в model/claims.yaml (params) и
+# model/rule-properties.yaml.
+#
+# equivalent_mutants — мутанты, признанные эквивалентными (вердикт шаблона не
+# меняется осознанно). Без причины мутант эквивалентным не считается (дельта M3).
+# Формат записи: {fingerprint, property, reason, recognized_by}.
+
+templates:
+  - name: declared_equals_actual
+    levels: [end_to_end, component]
+    params: "declared {file,key}|{fact}|{value}, actual {fact}, tolerance?"
+    mutation_operators: ["actual: соседнее значение", "actual: смена типа"]
+    description: "Система объявляет одно, измерено другое — сравнение декларации с фактом."
+  - name: bounds
+    levels: [end_to_end, component]
+    params: "fact, min?, max?, window?, tolerance?, tolerance_source?"
+    mutation_operators: ["за границей на 1 ед.", "за границей на 10%"]
+    description: "Измеренное значение внутри границ; значение ровно на границе не нарушение."
+  - name: conservation
+    levels: [end_to_end, component]
+    params: "left [facts], right [facts], tolerance"
+    mutation_operators: ["сдвиг стороны за допуском", "потеря одного слагаемого"]
+    description: "Сумма левой стороны сохраняется в правой в пределах допуска."
+  - name: identity
+    levels: [end_to_end, component]
+    params: "artifact {fact sha}, declared {file,key}|{fact}"
+    mutation_operators: ["замена одного hex-символа", "усечение хеша"]
+    description: "Хеш артефакта совпадает с объявленным по полной длине (не «почти»)."
+  - name: determinism
+    levels: [end_to_end, component]
+    params: "fact, subject_match?, min_runs=2"
+    mutation_operators: ["два прогона одного предмета разошлись"]
+    description: "Один предмет даёт одинаковое значение в разных прогонах."
+  - name: reversibility
+    levels: [end_to_end, component]
+    params: "before {fact sha}, after_revert {fact sha}"
+    mutation_operators: ["неполный откат (один байт отличается)"]
+    description: "После отката состояние совпадает с исходным."
+  - name: differential
+    levels: [end_to_end, component]
+    params: "a {fact}, b {fact}, tolerance?"
+    mutation_operators: ["расхождение за допуском", "одна сторона отсутствует → unverified"]
+    description: "Две величины совпадают; используется и для теневого сравнения стражей (R2)."
+  - name: metamorphic
+    levels: [end_to_end, component]
+    params: "base {fact}, transformed {fact}, relation 't == b*k', k, tolerance"
+    mutation_operators: ["нарушение соотношения t == b*k"]
+    description: "Преобразованная величина связана с базовой объявленным соотношением."
+  - name: monotonic_trend
+    levels: [end_to_end, component]
+    params: "series {fact}, direction up|down, window?, tolerance?"
+    mutation_operators: ["развёрнутый тренд в последнем окне"]
+    description: "Ряд не разворачивается против объявленного направления."
+  - name: liveness
+    levels: [end_to_end, component, diagnostic]
+    params: "counter {fact}, max_stall_s"
+    mutation_operators: ["счётчик не меняется (стой)"]
+    description: "Счётчик меняется, а не стоит дольше допуска."
+  - name: safety
+    levels: [end_to_end, component]
+    params: "forbidden {fact, op, value}"
+    mutation_operators: ["запрещённое состояние присутствует"]
+    description: "Запрещённое состояние отсутствует; без замера — unverified, не pass."
+  - name: freshness
+    levels: [end_to_end, component, diagnostic]
+    params: "fact, max_age_h"
+    mutation_operators: ["устаревшая запись"]
+    description: "Запись факта не старше допуска."
+
+equivalent_mutants: []

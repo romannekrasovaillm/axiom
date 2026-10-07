@@ -1,0 +1,48 @@
+# model/opening-gates.yaml — реестр открывающих гейтов (ADR-038, дельта K1).
+#
+# Точки, где система открывает деньги или стадию. Состав requires — из спек
+# стадий и ADR, по факту; чего нет в спеках — в open_questions, не выдумано.
+# Проверка: python3 tools/preflight.py <gate> (единый preflight, дельта K2);
+# check_budget_gate.py --preflight остаётся частным случаем.
+# requires: {claim: CL-NNN} — вердикт утверждения; {guard: <имя>, run: <run-ref>,
+#   require_verified: true} — страж в режиме «недоказанное не открывает».
+# opens: money | stage | public.
+
+- gate: rental-pretrain-l3
+  opens: money
+  # AD-8/C-041 (смета) + ADR-032 (KPI ток/с): аренда не открывается, пока KPI
+  # не подтверждён сквозным фактом (не компонентным ускорением) и реплика не
+  # доказана помещающейся. Гард performance-roofline без факта — unverified.
+  requires:
+    - {claim: CL-001}
+    - {claim: CL-019}
+    - {guard: performance-roofline, run: kda-wyut-delta, require_verified: true}
+  invocation: "python3 tools/check_budget_gate.py --preflight pretreain-l3"
+
+- gate: sft-start
+  opens: stage
+  # SFT-STAGE §1.1: eval-пакет претрейна (калибровка лесенки + PPL на пиннутом
+  # holdout с leak_check) обязателен ДО старта SFT; без (1) и (2) стадия не стартует.
+  requires:
+    - {claim: CL-017}
+    - {claim: CL-018}
+  invocation: "python3 tools/run_sft_smoke.py --preflight-gate sft-start"
+
+- gate: rl-start
+  opens: stage
+  # RL-STAGE: структура SFT-набора, здоровье ряда и feasibility лесенки (S-007),
+  # eval-гигиена (AD-12). Утверждений для структуры/здоровья/feasibility в
+  # реестре пока нет — вынесены в open_questions, здесь только подтверждённое.
+  requires:
+    - {claim: CL-018}
+  invocation: "python3 tools/run_rl_smoke.py --preflight-gate rl-start"
+
+- gate: hf-publish
+  opens: public
+  # ADR-030: публикация — только по вердикту приёмки стадии; eval-набор чист
+  # (AD-12) и карточка сходится с фактами (S-030). Утверждения для карточки
+  # (S-030) в реестре пока нет — вынесено в open_questions; здесь подтверждённое.
+  # Приватность корпуса (C-021) — процедурно, вне requires.
+  requires:
+    - {claim: CL-018}
+  invocation: "python3 tools/preflight.py hf-publish"

@@ -1,0 +1,8 @@
+pack: iac
+title: "Инфраструктура как код: манифесты Kubernetes и terraform plan"
+exporters:
+  - module: k8s_manifests
+    class: K8sManifestsExporter
+  - module: terraform_plan
+    class: TerraformPlanExporter
+fixtures: fixtures

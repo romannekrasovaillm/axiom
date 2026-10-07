@@ -41,6 +41,13 @@ FACT_KEYS: tuple[str, ...] = (
     "prev_sha256",
 )
 
+#: Необязательные ключи записи факта (дельта F, ADR-038): происхождение сырья.
+#: ``raw_ref`` = ``{path, sha256, selector}`` — для ``measured`` и ``wrapped``
+#: фактов обязателен (проверяет ``probe --raw``); для ``derived`` происхождение
+#: уже даёт ``inputs``. Отсутствие ключа у старых записей — не разрыв контракта,
+#: а честное «происхождение не зафиксировано» (``unverified`` у probe --raw).
+OPTIONAL_FACT_KEYS: tuple[str, ...] = ("raw_ref",)
+
 #: Классы качества факта.
 QUALITIES: tuple[str, ...] = ("measured", "derived", "wrapped")
 
@@ -86,6 +93,30 @@ def _last_raw_line(path: Path) -> Optional[str]:
     return lines[-1] if lines else None
 
 
+def validate_raw_ref(raw_ref: Any) -> list[str]:
+    """Схема ``raw_ref`` — список нарушений (пусто = валидно).
+
+    ``raw_ref`` = ``{path, sha256, selector}``: путь к сырью (может быть glob),
+    sha256 выбранного фрагмента (64 hex) и селектор фрагмента (``lines A-B`` |
+    ``key <path>`` | пустая строка = весь файл).
+    """
+    if raw_ref is None:
+        return []
+    if not isinstance(raw_ref, dict):
+        return [f"raw_ref: ожидался объект, получено {type(raw_ref).__name__}"]
+    errs: list[str] = []
+    path = raw_ref.get("path")
+    if not isinstance(path, str) or not path.strip():
+        errs.append("raw_ref.path: непустая строка обязательна")
+    sha = raw_ref.get("sha256")
+    if not isinstance(sha, str) or len(sha) != 64 or any(c not in "0123456789abcdef" for c in sha.lower()):
+        errs.append("raw_ref.sha256: 64 hex-символа обязательны")
+    selector = raw_ref.get("selector", "")
+    if not isinstance(selector, str):
+        errs.append("raw_ref.selector: строка (пустая = весь файл)")
+    return errs
+
+
 def _validate(
     sensor: str,
     fact: str,
@@ -97,6 +128,7 @@ def _validate(
     inputs: Any,
     status: str,
     note: str,
+    raw_ref: Any = None,
 ) -> None:
     if not isinstance(sensor, str) or not sensor.strip():
         raise FactError("sensor: непустая строка обязательна")
@@ -117,6 +149,9 @@ def _validate(
         )
     if inputs is not None and not isinstance(inputs, list):
         raise FactError("inputs: список ссылок на исходные записи")
+    raw_errors = validate_raw_ref(raw_ref)
+    if raw_errors:
+        raise FactError("; ".join(raw_errors))
     if status == "ok" and value is None:
         raise FactError("status=ok: значение обязательно (None = unverified)")
     if status == "unverified" and not (note or "").strip():
@@ -137,14 +172,18 @@ def write_fact(
     status: str = "ok",
     note: str = "",
     ts: Optional[str] = None,
+    raw_ref: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Дописывает одну запись факта и возвращает её.
 
     ``prev_sha256`` — sha256 предыдущей строки того же файла (``None`` для
     первой), цепочка делает правку истории обнаружимой. Только дозапись:
-    существующие строки не переписываются.
+    существующие строки не переписываются. ``raw_ref`` ``{path, sha256,
+    selector}`` фиксирует происхождение факта до сырья (дельта F, ADR-038);
+    для ``measured``/``wrapped`` фактов он обязателен по контракту, для
+    ``derived`` происхождение даёт ``inputs``.
     """
-    _validate(sensor, fact, value, unit, quality, method, subject, inputs, status, note)
+    _validate(sensor, fact, value, unit, quality, method, subject, inputs, status, note, raw_ref)
 
     path = facts_path(sensor, out_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -162,6 +201,7 @@ def write_fact(
         "status": status,
         "note": note,
         "prev_sha256": line_sha256(prev) if prev is not None else None,
+        "raw_ref": raw_ref,
     }
     raw = canonical(record) + "\n"
     with path.open("a", encoding="utf-8") as fh:

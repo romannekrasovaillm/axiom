@@ -78,4 +78,4 @@ def test_repo_estimate_structural_verify_passes():
 
 def test_check_claims_combined_verify_and_bindings_green():
     assert check_claims.main(["--verify", "--mode", "config-bindings", "--root", str(ROOT)]) == 0
-    assert check_claims.main(["--evaluate", "--fail-on", "fail", "--root", str(ROOT)]) == 0
+    assert check_claims.main(["--evaluate", "--no-history", "--fail-on", "fail", "--root", str(ROOT)]) == 0

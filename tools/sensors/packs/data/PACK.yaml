@@ -1,0 +1,8 @@
+pack: data
+title: "Данные: отпечаток схемы и доля near-дубликатов"
+exporters:
+  - module: schema_fingerprint
+    class: SchemaFingerprintExporter
+  - module: dup_rate
+    class: DupRateExporter
+fixtures: fixtures

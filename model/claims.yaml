@@ -17,10 +17,21 @@
   kind: bound
   sensor: S-012
   fact: tok_s_median_window
-  predicate: {op: ">=", value: 800, unit: tok_s, tolerance: null}
+  predicate:
+    op: ">="
+    value: 800
+    unit: tok_s
+    tolerance: 0.05
+    window: {stat: median, n: 50, skip_warmup: 20}
+    tolerance_source: {decision: "ADR-032 KPI + прецедент политики допусков _SCAN_FORM_ATOL"}
+  conditions:
+    - {fact: S-018.model_loads_count, op: "==", value: 1}
+  series: true
   subject_match: [run_ref]
   rule: C-050
   binding: null
+  stake: money
+  stake_note: "KPI ток/с открывает аренду и стадии; ошибка = расход без приёмки (ADR-032/038)"
 
 - id: CL-002
   source: {file: net/config.json, anchor: "\"actual_param_count\": 1009632913"}
@@ -32,6 +43,8 @@
   subject_match: [config_sha256]
   rule: null
   binding: null
+  stake: internal
+  stake_note: "N_total — базис сметы; ошибка пересчёта меняет оценку, но не дверь"
 
 - id: CL-003
   source: {file: net/config.json, anchor: "\"active_params_per_token\": 502399236"}
@@ -43,6 +56,8 @@
   subject_match: [config_sha256]
   rule: null
   binding: null
+  stake: internal
+  stake_note: "N_active — базис сметы; ошибка пересчёта меняет оценку, но не дверь"
 
 - id: CL-004
   source: {file: docs/adr/ADR-034-multi-gpu-dp-jax-sharding.md, anchor: "≈ **16 ГБ ≪ 80 ГБ H100**"}
@@ -54,6 +69,8 @@
   subject_match: [config_sha256]
   rule: null
   binding: null
+  stake: money
+  stake_note: "«реплика помещается» — основание выбора DP/аренды; ошибка = OOM или лишние GPU"
 
 - id: CL-005
   source: {file: docs/adr/ADR-034-multi-gpu-dp-jax-sharding.md, anchor: "на 8×H100 при 20–30 % MFU ≈ 7–11 ч счёта"}
@@ -65,6 +82,8 @@
   subject_match: [run_ref]
   rule: null
   binding: null
+  stake: money
+  stake_note: "«7–11 ч» — бюджет аренды pretrain-l3; ошибка = перерасход (AD-8)"
 
 - id: CL-006
   source: {file: docs/adr/ADR-018-block-wise-token-merging-v-mla-sloyah-skeleta-zaimstvovanie-step-5.md, anchor: "cost off→on 1,928→0,773 с p50 (**2,49× дешевле**"}
@@ -73,9 +92,12 @@
   sensor: S-014
   fact: block_merge_cost_ratio
   predicate: {op: "<=", value: 0.95, unit: ratio, tolerance: null}
+  e2e_pair: CL-001
   subject_match: []
   rule: null
   binding: null
+  stake: internal
+  stake_note: "block-merge cost ratio — компонентная метрика, не открывает деньги"
 
 - id: CL-007
   statement: "block-merge: recall on ≥ off на всех пробах"
@@ -85,6 +107,8 @@
   subject_match: []
   rule: null
   binding: null
+  stake: internal
+  stake_note: "recall on ≥ off — качество компонента; ошибка локальна"
 
 - id: CL-008
   source: {file: docs/RENTAL-VAST.ru.md, anchor: "# Runbook аренды H800 на vast.ai — претрейн L3 (20B → 17,84B)"}
@@ -96,6 +120,8 @@
   subject_match: [dataset_ref]
   rule: null
   binding: null
+  stake: internal
+  stake_note: "D корпуса — базис сметы; ошибка меняет оценку, но не дверь"
 
 - id: CL-009
   source: {file: docs/adr/ADR-004-konveyer-pretreyna-dannye-arenda-gpu-i-stadiynost.md, anchor: "Канонический токенизатор претрейна — корпусной BPE v2: полный sha256"}
@@ -107,6 +133,8 @@
   subject_match: [config_sha256]
   rule: null
   binding: null
+  stake: internal
+  stake_note: "канонический токенизатор — воспроизводимость, не деньги"
 
 - id: CL-010
   source: {file: net/config.json, anchor: "\"num_kda_layers\": 18,"}
@@ -118,6 +146,8 @@
   subject_match: [config_sha256]
   rule: C-049
   binding: {file: net/config.json, path: num_kda_layers, value: 18}
+  stake: internal
+  stake_note: "config_binding слоёв KDA"
 
 - id: CL-011
   source: {file: net/config.json, anchor: "\"num_mla_layers\": 6,"}
@@ -129,6 +159,8 @@
   subject_match: [config_sha256]
   rule: C-049
   binding: {file: net/config.json, path: num_mla_layers, value: 6}
+  stake: internal
+  stake_note: "config_binding слоёв MLA"
 
 - id: CL-012
   source: {file: net/model.py, anchor: "(12 routed + 2 shared, top-2 dispatch, QB balancing"}
@@ -140,6 +172,8 @@
   subject_match: [config_sha256]
   rule: C-049
   binding: {file: net/config.json, path: moe_top_k, value: 2}
+  stake: internal
+  stake_note: "config_binding MoE top-2"
 
 - id: CL-013
   source: {file: net/config.json, anchor: "\"vocab_size\": 160000,"}
@@ -151,6 +185,8 @@
   subject_match: [config_sha256]
   rule: C-049
   binding: {file: net/config.json, path: vocab_size, value: 160000}
+  stake: internal
+  stake_note: "config_binding словаря"
 
 - id: CL-014
   source: {file: docs/specs/ENVIRONMENT-V1.md, anchor: "Кап: суммарный объём воркспейса ≤ 64 МБ"}
@@ -162,6 +198,8 @@
   subject_match: []
   rule: null
   binding: null
+  stake: internal
+  stake_note: "кап снапшота — гигиена воркспейса"
 
 - id: CL-015
   source: {file: docs/specs/ENVIRONMENT-V1.md, anchor: "Верификатор детерминирован, поэтому"}
@@ -173,6 +211,8 @@
   subject_match: []
   rule: null
   binding: null
+  stake: irreversible
+  stake_note: "детерминизм вердикта: расхождение делает вердикт невоспроизводимым (AD-4/AD-11)"
 
 - id: CL-016
   source: {file: docs/adr/ADR-034-multi-gpu-dp-jax-sharding.md, anchor: "343 TFLOP/s эффективных на H800 ≈ 35 % MFU"}
@@ -180,10 +220,19 @@
   kind: number
   sensor: S-027
   fact: mfu_measured
-  predicate: {op: approx, value: 0.35, unit: fraction, tolerance: 0.10}
+  predicate:
+    op: approx
+    value: 0.35
+    unit: fraction
+    tolerance: 0.10
+    window: {stat: median, n: 50, skip_warmup: 20}
+    tolerance_source: {decision: "ADR-034 п.: 343 TFLOP/s эффективных на H800 ≈ 35 % MFU"}
+  series: true
   subject_match: [run_ref]
   rule: null
   binding: null
+  stake: money
+  stake_note: "MFU 35 % — ориентир сметы pretrain-l3; ошибка = перерасход"
 
 - id: CL-017
   source: {file: docs/specs/SFT-STAGE.delta.md, anchor: "калибровка лесенки §10 ENVIRONMENT-V1** на реальной модели"}
@@ -195,6 +244,8 @@
   subject_match: [run_ref]
   rule: null
   binding: null
+  stake: internal
+  stake_note: "калибровка обязательна до SFT — процессная привязка"
 
 - id: CL-018
   source: {file: docs/specs/EVAL-HYGIENE.delta.md, anchor: "нулевое пересечение с каждым кандидатным миксом"}
@@ -206,6 +257,8 @@
   subject_match: [dataset_ref]
   rule: null
   binding: null
+  stake: public
+  stake_note: "чистота eval-набора: утечка обнуляет публичные числа (AD-12)"
 
 - id: CL-019
   source: {file: docs/adr/ADR-034-multi-gpu-dp-jax-sharding.md, anchor: "Модель-реплика целиком помещается на каждый GPU"}
@@ -217,3 +270,26 @@
   subject_match: [config_sha256]
   rule: null
   binding: null
+  stake: money
+  stake_note: "«реплика помещается в один GPU» — обоснование отклонения FSDP; ошибка = лишние GPU/OOM"
+
+- id: CL-021
+  source: {file: docs/RESULTS-2026-10-05.ru.md, anchor: "**4,35× скорость, 2,74× меньше scratch** (parity 32 зелёных)"}
+  statement: "KDA-компонент после WY/UT быстрее чанкового ≥4× (компонентная метрика, не KPI)"
+  kind: bound
+  sensor: S-014
+  fact: kda_component_speedup
+  predicate:
+    op: ">="
+    value: 4.0
+    unit: ratio
+    tolerance: 0.05
+    window: {stat: median, n: 30, skip_warmup: 10}
+    tolerance_source: {decision: "_SCAN_FORM_ATOL (процентный допуск сканера как прецедент политики допусков)"}
+  series: true
+  e2e_pair: CL-001
+  subject_match: []
+  rule: null
+  binding: null
+  stake: internal
+  stake_note: "компонентное ускорение — прокси: не открывает гейт без сквозного ток/с (L3)"

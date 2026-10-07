@@ -793,6 +793,18 @@ def main(argv: Optional[list[str]] = None) -> int:
         "компоненты --out (при невозможности a4-run-<хеш>); по нему страж "
         "стоимости ищет смету evidence/budget/<run-id>.json",
     )
+    parser.add_argument(
+        "--preflight-gate",
+        default=None,
+        help="открывающий гейт: прогнать единый preflight (model/opening-gates.yaml) "
+        "до старта стадий (ADR-038, K3); по умолчанию не вызывается, т.к. "
+        "оркестратор не открывает стадии sft/rl сам",
+    )
+    parser.add_argument(
+        "--override-preflight",
+        default=None,
+        help="аварийный обход preflight гейта с причиной (пишется фактом S-033)",
+    )
     args = parser.parse_args(argv)
 
     repo_root = detect_repo_root()
@@ -804,6 +816,18 @@ def main(argv: Optional[list[str]] = None) -> int:
             file=sys.stderr,
         )
         return 2
+
+    if args.preflight_gate:
+        try:
+            from tools.stage_preflight import enforce as _enforce_preflight
+        except ImportError:  # запуск как скрипт из tools/
+            from stage_preflight import enforce as _enforce_preflight
+
+        gate_code = _enforce_preflight(
+            args.preflight_gate, args.override_preflight, root=str(repo_root)
+        )
+        if gate_code != 0:
+            return gate_code
 
     # Относительные --out/--manifest-out якорятся к корню кейса (не к cwd
     # вызова) — оркестратор не зависит от каталога запуска.

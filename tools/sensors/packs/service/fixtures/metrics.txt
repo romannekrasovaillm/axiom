@@ -1,0 +1,12 @@
+# HELP http_request_duration_seconds histogram
+# TYPE http_request_duration_seconds histogram
+http_request_duration_seconds_bucket{le="0.05"} 10
+http_request_duration_seconds_bucket{le="0.1"} 40
+http_request_duration_seconds_bucket{le="0.25"} 80
+http_request_duration_seconds_bucket{le="0.5"} 95
+http_request_duration_seconds_bucket{le="1"} 99
+http_request_duration_seconds_bucket{le="2.5"} 100
+http_request_duration_seconds_bucket{le="+Inf"} 100
+http_request_duration_seconds_count 100
+http_requests_total{code="200"} 950
+http_requests_total{code="500"} 50

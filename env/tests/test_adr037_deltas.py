@@ -140,8 +140,9 @@ def test_excluded_infra_rules_include_c048_not_c047(tmp_path):
     )
     detected = detect_excluded_infra_rules(case / "CONSTRAINTS.yaml")
     assert "C-040" in detected and "C-050" in detected and "C-049" not in detected
-    assert len(EXCLUDED_INFRA_RULES) == 18
-    assert "C-050" in EXCLUDED_INFRA_RULES and "C-049" not in EXCLUDED_INFRA_RULES
+    assert len(EXCLUDED_INFRA_RULES) == 19
+    assert "C-050" in EXCLUDED_INFRA_RULES and "C-051" in EXCLUDED_INFRA_RULES
+    assert "C-049" not in EXCLUDED_INFRA_RULES
 
 
 def test_h_layer_v2_pins_claims_and_checker(tmp_path):

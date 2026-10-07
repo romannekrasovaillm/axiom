@@ -1,0 +1,29 @@
+{
+  "format_version": "1.2",
+  "resource_changes": [
+    {
+      "address": "aws_instance.web",
+      "type": "aws_instance",
+      "name": "web",
+      "change": {"actions": ["create"], "before": null, "after": {"ami": "ami-1"}}
+    },
+    {
+      "address": "aws_s3_bucket.logs",
+      "type": "aws_s3_bucket",
+      "name": "logs",
+      "change": {"actions": ["update"], "before": {"acl": "private"}, "after": {"acl": "public-read"}}
+    },
+    {
+      "address": "aws_vpc.old",
+      "type": "aws_vpc",
+      "name": "old",
+      "change": {"actions": ["delete"], "before": {"cidr_block": "10.0.0.0/16"}, "after": null}
+    },
+    {
+      "address": "aws_instance.replaced",
+      "type": "aws_instance",
+      "name": "replaced",
+      "change": {"actions": ["delete", "create"], "before": {"ami": "ami-0"}, "after": {"ami": "ami-2"}}
+    }
+  ]
+}

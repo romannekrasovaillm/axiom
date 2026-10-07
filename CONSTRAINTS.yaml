@@ -534,3 +534,15 @@ constraints:
     evidence: "tools/check_claims.py --evaluate --fail-on fail → exit 0, когда ни одно утверждение не опровергнуто фактами; подтверждённый контрапример (fail) даёт exit 1. Классы pass | fail | unverified: нет факта / просрочен / предмет не совпал / факт unverified — только unverified, не pass (ADR-037). Факты живут в evidence/, которого нет в песочнице, поэтому правило инфраструктурное (EXCLUDED_INFRA_RULES)"
     adr: ADR-037
     owner: архитектор
+
+  - id: C-051
+    name: "Реестры поведенческого слоя согласованы: наследование прозаических правил, ставки, решения триажа, открывающие гейты, уровни и пары прокси, окна и допуски (ADR-038)"
+    type: command_succeeds
+    command: 'python3 tools/check_claims.py --verify-layer'
+    timeout_secs: 60
+    severity: high
+    scope: case
+    kind: structural
+    evidence: "tools/check_claims.py --verify-layer → покрытие model/rule-lineage.yaml по всем 30 documentary-правилам (successor существует и не documentary; none/pending с причиной), stake money|irreversible|public с датчиком или pending, решения model/claims-triage.yaml по кандидатам --scan-adr, состав model/opening-gates.yaml (fail-open страж только с require_verified), уровень end_to_end у утверждений гейтов и высоких правил (кроме config_binding), наличие e2e_pair у компонентных ускорений/сжатия, окна/tolerance/tolerance_source у рядовых предикатов. Правило проверяет согласованность реестров, а не поведение системы; реестры гейтов, сырья и истории не нужны в песочнице RL, а атомы порчи их не касаются, поэтому правило инфраструктурное (EXCLUDED_INFRA_RULES)"
+    adr: ADR-038
+    owner: архитектор

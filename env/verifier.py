@@ -41,6 +41,11 @@ HACK_RULE = "hacking"
 #: содержимое CONSTRAINTS.yaml воркспейса и ARCHITECTURE-SPINE.md воркспейса.
 PIN_KEY_CONSTRAINTS = "constraints"
 PIN_KEY_SPINE = "spine"
+#: Дополнительные ключи H-слоя для ``atoms_version: v2`` (ADR-036, дельта D6):
+#: реестр утверждений и сам страж утверждений — их правка в воркспейсе даёт
+#: ложный pass (атом ``drift_config_value`` иначе разоружает C-047).
+PIN_KEY_CLAIMS = "claims"
+PIN_KEY_CLAIMS_CHECKER = "claims_checker"
 
 #: Инфраструктурные правила кейса, исключаемые из вердикта (R-1', §7).
 #: Это ВСЕ правила ``type: command_succeeds`` кейсового CONSTRAINTS.yaml: они
@@ -62,12 +67,29 @@ PIN_KEY_SPINE = "spine"
 EXCLUDED_INFRA_RULES: tuple[str, ...] = (
     "C-032", "C-033", "C-034", "C-035", "C-036", "C-037", "C-038",
     "C-039", "C-040", "C-041", "C-042", "C-043", "C-044", "C-045",
-    "C-046",
+    "C-046", "C-048",
 )
+
+#: Логический ключ H-слоя v2 → путь файла в воркспейсе.
+_EXTRA_GATE_PATHS: dict[str, str] = {
+    PIN_KEY_CLAIMS: "model/claims.yaml",
+    PIN_KEY_CLAIMS_CHECKER: "tools/check_claims.py",
+}
+
+
+def _is_infra_rule(rule: dict) -> bool:
+    """Инфраструктурное ли правило: ``command_succeeds`` без ``infra: false``.
+
+    Правило, помеченное ``infra: false`` (C-047), исполняется В ВОРКСПЕЙСЕ без
+    сети и GPU и остаётся в вердикте — оно не инфраструктурное (ADR-036, дельта D1).
+    """
+    if not isinstance(rule, dict) or rule.get("type") != "command_succeeds":
+        return False
+    return rule.get("infra", True) is not False
 
 
 def detect_excluded_infra_rules(constraints: Path) -> tuple[str, ...]:
-    """Динамически: id всех правил ``type: command_succeeds`` из ruleset.
+    """Динамически: id всех инфраструктурных правил рилсета.
 
     Детерминированный детектор от содержимого файла (не от машины). На кейсовом
     CONSTRAINTS.yaml возвращает ровно :data:`EXCLUDED_INFRA_RULES`; служит
@@ -82,7 +104,7 @@ def detect_excluded_infra_rules(constraints: Path) -> tuple[str, ...]:
         sorted(
             str(c["id"])
             for c in rules
-            if isinstance(c, dict) and c.get("type") == "command_succeeds" and c.get("id")
+            if _is_infra_rule(c) and c.get("id")
         )
     )
 
@@ -91,7 +113,7 @@ def _excluded_match_keys(constraints: Path) -> frozenset[str]:
     """Ключи сопоставления с полем ``rule`` отчёта ``control check``.
 
     Отчёт arch-ml кладёт в ``rule`` ИМЯ правила (не id), поэтому к пину id
-    добавляются имена только тех правил, чей ``type`` — ``command_succeeds``.
+    добавляются имена только инфраструктурных правил.
     """
     keys: set[str] = set(EXCLUDED_INFRA_RULES)
     try:
@@ -100,7 +122,7 @@ def _excluded_match_keys(constraints: Path) -> frozenset[str]:
         return frozenset(keys)
     rules = data.get("constraints", []) if isinstance(data, dict) else []
     for c in rules:
-        if not isinstance(c, dict) or c.get("type") != "command_succeeds":
+        if not _is_infra_rule(c):
             continue
         if c.get("id"):
             keys.add(str(c["id"]))
@@ -344,6 +366,20 @@ def _pinned_gate_hashes(task_spec: Optional[dict]) -> dict[str, str]:
     return out
 
 
+def _gate_files(constraints_name: str, task_spec: Optional[dict]) -> tuple[str, ...]:
+    """Гейтовые файлы H-слоя: базовые ``{constraints, spine}`` + (v2) claims-пара.
+
+    ``atoms_version: v2`` добавляет пин ``model/claims.yaml`` и
+    ``tools/check_claims.py`` (ADR-036, дельта D6): правка любого из них в
+    воркспейсе обезоружила бы C-047 и дала ложный pass.
+    """
+    base = [constraints_name, SPINE_FILE]
+    version = task_spec.get("atoms_version") if isinstance(task_spec, dict) else None
+    if version == "v2":
+        base.extend(_EXTRA_GATE_PATHS.values())
+    return tuple(dict.fromkeys(base))
+
+
 def _gate_pin(
     pins: dict[str, str], rel: str, constraints_name: str
 ) -> Optional[str]:
@@ -354,6 +390,9 @@ def _gate_pin(
         return pins.get(PIN_KEY_CONSTRAINTS)
     if rel == SPINE_FILE:
         return pins.get(PIN_KEY_SPINE)
+    for key, path in _EXTRA_GATE_PATHS.items():
+        if rel == path:
+            return pins.get(key)
     return None
 
 
@@ -380,7 +419,7 @@ def gate_integrity(
     constraints_name = ver.get("constraints", CONSTRAINTS_FILE) if isinstance(ver, dict) else CONSTRAINTS_FILE
     if not isinstance(constraints_name, str) or not constraints_name:
         constraints_name = CONSTRAINTS_FILE
-    gate_files = tuple(dict.fromkeys((constraints_name, SPINE_FILE)))
+    gate_files = _gate_files(constraints_name, task_spec)
     pins = _pinned_gate_hashes(task_spec)
 
     hashes: dict[str, dict] = {}

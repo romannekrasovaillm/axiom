@@ -230,6 +230,27 @@ def validate_estimate(estimate: Any, run_ref: str) -> list[str]:
             f"usd_estimate {usd} > limit_usd {limit}: "
             "смета превышает лимит — запуск блокирован (AD-8)"
         )
+
+    # ADR-036 (дельта E2, структурно): смета аренды обязана объявить, какие
+    # утверждения открывают расход. Preflight здесь НЕ исполняется — закрытая
+    # дверь не нарушение; проверяется лишь наличие и форма поля.
+    if estimate.get("provider") == "vast.ai":
+        rv = estimate.get("requires_verdicts")
+        if not isinstance(rv, list) or not rv:
+            errs.append(
+                "requires_verdicts: для provider vast.ai обязателен непустой список "
+                "({guard: performance-roofline, run: ...} | {claim: CL-NNN}) — ADR-036"
+            )
+        else:
+            for item in rv:
+                if not isinstance(item, dict) or not (
+                    isinstance(item.get("claim"), str)
+                    or (isinstance(item.get("guard"), str) and isinstance(item.get("run"), str))
+                ):
+                    errs.append(
+                        "requires_verdicts: пункт должен быть {claim: CL-NNN} "
+                        "или {guard: performance-roofline, run: <run>}"
+                    )
     return errs
 
 
@@ -503,19 +524,114 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--force", action="store_true", help="перезаписать существующую смету (осознанно)"
     )
+    parser.add_argument(
+        "--preflight",
+        metavar="RUN_REF",
+        default=None,
+        help="preflight аренды: каждый пункт requires_verdicts должен дать pass "
+             "(ADR-036; unverified/fail → расход не открыт)",
+    )
+    parser.add_argument(
+        "--facts-dir", default=None, help="каталог фактов (evidence/facts) для preflight",
+    )
     return parser
+
+
+def _estimate_path(case_dir: Path, run_ref: str) -> Path:
+    return case_dir / "evidence" / "budget" / f"{run_ref}.json"
+
+
+def cmd_preflight(case_dir: Path, run_ref: str, facts_dir: Optional[str] = None) -> int:
+    """Preflight аренды: ``unverified`` не открывает расход (ADR-036, дельта E2).
+
+    Каждый пункт ``requires_verdicts`` сметы обязан дать ``pass``:
+    ``{claim: CL-NNN}`` — через ``check_claims --evaluate``; ``{guard:
+    performance-roofline, run: <run>}`` — через ``check_performance_roofline
+    --require-verified``. Любой иной исход → отказ.
+    """
+    if not RUN_REF_RE.match(run_ref):
+        print(f"preflight: неверный run-ref {run_ref!r}", file=sys.stderr)
+        return 2
+    path = _estimate_path(case_dir, run_ref)
+    if not path.is_file():
+        print(f"preflight: нет сметы {path} — расход не открыт (ADR-036)", file=sys.stderr)
+        return 1
+    try:
+        estimate = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"preflight: смета не читается: {exc}", file=sys.stderr)
+        return 1
+    items = estimate.get("requires_verdicts") or []
+    if not items:
+        print(
+            "preflight: смета не объявляет requires_verdicts — расход не открыт (ADR-036)",
+            file=sys.stderr,
+        )
+        return 1
+
+    root = Path(__file__).resolve().parents[1]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    try:
+        from tools import check_claims
+        from tools import check_performance_roofline as roofline
+    except Exception as exc:  # noqa: BLE001 — нет стража = нечем открыть дверь
+        print(f"preflight: стражи недоступны: {exc}", file=sys.stderr)
+        return 1
+
+    claims_cache = None
+    blockers: list[str] = []
+    print(f"Preflight «{run_ref}» (ADR-036):")
+    for item in items:
+        if not isinstance(item, dict):
+            blockers.append(f"пункт не объект: {item!r}")
+            continue
+        if isinstance(item.get("claim"), str):
+            if claims_cache is None:
+                claims_cache = {r["id"]: r for r in check_claims.evaluate(root)}
+            verdict = claims_cache.get(item["claim"], {}).get("verdict", "unverified")
+            ok = verdict == "pass"
+            print(f"  claim {item['claim']}: {verdict}")
+            if not ok:
+                blockers.append(f"claim {item['claim']}: {verdict}")
+        elif item.get("guard") == "performance-roofline" and isinstance(item.get("run"), str):
+            code, report = roofline.run_check(
+                item["run"], None, require_verified=True, facts_dir=facts_dir
+            )
+            ok = code == roofline.EXIT_OK
+            print(f"  guard performance-roofline/{item['run']}: {report.get('verdict')}")
+            if not ok:
+                blockers.append(
+                    f"guard performance-roofline/{item['run']}: {report.get('verdict')} "
+                    f"(exit {code})"
+                )
+        else:
+            blockers.append(f"неизвестный пункт requires_verdicts: {item!r}")
+
+    if blockers:
+        print(
+            "\nОтказ: unverified/fail — расход не открыт (ADR-036):\n  - "
+            + "\n  - ".join(blockers),
+            file=sys.stderr,
+        )
+        return 1
+    print("\nPreflight PASS: все утверждения подтверждены — расход открыт")
+    return 0
 
 
 def main(argv: Optional[list[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     case_dir = Path(args.case_dir)
+    if args.preflight:
+        return cmd_preflight(case_dir, args.preflight, facts_dir=args.facts_dir)
     if args.verify:
         return cmd_verify(case_dir, args.run_ref)
     if args.estimate:
         return cmd_estimate(case_dir, args)
     build_parser().print_usage(sys.stderr)
     print(
-        "укажите режим: --verify (страж) или --estimate <run-ref> (генератор)",
+        "укажите режим: --verify (страж), --estimate <run-ref> (генератор) "
+        "или --preflight <run-ref> (открытие двери)",
         file=sys.stderr,
     )
     return 2

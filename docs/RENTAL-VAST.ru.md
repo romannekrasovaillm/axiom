@@ -166,3 +166,19 @@ nohup python3 tools/vast_watchdog.py --host --instance-id <id> \
 - **D1 (косметика):** остаток прототипа в f-string удалён.
 
 Правило ревью: килл-свитч обязан отказываться ГРОМКО (unknown → крик в лог), никогда — молча и никогда — ложно.
+
+## 6. Preflight: `unverified` не открывает расход (ADR-036)
+
+До аренды — обязательный preflight сметы: каждый пункт `requires_verdicts`
+(guard `performance-roofline` и/или утверждение `CL-NNN`) обязан дать `pass`:
+
+```bash
+python3 tools/check_budget_gate.py --preflight pretreain-l3
+python3 tools/check_performance_roofline.py --run kda-wyut-delta \
+  --metrics <metrics.jsonl> --require-verified     # neutral → exit 3 (unverified)
+```
+
+Отказ preflight («unverified/fail — расход не открыт») означает: KPI/вместимость не
+доказаны фактами — аренда не открывается. Запуск сторожа `tools/vast_watchdog.py`
+выполняется только после PASS preflight (точки старта инстанса в самом сторожe нет —
+preflight живёт здесь, как шаг runbook).

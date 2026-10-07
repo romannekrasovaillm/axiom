@@ -66,7 +66,7 @@ def test_snapshot_carries_full_case_ruleset(case_dir, tmp_path):
 
 
 def test_excluded_infra_rules_detected_dynamically(case_dir):
-    """Динамический детектор инфраструктурных ``command_succeeds`` == реестровый пин (16).
+    """Динамический детектор инфраструктурных ``command_succeeds`` == реестровый пин (18).
 
     ADR-037 (дельта D2): C-050 (``--evaluate``, факты в ``evidence/``) —
     инфраструктурное правило; C-049 (сверка деклараций, без сети/GPU) помечено
@@ -74,7 +74,7 @@ def test_excluded_infra_rules_detected_dynamically(case_dir):
     """
     detected = detect_excluded_infra_rules(case_dir / "CONSTRAINTS.yaml")
     assert detected == EXCLUDED_INFRA_RULES
-    assert len(detected) == 16
+    assert len(detected) == 18
     assert "C-050" in EXCLUDED_INFRA_RULES
     assert "C-049" not in EXCLUDED_INFRA_RULES
 

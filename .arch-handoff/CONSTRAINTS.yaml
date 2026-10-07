@@ -497,3 +497,15 @@ constraints:
     evidence: "tools/check_adr_config_consistency.py: карта 1 — ADR-009↔net/config.json (8 соответствий), карта 2 — ADR-032↔evidence/kpi-pins.json (2 соответствия, list-путь pins.0.x); selftest 5/5; паттерн не найден в ADR → adr-unverifiable (fail-closed); план ENVIRONMENT-V1 §9"
     adr: ADR-032
     owner: архитектор
+
+  - id: C-048
+    name: "Страж эффективности с блокировкой аренды: смета аренды GPU не одобрена, пока KPI ток/с не добит до пинового порога (ADR-032/034 §5, пин blocks_rental); selftest с мутантами; fail-closed (нет метрик = unmet = блокировка действует; файл сметы без статуса = нарушение)"
+    type: command_succeeds
+    command: 'python3 tools/check_rental_block.py --selftest && python3 tools/check_rental_block.py --quiet'
+    timeout_secs: 60
+    severity: high
+    scope: case
+    kind: structural
+    evidence: "tools/check_rental_block.py: медиана tok_s последнего окна ≥20 шагов vs threshold пина (вычисление — носитель roofline-стража); rental_budget_paths пина сканируются: approved/unknown при unmet = нарушение, draft = оценка для планирования допустима; selftest 6/6"
+    adr: ADR-034
+    owner: архитектор

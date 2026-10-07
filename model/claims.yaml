@@ -1,0 +1,219 @@
+# model/claims.yaml — реестр утверждений поведенческого слоя Spine (ADR-036, дельта A).
+#
+# Утверждение (CL-NNN): дословный anchor первоисточника + предикат над фактом
+# датчика. Вердикт выносит tools/check_claims.py (pass | fail | unverified).
+# Утверждение с sensor читается из evidence/facts/<S-id>.jsonl; утверждение с
+# pending — отложено честно (владелец и срок объявлены), не подставлено.
+#
+# kind:
+#   number         — числовое значение/порог;
+#   bound          — ограничение (≤/≥);
+#   obligation     — обязательство (должно быть true);
+#   config_binding — декларация конфига (сверяется в --mode config-bindings).
+
+- id: CL-001
+  source: {file: docs/adr/ADR-032-kda-wyut-tok-s-kpi-bolshoy-batch.md, anchor: "**≥800 ток/с** (10×, порог приёмки дельты WY/UT+батча)"}
+  statement: "KPI претрейна: приёмка WY/UT от ≥800 ток/с (10× базиса 80–86)"
+  kind: bound
+  sensor: S-012
+  fact: tok_s_median_window
+  predicate: {op: ">=", value: 800, unit: tok_s, tolerance: null}
+  subject_match: [run_ref]
+  rule: C-048
+  binding: null
+
+- id: CL-002
+  source: {file: net/config.json, anchor: "\"actual_param_count\": 1009632913"}
+  statement: "N_total ≈ 1,0096e9 (базис сметы «6·N_active·D»)"
+  kind: number
+  sensor: S-002
+  fact: params_total
+  predicate: {op: "==", value: 1009632913, unit: count, tolerance: null}
+  subject_match: [config_sha256]
+  rule: null
+  binding: null
+
+- id: CL-003
+  source: {file: net/config.json, anchor: "\"active_params_per_token\": 502399236"}
+  statement: "N_active ≈ 502,4e6 (активные на токен)"
+  kind: number
+  sensor: S-002
+  fact: params_active
+  predicate: {op: "==", value: 502399236, unit: count, tolerance: null}
+  subject_match: [config_sha256]
+  rule: null
+  binding: null
+
+- id: CL-004
+  source: {file: docs/adr/ADR-034-multi-gpu-dp-jax-sharding.md, anchor: "≈ **16 ГБ ≪ 80 ГБ H100**"}
+  statement: "реплика модели целиком помещается в 16 ГБ (≪ 80 ГБ H100)"
+  kind: bound
+  sensor: S-003
+  fact: replica_bytes_total
+  predicate: {op: "<=", value: 17179869184, unit: bytes, tolerance: null}
+  subject_match: [config_sha256]
+  rule: null
+  binding: null
+
+- id: CL-005
+  source: {file: docs/adr/ADR-034-multi-gpu-dp-jax-sharding.md, anchor: "на 8×H100 при 20–30 % MFU ≈ 7–11 ч счёта"}
+  statement: "ETA претрейна 20B с ядром WY/UT (MFU ≥ 10 %) — 7–11 ч на 8×H100"
+  kind: bound
+  sensor: S-028
+  fact: eta_hours
+  predicate: {op: between, value: [7, 11], unit: hours, tolerance: null}
+  subject_match: [run_ref]
+  rule: null
+  binding: null
+
+- id: CL-006
+  source: {file: docs/adr/ADR-018-block-wise-token-merging-v-mla-sloyah-skeleta-zaimstvovanie-step-5.md, anchor: "cost off→on 1,928→0,773 с p50 (**2,49× дешевле**"}
+  statement: "block-merge: цена MLA-стека падает (условие <0.95× выполнено с запасом)"
+  kind: bound
+  sensor: S-014
+  fact: block_merge_cost_ratio
+  predicate: {op: "<=", value: 0.95, unit: ratio, tolerance: null}
+  subject_match: []
+  rule: null
+  binding: null
+
+- id: CL-007
+  statement: "block-merge: recall on ≥ off на всех пробах"
+  kind: obligation
+  pending: {reason: "формулировка неоднозначна: критерий требует оба конца (recall_on и recall_off), факт S-014 несёт только recall_on", owner: line-1, since: 2026-10-07}
+  source: {file: docs/adr/ADR-018-block-wise-token-merging-v-mla-sloyah-skeleta-zaimstvovanie-step-5.md, anchor: "recall on ≥ off на всех 9 пробах трёх позиций"}
+  subject_match: []
+  rule: null
+  binding: null
+
+- id: CL-008
+  source: {file: docs/RENTAL-VAST.ru.md, anchor: "# Runbook аренды H800 на vast.ai — претрейн L3 (20B → 17,84B)"}
+  statement: "объём корпуса претрейна D = 17,84B токенов"
+  kind: number
+  sensor: S-005
+  fact: corpus_tokens_total
+  predicate: {op: approx, value: 17840000000, unit: count, tolerance: 0.01}
+  subject_match: [dataset_ref]
+  rule: null
+  binding: null
+
+- id: CL-009
+  source: {file: docs/adr/ADR-004-konveyer-pretreyna-dannye-arenda-gpu-i-stadiynost.md, anchor: "Канонический токенизатор претрейна — корпусной BPE v2: полный sha256"}
+  statement: "канонический токенизатор (ADR-004-амендмент) — хеш совпадает с пином конфига"
+  kind: obligation
+  sensor: S-004
+  fact: matches_config_hash
+  predicate: {op: "==", value: true, unit: bool, tolerance: null}
+  subject_match: [config_sha256]
+  rule: null
+  binding: null
+
+- id: CL-010
+  source: {file: net/config.json, anchor: "\"num_kda_layers\": 18,"}
+  statement: "число слоёв KDA — 18"
+  kind: config_binding
+  sensor: S-001
+  fact: num_kda_layers
+  predicate: {op: "==", value: 18, unit: count, tolerance: null}
+  subject_match: [config_sha256]
+  rule: C-047
+  binding: {file: net/config.json, path: num_kda_layers, value: 18}
+
+- id: CL-011
+  source: {file: net/config.json, anchor: "\"num_mla_layers\": 6,"}
+  statement: "число слоёв MLA — 6"
+  kind: config_binding
+  sensor: S-001
+  fact: num_mla_layers
+  predicate: {op: "==", value: 6, unit: count, tolerance: null}
+  subject_match: [config_sha256]
+  rule: C-047
+  binding: {file: net/config.json, path: num_mla_layers, value: 6}
+
+- id: CL-012
+  source: {file: net/model.py, anchor: "(12 routed + 2 shared, top-2 dispatch, QB balancing"}
+  statement: "MoE: top-2 dispatch"
+  kind: config_binding
+  sensor: S-001
+  fact: moe_top_k
+  predicate: {op: "==", value: 2, unit: count, tolerance: null}
+  subject_match: [config_sha256]
+  rule: C-047
+  binding: {file: net/config.json, path: moe_top_k, value: 2}
+
+- id: CL-013
+  source: {file: net/config.json, anchor: "\"vocab_size\": 160000,"}
+  statement: "словарь модели — 160 000"
+  kind: config_binding
+  sensor: S-001
+  fact: vocab_size
+  predicate: {op: "==", value: 160000, unit: count, tolerance: null}
+  subject_match: [config_sha256]
+  rule: C-047
+  binding: {file: net/config.json, path: vocab_size, value: 160000}
+
+- id: CL-014
+  source: {file: docs/specs/ENVIRONMENT-V1.md, anchor: "Кап: суммарный объём воркспейса ≤ 64 МБ"}
+  statement: "кап снапшота чистого кейса — 64 МБ (E-1.5)"
+  kind: bound
+  sensor: S-006
+  fact: snapshot_bytes
+  predicate: {op: "<=", value: 67108864, unit: bytes, tolerance: null}
+  subject_match: [git_sha]
+  rule: null
+  binding: null
+
+- id: CL-015
+  source: {file: docs/specs/ENVIRONMENT-V1.md, anchor: "Верификатор детерминирован, поэтому"}
+  statement: "вердикт детерминирован (ENVIRONMENT R-1 / AD-4)"
+  kind: obligation
+  sensor: S-009
+  fact: verdict_identical
+  predicate: {op: "==", value: true, unit: bool, tolerance: null}
+  subject_match: [git_sha]
+  rule: null
+  binding: null
+
+- id: CL-016
+  source: {file: docs/adr/ADR-034-multi-gpu-dp-jax-sharding.md, anchor: "343 TFLOP/s эффективных на H800 ≈ 35 % MFU"}
+  statement: "ориентир MFU ≈ 35 % на H800 (смета pretrain-l3)"
+  kind: number
+  sensor: S-027
+  fact: mfu_measured
+  predicate: {op: approx, value: 0.35, unit: fraction, tolerance: 0.10}
+  subject_match: [run_ref]
+  rule: null
+  binding: null
+
+- id: CL-017
+  source: {file: docs/specs/SFT-STAGE.delta.md, anchor: "калибровка лесенки §10 ENVIRONMENT-V1** на реальной модели"}
+  statement: "калибровка лесенки обязательна на претрейн-чекпойнте до старта SFT (число снято)"
+  kind: obligation
+  sensor: S-015
+  fact: pass_rate
+  predicate: {op: "!=", value: null, unit: fraction, tolerance: null}
+  subject_match: [run_ref]
+  rule: null
+  binding: null
+
+- id: CL-018
+  source: {file: docs/specs/EVAL-HYGIENE.delta.md, anchor: "нулевое пересечение с каждым кандидатным миксом"}
+  statement: "eval-набор чист до вердикта: нулевое пересечение с обучающим"
+  kind: number
+  sensor: S-016
+  fact: overlap_count
+  predicate: {op: "==", value: 0, unit: count, tolerance: null}
+  subject_match: [dataset_ref]
+  rule: null
+  binding: null
+
+- id: CL-019
+  source: {file: docs/adr/ADR-034-multi-gpu-dp-jax-sharding.md, anchor: "Модель-реплика целиком помещается на каждый GPU"}
+  statement: "реплика модели помещается в один GPU (обоснование отклонения FSDP)"
+  kind: obligation
+  sensor: S-029
+  fact: replica_fits_device
+  predicate: {op: "==", value: true, unit: bool, tolerance: null}
+  subject_match: [config_sha256]
+  rule: null
+  binding: null

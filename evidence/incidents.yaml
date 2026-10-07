@@ -1,0 +1,62 @@
+# evidence/incidents.yaml — реестр инцидентов (ADR-036, дельта B).
+#
+# Каждый инцидент: дата, заголовок, evidence-файлы, датчик, который увидел бы
+# предвестник раньше (или null), и ровно один страж: rule | test | pending |
+# unguardable. Проверяется в tools/check_claims.py --verify (rule существует и
+# его kind ∈ {behavioural, structural}; test-файл и def существуют).
+
+- id: INC-001
+  date: 2026-09-29
+  title: "OOM 973 ГиБ на value_and_grad при T=8192 (D-8) — segfault вместо понятной ошибки"
+  evidence: [evidence/d8-isolation-20261001.md]
+  sensor: S-024
+  guard: {rule: C-040}
+
+- id: INC-002
+  date: 2026-10-06
+  title: "35 ГБ воркспейсов вместо снапшотов (legacy env/data/public) — объём не мерился"
+  evidence: [docs/specs/ENVIRONMENT-V1.md]
+  sensor: S-006
+  guard: {pending: {reason: "кап объёма — тест генератора снапшота, отдельного fitness-правила нет", owner: line-2, since: 2026-10-06}}
+
+- id: INC-003
+  date: 2026-10-04
+  title: "обрезанный sha256 токенизатора в манифесте v2 (aca2ff5, 6645667) — пойман гейтом"
+  evidence: [docs/adr/ADR-004-konveyer-pretreyna-dannye-arenda-gpu-i-stadiynost.md]
+  sensor: S-004
+  guard: {pending: {reason: "сверка полного хеша артефакт↔манифест — часть раннера, отдельного правила нет", owner: line-1, since: 2026-10-04}}
+
+- id: INC-004
+  date: 2026-10-01
+  title: "ложная тревога C-040: pgrep само-матчит команду (049f5f7)"
+  evidence: [evidence/autonomous-run-20261006.md]
+  sensor: S-018
+  guard: {rule: C-040}
+
+- id: INC-005
+  date: 2026-10-05
+  title: "MFU < 1 % прошёл все 45 правил — скорость не была фактом (KPI 800 не проверялся)"
+  evidence: [evidence/budget/pretreain-l3.json]
+  sensor: S-027
+  guard: {rule: C-046}
+
+- id: INC-006
+  date: 2026-10-05
+  title: "WY/UT ускорил компонент KDA в 4,35×, а цикл остался на 75–83 ток/с (ed1268f)"
+  evidence: [docs/RESULTS-2026-10-05.ru.md]
+  sensor: S-023
+  guard: {pending: {reason: "фазовая инструментация лупа (линия-1) ещё не влита — правило появится вместе с таймерами", owner: line-1, since: 2026-10-07}}
+
+- id: INC-007
+  date: 2026-10-06
+  title: "DEF-1: задачный артефакт IMPLEMENTATION.md не сообщается агенту (7ddd41d) — задача невыполнима by construction"
+  evidence: [evidence/track2-stage-a-2026-10-06/calibration.json]
+  sensor: S-007
+  guard: {pending: {reason: "S-007 мерит выполнимость; правило-страж на конструктивную невыполнимость не сформулировано", owner: line-2, since: 2026-10-07}}
+
+- id: INC-008
+  date: 2026-10-06
+  title: "коллизии нумерации ADR (6 коммитов-разрешений) — номера дублировались"
+  evidence: [docs/SELF-REVIEW-20261002.ru.md]
+  sensor: S-010
+  guard: {pending: {reason: "нумерация ADR — процессная дисциплина без fitness-правила", owner: line-2, since: 2026-10-06}}

@@ -506,6 +506,6 @@ constraints:
     severity: high
     scope: case
     kind: structural
-    evidence: "tools/check_rental_block.py: медиана tok_s последнего окна ≥20 шагов vs threshold пина (вычисление — носитель roofline-стража); rental_budget_paths пина сканируются: approved/unknown при unmet = нарушение, draft = оценка для планирования допустима; selftest 6/6"
+    evidence: "tools/check_rental_block.py (канон C-048; дубль rental-budget-gate выведен архитектором 07.10 — вторая реализация того же инварианта): медиана tok_s последнего окна ≥20 шагов vs threshold пина (вычисление — носитель roofline-стража); rental_budget_paths пина сканируются: approved/unknown при unmet = нарушение, draft = оценка для планирования допустима; selftest 6/6"
     adr: ADR-034
     owner: архитектор

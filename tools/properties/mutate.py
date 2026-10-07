@@ -73,6 +73,53 @@ def claim_mutations(claim: dict, root: Path, out_dir: Optional[Path], equivalent
     }
 
 
+def wrapped_guard_mutations(root: str | Path) -> dict[str, dict]:
+    """Мутационный счёт ``wrapped``-стражей по их собственным ``--selftest`` (M1).
+
+    Страж запускается как есть; из вывода берётся опубликованный счёт вида
+    ``N/N`` (убито/всего). Если страж счёт не публикует — ``unverified`` с
+    пометкой, а не выдуманное число.
+    """
+    import re
+    import subprocess
+    import sys
+
+    root = Path(root).resolve()
+    cc = _cc()
+    rules = cc.load_rule_properties(root) or []
+    out: dict[str, dict] = {}
+    for entry in rules:
+        if entry.get("migration") != "wrapped":
+            continue
+        rule = str(entry.get("rule"))
+        command = str(entry.get("probe") or "")
+        # Команду берём из CONSTRAINTS (реестр правил), как у C-047/C-048.
+        text = (root / "CONSTRAINTS.yaml").read_text(encoding="utf-8")
+        m = re.search(rf"-\s*id:\s*{re.escape(rule)}\b(.*?)(?=\n\s*-\s*id:|\Z)", text, re.S)
+        if m:
+            mc = re.search(r"command:\s*'(.+)'", m.group(1))
+            if mc:
+                command = mc.group(1)
+        if not command:
+            out[rule] = {"verdict": "unverified", "reason": "команда стража не найдена"}
+            continue
+        cmd = command if not command.startswith("python3 ") else sys.executable + " " + command[len("python3 "):]
+        try:
+            proc = subprocess.run(cmd, shell=True, cwd=str(root), capture_output=True, text=True, timeout=600)
+        except subprocess.TimeoutExpired:
+            out[rule] = {"verdict": "unverified", "reason": "таймаут selftest"}
+            continue
+        found = re.findall(r"(\d+)\s*/\s*(\d+)", (proc.stdout or "") + (proc.stderr or ""))
+        if found:
+            killed, total = (int(x) for x in found[-1])
+            out[rule] = {"verdict": "ok", "killed": killed, "total": total,
+                         "mutation_score": (killed / total) if total else None}
+        else:
+            out[rule] = {"verdict": "unverified",
+                         "reason": "selftest не публикует мутационный счёт"}
+    return out
+
+
 def mutation_report(root: str | Path, out_dir: Optional[Path] = None) -> dict[str, Any]:
     root = Path(root).resolve()
     cc = _cc()
@@ -112,6 +159,7 @@ def mutation_report(root: str | Path, out_dir: Optional[Path] = None) -> dict[st
         "by_template": by_template,
         "survivors": survivors,
         "equivalent": list(equivalent),
+        "wrapped": wrapped_guard_mutations(root),
     }
 
 
@@ -154,7 +202,8 @@ def write_facts(root: Path, report: dict, out_dir: Optional[Path] = None) -> Non
         ("S-039", "mutation_score", {"by_claim": report["by_claim"], "by_rule": report["by_rule"]}),
         ("S-040", "mutation_summary", {"by_template": report["by_template"],
                                        "survivors": report["survivors"],
-                                       "equivalent": report["equivalent"]}),
+                                       "equivalent": report["equivalent"],
+                                       "wrapped": report.get("wrapped", {})}),
     ):
         write_fact(sensor, fact, value, unit="", quality="derived",
                    method="tools.properties.mutate (ADR-039, дельта M)",

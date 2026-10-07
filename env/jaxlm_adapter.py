@@ -28,6 +28,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 from dataclasses import dataclass, fields as dataclass_fields
@@ -133,6 +134,16 @@ class _Backend:
     def checkpoint_sha256(self) -> str:  # pragma: no cover - протокол
         return ""
 
+    @property
+    def tokenizer_identity(self) -> str:  # pragma: no cover - протокол
+        """Имя+хеш фактического токенизатора (пусто — токенизатор не пиннут)."""
+        return ""
+
+    @property
+    def tokenizer_hash(self) -> str:  # pragma: no cover - протокол
+        """sha256 артефакта токенизатора из манифеста (пусто — манифеста нет)."""
+        return ""
+
 
 def load_model_config(source: Any):
     """Собрать ``ModelConfig`` из инстанса/словаря/пути (без импорта net.config).
@@ -196,48 +207,177 @@ class _HFTokenizerShim:
         return self._tok.decode([int(i) for i in ids])
 
 
-def load_tokenizer(path: str | Path, vocab_size: Optional[int] = None):
-    """Пиннутый токенизатор претрейна: артефакт сети (JSON BPE) или HF v2.
+#: Схема манифеста токенизатора AD-4 (``tools/bpe_train.TOKENIZER_SCHEMA``).
+MANIFEST_SCHEMA = "axiom-pretrain-tokenizer/1"
 
-    Различие — по содержимому: JSON ``net.tokenizer.BPETokenizer`` несёт ключ
-    ``specials`` с целочисленными merges; HF ``tokenizer.model`` — нет.
+
+def _file_sha256(path: Path, chunk: int = 1 << 20) -> str:
+    """sha256 файла-артефакта — предмет пина ``tokenizer_hash`` манифеста AD-4."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for block in iter(lambda: handle.read(chunk), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _read_json(path: Path) -> Any:
+    """JSON файла или ``None`` (артефакт сети бывает не-JSON — решает ветка)."""
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+
+
+@dataclass(frozen=True)
+class TokenizerPin:
+    """Загруженный токенизатор вместе с его пином (манифест AD-4 → артефакт+хеш).
+
+    ``tokenizer_hash`` — sha256 файла-артефакта, сверенный с пином манифеста;
+    ``None`` — если грузили артефакт напрямую (манифеста нет, сверять нечего).
     """
-    from net import infer  # net.tokenizer.BPETokenizer доступен через net.infer
 
-    p = Path(path)
-    if not p.is_file():
-        raise FileNotFoundError(f"токенизатор не найден: {p}")
-    data = json.loads(p.read_text(encoding="utf-8"))
-    merges = data.get("merges")
+    tokenizer: Any
+    artifact_path: Path
+    tokenizer_hash: Optional[str]
+    manifest_path: Optional[Path] = None
+    vocab_size: Optional[int] = None
+
+    @property
+    def identity(self) -> str:
+        """Ссылка «имя+хеш» фактического токенизатора (журнал, ``policy_version``)."""
+        if self.tokenizer_hash:
+            return f"{self.artifact_path.name}@{self.tokenizer_hash[:12]}"
+        return self.artifact_path.name
+
+
+def _looks_like_manifest(data: Any) -> bool:
+    """Манифест AD-4 (``tools/bpe_train.py``) — несёт ``tokenizer.file``.
+
+    Артефакт ``tokenizers-json/v1`` такого ключа не имеет (у него ``model``,
+    ``decoder``…), поэтому различение манифеста и артефакта — по контракту
+    AD-4, а не по угадыванию.
+    """
+    block = data.get("tokenizer") if isinstance(data, dict) else None
+    return isinstance(block, dict) and bool(block.get("file"))
+
+
+def _load_artifact(path: Path, vocab_size: Optional[int]):
+    """Артефакт по содержимому: JSON сети (``specials``-список) или ``tokenizers``.
+
+    JSON ``net.tokenizer.BPETokenizer`` несёт ключ ``specials`` списком и
+    целочисленные merges; HF ``tokenizer.model`` (``tokenizers-json/v1``) — нет.
+    """
+    data = _read_json(path)
+    merges = data.get("merges") if isinstance(data, dict) else None
     is_net_bpe = (
-        isinstance(data.get("specials"), list)
+        isinstance(data, dict)
+        and isinstance(data.get("specials"), list)
         and isinstance(merges, list)
         and (not merges or isinstance(merges[0], list))
     )
     if is_net_bpe:
-        return infer.BPETokenizer.load(str(p), vocab_size=vocab_size or 160_000)
+        from net import infer  # ленивый импорт: net.tokenizer.BPETokenizer через net.infer
+        return infer.BPETokenizer.load(str(path), vocab_size=vocab_size or 160_000)
     try:
         from tokenizers import Tokenizer as HFTokenizer
     except ImportError as exc:  # pragma: no cover — окружение без библиотеки
         raise JaxUnavailableError(
-            f"нужен пакет tokenizers для HF-токенизатора {p}: {exc}"
+            f"нужен пакет tokenizers для HF-токенизатора {path}: {exc}"
         ) from exc
-    return _HFTokenizerShim(HFTokenizer.from_file(str(p)), vocab_size=vocab_size)
+    return _HFTokenizerShim(HFTokenizer.from_file(str(path)), vocab_size=vocab_size)
+
+
+def resolve_tokenizer_pin(
+    path: str | Path, vocab_size: Optional[int] = None
+) -> TokenizerPin:
+    """Каноническая точка загрузки: манифест AD-4 либо артефакт → токенизатор+пин.
+
+    ``path`` — либо **манифест** токенизатора (``tools/bpe_train.py``:
+    ``version/kind/vocab_size/merges/specials/pad_id`` + ``tokenizer.file`` +
+    ``tokenizer_hash``), либо сам артефакт.  Манифест разворачивается в артефакт
+    относительно своего каталога, sha256 артефакта сверяется с пином
+    ``tokenizer_hash`` (подмена после упаковки — отказ, AD-4), и уже артефакт
+    грузится по содержимому (:func:`_load_artifact`).
+
+    Отсутствие пина в манифесте — отказ (fail-closed): «загрузить и не сверить»
+    означало бы молча поехать по другому словарю.
+    """
+    p = Path(path)
+    if not p.is_file():
+        raise FileNotFoundError(f"токенизатор не найден: {p}")
+    data = _read_json(p)
+    if not _looks_like_manifest(data):
+        return TokenizerPin(
+            tokenizer=_load_artifact(p, vocab_size),
+            artifact_path=p,
+            tokenizer_hash=None,
+            vocab_size=vocab_size,
+        )
+    version = data.get("version")
+    if version != MANIFEST_SCHEMA:
+        raise ValueError(
+            f"манифест токенизатора {p}: схема {version!r} не поддержана "
+            f"(ожидается {MANIFEST_SCHEMA!r})"
+        )
+    artifact = p.parent / str(data["tokenizer"]["file"])
+    if not artifact.is_file():
+        raise FileNotFoundError(
+            f"артефакт токенизатора манифеста отсутствует: {artifact} (манифест {p})"
+        )
+    pinned = data.get("tokenizer_hash")
+    if not isinstance(pinned, str) or not pinned:
+        raise ValueError(
+            f"манифест {p} не несёт tokenizer_hash — пин артефакта нечем проверить"
+        )
+    actual = _file_sha256(artifact)
+    if pinned != actual:
+        raise ValueError(
+            f"tokenizer_hash не совпал с пином манифеста {p}: {actual[:12]}… != "
+            f"{pinned[:12]}… ({artifact}) — файл изменился после упаковки"
+        )
+    vocab = vocab_size if vocab_size is not None else data.get("vocab_size")
+    return TokenizerPin(
+        tokenizer=_load_artifact(artifact, vocab),
+        artifact_path=artifact,
+        tokenizer_hash=actual,
+        manifest_path=p,
+        vocab_size=vocab,
+    )
+
+
+def load_tokenizer(path: str | Path, vocab_size: Optional[int] = None):
+    """Пиннутый токенизатор претрейна: манифест AD-4, JSON сети (BPE) или HF v2.
+
+    Единая точка загрузки для приборов.  ``--tokenizer-path`` стенда указывает
+    на манифест (``tokenizer-manifest.json``); раньше этот манифест уходил прямо
+    в ``tokenizers.Tokenizer.from_file`` и прибор падал на
+    «Unknown tokenizer version 'axiom-pretrain-tokenizer/1'».  Теперь манифест
+    разворачивается в артефакт с обязательной сверкой ``tokenizer_hash``, а
+    артефакт грузится по содержимому: JSON ``net.tokenizer.BPETokenizer``
+    (``specials``-список) или HF ``tokenizer.model``.
+    """
+    return resolve_tokenizer_pin(path, vocab_size=vocab_size).tokenizer
 
 
 def default_tokenizer_path() -> Optional[Path]:
     """Дефолтный путь пиннутого tokenizer'а: env-переменная → корень репо.
 
-    Порядок: ``AXIOM_TOKENIZER`` (явный пин прогона) → ``<repo>/tokenizer.model``
-    → ``<repo>/net/config.json`` рядом с артефактом.  Нет файла — ``None``
-    (адаптер потребует явный ``tokenizer_path``).
+    Порядок: ``AXIOM_TOKENIZER`` (явный пин прогона: манифест или артефакт) →
+    ``<repo>/tokenizer.model`` → ``<repo>/tokenizer-manifest.json`` → те же два
+    имени в ``<repo>/net/``.  Нет файла — ``None`` (адаптер потребует явный
+    ``tokenizer_path``).
     """
     import os
 
     env_path = os.environ.get("AXIOM_TOKENIZER")
     if env_path and Path(env_path).is_file():
         return Path(env_path)
-    for candidate in (_REPO_ROOT / "tokenizer.model", _REPO_ROOT / "net" / "tokenizer.model"):
+    for candidate in (
+        _REPO_ROOT / "tokenizer.model",
+        _REPO_ROOT / "tokenizer-manifest.json",
+        _REPO_ROOT / "net" / "tokenizer.model",
+        _REPO_ROOT / "net" / "tokenizer-manifest.json",
+    ):
         if candidate.is_file():
             return candidate
     return None
@@ -304,6 +444,7 @@ class _NetBackend(_Backend):
         self._config_src = config
         self._tokenizer = tokenizer
         self._tokenizer_path = tokenizer_path
+        self._tokenizer_pin: Optional[TokenizerPin] = None
         self._seed = int(seed)
         self._chunk_size = int(chunk_size)
         self._loaded = False
@@ -333,7 +474,9 @@ class _NetBackend(_Backend):
         if tokenizer is None and path is None:
             path = default_tokenizer_path()
         if tokenizer is None and path is not None:
-            tokenizer = load_tokenizer(path, vocab_size=int(cfg.vocab_size))
+            pin = resolve_tokenizer_pin(path, vocab_size=int(cfg.vocab_size))
+            tokenizer = pin.tokenizer
+            self._tokenizer_pin = pin
         self._tokenizer = tokenizer
         step = resolve_step_dir(self._checkpoint)
         target = infer.model_mod.init_params(jax.random.PRNGKey(self._seed), cfg)
@@ -358,6 +501,20 @@ class _NetBackend(_Backend):
     def vocab_size(self) -> int:
         self._load()
         return int(self._cfg.vocab_size)
+
+    @property
+    def tokenizer_identity(self) -> str:
+        """Имя+хеш токенизатора прогона (манифест AD-4 → артефакт); иначе пусто."""
+        self._load()
+        pin = self._tokenizer_pin
+        return pin.identity if pin is not None else ""
+
+    @property
+    def tokenizer_hash(self) -> str:
+        """sha256 артефакта токенизатора, сверенный с пином манифеста."""
+        self._load()
+        pin = self._tokenizer_pin
+        return (pin.tokenizer_hash or "") if pin is not None else ""
 
     # -- кодек --------------------------------------------------------------
 
@@ -594,11 +751,32 @@ class JaxLMAdapter:
         return getattr(self._backend, "checkpoint_sha256", "") or ""
 
     @property
+    def tokenizer_identity(self) -> str:
+        """Имя+хеш фактического токенизатора прогона (пусто — пин не назван)."""
+        return getattr(self._backend, "tokenizer_identity", "") or ""
+
+    @property
+    def tokenizer_hash(self) -> str:
+        """sha256 артефакта токенизатора из манифеста (пусто — манифеста нет)."""
+        return getattr(self._backend, "tokenizer_hash", "") or ""
+
+    @property
     def policy_version(self) -> str:
+        """Имя предмета замера: хеш чекпойнта + (если пиннут) хеш токенизатора.
+
+        Формат ``jax-<ckpt12>`` сохраняется, когда токенизатор не пиннут
+        (подменяемый бэкенд): журнал роллаута не приписывает токенизатор, о
+        котором ничего не знает.  Реальный стенд добавляет ``+<артефакт>@<хеш12>``
+        — тогда строка называет и словарь, которым кодировался роллаут.
+        """
         if self._policy_version != "jax-pending":
             return self._policy_version
         sha = self.checkpoint_sha256
-        return f"jax-{sha[:12]}" if sha else "jax-pending"
+        if not sha:
+            return "jax-pending"
+        base = f"jax-{sha[:12]}"
+        identity = self.tokenizer_identity
+        return f"{base}+{identity}" if identity else base
 
     def encode(self, text: str) -> list[int]:
         """Детерминированное кодирование промпта/наблюдения (§13)."""
@@ -646,8 +824,10 @@ __all__ = [
     "GenerationResult",
     "JaxLMAdapter",
     "JaxUnavailableError",
+    "MANIFEST_SCHEMA",
     "RESULT_FIELDS",
     "RestoredModel",
+    "TokenizerPin",
     "checkpoint_sha256",
     "default_tokenizer_path",
     "jax_available",
@@ -656,4 +836,5 @@ __all__ = [
     "load_tokenizer",
     "render_messages",
     "resolve_step_dir",
+    "resolve_tokenizer_pin",
 ]

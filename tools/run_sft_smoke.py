@@ -1040,6 +1040,12 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
                         help="явный лимит смоука, если сметы evidence/budget/<run-ref>.json нет")
     parser.add_argument("--card-scan-lines", type=int, default=DEFAULT_CARD_SCAN_LINES)
     parser.add_argument("--json", action="store_true", help="печать журнала в stdout")
+    parser.add_argument("--preflight-gate", default="sft-start",
+                        help="открывающий гейт: preflight перед стартом стадии (ADR-038, K3)")
+    parser.add_argument("--override-preflight", default=None,
+                        help="аварийный обход preflight гейта с причиной (пишется фактом)")
+    parser.add_argument("--no-preflight", action="store_true",
+                        help="не вызывать preflight (осознанно; по умолчанию вызывается)")
     return parser.parse_args(list(argv) if argv is not None else None)
 
 
@@ -1400,6 +1406,16 @@ def _write_journal(journal: dict[str, Any], out_dir: Path) -> None:
 
 def main(argv: Optional[Iterable[str]] = None) -> int:
     args = parse_args(argv)
+    try:
+        from tools.stage_preflight import enforce as _enforce_preflight
+    except ImportError:  # запуск как скрипт из tools/
+        from stage_preflight import enforce as _enforce_preflight
+
+    gate_code = _enforce_preflight(
+        args.preflight_gate, args.override_preflight, no_preflight=args.no_preflight
+    )
+    if gate_code != 0:
+        return gate_code
     journal, ok = run_stage(args)
     if args.json:
         print(json.dumps(journal, ensure_ascii=False, indent=2))

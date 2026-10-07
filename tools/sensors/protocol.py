@@ -214,40 +214,48 @@ def collect_all(exporter: Exporter, subject: dict[str, Any], **inputs: Any) -> l
 
 
 def check_conformance(exporters: list[Exporter], *, subject: Optional[dict[str, Any]] = None) -> list[str]:
-    """Тест соответствия протоколу. Возвращает список нарушений (пусто = OK)."""
+    """Тест соответствия протоколу. Возвращает список нарушений (пусто = OK).
+
+    Экспортёры вызываются в изолированном временном корне: тяжёлые источники
+    (git-история, аудит стражей) не трогаются, а недоступный источник обязан
+    дать ``unverified``, не исключение.
+    """
+    import tempfile
+
     errs: list[str] = []
     ref_subject = subject or {"git_sha": "0" * 40, "git_dirty": False, "device_kind": "cpu"}
     seen: set[str] = set()
-    for exporter in exporters:
-        try:
-            spec = exporter.describe()
-        except Exception as exc:  # noqa: BLE001
-            errs.append(f"{exporter!r}: describe() упал — {type(exc).__name__}: {exc}")
-            continue
-        if not isinstance(spec, SensorSpec):
-            errs.append(f"{spec!r}: describe() вернул не SensorSpec")
-            continue
-        errs.extend(f"{spec.id}: {e}" for e in spec.validate())
-        if spec.id in seen:
-            errs.append(f"{spec.id}: дубль id среди экспортёров")
-        seen.add(spec.id)
+    with tempfile.TemporaryDirectory(prefix="exporters-conformance-") as tmp:
+        for exporter in exporters:
+            try:
+                spec = exporter.describe()
+            except Exception as exc:  # noqa: BLE001
+                errs.append(f"{exporter!r}: describe() упал — {type(exc).__name__}: {exc}")
+                continue
+            if not isinstance(spec, SensorSpec):
+                errs.append(f"{spec!r}: describe() вернул не SensorSpec")
+                continue
+            errs.extend(f"{spec.id}: {e}" for e in spec.validate())
+            if spec.id in seen:
+                errs.append(f"{spec.id}: дубль id среди экспортёров")
+            seen.add(spec.id)
 
-        facts = collect_all(exporter, ref_subject)
-        if not isinstance(facts, list):
-            errs.append(f"{spec.id}: collect() вернул не список")
-            continue
-        returned = {f.fact for f in facts}
-        missing = set(spec.facts) - returned
-        if missing:
-            errs.append(f"{spec.id}: collect() не вернул объявленные факты {sorted(missing)}")
-        for fact in facts:
-            if fact.sensor != spec.id:
-                errs.append(f"{spec.id}: факт {fact.fact} с чужим sensor={fact.sensor}")
-            for e in fact.validate():
-                errs.append(f"{spec.id}/{fact.fact}: {e}")
-            record = fact.to_record()
-            if not set(FACT_KEYS) <= set(record):
-                errs.append(f"{spec.id}/{fact.fact}: запись не по контракту C1")
+            facts = collect_all(exporter, ref_subject, root=tmp)
+            if not isinstance(facts, list):
+                errs.append(f"{spec.id}: collect() вернул не список")
+                continue
+            returned = {f.fact for f in facts}
+            missing = set(spec.facts) - returned
+            if missing:
+                errs.append(f"{spec.id}: collect() не вернул объявленные факты {sorted(missing)}")
+            for fact in facts:
+                if fact.sensor != spec.id:
+                    errs.append(f"{spec.id}: факт {fact.fact} с чужим sensor={fact.sensor}")
+                for e in fact.validate():
+                    errs.append(f"{spec.id}/{fact.fact}: {e}")
+                record = fact.to_record()
+                if not set(FACT_KEYS) <= set(record):
+                    errs.append(f"{spec.id}/{fact.fact}: запись не по контракту C1")
     return errs
 
 

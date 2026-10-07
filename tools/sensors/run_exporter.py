@@ -21,7 +21,7 @@ from .subject import REPO_ROOT
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Прогон экспортёра пакета (ADR-038)")
-    parser.add_argument("--id", required=True, help="id экспортёра (например S-031)")
+    parser.add_argument("--id", default=None, help="id экспортёра (например S-031)")
     parser.add_argument("--out-dir", default=None, help="каталог фактов (evidence/facts)")
     parser.add_argument("--root", default=None, help="корень репозитория (по умолчанию)")
     parser.add_argument("--selftest", action="store_true", help="проверка протокола по всем экспортёрам")
@@ -44,14 +44,16 @@ def main(argv: Optional[list[str]] = None) -> int:
         print(f"conformance: {'OK' if not errors else str(len(errors)) + ' нарушений'}")
         return 1 if errors else 0
 
+    if not args.id:
+        print("run_exporter: укажите --id <S-NNN> или --selftest", file=sys.stderr)
+        return 2
     exporter = _find(args.id)
     if exporter is None:
         print(f"run_exporter: экспортёр {args.id} не найден среди пакетов", file=sys.stderr)
         return 1
     root = args.root or str(REPO_ROOT)
     subject = config_subject(device="cpu")
-    inputs = {"root": root} if args.id.startswith(("S-031", "S-032")) else {}
-    facts = collect_all(exporter, subject, **inputs)
+    facts = collect_all(exporter, subject, root=root)
     for fact in facts:
         fact.write(args.out_dir)
         print(f"{fact.sensor} {fact.fact} = {fact.value} [{fact.status}]")

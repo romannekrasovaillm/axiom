@@ -868,6 +868,12 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     parser.add_argument("--budget-limit-usd", type=float, default=None,
                         help="явный лимит смоука, если сметы evidence/budget/<run-id>.json нет")
     parser.add_argument("--json", action="store_true", help="печать журнала в stdout")
+    parser.add_argument("--preflight-gate", default="rl-start",
+                        help="открывающий гейт: preflight перед стартом стадии (ADR-038, K3)")
+    parser.add_argument("--override-preflight", default=None,
+                        help="аварийный обход preflight гейта с причиной (пишется фактом)")
+    parser.add_argument("--no-preflight", action="store_true",
+                        help="не вызывать preflight (осознанно; по умолчанию вызывается)")
     args = parser.parse_args(list(argv) if argv is not None else None)
     if args.steps > 100:
         parser.error("смоук-режим: --steps <= 100 (спека §3.2); полный прогон — "
@@ -1510,6 +1516,16 @@ def _param_norm(params) -> float:
 
 def main(argv: Optional[Iterable[str]] = None) -> int:
     args = parse_args(argv)
+    try:
+        from tools.stage_preflight import enforce as _enforce_preflight
+    except ImportError:  # запуск как скрипт из tools/
+        from stage_preflight import enforce as _enforce_preflight
+
+    gate_code = _enforce_preflight(
+        args.preflight_gate, args.override_preflight, no_preflight=args.no_preflight
+    )
+    if gate_code != 0:
+        return gate_code
     journal, ok = run_stage(args)
     if args.json:
         print(json.dumps(journal, ensure_ascii=False, indent=2))

@@ -435,3 +435,29 @@
   status: active
   pack: spine
   raw: {path: ".git", format: text, retention_days: null, in_git: true}
+
+- id: S-033
+  name: "отчёт единого preflight по открывающему гейту"
+  facts: [gate_preflight]
+  context: "repo | cpu"
+  producer: "python3 tools/preflight.py <gate>"
+  output: evidence/facts/S-033.jsonl
+  quality: measured
+  freshness_max_h: null
+  zone: line-2
+  status: active
+  pack: spine
+  raw: {note: "отчёт по запуску preflight; отдельного файла сырья нет"}
+
+- id: S-034
+  name: "аудит fail-open стражей: пробы с отсутствующим входом"
+  facts: [fail_open, outcomes, guards_count, not_probed]
+  context: "repo"
+  producer: "python3 -m tools.sensors.run_exporter --id S-034"
+  output: evidence/facts/S-034.jsonl
+  quality: measured
+  freshness_max_h: null
+  zone: line-2
+  status: active
+  pack: spine
+  raw: {note: "пробы во временном каталоге: запуск стражей без входа (K4)"}

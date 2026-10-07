@@ -5,4 +5,6 @@ exporters:
     class: SpineCoverageExporter
   - module: piles_trend
     class: PilesTrendExporter
+  - module: fail_open_audit
+    class: FailOpenAuditExporter
 fixtures: fixtures

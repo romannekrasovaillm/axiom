@@ -255,3 +255,16 @@
   binding: null
   stake: money
   stake_note: "«реплика помещается в один GPU» — обоснование отклонения FSDP; ошибка = лишние GPU/OOM"
+
+- id: CL-020
+  source: {file: docs/adr/ADR-030-hf-kanal-publikacii-artefaktov-axiom.md, anchor: "Публикация — только по вердикту стадии (что «важно» — решает приёмка стадии, не ручной выбор)."}
+  statement: "публикация артефактов — только по вердикту стадии; карточка HF сходится с фактами (S-030)"
+  kind: obligation
+  sensor: S-030
+  fact: public_card_matches_facts
+  predicate: {op: "==", value: true, unit: bool, tolerance: null}
+  subject_match: []
+  rule: null
+  binding: null
+  stake: public
+  stake_note: "канал публикации: неверная карточка = неверные публичные числа (ADR-030)"

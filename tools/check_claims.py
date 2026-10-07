@@ -500,6 +500,12 @@ def report(root: Path, out_dir: Optional[Path] = None) -> dict[str, Any]:
         "sensors_pending": sum(1 for s in sensors if s.get("status") == "pending"),
     }
     payload.update(shares(root))
+    # K6: «не проверено» не сворачивается в зелёное — отдельный блок с причиной.
+    payload["unverified_block"] = [
+        {"id": r["id"], "sensor": r.get("sensor"), "fact": r.get("fact"), "reason": r.get("reason")}
+        for r in results
+        if r["verdict"] == "unverified"
+    ]
     return payload
 
 
@@ -631,12 +637,67 @@ def _verify_triage(root: Path) -> list[str]:
     return errors
 
 
+def load_gates(root: Path) -> Optional[list[dict[str, Any]]]:
+    return _load_registry(root, GATES_FILE)
+
+
+def _fail_open_map(root: Path) -> dict[str, Any]:
+    """Карта fail-open стражей из факта S-034 (пусто, если аудита нет)."""
+    try:
+        from tools.sensors.fact import read_latest
+
+        record = read_latest("S-034", "fail_open")
+        if record and record.get("status") == "ok" and isinstance(record.get("value"), dict):
+            return record["value"]
+    except Exception:  # noqa: BLE001 — нет факта = нечего сверять
+        return {}
+    return {}
+
+
+def _verify_gates(root: Path) -> list[str]:
+    """Реестр открывающих гейтов: состав, opens, и запрет fail-open без verified (K5)."""
+    errors: list[str] = []
+    gates = load_gates(root)
+    if gates is None:
+        return [f"{GATES_FILE}: реестр открывающих гейтов отсутствует"]
+    seen: set[str] = set()
+    fail_open = _fail_open_map(root)
+    for gate in gates:
+        name = gate.get("gate")
+        if not isinstance(name, str) or not name.strip():
+            errors.append("gate: имя обязательно")
+            continue
+        if name in seen:
+            errors.append(f"gate {name}: дубль")
+        seen.add(name)
+        if gate.get("opens") not in ("money", "stage", "public"):
+            errors.append(f"gate {name}: opens вне money|stage|public")
+        requires = gate.get("requires")
+        if not isinstance(requires, list) or not requires:
+            errors.append(f"gate {name}: requires — непустой список")
+            continue
+        for req in requires:
+            if not isinstance(req, dict):
+                errors.append(f"gate {name}: требование не объект")
+                continue
+            if isinstance(req.get("guard"), str):
+                guard = req["guard"]
+                if fail_open.get(guard) is True and not req.get("require_verified"):
+                    errors.append(
+                        f"gate {name}: страж {guard} fail-open — требуется require_verified (K5)"
+                    )
+            elif not isinstance(req.get("claim"), str):
+                errors.append(f"gate {name}: требование без claim|guard")
+    return errors
+
+
 def verify_layer(root: Path) -> list[str]:
-    """Согласованность реестров слоя (дельта I/J; K/L/M добавляются далее)."""
+    """Согласованность реестров слоя (дельты I/J/K; L/M добавляются далее)."""
     errors: list[str] = []
     errors.extend(_verify_lineage(root))
     errors.extend(_verify_claims_stake(root))
     errors.extend(_verify_triage(root))
+    errors.extend(_verify_gates(root))
     return errors
 
 
@@ -894,6 +955,11 @@ def main(argv: Optional[list[str]] = None) -> int:
             payload = report(root, out_dir)
             for line in format_shares(payload):
                 print(line)
+            block = payload.get("unverified_block") or []
+            if block:
+                print("\nНЕ ПРОВЕРЕНО (unverified) — дверь не открывает (K6, ADR-038):")
+                for item in block:
+                    print(f"  [{item['id']}] {item.get('sensor')}/{item.get('fact')}: {item.get('reason')}")
             print(json.dumps(payload, ensure_ascii=False, indent=1))
             return 0
     except ClaimsError as exc:

@@ -261,7 +261,7 @@ MODEL_LADDER: tuple[LadderRung, ...] = (
         ),
         factory=tiny_config,
         params_estimate=64_737,
-        param_corridor=(50_000, 300_000),
+        param_corridor=(42_000, 78_000),
     ),
     LadderRung(
         name="small",
@@ -275,7 +275,7 @@ MODEL_LADDER: tuple[LadderRung, ...] = (
         # ADR-036/RUNBOOK quote «~1-2M» for M1; the frozen conftest preset the
         # rung must equal counts 340,583 (T-ML-2 pins the equality), so the
         # corridor follows the factory, not the ADR's rounded figure.
-        param_corridor=(200_000, 600_000),
+        param_corridor=(238_000, 443_000),
     ),
     LadderRung(
         name="mid",
@@ -287,7 +287,7 @@ MODEL_LADDER: tuple[LadderRung, ...] = (
         ),
         factory=mid_config,
         params_estimate=51_147_395,
-        param_corridor=(25_000_000, 80_000_000),
+        param_corridor=(35_700_000, 66_300_000),
     ),
     LadderRung(
         name="l3-full",

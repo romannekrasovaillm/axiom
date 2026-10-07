@@ -74,3 +74,20 @@ cd ~/axiom && ~/venv-axiom/bin/python tools/pretrain_run.py \
 4. **Семантика шагов (проверено 05.10)**: `--steps` — шаги ЭТОЙ ноги; `--total-steps` — абсолютный горизонт расписания, обязателен при resume (`--total-steps` ≥ шаг курсора; иначе отказ «нога не накрыта расписанием» — H4-контракт). Новая нога: `--steps 300 --total-steps 600`. Расписание WSD перестраивается на новый горизонт — **lr тёплым рестартом возвращается к пику** (шаг 301: lr 0.01 после 0.0 на 300); для полного 20B-прогона на аренде — один непрерывный горизонт, не рестарты (замечание линии-2/владельцу).
 5. **Запуск ноги по ssh — грабли канала**: фон с наследованным stdin держит ssh-сессию до таймаута. Шаблон: `ssh host 'setsid nohup ... > leg.log 2>&1 < /dev/null & exit'` — stdin закрыт, хвост лога смотреть ОТДЕЛЬНЫМ вызовом. Проверку «процесс жив» — по `/proc/<pid>/cmdline` или nvidia-smi, никогда `pgrep -f` с паттерном из собственной команды (self-match ловится дважды за день — RESULTS §9, §15).
 6. **Окна проб** (калибровка/RL-смоук между ногами): тот же паттерн — проба → возврат; пробы выполняются при остановленной платформе (B3-down).
+
+## 8. Датчики поведенческого слоя (ADR-036)
+
+В окне стенда (после C-040 — стенд свободен), только чтение, шаг 5–10 с:
+
+```bash
+python3 -m tools.sensors.power_thermal --samples 6 --interval 5      # S-020
+python3 -m tools.sensors.device_memory_external --run                 # S-021
+python3 -m tools.sensors.peak_tflops_bench --allow-device             # S-025 (микробенч bf16)
+python3 -m tools.sensors.drift_probe --allow-device                   # S-026 (drift-проба)
+python3 -m tools.sensors.wrap_pretrain_metrics --metrics <metrics.jsonl> --journal <journal.json>  # S-012/S-013
+python3 -m tools.sensors.wrap_gb10_load                               # S-018 (пиннутое чтение стенда)
+python3 -m tools.sensors.probe                                        # класс по каждому датчику
+```
+
+Датчик, которому недоступен предмет (нет окна/поля `nvidia-smi`), пишет `unverified`
+с причиной — не подставляет число.

@@ -229,7 +229,7 @@
   quality: measured
   freshness_max_h: 1
   zone: line-1
-  status: pending
+  status: active
 
 - id: S-021
   name: "память устройства по процессу (внешний сэмплер)"
@@ -240,7 +240,7 @@
   quality: measured
   freshness_max_h: 1
   zone: line-1
-  status: pending
+  status: active
 
 - id: S-022
   name: "расход аренды по API: spend, ставка, баланс, инстанс"
@@ -284,7 +284,7 @@
   quality: measured
   freshness_max_h: null
   zone: line-1
-  status: pending
+  status: active
 
 - id: S-026
   name: "побитовая идентичность коротких прогонов (drift-проба)"
@@ -295,7 +295,7 @@
   quality: measured
   freshness_max_h: null
   zone: line-1
-  status: pending
+  status: active
 
 - id: S-027
   name: "MFU по измеренному пику (производный)"
@@ -306,7 +306,7 @@
   quality: derived
   freshness_max_h: null
   zone: line-2
-  status: pending
+  status: active
 
 - id: S-028
   name: "ETA прогона для заданной D и машины (производный)"
@@ -317,7 +317,7 @@
   quality: derived
   freshness_max_h: null
   zone: line-2
-  status: pending
+  status: active
 
 - id: S-029
   name: "реплика помещается в устройство (производный)"
@@ -328,7 +328,7 @@
   quality: derived
   freshness_max_h: null
   zone: line-2
-  status: pending
+  status: active
 
 - id: S-030
   name: "публичная карточка HF сходится с фактами (производный)"
@@ -339,4 +339,4 @@
   quality: derived
   freshness_max_h: null
   zone: line-2
-  status: pending
+  status: active

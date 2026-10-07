@@ -78,7 +78,7 @@ def run_selftest() -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="S-006: объём снапшота кейса (ADR-036)")
+    parser = argparse.ArgumentParser(description="S-006: объём снапшота кейса (ADR-037)")
     parser.add_argument("--case", default=str(REPO_ROOT))
     parser.add_argument("--out-dir", default=None)
     parser.add_argument("--device", default=None)

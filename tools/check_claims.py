@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""check_claims.py — страж реестра утверждений и реестра инцидентов (ADR-036, дельта A).
+"""check_claims.py — страж реестра утверждений и реестра инцидентов (ADR-037, дельта A).
 
 Утверждение (`model/claims.yaml`) — дословный anchor первоисточника + предикат
 над фактом датчика. Реестр инцидентов — `evidence/incidents.yaml`.
@@ -16,7 +16,7 @@
     --report                 счётчики реестров (без порогов)
     --selftest               мутанты
 
-Разбор YAML — stdlib-only (`tools/miniyaml.py`): правило C-047 исполняется в
+Разбор YAML — stdlib-only (`tools/miniyaml.py`): правило C-049 исполняется в
 песочнице без сети и сторонних зависимостей.
 """
 
@@ -334,7 +334,7 @@ def config_bindings(root: Path) -> list[dict[str, Any]]:
     """Сверка ``config_binding`` ↔ ``<root>/net/config.json``.
 
     Сообщение называет CL-id, файл, ключ и ADR, но **не ожидаемое значение**
-    (урок DEF-1: артефакт сообщён — решение не подсказано, ADR-036 дельта D4).
+    (урок DEF-1: артефакт сообщён — решение не подсказано, ADR-037 дельта D4).
     """
     results: list[dict[str, Any]] = []
     for claim in load_claims(root):
@@ -359,7 +359,7 @@ def config_bindings(root: Path) -> list[dict[str, Any]]:
         }
         if not ok:
             entry["message"] = (
-                f"C-047: привязка {claim.get('id')} не совпала с {rel}:{path} "
+                f"C-049: привязка {claim.get('id')} не совпала с {rel}:{path} "
                 f"(ADR {_adr_id(claim)}) — значение не сообщается намеренно"
             )
         results.append(entry)
@@ -439,7 +439,7 @@ def run_selftest() -> int:
             encoding="utf-8",
         )
         (root / "CONSTRAINTS.yaml").write_text(
-            "constraints:\n  - id: C-047\n    kind: structural\n    severity: high\n",
+            "constraints:\n  - id: C-049\n    kind: structural\n    severity: high\n",
             encoding="utf-8",
         )
         from tools.sensors.subject import build_subject
@@ -528,7 +528,7 @@ def _print_summary(results: list[dict[str, Any]]) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Страж реестра утверждений и инцидентов (ADR-036)")
+    parser = argparse.ArgumentParser(description="Страж реестра утверждений и инцидентов (ADR-037)")
     parser.add_argument("--root", default=".", help="корень кейса (по умолчанию '.')")
     parser.add_argument("--out-dir", default=None, help="каталог фактов (evidence/facts)")
     parser.add_argument("--verify", action="store_true")

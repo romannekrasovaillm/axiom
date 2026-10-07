@@ -158,7 +158,7 @@ def run_selftest() -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="S-007: выполнимость задач (ADR-036)")
+    parser = argparse.ArgumentParser(description="S-007: выполнимость задач (ADR-037)")
     parser.add_argument("--clean", default=str(REPO_ROOT))
     parser.add_argument("--n", type=int, default=20)
     parser.add_argument("--levels", default=",".join(LEVELS))

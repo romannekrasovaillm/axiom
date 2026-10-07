@@ -96,7 +96,7 @@ def run_selftest() -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="S-008: время вердикта arch-ml (ADR-036)")
+    parser = argparse.ArgumentParser(description="S-008: время вердикта arch-ml (ADR-037)")
     parser.add_argument("--clean", default=str(REPO_ROOT))
     parser.add_argument("--n", type=int, default=3)
     parser.add_argument("--level", default="L1")

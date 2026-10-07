@@ -37,7 +37,7 @@ LEVEL_ATOMS: dict[str, list[str]] = {
     "L3": ["remove_adr_section", "break_affects", "break_verified_by", "break_ad_link"],
 }
 
-#: Версия атомов v2 (ADR-036, дельта D5): v1 + ``drift_config_value`` на L1–L3
+#: Версия атомов v2 (ADR-037, дельта D5): v1 + ``drift_config_value`` на L1–L3
 #: (на L0 нет). Задачи/калибровки ``atoms_version: v1`` воспроизводятся
 #: побайтово — словарь v1 не меняется.
 LEVEL_ATOMS_V2: dict[str, list[str]] = {
@@ -77,7 +77,7 @@ class Damage:
         return d
 
 
-#: Файл конфигурации, значения которого сверяет C-047 (config_binding).
+#: Файл конфигурации, значения которого сверяет C-049 (config_binding).
 CONFIG_FILE = "net/config.json"
 
 
@@ -265,7 +265,7 @@ def corrupt(clean_dir: Path, out_dir: Path, seed: int, level: str, atoms_version
     ``clean_dir`` — каталог чистого кейса (может содержать env/: он исключается
     при копировании). Возвращает список применённых повреждений (для метаданных
     и отката). ``atoms_version`` — версия набора атомов (``v1`` по умолчанию;
-    ``v2`` добавляет ``drift_config_value``, ADR-036 дельта D5).
+    ``v2`` добавляет ``drift_config_value``, ADR-037 дельта D5).
     """
     from .util import copy_case_snapshot, workspace_size_cap
 

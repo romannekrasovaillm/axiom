@@ -68,15 +68,15 @@ def test_snapshot_carries_full_case_ruleset(case_dir, tmp_path):
 def test_excluded_infra_rules_detected_dynamically(case_dir):
     """Динамический детектор инфраструктурных ``command_succeeds`` == реестровый пин (16).
 
-    ADR-036 (дельта D2): C-048 (``--evaluate``, факты в ``evidence/``) —
-    инфраструктурное правило; C-047 (сверка деклараций, без сети/GPU) помечено
+    ADR-037 (дельта D2): C-050 (``--evaluate``, факты в ``evidence/``) —
+    инфраструктурное правило; C-049 (сверка деклараций, без сети/GPU) помечено
     ``infra: false`` и в вердикте остаётся.
     """
     detected = detect_excluded_infra_rules(case_dir / "CONSTRAINTS.yaml")
     assert detected == EXCLUDED_INFRA_RULES
     assert len(detected) == 16
-    assert "C-048" in EXCLUDED_INFRA_RULES
-    assert "C-047" not in EXCLUDED_INFRA_RULES
+    assert "C-050" in EXCLUDED_INFRA_RULES
+    assert "C-049" not in EXCLUDED_INFRA_RULES
 
 
 def test_clean_case_verdict_passes(case_dir, tmp_path, arch_ml):

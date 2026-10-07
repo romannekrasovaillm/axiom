@@ -1,4 +1,4 @@
-# model/claims.yaml — реестр утверждений поведенческого слоя Spine (ADR-036, дельта A).
+# model/claims.yaml — реестр утверждений поведенческого слоя Spine (ADR-037, дельта A).
 #
 # Утверждение (CL-NNN): дословный anchor первоисточника + предикат над фактом
 # датчика. Вердикт выносит tools/check_claims.py (pass | fail | unverified).
@@ -19,7 +19,7 @@
   fact: tok_s_median_window
   predicate: {op: ">=", value: 800, unit: tok_s, tolerance: null}
   subject_match: [run_ref]
-  rule: C-048
+  rule: C-050
   binding: null
 
 - id: CL-002
@@ -116,7 +116,7 @@
   fact: num_kda_layers
   predicate: {op: "==", value: 18, unit: count, tolerance: null}
   subject_match: [config_sha256]
-  rule: C-047
+  rule: C-049
   binding: {file: net/config.json, path: num_kda_layers, value: 18}
 
 - id: CL-011
@@ -127,7 +127,7 @@
   fact: num_mla_layers
   predicate: {op: "==", value: 6, unit: count, tolerance: null}
   subject_match: [config_sha256]
-  rule: C-047
+  rule: C-049
   binding: {file: net/config.json, path: num_mla_layers, value: 6}
 
 - id: CL-012
@@ -138,7 +138,7 @@
   fact: moe_top_k
   predicate: {op: "==", value: 2, unit: count, tolerance: null}
   subject_match: [config_sha256]
-  rule: C-047
+  rule: C-049
   binding: {file: net/config.json, path: moe_top_k, value: 2}
 
 - id: CL-013
@@ -149,7 +149,7 @@
   fact: vocab_size
   predicate: {op: "==", value: 160000, unit: count, tolerance: null}
   subject_match: [config_sha256]
-  rule: C-047
+  rule: C-049
   binding: {file: net/config.json, path: vocab_size, value: 160000}
 
 - id: CL-014

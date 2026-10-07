@@ -113,7 +113,7 @@ def run_selftest() -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="S-020: сэмплер мощности/тепла (ADR-036)")
+    parser = argparse.ArgumentParser(description="S-020: сэмплер мощности/тепла (ADR-037)")
     parser.add_argument("--csv", dest="csv_path", default=None, help="сохранённый вывод nvidia-smi (фикстура)")
     parser.add_argument("--samples", type=int, default=0)
     parser.add_argument("--interval", type=float, default=5.0)

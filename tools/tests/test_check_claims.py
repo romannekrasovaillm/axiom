@@ -79,13 +79,13 @@ def test_verify_reports_missing_rule_refs_in_sandbox_like_fixture(tmp_path):
         json.dumps([{"id": "S-001", "facts": ["num_kda_layers"]}], ensure_ascii=False),
         encoding="utf-8",
     )
-    (root / "CONSTRAINTS.yaml").write_text("- id: C-047\n  kind: structural\n", encoding="utf-8")
+    (root / "CONSTRAINTS.yaml").write_text("- id: C-049\n  kind: structural\n", encoding="utf-8")
     (root / "model" / "claims.yaml").write_text(
         json.dumps([{
             "id": "CL-1", "source": {"file": "docs/src.md", "anchor": anchor},
             "statement": "s", "kind": "number", "sensor": "S-001", "fact": "num_kda_layers",
             "predicate": {"op": "==", "value": 18}, "subject_match": [],
-            "rule": "C-047", "binding": None,
+            "rule": "C-049", "binding": None,
         }], ensure_ascii=False),
         encoding="utf-8",
     )

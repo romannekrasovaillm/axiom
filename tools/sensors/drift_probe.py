@@ -67,7 +67,7 @@ def run_selftest() -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="S-026: drift-проба (ADR-036)")
+    parser = argparse.ArgumentParser(description="S-026: drift-проба (ADR-037)")
     parser.add_argument("--allow-device", action="store_true")
     parser.add_argument("--out-dir", default=None)
     parser.add_argument("--device", default=None)

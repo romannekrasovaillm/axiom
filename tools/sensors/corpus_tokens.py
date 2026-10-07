@@ -200,7 +200,7 @@ def run_selftest() -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="S-005: токены корпуса (ADR-036)")
+    parser = argparse.ArgumentParser(description="S-005: токены корпуса (ADR-037)")
     parser.add_argument("--tokens-root", default=str(TOKENS_V2_ROOT))
     parser.add_argument("--spotcheck", type=int, default=5)
     parser.add_argument("--out-dir", default=None)

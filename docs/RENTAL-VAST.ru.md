@@ -167,7 +167,7 @@ nohup python3 tools/vast_watchdog.py --host --instance-id <id> \
 
 Правило ревью: килл-свитч обязан отказываться ГРОМКО (unknown → крик в лог), никогда — молча и никогда — ложно.
 
-## 6. Preflight: `unverified` не открывает расход (ADR-036)
+## 6. Preflight: `unverified` не открывает расход (ADR-037)
 
 До аренды — обязательный preflight сметы: каждый пункт `requires_verdicts`
 (guard `performance-roofline` и/или утверждение `CL-NNN`) обязан дать `pass`:

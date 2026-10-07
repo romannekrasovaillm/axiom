@@ -149,7 +149,7 @@ def run_selftest() -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Реестр датчиков: класс по каждому датчику (ADR-036, дельта C1)",
+        description="Реестр датчиков: класс по каждому датчику (ADR-037, дельта C1)",
     )
     parser.add_argument("--sensor", action="append", default=None,
                         help="проверить только этот датчик (можно несколько раз)")

@@ -1,4 +1,4 @@
-"""ADR-036 дельта E: unverified не открывает расход (roofline + preflight)."""
+"""ADR-037 дельта E: unverified не открывает расход (roofline + preflight)."""
 
 from __future__ import annotations
 

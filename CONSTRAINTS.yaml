@@ -485,8 +485,8 @@ constraints:
     adr: ADR-023
     owner: архитектор
 
-  - id: C-047
-    name: "ADR и конфиг согласованы: config-привязки реестра утверждений совпадают с net/config.json; реестры claims/sensors/incidents валидны (ADR-036)"
+  - id: C-049
+    name: "ADR и конфиг согласованы: config-привязки реестра утверждений совпадают с net/config.json; реестры claims/sensors/incidents валидны (ADR-037)"
     type: command_succeeds
     command: 'python3 tools/check_claims.py --verify --mode config-bindings --root .'
     timeout_secs: 60
@@ -494,18 +494,18 @@ constraints:
     scope: case
     kind: structural
     infra: false
-    evidence: "tools/check_claims.py → selftest: дрейф anchor, факт с чужим пином, просроченный факт, предикат против unverified-факта, дубль id дают корректные классы; --mode config-bindings сверяет каждую пару {binding.path: value} с net/config.json и валит C-047 при расхождении (атом drift_config_value, env/corruption.py). Правило исполняется В воркспейсе без сети и GPU (model/ + tools/ попадают в снапшот), поэтому не инфраструктурное (infra: false): сообщение называет CL-id, файл и ключ, но не ожидаемое значение (урок DEF-1)"
-    adr: ADR-036
+    evidence: "tools/check_claims.py → selftest: дрейф anchor, факт с чужим пином, просроченный факт, предикат против unverified-факта, дубль id дают корректные классы; --mode config-bindings сверяет каждую пару {binding.path: value} с net/config.json и валит C-049 при расхождении (атом drift_config_value, env/corruption.py). Правило исполняется В воркспейсе без сети и GPU (model/ + tools/ попадают в снапшот), поэтому не инфраструктурное (infra: false): сообщение называет CL-id, файл и ключ, но не ожидаемое значение (урок DEF-1)"
+    adr: ADR-037
     owner: архитектор
 
-  - id: C-048
-    name: "Утверждения ADR не опровергнуты фактами датчиков: ни одного fail в check_claims --evaluate (unverified не валит гейт, но не открывает расход — ADR-036)"
+  - id: C-050
+    name: "Утверждения ADR не опровергнуты фактами датчиков: ни одного fail в check_claims --evaluate (unverified не валит гейт, но не открывает расход — ADR-037)"
     type: command_succeeds
     command: 'python3 tools/check_claims.py --evaluate --fail-on fail'
     timeout_secs: 60
     severity: high
     scope: case
     kind: behavioural
-    evidence: "tools/check_claims.py --evaluate --fail-on fail → exit 0, когда ни одно утверждение не опровергнуто фактами; подтверждённый контрапример (fail) даёт exit 1. Классы pass | fail | unverified: нет факта / просрочен / предмет не совпал / факт unverified — только unverified, не pass (ADR-036). Факты живут в evidence/, которого нет в песочнице, поэтому правило инфраструктурное (EXCLUDED_INFRA_RULES)"
-    adr: ADR-036
+    evidence: "tools/check_claims.py --evaluate --fail-on fail → exit 0, когда ни одно утверждение не опровергнуто фактами; подтверждённый контрапример (fail) даёт exit 1. Классы pass | fail | unverified: нет факта / просрочен / предмет не совпал / факт unverified — только unverified, не pass (ADR-037). Факты живут в evidence/, которого нет в песочнице, поэтому правило инфраструктурное (EXCLUDED_INFRA_RULES)"
+    adr: ADR-037
     owner: архитектор

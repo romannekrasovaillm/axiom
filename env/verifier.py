@@ -41,9 +41,9 @@ HACK_RULE = "hacking"
 #: содержимое CONSTRAINTS.yaml воркспейса и ARCHITECTURE-SPINE.md воркспейса.
 PIN_KEY_CONSTRAINTS = "constraints"
 PIN_KEY_SPINE = "spine"
-#: Дополнительные ключи H-слоя для ``atoms_version: v2`` (ADR-036, дельта D6):
+#: Дополнительные ключи H-слоя для ``atoms_version: v2`` (ADR-037, дельта D6):
 #: реестр утверждений и сам страж утверждений — их правка в воркспейсе даёт
-#: ложный pass (атом ``drift_config_value`` иначе разоружает C-047).
+#: ложный pass (атом ``drift_config_value`` иначе разоружает C-049).
 PIN_KEY_CLAIMS = "claims"
 PIN_KEY_CLAIMS_CHECKER = "claims_checker"
 
@@ -67,7 +67,7 @@ PIN_KEY_CLAIMS_CHECKER = "claims_checker"
 EXCLUDED_INFRA_RULES: tuple[str, ...] = (
     "C-032", "C-033", "C-034", "C-035", "C-036", "C-037", "C-038",
     "C-039", "C-040", "C-041", "C-042", "C-043", "C-044", "C-045",
-    "C-046", "C-048",
+    "C-046", "C-050",
 )
 
 #: Логический ключ H-слоя v2 → путь файла в воркспейсе.
@@ -80,8 +80,8 @@ _EXTRA_GATE_PATHS: dict[str, str] = {
 def _is_infra_rule(rule: dict) -> bool:
     """Инфраструктурное ли правило: ``command_succeeds`` без ``infra: false``.
 
-    Правило, помеченное ``infra: false`` (C-047), исполняется В ВОРКСПЕЙСЕ без
-    сети и GPU и остаётся в вердикте — оно не инфраструктурное (ADR-036, дельта D1).
+    Правило, помеченное ``infra: false`` (C-049), исполняется В ВОРКСПЕЙСЕ без
+    сети и GPU и остаётся в вердикте — оно не инфраструктурное (ADR-037, дельта D1).
     """
     if not isinstance(rule, dict) or rule.get("type") != "command_succeeds":
         return False
@@ -370,8 +370,8 @@ def _gate_files(constraints_name: str, task_spec: Optional[dict]) -> tuple[str, 
     """Гейтовые файлы H-слоя: базовые ``{constraints, spine}`` + (v2) claims-пара.
 
     ``atoms_version: v2`` добавляет пин ``model/claims.yaml`` и
-    ``tools/check_claims.py`` (ADR-036, дельта D6): правка любого из них в
-    воркспейсе обезоружила бы C-047 и дала ложный pass.
+    ``tools/check_claims.py`` (ADR-037, дельта D6): правка любого из них в
+    воркспейсе обезоружила бы C-049 и дала ложный pass.
     """
     base = [constraints_name, SPINE_FILE]
     version = task_spec.get("atoms_version") if isinstance(task_spec, dict) else None

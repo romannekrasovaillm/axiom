@@ -1,4 +1,4 @@
-"""Контракт записи факта (ADR-036, дельта C1).
+"""Контракт записи факта (ADR-037, дельта C1).
 
 Запись факта — одна строка JSONL в ``evidence/facts/<S-id>.jsonl``: что
 измерено, значение, единицы, когда, каким методом и **на каком предмете**
@@ -113,7 +113,7 @@ def _validate(
     if not subject_is_pinned(subject):
         raise FactError(
             "subject: пин предмета пуст — факт не привязывается к утверждению "
-            "(ADR-036); неизвестные поля пишутся как null"
+            "(ADR-037); неизвестные поля пишутся как null"
         )
     if inputs is not None and not isinstance(inputs, list):
         raise FactError("inputs: список ссылок на исходные записи")

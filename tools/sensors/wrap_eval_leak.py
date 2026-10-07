@@ -103,7 +103,7 @@ def run_selftest() -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="S-016: обёртка check_eval_leak (ADR-036)")
+    parser = argparse.ArgumentParser(description="S-016: обёртка check_eval_leak (ADR-037)")
     parser.add_argument("--eval", dest="eval_path", default=None)
     parser.add_argument("--source", dest="sources", action="append", default=None)
     parser.add_argument("--out-dir", default=None)

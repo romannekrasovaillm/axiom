@@ -106,7 +106,7 @@ def run_selftest() -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="S-025: микробенч пика bf16 (ADR-036)")
+    parser = argparse.ArgumentParser(description="S-025: микробенч пика bf16 (ADR-037)")
     parser.add_argument("--allow-device", action="store_true",
                         help="разрешить микробенч (только в окне GB10/на аренде)")
     parser.add_argument("--out-dir", default=None)

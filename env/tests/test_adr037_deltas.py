@@ -1,4 +1,4 @@
-"""ADR-036 дельты D (атом drift_config_value, версии атомов, H-слой v2, SFT D7)."""
+"""ADR-037 дельты D (атом drift_config_value, версии атомов, H-слой v2, SFT D7)."""
 
 from __future__ import annotations
 
@@ -134,14 +134,14 @@ def test_excluded_infra_rules_include_c048_not_c047(tmp_path):
     (case / "CONSTRAINTS.yaml").write_text(
         "constraints:\n"
         "  - id: C-040\n    type: command_succeeds\n    kind: behavioural\n"
-        "  - id: C-047\n    type: command_succeeds\n    kind: structural\n    infra: false\n"
-        "  - id: C-048\n    type: command_succeeds\n    kind: behavioural\n",
+        "  - id: C-049\n    type: command_succeeds\n    kind: structural\n    infra: false\n"
+        "  - id: C-050\n    type: command_succeeds\n    kind: behavioural\n",
         encoding="utf-8",
     )
     detected = detect_excluded_infra_rules(case / "CONSTRAINTS.yaml")
-    assert "C-040" in detected and "C-048" in detected and "C-047" not in detected
+    assert "C-040" in detected and "C-050" in detected and "C-049" not in detected
     assert len(EXCLUDED_INFRA_RULES) == 16
-    assert "C-048" in EXCLUDED_INFRA_RULES and "C-047" not in EXCLUDED_INFRA_RULES
+    assert "C-050" in EXCLUDED_INFRA_RULES and "C-049" not in EXCLUDED_INFRA_RULES
 
 
 def test_h_layer_v2_pins_claims_and_checker(tmp_path):

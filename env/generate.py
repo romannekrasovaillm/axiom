@@ -156,7 +156,7 @@ def _make_spec(
         # Verifier сверяет финал воркспейса против этого пина (основной путь);
         # рантайм base_ws — только fallback для спек без пина.
         "gates_sha256": gates_sha,
-        # ADR-036 (дельта D5, обратно совместимо): v1 — по умолчанию; v2 добавляет
+        # ADR-037 (дельта D5, обратно совместимо): v1 — по умолчанию; v2 добавляет
         # атом drift_config_value и пин claims-пары (§D6). Задачи v1 — побайтово.
         "atoms_version": atoms_version,
         "budget_seconds": 1800,
@@ -180,7 +180,7 @@ def gates_sha256(clean_dir: Path, atoms_version: str = "v1") -> dict[str, str]:
     чистого кейса. Порча (corruption) гейтовые файлы не трогает, поэтому пин
     равен и снапшоту задачи (real/corruption), и clean-состоянию holdout.
 
-    Для ``atoms_version: v2`` (ADR-036 дельта D6) добавляются ``claims``
+    Для ``atoms_version: v2`` (ADR-037 дельта D6) добавляются ``claims``
     (model/claims.yaml) и ``claims_checker`` (tools/check_claims.py).
     """
     pins = {
@@ -235,7 +235,7 @@ def generate(
 ) -> dict[str, Any]:
     """Генерирует публичный набор и holdout-пул. Возвращает сводку.
 
-    ``atoms_version`` (ADR-036 дельта D5): ``v1`` по умолчанию (побайтовое
+    ``atoms_version`` (ADR-037 дельта D5): ``v1`` по умолчанию (побайтовое
     воспроизведение прежних задач); ``v2`` включает атом ``drift_config_value``
     и пин claims-пары.
     """

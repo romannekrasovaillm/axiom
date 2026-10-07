@@ -209,7 +209,7 @@ def run_selftest() -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="S-010: доли коммитов по кучкам (ADR-036)")
+    parser = argparse.ArgumentParser(description="S-010: доли коммитов по кучкам (ADR-037)")
     parser.add_argument("--repo", default=str(REPO_ROOT))
     parser.add_argument("--since", default="2026-09-25")
     parser.add_argument("--until", default=None)

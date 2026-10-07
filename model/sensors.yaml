@@ -1,4 +1,4 @@
-# model/sensors.yaml — реестр датчиков поведенческого слоя Spine (ADR-036).
+# model/sensors.yaml — реестр датчиков поведенческого слоя Spine (ADR-037).
 #
 # Датчик измеряет и пишет запись факта (evidence/facts/<S-id>.jsonl); вердикт
 # выносит предикат утверждения (model/claims.yaml, tools/check_claims.py).

@@ -231,7 +231,7 @@ def validate_estimate(estimate: Any, run_ref: str) -> list[str]:
             "смета превышает лимит — запуск блокирован (AD-8)"
         )
 
-    # ADR-036 (дельта E2, структурно): смета аренды обязана объявить, какие
+    # ADR-037 (дельта E2, структурно): смета аренды обязана объявить, какие
     # утверждения открывают расход. Preflight здесь НЕ исполняется — закрытая
     # дверь не нарушение; проверяется лишь наличие и форма поля.
     if estimate.get("provider") == "vast.ai":
@@ -239,7 +239,7 @@ def validate_estimate(estimate: Any, run_ref: str) -> list[str]:
         if not isinstance(rv, list) or not rv:
             errs.append(
                 "requires_verdicts: для provider vast.ai обязателен непустой список "
-                "({guard: performance-roofline, run: ...} | {claim: CL-NNN}) — ADR-036"
+                "({guard: performance-roofline, run: ...} | {claim: CL-NNN}) — ADR-037"
             )
         else:
             for item in rv:
@@ -529,7 +529,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="RUN_REF",
         default=None,
         help="preflight аренды: каждый пункт requires_verdicts должен дать pass "
-             "(ADR-036; unverified/fail → расход не открыт)",
+             "(ADR-037; unverified/fail → расход не открыт)",
     )
     parser.add_argument(
         "--facts-dir", default=None, help="каталог фактов (evidence/facts) для preflight",
@@ -542,7 +542,7 @@ def _estimate_path(case_dir: Path, run_ref: str) -> Path:
 
 
 def cmd_preflight(case_dir: Path, run_ref: str, facts_dir: Optional[str] = None) -> int:
-    """Preflight аренды: ``unverified`` не открывает расход (ADR-036, дельта E2).
+    """Preflight аренды: ``unverified`` не открывает расход (ADR-037, дельта E2).
 
     Каждый пункт ``requires_verdicts`` сметы обязан дать ``pass``:
     ``{claim: CL-NNN}`` — через ``check_claims --evaluate``; ``{guard:
@@ -554,7 +554,7 @@ def cmd_preflight(case_dir: Path, run_ref: str, facts_dir: Optional[str] = None)
         return 2
     path = _estimate_path(case_dir, run_ref)
     if not path.is_file():
-        print(f"preflight: нет сметы {path} — расход не открыт (ADR-036)", file=sys.stderr)
+        print(f"preflight: нет сметы {path} — расход не открыт (ADR-037)", file=sys.stderr)
         return 1
     try:
         estimate = json.loads(path.read_text(encoding="utf-8"))
@@ -564,7 +564,7 @@ def cmd_preflight(case_dir: Path, run_ref: str, facts_dir: Optional[str] = None)
     items = estimate.get("requires_verdicts") or []
     if not items:
         print(
-            "preflight: смета не объявляет requires_verdicts — расход не открыт (ADR-036)",
+            "preflight: смета не объявляет requires_verdicts — расход не открыт (ADR-037)",
             file=sys.stderr,
         )
         return 1
@@ -581,7 +581,7 @@ def cmd_preflight(case_dir: Path, run_ref: str, facts_dir: Optional[str] = None)
 
     claims_cache = None
     blockers: list[str] = []
-    print(f"Preflight «{run_ref}» (ADR-036):")
+    print(f"Preflight «{run_ref}» (ADR-037):")
     for item in items:
         if not isinstance(item, dict):
             blockers.append(f"пункт не объект: {item!r}")
@@ -610,7 +610,7 @@ def cmd_preflight(case_dir: Path, run_ref: str, facts_dir: Optional[str] = None)
 
     if blockers:
         print(
-            "\nОтказ: unverified/fail — расход не открыт (ADR-036):\n  - "
+            "\nОтказ: unverified/fail — расход не открыт (ADR-037):\n  - "
             + "\n  - ".join(blockers),
             file=sys.stderr,
         )

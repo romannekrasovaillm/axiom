@@ -133,7 +133,7 @@ def run_selftest() -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="S-004: артефакт токенизатора (ADR-036)")
+    parser = argparse.ArgumentParser(description="S-004: артефакт токенизатора (ADR-037)")
     parser.add_argument("--tokenizer", default=str(TOKENIZER_ARTIFACT))
     parser.add_argument("--config", default=str(REPO_ROOT / "net" / "config.json"))
     parser.add_argument("--out-dir", default=None)

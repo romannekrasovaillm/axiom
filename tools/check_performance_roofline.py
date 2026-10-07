@@ -65,7 +65,7 @@ REASON_NOT_RUN = "прогон не выполнялся — файл метри
 
 EXIT_OK = 0
 EXIT_FAIL = 1
-#: ``--require-verified``: недоказанное не открывает расход (ADR-036, дельта E1).
+#: ``--require-verified``: недоказанное не открывает расход (ADR-037, дельта E1).
 EXIT_UNVERIFIED = 3
 
 #: Минимальный размер окна медианы (детерминизм: ≥10 последних записей).
@@ -326,7 +326,7 @@ def _run_check_impl(
     return EXIT_FAIL, report
 
 
-#: Класс вердикта по строке отчёта (ADR-036, дельта E1).
+#: Класс вердикта по строке отчёта (ADR-037, дельта E1).
 _VERDICT_CLASS = {
     "ok": "ok",
     "regression": "regression",
@@ -484,7 +484,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json", dest="json_path", default=None,
                         help="куда записать отчёт")
     parser.add_argument("--require-verified", action="store_true",
-                        help="недоказанное не открывает расход: neutral → exit 3, no-data → exit 1 (ADR-036)")
+                        help="недоказанное не открывает расход: neutral → exit 3, no-data → exit 1 (ADR-037)")
     parser.add_argument("--facts-dir", default=None,
                         help="каталог фактов (evidence/facts) для сверки ток/с с S-012")
     parser.add_argument("--quiet", action="store_true", help="не печатать отчёт в stdout")

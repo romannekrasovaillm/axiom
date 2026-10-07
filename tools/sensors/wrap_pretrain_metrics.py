@@ -130,7 +130,7 @@ def run_selftest() -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="S-012: обёртка метрик претрейна (ADR-036)")
+    parser = argparse.ArgumentParser(description="S-012: обёртка метрик претрейна (ADR-037)")
     parser.add_argument("--metrics", default=None)
     parser.add_argument("--journal", default=None)
     parser.add_argument("--window", type=int, default=WINDOW)

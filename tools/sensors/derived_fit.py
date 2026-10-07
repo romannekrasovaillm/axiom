@@ -82,7 +82,7 @@ def run_selftest() -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="S-029: производная вместимость реплики (ADR-036)")
+    parser = argparse.ArgumentParser(description="S-029: производная вместимость реплики (ADR-037)")
     parser.add_argument("--device-bytes", type=int, default=None)
     parser.add_argument("--device-fact", default=None, help="ссылка S-021:device_mem_used_mb и т.п.")
     parser.add_argument("--out-dir", default=None)

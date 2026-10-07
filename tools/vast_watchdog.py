@@ -34,7 +34,7 @@ DEFAULT_HOST_METRICS = str(Path.home() / "gb10-shared" / "runs" / "pretreain-l3"
 
 
 def _write_sensor_facts(instance_id: str, pairs: dict) -> None:
-    """Пишет факты S-022 через контракт датчиков, не срывая сторож (ADR-036).
+    """Пишет факты S-022 через контракт датчиков, не срывая сторож (ADR-037).
 
     Watchdog — внешний килл-свитч: сбой записи факта не имеет права остановить
     сторож, поэтому запись обёрнута в try/except и не бросает. При UNKNOWN-ставке

@@ -72,7 +72,7 @@ def run_selftest() -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="S-028: производная ETA (ADR-036)")
+    parser = argparse.ArgumentParser(description="S-028: производная ETA (ADR-037)")
     parser.add_argument("--d-tokens", type=int, default=DEFAULT_D)
     parser.add_argument("--run-ref", default=None)
     parser.add_argument("--out-dir", default=None)

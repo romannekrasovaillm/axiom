@@ -5,7 +5,7 @@
 routed/shared экспертов, ``vocab_size`` по форме эмбеддинга и фактически
 выбранный ``kda_impl``. Значения берутся из ``jax.eval_shape(init_params)``
 (формы параметров и построенная структура), а не из JSON: JSON — декларация,
-факт конфигурации даёт исполнение (ADR-036).
+факт конфигурации даёт исполнение (ADR-037).
 
 Запуск::
 
@@ -112,7 +112,7 @@ def run_selftest() -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="S-001: исполняемый конфиг модели (ADR-036)")
+    parser = argparse.ArgumentParser(description="S-001: исполняемый конфиг модели (ADR-037)")
     parser.add_argument("--config", default=str(REPO_ROOT / "net" / "config.json"))
     parser.add_argument("--out-dir", default=None)
     parser.add_argument("--device", default=None, help="переопределить device_kind (фикстуры)")

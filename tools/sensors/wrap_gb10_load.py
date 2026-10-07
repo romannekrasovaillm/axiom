@@ -113,7 +113,7 @@ def run_selftest() -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="S-018: обёртка check_gb10_single_load (ADR-036)")
+    parser = argparse.ArgumentParser(description="S-018: обёртка check_gb10_single_load (ADR-037)")
     parser.add_argument("--evidence", default=None)
     parser.add_argument("--run", action="store_true", help="дополнительно запустить локальный страж")
     parser.add_argument("--out-dir", default=None)

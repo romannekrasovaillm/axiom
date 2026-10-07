@@ -94,7 +94,7 @@ def run_selftest() -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="S-003: байты реплики (ADR-036)")
+    parser = argparse.ArgumentParser(description="S-003: байты реплики (ADR-037)")
     parser.add_argument("--config", default=str(REPO_ROOT / "net" / "config.json"))
     parser.add_argument("--out-dir", default=None)
     parser.add_argument("--device", default=None)

@@ -1,4 +1,4 @@
-"""Реестр датчиков и probe (ADR-036, дельта C1)."""
+"""Реестр датчиков и probe (ADR-037, дельта C1)."""
 
 from __future__ import annotations
 

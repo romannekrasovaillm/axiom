@@ -100,7 +100,7 @@ def run_selftest() -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="S-021: память устройства по процессу (ADR-036)")
+    parser = argparse.ArgumentParser(description="S-021: память устройства по процессу (ADR-037)")
     parser.add_argument("--csv", dest="csv_path", default=None)
     parser.add_argument("--run", action="store_true")
     parser.add_argument("--out-dir", default=None)

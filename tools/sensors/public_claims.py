@@ -118,7 +118,7 @@ def run_selftest() -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="S-030: сверка карточки HF с фактами (ADR-036)")
+    parser = argparse.ArgumentParser(description="S-030: сверка карточки HF с фактами (ADR-037)")
     parser.add_argument("--card", default=None)
     parser.add_argument("--out-dir", default=None)
     parser.add_argument("--device", default=None)

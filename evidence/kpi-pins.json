@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "pins": [
     {
       "run": "kda-wyut-delta",
@@ -15,5 +15,34 @@
   "rental_budget_paths": [
     "evidence/budget/rental-*.json",
     "contracts/INT-001-arenda-gpu.yaml"
-  ]
+  ],
+  "mfu_reference": {
+    "added": "2026-10-07",
+    "author": "архитектор (директива владельца: поднять MFU; честная рамка)",
+    "hardware": "DGX Spark GB10 (spark-44c3), 128 ГБ LPDDR5x unified, 273 ГБ/с",
+    "peak_sources": [
+      "NVIDIA DGX Spark datasheet: 'up to 1 petaFLOP AI compute' = FP4 sparse (маркетинговый пик)",
+      "DataHardware/TechPowerUp (перекрёстно): 1 PFLOP FP4 — sparse; dense FP4 ≈ 500 TFLOPS; стандартная лесенка Blackwell: FP8 dense ≈ 250 TFLOPS, BF16 dense ≈ 125 TFLOPS [точные dense-числа GB10 ТРЕБУЮТ ПРОВЕРКИ по NV техотчёту — datasheet публикует только FP4-sparse]"
+    ],
+    "peak_used": {
+      "bf16_dense_tflops": 125,
+      "precision_note": "наша тренировка: MXFP4 QAT веса, compute в BF16 — считаем от BF16-dense как консервативный знаменатель"
+    },
+    "measured_baseline": {
+      "dense124m_smoke_b1": { "tok_s": 336, "tflops": 0.283, "mfu_pct": 0.23, "runs": 2, "bitwise_identical": true },
+      "l3full_pilot_b1": { "tok_s": 77.7, "tflops": 0.56, "mfu_pct": 0.45, "source": "базис линии-1, batch=1" }
+    },
+    "staged_targets": [
+      { "stage": 1, "name": "batch-fill", "mfu_pct": 3, "mechanism": "устранение batch=1 (свип 8/32/64), снятие host-sync; ожидаемо 5-20x ток/с" },
+      { "stage": 2, "name": "phase-fusion", "mfu_pct": 10, "mechanism": "пофазовые таймеры (линия-1, §26) → таргетный фикс крупнейшей memory-bound фазы, fusion jit" },
+      { "stage": 3, "name": "kernel-class", "mfu_pct": 20, "mechanism": "MXFP4/FP8 matmul в compute-пути, custom pallas-кернелы" }
+    ],
+    "verdict_50pct": "50% MFU на GB10 для тренировки — за пределами достоверного горизонта: класс железа (LPDDR5x 273 ГБ/с против HBM3e 3.35 ТБ/с у H100) и зрелость стека JAX на GB10; 30-50% MFU — цифры датацентрового класса (H100/B200 NVL, HBM, глубокий стек). 50% фиксировать как пин нельзя — будет вечным красным C-046. Лестница 3/10/20% — честные гейты; пересмотр после стадии 2 с реальными числами.",
+    "kpi_note": "tok/s-пин 800 (C-048 аренда) остаётся как запиннен — НЕ ослаблять задним числом; но после свипа пересмотреть БАЗИС (86 ток/с измерен на batch=1 — заполнение батча легитимно добьёт порог инфраструктурно; решение о пересмотре базиса — владельцу, с числами свипа)",
+    "sweep": {
+      "script": "/home/roman/axiom-run/mfu-sweep-0710.sh (стенд, nohup)",
+      "points": "dense-124M batch 8 и 32, 10 шагов, seq 8192",
+      "status": "запущен 07.10 ~17:1x; стенд ушёл в banner-timeout до получения результатов"
+    }
+  }
 }

@@ -229,7 +229,7 @@
   quality: measured
   freshness_max_h: 1
   zone: line-1
-  status: active
+  status: pending  # окно GB10 (AD-7): на исполнителе только unverified-записи
 
 - id: S-021
   name: "память устройства по процессу (внешний сэмплер)"
@@ -240,7 +240,7 @@
   quality: measured
   freshness_max_h: 1
   zone: line-1
-  status: active
+  status: pending  # окно GB10 (AD-7): на исполнителе только unverified-записи
 
 - id: S-022
   name: "расход аренды по API: spend, ставка, баланс, инстанс"

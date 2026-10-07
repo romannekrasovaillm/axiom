@@ -650,6 +650,10 @@ def _verify_triage(root: Path) -> list[str]:
             continue
         path = root / rel
         if not path.is_file():
+            if entry.get("case_optional"):
+                # Файл вне границ этого (редуцированного) кейса; решение действует
+                # в полном репозитории, в песочнице кейса его сверять не с чем.
+                continue
             errors.append(f"triage: файл не существует: {rel}")
             continue
         if anchor not in path.read_text(encoding="utf-8"):

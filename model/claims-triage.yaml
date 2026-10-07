@@ -146,6 +146,7 @@
 - file: docs/adr/ADR-030-hf-kanal-publikacii-artefaktov-axiom.md
   anchor: "1. **Публиковать от `Roman12322`** — отклонено: решение владельца — целевой профиль `Rob1234567` (два аккаунта — факт; канал должен быть закреплён за профилем эксперимента)."
   disposition: not_a_claim
+  case_optional: true
   reason: "решение о профиле публикации, не измеряемое утверждение"
 
 - file: docs/adr/ADR-031-tretya-vetka-ornith-samoscaffolding.md

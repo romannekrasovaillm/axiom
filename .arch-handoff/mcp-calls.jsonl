@@ -42,3 +42,26 @@
 {"ts":"2026-10-05T06:34:13.471121695+03:00","tool":"trace_check","verdict":"fail","duration_ms":10,"rules":["spine-ref-missing-in-model"],"session_id":"d427bade5483bc57","host":"claude-code"}
 {"ts":"2026-10-05T06:34:31.944611874+03:00","tool":"fitness_check","verdict":"fail","duration_ms":277,"rules":["Спинальные инварианты: каждый AD привязан к fitness-правилу"],"session_id":"c92354a494d18e7c","host":"claude-code"}
 {"ts":"2026-10-05T06:39:20.198310158+03:00","tool":"trace_check","verdict":"fail","duration_ms":8,"rules":["spine-ref-missing-in-model"],"session_id":"c92354a494d18e7c","host":"claude-code"}
+{"ts":"2026-10-05T10:21:40.579690209+03:00","tool":"fitness_check","verdict":"pass","duration_ms":265,"session_id":"e43a743b10179b56","host":"claude-code"}
+{"ts":"2026-10-05T11:06:58.268183567+03:00","tool":"fitness_check","verdict":"pass","duration_ms":869,"session_id":"ebacf71b50b55293","host":"claude-code"}
+{"ts":"2026-10-05T11:46:02.576294714+03:00","tool":"fitness_check","verdict":"pass","duration_ms":524,"session_id":"a74faa29f86950d0","host":"claude-code"}
+{"ts":"2026-10-05T15:12:38.443626378+03:00","tool":"fitness_check","verdict":"pass","duration_ms":571,"session_id":"06251f393d276abc","host":"claude-code"}
+{"ts":"2026-10-05T15:12:38.445317882+03:00","tool":"spine_lint","verdict":"pass","duration_ms":1,"session_id":"06251f393d276abc","host":"claude-code"}
+{"ts":"2026-10-05T16:00:06.273892555+03:00","tool":"fitness_check","verdict":"invalid","duration_ms":0,"session_id":"a9e54ec0f526d456","host":"claude-code"}
+{"ts":"2026-10-05T16:00:10.960051800+03:00","tool":"fitness_check","verdict":"pass","duration_ms":584,"session_id":"a9e54ec0f526d456","host":"claude-code"}
+{"ts":"2026-10-05T18:48:35.485839618+03:00","tool":"fitness_check","verdict":"pass","duration_ms":540,"session_id":"8d241922212203cf","host":"claude-code"}
+{"ts":"2026-10-05T19:06:57.163208883+03:00","tool":"fitness_check","verdict":"pass","duration_ms":558,"session_id":"7a4a66cee912000a","host":"claude-code"}
+{"ts":"2026-10-06T05:09:24.926024408+03:00","tool":"fitness_check","verdict":"pass","duration_ms":816,"session_id":"493e154b947ad43f","host":"claude-code"}
+{"ts":"2026-10-06T05:09:24.934493162+03:00","tool":"delta_guard","verdict":"pass","duration_ms":8,"session_id":"493e154b947ad43f","host":"claude-code"}
+{"ts":"2026-10-06T05:09:24.936831761+03:00","tool":"spine_lint","verdict":"pass","duration_ms":2,"session_id":"493e154b947ad43f","host":"claude-code"}
+{"ts":"2026-10-06T05:24:04.946668142+03:00","tool":"fitness_check","verdict":"pass","duration_ms":594,"session_id":"075f2136ea9936c7","host":"claude-code"}
+{"ts":"2026-10-06T06:02:41.504114473+03:00","tool":"fitness_check","verdict":"pass","duration_ms":588,"session_id":"59a44417a5c6d272","host":"claude-code"}
+{"ts":"2026-10-07T05:33:11.539427529+03:00","tool":"fitness_check","verdict":"fail","duration_ms":1543,"rules":["ADR: обратимость указана явно (reversible | costly | irreversible)","ADR: обязательные секции (Alternatives) — решение без альтернатив не решение","ADR: отрицательные последствия описаны (иначе решение продано, а не проверено)","rule_weakened"],"session_id":"deb0f01aac23c6df","host":"claude-code"}
+{"ts":"2026-10-07T05:58:52.633231755+03:00","tool":"fitness_check","verdict":"pass","duration_ms":1123,"session_id":"50bdbd2ee60e40b4","host":"claude-code"}
+{"ts":"2026-10-07T06:16:14.660611671+03:00","tool":"fitness_check","verdict":"pass","duration_ms":901,"session_id":"7f80955eead44653","host":"claude-code"}
+{"ts":"2026-10-07T06:39:16.596554930+03:00","tool":"fitness_check","verdict":"pass","duration_ms":840,"session_id":"7f0adafc492191f5","host":"claude-code"}
+{"ts":"2026-10-07T06:41:26.146410144+03:00","tool":"fitness_check","verdict":"pass","duration_ms":853,"session_id":"7f0adafc492191f5","host":"claude-code"}
+{"ts":"2026-10-07T09:13:07.513653014+03:00","tool":"fitness_check","verdict":"pass","duration_ms":963,"session_id":"dca8ee0421c2a1d2","host":"claude-code"}
+{"ts":"2026-10-07T09:13:07.520495956+03:00","tool":"delta_guard","verdict":"pass","duration_ms":6,"session_id":"dca8ee0421c2a1d2","host":"claude-code"}
+{"ts":"2026-10-07T09:13:17.742994512+03:00","tool":"spine_lint","verdict":"pass","duration_ms":2,"session_id":"dca8ee0421c2a1d2","host":"claude-code"}
+{"ts":"2026-10-07T09:37:30.396356137+03:00","tool":"fitness_check","verdict":"pass","duration_ms":912,"session_id":"461171909b32472c","host":"claude-code"}

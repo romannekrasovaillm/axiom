@@ -1,13 +1,9 @@
 # Архитектурный контекст (epic-context)
 
-Собран: 2026-10-05T04:16:14.428160042+00:00
+Собран: 2026-10-08T03:29:25.498595243+00:00
 
 Источники:
 - /home/roman/axiom/ARCHITECTURE-SPINE.md
-- /home/roman/axiom/docs/adr/ADR-023-perenos-urokov-laguny-v-reglamenty-i-strazhi-axiom.md
-- /home/roman/axiom/docs/specs/SFT-STAGE.delta.md
-- /home/roman/axiom/docs/RESULTS-2026-10-05.ru.md
-- /home/roman/axiom/docs/CONTRIBUTING.ru.md
 
 <!-- источник: /home/roman/axiom/ARCHITECTURE-SPINE.md -->
 
@@ -57,6 +53,7 @@
 ## AD-5: Архитектурная база — опубликованный дизайн; отклонения только через ADR
 
 - **Binds**: код модели ↔ техотчёт K3 (`k3_tech_report.pdf`, проверен 11.09.2026)
-- **Prevents**: самовольные архитектурные эксперименты на бюджете претрейна (22k H800-ч как цена одной непроверенн
+- **Prevents**: самовольные архитектурные эксперименты на бюджете претрейна (22k H800-ч как цена одной непроверенной гипотезы)
+- **Rule**: KDA, AttnRes, LatentMoE, SiTU-GLU и референсные пропорции слоёв фиксируются как база; любое отклонение оформляется новым ADR с оценкой стоимости проверки и планом замера в среде. Детали, не раскрытые в техотчёт
 
 > **Контекст усечён** до 6000 символов; полные тексты — в файлах-источниках (см. MANIFEST.json).

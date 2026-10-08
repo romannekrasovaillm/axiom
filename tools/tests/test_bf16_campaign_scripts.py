@@ -269,6 +269,21 @@ def test_parity_cli_writes_pending_report_without_a_gpu(tmp_path: Path) -> None:
     assert set(report["cells"]) == {"fp32", "bf16"}
 
 
+def test_parity_gpu_probe_accepts_cuda_device_reprs(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Parity probe parses ``CudaDevice(id=0)`` as a GPU (GB10 stand, 39b9fe1)."""
+    monkeypatch.setenv("PYTHONPATH", str(_fake_jax(tmp_path, "CudaDevice(id=0)", "gpu")))
+    assert parity.gpu_available() is True
+
+
+def test_parity_gpu_probe_still_reports_a_cpu_interpreter(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("PYTHONPATH", str(_fake_jax(tmp_path, "CpuDevice(id=0)", "cpu")))
+    assert parity.gpu_available() is False
+
+
 def test_parity_run_leg_drives_the_real_training_leg(tmp_path: Path, monkeypatch) -> None:
     """A leg really trains and journals — the script is not just a plan."""
     pytest.importorskip("jax", reason="прогон ноги требует jax; на этой машине его нет")

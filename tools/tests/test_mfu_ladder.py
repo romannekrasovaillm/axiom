@@ -11,7 +11,10 @@ Coverage contract of the ladder (TASK.md):
     silently measures on the CPU and reports it as a GB10 number;
   * ``XLA_PYTHON_CLIENT_MEM_FRACTION`` is set *before* ``import jax``
     (ADR-041, OOM incident of 08.10), respects an existing override, and the
-    CPU smoke path still produces a non-zero TFLOPS.
+    CPU smoke path still produces a non-zero TFLOPS;
+  * the L3-MLA rung is gate-aware: it runs under the ``AXIOM_COMPUTE_DTYPE``
+    mode its ``--dtype`` selects and takes that mode's denominator, instead of
+    pinning fp32 (and the fp32 pin) whatever the flag said.
 
 Run from the repository root::
 
@@ -28,6 +31,14 @@ import sys
 from pathlib import Path
 
 import pytest
+
+# ``mfu_ladder`` imports jax at module scope (the ladder measures on a device);
+# where jax is absent the module skips with a reason rather than erroring at
+# collection — the same guard the sibling net/tools compute-dtype tests use.
+pytest.importorskip(
+    "jax",
+    reason="mfu_ladder импортирует jax на уровне модуля; на этой машине jax нет",
+)
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -355,6 +366,100 @@ def test_analytic_matches_compiled_program_mla(l3_cfg):
         x,
     )
     assert abs(ratio - 1.0) <= TOLERANCE, f"MLA divergence {ratio:.3f}"
+
+
+def test_gate_mode_maps_the_ladder_dtype_or_fails_closed():
+    """``--dtype`` -> the ``AXIOM_COMPUTE_DTYPE`` mode, or an explicit refusal."""
+    assert mfu._gate_mode("bf16") == "bf16"
+    assert mfu._gate_mode("bfloat16") == "bf16"
+    assert mfu._gate_mode("fp32") == "fp32"
+    assert mfu._gate_mode("float32") == "fp32"
+    # a dtype the gate cannot express must not be silently measured as fp32
+    with pytest.raises(ValueError):
+        mfu._gate_mode("fp16")
+
+
+def test_l3_mla_cell_is_gate_aware(l3_cfg):
+    """The MLA rung declares — and runs under — the mode ``--dtype`` picked.
+
+    Regression guard for the MFU-fix: the cell used to pin
+    ``compute_dtype="fp32"`` and never touch ``AXIOM_COMPUTE_DTYPE``, so it
+    produced an fp32 point of reference whatever ``--dtype`` said (and whatever
+    state ``net/mla.py`` was in).
+    """
+    import net.compute_dtype as compute_dtype
+
+    for requested, mode in (("bf16", "bf16"), ("fp32", "fp32")):
+        cases = mfu.build_level3(requested, scale=8, cfg=l3_cfg)
+        mla = [c for c in cases if c.shape.startswith("MLA ")]
+        assert len(mla) == 1, "the L3 rung carries exactly one MLA cell"
+        cell = mla[0]
+        assert cell.compute_dtype == mode
+        assert cell.dtype == mode
+        # the variable name comes from the gate module's own constant, not a copy
+        assert cell.env == {compute_dtype.MODE_ENV: mode}
+        assert mode in cell.notes
+
+
+def test_run_levels_holds_the_mla_gate_env_and_takes_that_mode_s_pin(monkeypatch, tmp_path):
+    """The MLA cell benches under its gate; the pin follows the mode it measured.
+
+    ``bench`` is stubbed out: this pins the *wiring* (env around the cell's own
+    window, restored afterwards; denominator chosen from ``case.compute_dtype``),
+    not the kernel — the GB10 run is the architect's.
+    """
+    import net.compute_dtype as compute_dtype
+
+    monkeypatch.delenv(compute_dtype.MODE_ENV, raising=False)
+    seen: list[str | None] = []
+
+    def spy_bench(fn, **kwargs):
+        seen.append(os.environ.get(compute_dtype.MODE_ENV))
+        return {
+            "seconds": 1.0,
+            "samples": [1.0],
+            "warmup_s": 0.0,
+            "compile_s": 0.0,
+            "iters": kwargs.get("iters", 1),
+        }
+
+    monkeypatch.setattr(mfu, "has_cuda", lambda: True)
+    monkeypatch.setattr(mfu, "bench", spy_bench)
+    monkeypatch.setattr(mfu, "T_SEQ", 64)  # keep the cell build cheap
+
+    def mla_row(requested: str, out: Path) -> dict:
+        report = mfu.run_levels(
+            levels=["L3"],
+            dtype=requested,
+            pins_path=PIN_FILE,
+            out=out,
+            iters=1,
+            warmup=1,
+        )
+        row = next(r for r in report["results"] if r["shape"].startswith("MLA "))
+        assert row["status"] == "OK"
+        return row
+
+    row = mla_row("bf16", tmp_path / "bf16.json")
+    assert row["compute_dtype"] == "bf16"
+    assert row["denominator_name"] == "bf16"
+    assert row["denominator_tflops"] == pytest.approx(98.2)  # bf16 pin, by mode
+    # KDA declares no gate; MLA runs with it on; nothing leaks after the rung
+    assert seen == [None, "bf16"]
+    assert os.environ.get(compute_dtype.MODE_ENV) is None
+
+    seen.clear()
+    row = mla_row("fp32", tmp_path / "fp32.json")
+    assert row["compute_dtype"] == "fp32"
+    assert row["denominator_tflops"] == pytest.approx(45.2)  # fp32 pin, by mode
+    assert seen == [None, "fp32"]
+
+
+def test_env_override_restores_a_preexisting_value(monkeypatch):
+    monkeypatch.setenv("AXIOM_TEST_MODE", "fp32")
+    with mfu._env_override({"AXIOM_TEST_MODE": "bf16"}):
+        assert os.environ["AXIOM_TEST_MODE"] == "bf16"
+    assert os.environ["AXIOM_TEST_MODE"] == "fp32"
 
 
 def test_kda_reference_shape_terms():

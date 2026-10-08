@@ -51,6 +51,7 @@ EMPTY-PENDING; add ``--allow-cpu`` to get scaled CPU numbers for smoke only.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import statistics
@@ -350,10 +351,14 @@ def mla_macs_per_token(cfg, tokens: int = T_SEQ) -> dict[str, int]:
                ``top_k`` in place of ``T``, plus the indexer.
     ``pool``   the ADR-012 candidate pool / reindex scoring, when enabled.
 
-    **The MLA layer executes in fp32** (``_dense_apply`` casts the input and
-    every weight with ``.astype(jnp.float32)``, and the scores/softmax are fp32):
-    unlike KDA/MoE/MLP it cannot use bf16 tensor cores, so its honest
-    denominator is the fp32 pin, not the bf16 one.
+    **The MLA layer follows the compute-dtype gate** (``net/compute_dtype.py``,
+    since ``net/mla.py`` was routed through ``gemm``): with
+    ``AXIOM_COMPUTE_DTYPE`` off (the default, ``fp32``) every GEMM is the pinned
+    byte-exact fp32 expression, with the gate on (``bf16``) the *operands* are
+    cast to bf16 at the boundary and the product accumulates in fp32.  The
+    FLOPs counted here are the same either way — dtype changes the rate, not the
+    MAC shape — so the rung's honest denominator is the pin of the mode it
+    actually ran (see ``_gate_mode`` and the ``env=`` of the L3b case).
     """
     hid = cfg.hidden
     lat = cfg.mla_latent_dim
@@ -556,6 +561,9 @@ class Case:
     flops_active: int | None = None
     notes: str = ""
     requires_cuda: bool = False
+    #: Environment a gate-aware rung must run under (e.g. ``AXIOM_COMPUTE_DTYPE``).
+    #: Applied around the cell's own compile+bench window, restored afterwards.
+    env: dict[str, str] | None = None
 
 
 def _l3_cfg():
@@ -709,6 +717,7 @@ def build_level2(dtype: str, *, scale: int = 1, cfg=None) -> list[Case]:
 
 def build_level3(dtype: str, *, scale: int = 1, cfg=None) -> list[Case]:
     """L3 — single attention layers: (a) KDA, (b) MLA, forward+backward at T=8192."""
+    import net.compute_dtype as compute_dtype
     import net.kda as kda
     import net.mla as mla
 
@@ -741,7 +750,14 @@ def build_level3(dtype: str, *, scale: int = 1, cfg=None) -> list[Case]:
         )
     )
 
-    # MLA is fp32 by construction (net/mla.py:_dense_apply casts input+weights).
+    # MLA routes its GEMMs through the compute-dtype gate (net/compute_dtype.py,
+    # since 556cf08): gate off is the pinned fp32 path verbatim, gate on casts
+    # the *operands* to bf16 with an fp32 accumulator — the master weights stay
+    # fp32 (the gate never touches a parameter leaf).  So the cell is
+    # gate-aware like the other rungs: --dtype selects the gate for the cell's
+    # own compile+bench window, and the row's denominator follows the mode it
+    # actually measured (the pin is chosen from ``case.compute_dtype`` below).
+    mode = _gate_mode(dtype)
     mparams = mla.init_mla(jax.random.PRNGKey(0), cfg)
     mx = jax.random.normal(jax.random.PRNGKey(1), (1, t, cfg.hidden)).astype(jnp.float32)
 
@@ -758,14 +774,17 @@ def build_level3(dtype: str, *, scale: int = 1, cfg=None) -> list[Case]:
             fn=_fwd_bwd_fn(mparams, cfg, mla_apply, mx),
             flops=flops_mla(t, cfg, fwd_bwd=True),
             flops_active=flops_mla(t, cfg, fwd_bwd=True),
-            dtype="fp32",
-            compute_dtype="fp32",
+            dtype=mode,
+            compute_dtype=mode,
+            env={compute_dtype.MODE_ENV: mode},
             notes=(
-                "MLA слой fwd+bwd (x3); ВЫПОЛНЯЕТСЯ В fp32 (net/mla.py:_dense_apply "
-                "кастует вход и веса .astype(float32), scores/softmax fp32) — "
-                "знаменатель fp32, bf16-тензорники недоступны; attention O(T*T) "
-                "по T-записям на запрос" if cfg.attn_dense_reference else
-                "MLA слой fwd+bwd (x3); sparse top-k путь; fp32"
+                f"MLA слой fwd+bwd (x3); режим {mode} через compute-dtype-гейт "
+                f"({compute_dtype.MODE_ENV}): gate-off — побайтовый fp32-путь, "
+                "gate-on — bf16-операнды + fp32-накопление; знаменатель строки — "
+                "по режиму; attention O(T*T) по T-записям на запрос"
+                if cfg.attn_dense_reference else
+                f"MLA слой fwd+bwd (x3); sparse top-k путь; режим {mode} через "
+                f"compute-dtype-гейт ({compute_dtype.MODE_ENV}); знаменатель — по режиму"
             ),
         )
     )
@@ -840,6 +859,46 @@ def _jax_dtype(name: str):
         raise ValueError(f"неизвестный dtype: {name!r}; ожидается один из {sorted(table)}") from exc
 
 
+def _gate_mode(dtype: str) -> str:
+    """The ``AXIOM_COMPUTE_DTYPE`` mode a gate-aware rung runs under, from ``--dtype``.
+
+    The gate (``net/compute_dtype.py``) knows exactly two modes, so a rung that
+    cannot be expressed as one of them fails closed here rather than silently
+    measuring one mode under the other mode's denominator.
+    """
+    value = str(dtype).strip().lower()
+    if value in ("bf16", "bfloat16"):
+        return "bf16"
+    if value in ("fp32", "float32"):
+        return "fp32"
+    raise ValueError(
+        f"--dtype={dtype!r} не выражается режимом compute-dtype-гейта (fp32 | bf16)"
+    )
+
+
+@contextlib.contextmanager
+def _env_override(env: dict | None):
+    """Apply ``env`` for the duration of the block, restoring the prior values.
+
+    The compute-dtype gate is read when a graph is *traced*, so a cell that
+    declares a mode must hold the variable over its own compile+bench window —
+    and must not leak it to the next rung.
+    """
+    if not env:
+        yield
+        return
+    saved = {key: os.environ.get(key) for key in env}
+    os.environ.update(env)
+    try:
+        yield
+    finally:
+        for key, value in saved.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
 # --------------------------------------------------------------------------- #
 # Runner
 # --------------------------------------------------------------------------- #
@@ -910,7 +969,10 @@ def run_levels(
                 results.append(_empty_row(case, reason, denom, denom_name))
                 continue
 
-            res = bench(case.fn, iters=iters, warmup=warmup)
+            # A gate-aware rung (L3-MLA) declares the compute-dtype mode it must
+            # be traced under; hold it over the cell's compile+bench window only.
+            with _env_override(case.env):
+                res = bench(case.fn, iters=iters, warmup=warmup)
             tflops = case.flops / res["seconds"] / 1e12 if res["seconds"] else float("nan")
             active = case.flops_active if case.flops_active is not None else case.flops
             notes = case.notes

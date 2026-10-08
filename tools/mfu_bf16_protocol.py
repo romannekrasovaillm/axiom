@@ -284,12 +284,25 @@ def plan() -> list[dict[str, Any]]:
 
 
 def gpu_available() -> bool:
-    """Есть ли исполнимый GPU у этого интерпретатора (без падения при отсутствии)."""
+    """Есть ли исполнимый GPU у этого интерпретатора (без падения при отсутствии).
+
+    Вариант repr не должен решать судьбу зонда: на стенде GB10 JAX называет
+    устройство ``CudaDevice(id=0)`` — подстроки ``gpu`` в таком repr нет, и
+    прежний зонд давал ложное «GPU нет» при живом GPU. Поэтому принимаем обе
+    формы (``gpu``/``cuda``) и сверяемся с бэкендом, который JAX реально выбрал
+    (``default_backend() == 'gpu'``).
+    """
     env = dict(os.environ)
     env.pop("JAX_PLATFORMS", None)
     probe = (
-        "import jax,sys;d=[repr(x) for x in jax.devices()];"
-        "print('gpu' if any('.platform' not in r and 'gpu' in r.lower() for r in d) else 'cpu')"
+        "import jax\n"
+        "reps = [repr(d).lower() for d in jax.devices()]\n"
+        "try:\n"
+        "    backend = jax.default_backend()\n"
+        "except Exception:\n"
+        "    backend = ''\n"
+        "hit = backend == 'gpu' or any('gpu' in r or 'cuda' in r for r in reps)\n"
+        "print('gpu' if hit else 'cpu')\n"
     )
     try:
         out = subprocess.run(

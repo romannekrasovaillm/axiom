@@ -128,6 +128,7 @@ def test_mfu_cli_writes_pending_report_without_a_gpu(tmp_path: Path) -> None:
 
 def test_mfu_cell_drives_the_real_training_leg(tmp_path: Path, monkeypatch) -> None:
     """The cell runner executes ``train_loop.train`` and writes its journal."""
+    pytest.importorskip("jax", reason="прогон ноги требует jax; на этой машине его нет")
     monkeypatch.setattr(mfu, "STEPS", 3)
     cell = mfu.run_cell(
         str(PROTO_CONFIG.relative_to(CASE_DIR)), 1, 64, "fp32", tmp_path, steps=3
@@ -146,6 +147,46 @@ def test_mfu_cell_drives_the_real_training_leg(tmp_path: Path, monkeypatch) -> N
     # steps == warmup there is no tail, and the protocol says so instead of
     # reporting a warmup number as a result.
     assert cell["tok_s_median_tail"] is None or cell["tok_s_median_tail"] > 0
+
+
+def _fake_jax(tmp_path: Path, device_repr: str, backend: str) -> Path:
+    """A minimal stand-in for ``jax`` so the probe can be exercised without JAX.
+
+    Real JAX is not installed on this machine, and the probe runs in a
+    subprocess; putting this module on ``PYTHONPATH`` (which precedes
+    site-packages for ``python -c``) lets us drive the *actual* probe code,
+    including on a stand that does have JAX.
+    """
+    pkg = tmp_path / "fakejax"
+    pkg.mkdir()
+    (pkg / "jax.py").write_text(
+        "class _Device:\n"
+        f"    def __repr__(self):\n        return {device_repr!r}\n\n"
+        "def devices():\n    return [_Device()]\n\n"
+        f"def default_backend():\n    return {backend!r}\n",
+        encoding="utf-8",
+    )
+    return pkg
+
+
+@pytest.mark.parametrize(
+    ("device_repr", "backend", "expected"),
+    [
+        # GB10 stand: device named CudaDevice(id=0) — no 'gpu' substring in repr.
+        ("CudaDevice(id=0)", "gpu", True),
+        # Repr spelling alone is enough even if the backend string is odd.
+        ("GpuDevice(id=0)", "cpu", True),
+        # The backend JAX actually selected wins over a repr that says otherwise.
+        ("CpuDevice(id=0)", "gpu", True),
+        # A genuinely CPU interpreter stays a false negative.
+        ("CpuDevice(id=0)", "cpu", False),
+    ],
+)
+def test_mfu_gpu_probe_accepts_cuda_device_reprs(
+    tmp_path: Path, monkeypatch, device_repr: str, backend: str, expected: bool
+) -> None:
+    monkeypatch.setenv("PYTHONPATH", str(_fake_jax(tmp_path, device_repr, backend)))
+    assert mfu.gpu_available() is expected
 
 
 # --------------------------------------------------------------------------- #
@@ -230,6 +271,7 @@ def test_parity_cli_writes_pending_report_without_a_gpu(tmp_path: Path) -> None:
 
 def test_parity_run_leg_drives_the_real_training_leg(tmp_path: Path, monkeypatch) -> None:
     """A leg really trains and journals — the script is not just a plan."""
+    pytest.importorskip("jax", reason="прогон ноги требует jax; на этой машине его нет")
     monkeypatch.setattr(parity, "LEG_CONFIG", str(PROTO_CONFIG.relative_to(CASE_DIR)))
     monkeypatch.setattr(parity, "LEG_SEQ", 64)
     monkeypatch.setattr(parity, "LEG_BATCH", 1)

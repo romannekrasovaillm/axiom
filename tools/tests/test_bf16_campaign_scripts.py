@@ -21,6 +21,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 TOOLS_DIR = Path(__file__).resolve().parents[1]
@@ -41,6 +42,52 @@ def run_cli(script: Path, *args: str) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         text=True,
         cwd=str(CASE_DIR),
+    )
+
+
+def _write_packed_set(tokens_root: Path, name: str, *, records: int, seq_len: int) -> None:
+    """Синтетический packed-набор (``.bin`` + манифест контракта ``tokens/``).
+
+    Строит ровно тот контракт, что читает ``PackedTokenLoader`` (та же раскладка
+    записи и спец-токены), чтобы тест пары ног шёл по настоящему загрузчику, а не
+    по его подделке.
+    """
+    from net import train_loop as tl
+
+    out_dir = tokens_root / name
+    out_dir.mkdir(parents=True, exist_ok=True)
+    rows = np.zeros((records, seq_len), dtype=np.uint32)
+    rows[:, 0] = tl.BOS_ID
+    rows[:, 1:] = np.arange(3, 3 + seq_len - 1, dtype=np.uint32)
+    path = out_dir / f"{name}-00000.bin"
+    path.write_bytes(rows.tobytes(order="C"))
+    manifest = {
+        "version": tl.PACKED_MANIFEST_SCHEMA,
+        "shard": name,
+        "seq_len": seq_len,
+        "dtype": "uint32",
+        "record_layout": tl.PACKED_RECORD_LAYOUT,
+        "bos_id": tl.BOS_ID,
+        "eos_id": tl.EOS_ID,
+        "pad_id": tl.PAD_ID,
+        "tokenizer_hash": "0" * 64,
+        "tokenizer": {"file": "tokenizer.model", "vocab_size": 160000},
+        "shards": [
+            {
+                "file": path.name,
+                "source": f"{name}-00000.jsonl.zst",
+                "source_sha256": "0" * 64,
+                "records": records,
+                "tokens": records * seq_len,
+                "stream_tokens": records * (seq_len - 1),
+                "pad_tokens": 0,
+                "bytes": path.stat().st_size,
+                "sha256": "0" * 64,
+            }
+        ],
+    }
+    (out_dir / f"manifest-{name.lower()}.json").write_text(
+        json.dumps(manifest, ensure_ascii=False), encoding="utf-8"
     )
 
 
@@ -200,10 +247,127 @@ def test_parity_selftest_is_green() -> None:
     assert "FAIL" not in result.stdout
 
 
-def test_parity_leg_budget_is_50m_tokens_dense124m() -> None:
+def test_parity_defaults_are_the_dense124m_50m_leg() -> None:
+    """Дефолты CLI: dense-124m, 50M токенов, поток W — но не захардкоженный объём."""
     assert parity.LEG_CONFIG == "net/config-dense124m.json"
     assert parity.LEG_TOKENS == 50_000_000
+    assert parity.DEFAULT_STREAMS == "W"
     assert parity.leg_steps() == -(-50_000_000 // (parity.LEG_BATCH * parity.LEG_SEQ))
+    assert parity.leg_steps() == 6104
+
+
+def test_parity_steps_are_computed_for_the_owner_leg() -> None:
+    """Решение владельца: l3full (net/config.json), 5M токенов, batch 1, seq 8192.
+
+    ``ceil(5e6 / (1 * 8192)) = 611`` — число выводится из объёма, а не берётся
+    константой: захардкоженные 50M/6104 описывали другую ногу.
+    """
+    assert parity.leg_steps(5_000_000, 1, 8192) == 611
+    plan = parity.build_plan(
+        config="net/config.json",
+        batch=1,
+        seq=8192,
+        total_tokens=5_000_000,
+        streams=("W", "C"),
+        corpus="datasets/axiom-pretrain-l3/tokens-v2",
+    )
+    assert plan["config"] == "net/config.json"
+    assert plan["total_tokens"] == 5_000_000
+    assert plan["steps"] == 611
+    assert plan["data"] == "corpus"
+    assert [cell["mode"] for cell in plan["cells"]] == ["fp32", "bf16"]
+
+
+def test_parity_plan_is_deterministic_and_the_cells_are_paired() -> None:
+    """План клеток детерминирован, а клетки отличаются ТОЛЬКО dtype-гейтом."""
+    kwargs = dict(
+        config="net/config.json",
+        batch=1,
+        seq=8192,
+        total_tokens=5_000_000,
+        streams=("W", "C"),
+        corpus="datasets/axiom-pretrain-l3/tokens-v2",
+    )
+    first = parity.build_plan(**kwargs)
+    second = parity.build_plan(**kwargs)
+    assert first == second
+    assert json.dumps(first, sort_keys=True) == json.dumps(second, sort_keys=True)
+    envs = [cell["env"] for cell in first["cells"]]
+    assert {key for env in envs for key in env} == {"AXIOM_COMPUTE_DTYPE"}
+    assert envs[0] != envs[1]
+
+
+def test_parity_synthetic_data_never_passes() -> None:
+    """Fail-closed: синтетика не несёт вердикта паритета — никогда ``pass``."""
+    v = parity.verdict(_cells(3.0, 3.0), 0.25)  # корпус не объявлен → синтетика
+    assert v["status"] == "input-error"
+    assert "синтетическ" in v["reason"]
+    # тот же вход с объявленным корпусом — обычная арифметика допуска
+    declared = parity.verdict(_cells(3.0, 3.0), 0.25, real_corpus=True)
+    assert declared["status"] == "pass"
+
+
+def test_parity_plan_from_configs_not_volume(tmp_path) -> None:
+    """``--config`` меняет ногу целиком: l3full и dense дают разные планы."""
+    l3 = parity.build_plan(
+        config="net/config.json", batch=1, seq=8192,
+        total_tokens=5_000_000, streams=("W", "C"), corpus="corpus",
+    )
+    dense = parity.build_plan(
+        config="net/config-dense124m.json", batch=1, seq=8192,
+        total_tokens=50_000_000, streams=("W", "C"), corpus="corpus",
+    )
+    assert l3["config"] != dense["config"]
+    assert (l3["steps"], dense["steps"]) == (611, 6104)
+
+
+def test_parity_corpus_legs_see_the_same_batch_sequence(tmp_path, monkeypatch) -> None:
+    """Парный дизайн: обе ноги читают ОДНУ последовательность батчей корпуса.
+
+    Упакованный лоадер (``net.train_loop.PackedTokenLoader`` — тот же, что у
+    ``tools/pretrain_run.py``) не шаффлит записи, поэтому две сборки на одном
+    ``tokens_root`` дают побайтово одинаковый поток: расхождение кривых тогда
+    принадлежит dtype-гейту, а не данным.
+
+    ``NET_JAX_BACKEND`` снимается: соседние тест-модули выставляют его в
+    окружение сессии, а он заставляет ``net/train_loop`` тянуть jax уже на
+    импорте (пиннинг бэкенда, ADR-010). Нога паритета бэкенд не объявляет —
+    лоадер обязан собираться без jax.
+    """
+    monkeypatch.delenv("NET_JAX_BACKEND", raising=False)
+    tokens_root = tmp_path / "tokens-v2"
+    _write_packed_set(tokens_root, "W", records=8, seq_len=16)
+    _write_packed_set(tokens_root, "C", records=8, seq_len=16)
+    fp32_leg = parity.corpus_batches(tokens_root, ("W", "C"), 16, 1)
+    bf16_leg = parity.corpus_batches(tokens_root, ("W", "C"), 16, 1)
+    for _ in range(6):
+        assert np.array_equal(next(fp32_leg), next(bf16_leg))
+
+
+def test_parity_cli_synthetic_run_is_fail_closed(tmp_path, monkeypatch) -> None:
+    """CLI без флагов корпуса: 50-шаговый смоук — и вердикт ``input-error``.
+
+    Смоук исполняет механику (по 50 шагов на клетку) и в отчёт не идёт;
+    вердикта паритета на синтетике нет — статус ``input-error``, не ``pass``.
+    """
+    monkeypatch.setattr(parity, "gpu_available", lambda: True)
+    calls: list[tuple[str, int]] = []
+
+    def fake_spawn(mode: str, out_dir: Path, steps: int, **kwargs) -> dict:
+        calls.append((mode, steps))
+        return {"mode": mode, "steps": steps, "loss_median_window": 3.0}
+
+    monkeypatch.setattr(parity, "spawn_leg", fake_spawn)
+    out = tmp_path / "loss-parity.json"
+    rc = parity.main(["--tokens-per-byte", "0.25", "--out", str(out)])
+    report = json.loads(out.read_text(encoding="utf-8"))
+    assert calls == [("fp32", parity.SMOKE_STEPS), ("bf16", parity.SMOKE_STEPS)]
+    assert parity.SMOKE_STEPS == 50
+    assert report["status"] == "input-error"
+    assert report["verdict"]["status"] == "input-error"
+    assert "синтетическ" in report["verdict"]["reason"]
+    assert "cells_measured" not in report  # смоук в отчёт не идёт
+    assert rc == 1
 
 
 def test_parity_tolerance_is_the_task_threshold() -> None:
@@ -218,33 +382,34 @@ def _cells(fp32_loss: float, bf16_loss: float) -> dict:
 
 
 def test_parity_equal_curves_pass() -> None:
-    v = parity.verdict(_cells(3.0, 3.0), 0.25)
+    v = parity.verdict(_cells(3.0, 3.0), 0.25, real_corpus=True)
     assert v["status"] == "pass" and v["delta_bpb"] == 0.0
 
 
 def test_parity_at_the_tolerance_passes() -> None:
     """`<=`: the bar itself is a pass (same convention as the roofline gate)."""
     delta_nats = parity.BPB_TOLERANCE_DELTA * 0.6931471805599453 / 0.25
-    v = parity.verdict(_cells(3.0, 3.0 + delta_nats), 0.25)
+    v = parity.verdict(_cells(3.0, 3.0 + delta_nats), 0.25, real_corpus=True)
     assert v["status"] == "pass"
 
 
 def test_parity_beyond_the_tolerance_fails() -> None:
-    v = parity.verdict(_cells(3.0, 3.2), 0.25)
+    v = parity.verdict(_cells(3.0, 3.2), 0.25, real_corpus=True)
     assert v["status"] == "fail"
     assert v["delta_bpb"] > parity.BPB_TOLERANCE_DELTA
 
 
 def test_parity_better_curve_passes() -> None:
-    assert parity.verdict(_cells(3.2, 3.0), 0.25)["status"] == "pass"
+    assert parity.verdict(_cells(3.2, 3.0), 0.25, real_corpus=True)["status"] == "pass"
 
 
 def test_parity_without_the_coefficient_is_an_input_error() -> None:
-    assert parity.verdict(_cells(3.0, 3.0), None)["status"] == "input-error"
+    assert parity.verdict(_cells(3.0, 3.0), None, real_corpus=True)["status"] == "input-error"
 
 
 def test_parity_without_a_leg_is_an_input_error() -> None:
-    assert parity.verdict({"fp32": {"loss_median_window": 3.0}}, 0.25)["status"] == "input-error"
+    v = parity.verdict({"fp32": {"loss_median_window": 3.0}}, 0.25, real_corpus=True)
+    assert v["status"] == "input-error"
 
 
 def test_parity_cli_requires_a_coefficient() -> None:

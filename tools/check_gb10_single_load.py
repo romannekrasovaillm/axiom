@@ -27,6 +27,10 @@
    Маркер активен, только если ``pid`` жив (``os.kill(pid, 0)``). Мёртвый
    ``pid`` — брошенный маркер упавшего прогона: игнорируется, чтобы не давать
    вечный ложный FAIL. Маркер без целого ``pid`` — неконформный: игнорируется.
+   Каталог, недоступный для чтения (напр. режим ``000`` — стендовый долг), не
+   роняет страж ``PermissionError``: реестр читается через ``os.scandir``, и
+   недоступность возвращается статусом ``NOT-VERIFIED`` (полнота картины
+   нагрузок не подтверждена), а не молчаливым «ноль локов».
 
 Три различимых исхода (третий не равен первому; ложный зелёный запрещён):
 
@@ -150,12 +154,51 @@ def parse_compute_apps(csv_text: str) -> list[GpuProcess]:
     return procs
 
 
-def read_locks(lock_dir: Path) -> list[LoadLock]:
-    """Читает активные маркеры-локи (мёртвые/неконформные отбрасываются)."""
+@dataclass(frozen=True)
+class LocksState:
+    """Итог чтения реестра локов: список активных + признак недоступности.
+
+    ``unavailable`` — ``None``, если каталог прочитан (в т.ч. пустой);
+    человекочитаемая причина, если каталог существует, но недоступен
+    (``PermissionError``/``OSError``). Недоступность реестра — не «ноль локов»:
+    полнота картины нагрузок не подтверждена, ложный зелёный запрещён.
+    """
+
+    locks: list[LoadLock]
+    unavailable: str | None = None
+
+    @property
+    def readable(self) -> bool:
+        return self.unavailable is None
+
+
+def read_locks_state(lock_dir: Path) -> LocksState:
+    """Читает реестр локов, различая «пусто» и «каталог недоступен».
+
+    Каталог с режимом ``000`` (стендовый долг «вращающихся прав зеркала») не
+    роняет страж ``PermissionError``, как раньше: недоступность возвращается
+    понятным статусом. Отсутствие каталога — по-прежнему «ноль локов» (не
+    NOT-VERIFIED): реестр может быть просто не заведён.
+
+    ``os.scandir`` используется намеренно вместо ``Path.glob``: последний
+    молча глотает ``PermissionError`` и вернул бы ``[]`` — неотличимо от
+    «нагрузок нет», то есть ложный зелёный.
+    """
+    try:
+        if not lock_dir.is_dir():
+            return LocksState([])  # нет реестра — ноль локов, не ошибка
+    except OSError as exc:  # каталог есть, но stat недоступен
+        return LocksState([], f"реестр локов недоступен: {lock_dir} ({exc.__class__.__name__})")
+
+    try:
+        with os.scandir(lock_dir) as entries:
+            names = sorted(e.name for e in entries if e.name.endswith(".lock"))
+    except OSError as exc:  # каталог существует, но не читается (напр. режим 000)
+        return LocksState([], f"реестр локов недоступен: {lock_dir} ({exc.__class__.__name__})")
+
     locks: list[LoadLock] = []
-    if not lock_dir.is_dir():
-        return locks
-    for path in sorted(lock_dir.glob("*.lock")):
+    for name in names:
+        path = lock_dir / name
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
@@ -169,7 +212,17 @@ def read_locks(lock_dir: Path) -> list[LoadLock]:
             continue  # брошенный маркер упавшего прогона
         what = str(data.get("what") or path.stem)
         locks.append(LoadLock(name=path.name, pid=pid, what=what))
-    return locks
+    return LocksState(locks)
+
+
+def read_locks(lock_dir: Path) -> list[LoadLock]:
+    """Читает активные маркеры-локи (мёртвые/неконформные отбрасываются).
+
+    Совместимая обёртка над :func:`read_locks_state` для потребителей, которым
+    достаточно списка: недоступный каталог даёт ``[]`` (см. ``read_locks_state``,
+    если нужно отличить недоступность от «нуля локов»).
+    """
+    return read_locks_state(lock_dir).locks
 
 
 def _run_nvidia_smi(*args: str) -> tuple[bool, str]:
@@ -264,7 +317,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    locks = read_locks(Path(args.lock_dir))
+    locks_state = read_locks_state(Path(args.lock_dir))
+    locks = locks_state.locks
 
     gpu_ok, gpu_name = query_gpu_name()
     if not gpu_ok:
@@ -289,6 +343,15 @@ def main(argv: list[str] | None = None) -> int:
             )
         else:
             result = assess(procs, locks, threshold_mib=args.threshold)
+            # Недоступный реестр локов — не «ноль нагрузок»: подтверждённый FAIL
+            # остаётся FAIL, но подтверждённый OK понижается до NOT-VERIFIED
+            # (полнота картины нагрузок не проверена, ложный зелёный запрещён).
+            if result.status != STATUS_FAIL and not locks_state.readable:
+                result = Result(
+                    STATUS_NOT_VERIFIED,
+                    f"НЕ ПРОВЕРЕНО: {locks_state.unavailable} — "
+                    "полнота реестра нагрузок не подтверждена",
+                )
 
     print(result.message)
     for detail in result.details:

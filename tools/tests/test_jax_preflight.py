@@ -212,3 +212,155 @@ def test_tool_calls_preflight_before_import_jax(name: str):
     jax_at = next((i for i, ln in enumerate(lines) if re.match(r"^import jax\b", ln)), None)
     if jax_at is not None:  # лимит обязан стоять до инициализации рантайма JAX
         assert preflight_at < jax_at, f"{name}: ensure_mem_fraction() после import jax"
+
+
+# --- ADR-041 Amendment 08.10: гейт только для прогонов, enforce только GB10 ---
+
+#: Инструменты-ПРОВЕРКИ (контрольный контур): несут только лимит памяти.
+_CHECKING_TOOLS = ("check_precision_pinning.py", "a4_manifest.py")
+
+#: Инструменты-ПРОГОНЫ (обучение/профилировка): обязаны нести и fail-closed гейт.
+_RUN_TOOLS_GATED = (
+    "pretrain_run.py",
+    "bench_block_merge.py",
+    "bench_kda_wyut.py",
+    "run_rl_smoke.py",
+    "run_sft_smoke.py",
+    "d8_isolate.py",
+    "pool_cost_probe.py",
+    "topk_exact_probe.py",
+    "run_a4_pipeline.py",
+)
+
+
+@pytest.mark.parametrize("name", _CHECKING_TOOLS)
+def test_checking_tool_survives_foreign_load(name, monkeypatch, capsys):
+    """ADR-041 п.2: проверяющий инструмент не падает при чужой нагрузке.
+
+    Его единственный префлайт-вызов — ``ensure_mem_fraction()`` (лимит памяти);
+    fail-closed ``gate_or_exit()`` контрольному контуру не принадлежит. Даже при
+    чужих compute-процессах на стенде GB10 SystemExit не поднимается, иначе
+    C-042/C-038 дали бы ложный FAIL.
+    """
+    _patch_runner(monkeypatch, apps="1714413, llama-server, 7584 MiB", gpu_name="NVIDIA GB10")
+    source = (TOOLS_DIR / name).read_text(encoding="utf-8")
+    assert "gate_or_exit" not in source, "контрольный контур не должен нести fail-closed гейт"
+    assert "ensure_mem_fraction()" in source  # лимит памяти обязателен всем
+
+    value = jax_preflight.ensure_mem_fraction()  # не падает под чужой нагрузкой
+    assert value
+    assert capsys.readouterr().err  # префлайт залогирован, SystemExit не поднят
+
+
+@pytest.mark.parametrize("name", _RUN_TOOLS_GATED)
+def test_run_tool_keeps_fail_closed_gate(name):
+    """ADR-041 п.2 (обратная сторона): прогонный путь обязан нести гейт."""
+    if not (TOOLS_DIR / name).is_file():
+        pytest.skip(f"{name} отсутствует в этой ветке")
+    source = (TOOLS_DIR / name).read_text(encoding="utf-8")
+    assert "gate_or_exit()" in source, f"{name}: прогонный путь потерял гейт стенда"
+
+
+def test_gate_or_exit_local_gpu_warns_and_continues(monkeypatch, tmp_path, capsys):
+    """Не-GB10 GPU: чужие процессы -> предупреждение в stderr, без SystemExit."""
+    monkeypatch.delenv(jax_preflight.GATE_ENV, raising=False)
+    _patch_runner(
+        monkeypatch,
+        apps="1714413, llama-server, 7584 MiB",
+        gpu_name="NVIDIA GeForce RTX 4080 SUPER",
+    )
+    state = jax_preflight.gate_or_exit(lock_dir=tmp_path)
+    assert state is not None and state["ok"] is True  # локальный GPU не блокирует
+    assert "не-GB10" in capsys.readouterr().err  # но предупреждает
+
+
+def test_gate_or_exit_no_nvidia_smi_warns_and_continues(monkeypatch, tmp_path, capsys):
+    """Нет nvidia-smi (дев-ПК): предупреждение и продолжение, не SystemExit."""
+    monkeypatch.delenv(jax_preflight.GATE_ENV, raising=False)
+    _patch_runner(monkeypatch, missing=("nvidia-smi",))
+    state = jax_preflight.gate_or_exit(lock_dir=tmp_path)
+    assert state is not None and state["gpu"] == "none"
+    assert "nvidia-smi недоступен" in capsys.readouterr().err
+
+
+def test_gate_or_exit_force_value_does_not_extend_beyond_gb10(monkeypatch, tmp_path, capsys):
+    """ADR-041 п.3: даже ``JAX_PREFLIGHT_GATE=1`` не блокирует не-GB10 GPU."""
+    monkeypatch.setenv(jax_preflight.GATE_ENV, "1")
+    _patch_runner(
+        monkeypatch,
+        apps="1714413, llama-server, 7584 MiB",
+        gpu_name="NVIDIA RTX 4090",
+    )
+    state = jax_preflight.gate_or_exit(lock_dir=tmp_path)
+    assert state is not None and state["ok"] is True
+    assert "не-GB10" in capsys.readouterr().err
+
+
+def test_gate_or_exit_enforces_on_gb10_with_permission_file(monkeypatch, tmp_path):
+    """GB10 + файл-разрешение владельца -> enforce не срабатывает (прогон идёт)."""
+    monkeypatch.delenv(jax_preflight.GATE_ENV, raising=False)
+    (tmp_path / "allow-colocation.txt").write_text("owner: ok to share\n", encoding="utf-8")
+    _patch_runner(monkeypatch, apps="1714413, llama-server, 7584 MiB", gpu_name="NVIDIA GB10")
+    state = jax_preflight.gate_or_exit(lock_dir=tmp_path)
+    assert state is not None and "co-run-allowed" in state["reason"]
+
+
+# --- ADR-041 Amendment 08.10: read_locks устойчив к недоступному .locks -------
+
+import check_gb10_single_load as gb10  # noqa: E402
+
+
+def _raise_permission(*_args, **_kwargs):
+    raise PermissionError(13, "Permission denied")
+
+
+def test_read_locks_state_unavailable_on_permission_error(tmp_path, monkeypatch):
+    """Каталог режима 000 (PermissionError) -> статус недоступности, не падение."""
+    lock_dir = tmp_path / ".locks"
+    lock_dir.mkdir()
+    monkeypatch.setattr(gb10.os, "scandir", _raise_permission)
+
+    state = gb10.read_locks_state(lock_dir)
+    assert state.locks == []
+    assert state.readable is False
+    assert state.unavailable and "недоступен" in state.unavailable
+    # совместимая обёртка тоже не падает и отдаёт пустой список
+    assert gb10.read_locks(lock_dir) == []
+
+
+def test_read_locks_state_missing_dir_is_empty_and_readable(tmp_path):
+    """Отсутствие реестра — «ноль локов» и доступность (не NOT-VERIFIED)."""
+    state = gb10.read_locks_state(tmp_path / "nope")
+    assert state.locks == []
+    assert state.readable is True
+    assert state.unavailable is None
+
+
+def test_main_lock_dir_unavailable_is_not_verified(tmp_path, monkeypatch, capsys):
+    """Недоступный реестр при подтверждённом GB10 — NOT-VERIFIED, а не OK."""
+    lock_dir = tmp_path / ".locks"
+    lock_dir.mkdir()
+    monkeypatch.setattr(gb10, "query_gpu_name", lambda: (True, "GB10"))
+    monkeypatch.setattr(
+        gb10, "query_compute_apps", lambda: (True, [gb10.GpuProcess(pid=1, name="python", used_mib=17536)])
+    )
+    monkeypatch.setattr(gb10.os, "scandir", _raise_permission)
+
+    rc = gb10.main(["--lock-dir", str(lock_dir)])
+    out = capsys.readouterr().out
+    assert rc == gb10.EXIT_NOT_VERIFIED
+    assert "НЕ ПРОВЕРЕНО" in out and "недоступен" in out
+
+
+def test_main_lock_dir_ok_confirmed_fail_stays_fail(tmp_path, monkeypatch, capsys):
+    """Подтверждённый FAIL (>=2 нагрузок) важнее недоступного реестра."""
+    lock_dir = tmp_path / ".locks"
+    lock_dir.mkdir()
+    two = [gb10.GpuProcess(pid=1, name="vllm", used_mib=17536), gb10.GpuProcess(pid=2, name="sft", used_mib=17300)]
+    monkeypatch.setattr(gb10, "query_gpu_name", lambda: (True, "GB10"))
+    monkeypatch.setattr(gb10, "query_compute_apps", lambda: (True, two))
+    monkeypatch.setattr(gb10.os, "scandir", _raise_permission)
+
+    rc = gb10.main(["--lock-dir", str(lock_dir)])
+    assert rc == gb10.EXIT_FAIL
+    assert "FAIL" in capsys.readouterr().out

@@ -17,7 +17,11 @@ GB10 стартовал без ``XLA_PYTHON_CLIENT_MEM_FRACTION``, JAX заре�
 * :func:`preflight_gate` — снимает состояние стенда (``nvidia-smi
   --query-compute-apps`` + ``free -g``) и **fail-closed** отказывает в старте,
   если на устройстве есть ЧУЖИЕ compute-процессы, а явного разрешения владельца
-  на совмещение нет.
+  на совмещение нет. Обёртка :func:`gate_or_exit` для инструментов применяет
+  этот отказ **только на стенде GB10** (ADR-041 п.3) и вызывается **только из
+  прогонных путей**; проверяющие инструменты несут лишь
+  :func:`ensure_mem_fraction` (ADR-041 п.2) — контрольный контур не должен
+  падать из-за чужой нагрузки.
 
 Модуль ``stdlib-only``: ничего не импортирует из ``jax`` (иначе лимит
 выставлялся бы слишком поздно), не делает сетевых вызовов и ничего не пишет за
@@ -60,9 +64,10 @@ ENV_VAR = "XLA_PYTHON_CLIENT_MEM_FRACTION"
 DEFAULT_MEM_FRACTION = "0.5"
 
 #: Переключатель префлайт-гейта для инструментов: ``0``/``false``/``off``/``no``
-#: — не проверять совмещение; ``1``/``true``/``on``/``yes`` — проверять строго
-#: (enforce даже на не-стендовом GPU); не задан — авто (enforce только на
-#: распознанном общем стенде GB10).
+#: — не проверять совмещение вовсе; иное значение (или отсутствие) — проверять
+#: штатно. Enforce ограничен стендом GB10 (ADR-041 п.3): **ни одно** значение
+#: переменной не расширяет блокировку за пределы GB10 — на дев-ПК чужие
+#: процессы остаются предупреждением, а не отказом.
 GATE_ENV = "JAX_PREFLIGHT_GATE"
 
 #: Таймаут сенсорных подпроцессов, с.
@@ -71,16 +76,18 @@ _SUBPROCESS_TIMEOUT = 15
 #: Каталог разрешений/локов по умолчанию (конвенция C-040).
 DEFAULT_LOCK_DIR = Path.home() / "gb10-shared" / ".locks"
 
-#: Имя общего стенда (DGX Spark, GB10, Grace Blackwell). Не распознан —
-#: совмещение считается локальным (advisory), а не стендовым (fail-closed).
-SHARED_STAND_RE = re.compile(r"GB10|Spark|Grace\s*Blackwell", re.IGNORECASE)
+#: Имя общего стенда — DGX Spark (nvidia-smi отдаёт ``NVIDIA GB10``). Не
+#: содержит «GB10» — совмещение считается локальным (advisory), а не
+#: стендовым (fail-closed). Детект сужен до GB10 осознанно (ADR-041 п.3):
+#: блокировать локальную работу из-за чужого процесса на дев-ПК — вредная
+#: строгость.
+SHARED_STAND_RE = re.compile(r"GB10", re.IGNORECASE)
 
 #: Признак явного разрешения на совмещение (имя файла или его текст).
 PERMISSION_RE = re.compile(r"(allow|permit|colocat|co-?run|share|совмест)", re.IGNORECASE)
 
-#: Категории вердикта ``gate_or_exit`` — для читаемости логов.
+#: Значения ``JAX_PREFLIGHT_GATE``, выключающие проверку (для читаемости логов).
 _SKIP_VALUES = frozenset({"0", "false", "off", "no"})
-_FORCE_VALUES = frozenset({"1", "true", "on", "yes"})
 
 __all__ = [
     "ENV_VAR",
@@ -369,25 +376,31 @@ def gate_or_exit(
 ) -> Optional[dict[str, Any]]:
     """Гейт для инструментов: вызывается перед реальным стартом прогона.
 
-    Режим из ``JAX_PREFLIGHT_GATE``: выключен — ``None`` (проверка пропущена);
-    включён строго — enforce даже на не-стендовом GPU; по умолчанию (не задан) —
-    enforce только на распознанном общем стенде GB10, на прочей машине чужие
-    процессы остаются advisory-предупреждением (иначе локальный GPU с чужим
-    сервером блокировал бы легитимные CPU/дев-прогоны).
+    Режим из ``JAX_PREFLIGHT_GATE``: выключен (``0``/``false``/``off``/``no``) —
+    ``None`` (проверка пропущена); любое иное значение (или не задан) — проверка
+    штатная. Enforce (``SystemExit``) выполняется **только** на распознанном
+    стенде GB10 (ADR-041 п.3); на любой другой машине — нет ``nvidia-smi`` или
+    GPU не GB10 — чужие процессы дают предупреждение в ``stderr`` и прогон
+    продолжается. Ни одно значение переменной строгость за пределы GB10 не
+    расширяет: блокировать локальную работу на дев-ПК из-за чужого процесса —
+    вредная строгость (ложный FAIL контрольного контура).
 
-    Fail-closed происходит внутри :func:`preflight_gate` (``SystemExit``).
+    Fail-closed на стенде происходит внутри :func:`preflight_gate`
+    (``SystemExit``) при отсутствии разрешения владельца.
     """
     mode = os.environ.get(GATE_ENV, "").strip().lower()
     if mode in _SKIP_VALUES:
         return None
-    forced = mode in _FORCE_VALUES
 
     state = preflight_gate(lock_dir=lock_dir, require_lock=False)
     foreign = state.get("foreign_procs") or []
 
     if state.get("gpu") == "none":
-        if verbose:
-            print("[jax-preflight] preflight_gate: no-gpu — проверка пропущена", file=sys.stderr)
+        print(
+            "[jax-preflight] предупреждение: nvidia-smi недоступен — проверка "
+            "совмещения пропущена (стенд GB10 не распознан)",
+            file=sys.stderr,
+        )
         return state
     if not foreign:
         if verbose:
@@ -397,18 +410,17 @@ def gate_or_exit(
                 file=sys.stderr,
             )
         return state
-    if forced or is_shared_stand(state):
-        # enforce: поднимет SystemExit, если разрешения нет.
+    if is_shared_stand(state):
+        # Enforce: поднимет SystemExit, если разрешения владельца нет.
         state = preflight_gate(lock_dir=lock_dir, require_lock=True)
         if verbose:
             print(f"[jax-preflight] preflight_gate: {state['reason']}", file=sys.stderr)
         return state
-    if verbose:
-        print(
-            "[jax-preflight] preflight_gate: чужие процессы на локальном GPU — "
-            "advisory (не стенд GB10)",
-            file=sys.stderr,
-        )
+    print(
+        "[jax-preflight] предупреждение: чужие compute-процессы на не-GB10 GPU — "
+        "совмещение разрешено (enforce только на стенде GB10, ADR-041 п.3)",
+        file=sys.stderr,
+    )
     return state
 
 

@@ -57,7 +57,8 @@ SCRIPT = Path(__file__).resolve()
 CASE_DIR = SCRIPT.parents[1]
 DEFAULT_CONFTEST = CASE_DIR / "net" / "tests" / "conftest.py"
 
-# ADR-041: дисциплина памяти JAX — префлайт ДО import jax (лимит XLA + гейт стенда).
+# ADR-041: дисциплина памяти JAX — лимит ДО import jax (гейт стенда — только
+# у прогонных инструментов, ADR-041 п.2; проверяющий инструмент его не несёт).
 if str(SCRIPT.parent) not in sys.path:
     sys.path.insert(0, str(SCRIPT.parent))
 import jax_preflight  # noqa: E402
@@ -522,7 +523,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_arg_parser().parse_args(argv)
-    jax_preflight.gate_or_exit()  # ADR-041: состояние стенда до прогона JAX
+    # ADR-041 п.2: проверяющий инструмент несёт только лимит памяти
+    # (ensure_mem_fraction в шапке модуля), без fail-closed гейта — контрольный
+    # контур не должен падать из-за чужой нагрузки на стенде (ложный FAIL C-042).
     case_dir = Path(args.case_dir)
     conftest_path = Path(args.conftest)
 

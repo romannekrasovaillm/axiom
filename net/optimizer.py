@@ -39,6 +39,16 @@ branch.  ``legacy_muon_all_2d=True`` restores the pre-ADR-048 classification
 ("any ``ndim == 2`` -> Muon") on the same code, for an honest before/after
 comparison; the number of NS iterations is parameterised by ``ns_steps``
 (default 5 — the ADR keeps that default until a measurement says otherwise).
+
+Cost of the step (ADR-048 Amendment, 08.10.2026)
+------------------------------------------------
+The 20.4 s was **host overhead, not arithmetic**: the whole step ran *outside*
+``jax.jit``, and ``_one`` walked the 723-leaf tree twice (two
+``tree_map_with_path`` calls, so the Newton–Schulz work was materialised twice
+over).  The step built by :func:`make_step` is therefore jitted (``lr`` is a
+*dynamic* argument — a Python-float ``lr`` closed over would recompile on every
+schedule tick) and walks the tree once.  The per-branch arithmetic is unchanged;
+the CPU smoke in ``tools/optimizer_jit_smoke.py`` measures the ratio.
 """
 
 from __future__ import annotations
@@ -205,14 +215,35 @@ def make_step(
     weight_clip: float | None = 1.0,
     ns_steps: int = NS_STEPS_DEFAULT,
     legacy_muon_all_2d: bool = False,
+    *,
+    jit: bool = True,
+    single_pass: bool = True,
 ):
-    """Build a jittable optimizer step closing over the hyperparameters.
+    """Build the optimizer step — jitted, one walk over the parameter tree.
 
     ``ns_steps`` — Newton-Schulz iterations for the three Muon groups
     (ADR-048 п. 2; the default is the pre-existing value 5).
     ``legacy_muon_all_2d`` — restore the pre-ADR-048 branch ("any ``ndim == 2``
     -> Muon", embeddings included) for a before/after comparison on one code
     revision.
+
+    ADR-048 Amendment (08.10.2026): the measured ``sec_backopt`` = 20.4 s of a
+    ~31 s step was **host** overhead, not arithmetic (the whole step's NS work is
+    ~3.6e13 FLOP, tens of milliseconds).  Two causes are removed here:
+
+    * the step ran *outside* ``jax.jit`` — now wrapped, with ``lr`` left
+      **dynamic** (a Python float closed over instead would recompile the step
+      on every schedule tick; the tree structure and the hyper-parameters —
+      momenta, ``eps``, ``ns_steps`` — stay static, which is what jit wants);
+    * ``_one`` walked the tree twice (one ``tree_map_with_path`` per output
+      tree, so every leaf's update was computed twice) — now walked once by
+      :func:`_walk_once`.
+
+    The arithmetic of every branch is untouched.  ``jit=False`` returns the
+    plain function (eager-vs-jit smoke, debugging); ``single_pass=False``
+    restores the pre-Amendment two-walk traversal as the parity oracle for the
+    one-walk refactor — **never enable it in training**, it doubles the
+    Newton–Schulz work.
     """
     if int(ns_steps) < 1:
         raise ValueError(f"ns_steps must be >= 1, got {ns_steps!r}")
@@ -241,47 +272,90 @@ def make_step(
             p = jnp.clip(p, -weight_clip, weight_clip)
         return p, m
 
-    def _vector_step(p, g, st, lr):
+    def _adamw_step(p, g, st, lr, *, clip: bool):
+        """AdamW, elementwise — vectors (norms/biases) and the 2-D embeddings."""
         m, v = st
         m = adam_b1 * m + (1.0 - adam_b1) * g
         v = adam_b2 * v + (1.0 - adam_b2) * (g * g)
         mh = m / (1.0 - adam_b1)
         vh = v / (1.0 - adam_b2)
         p = p * (1.0 - lr * wd) - lr * mh / (jnp.sqrt(vh) + 1e-8)
+        # ADR-048 Amendment п.4: ``weight_clip`` (1.0) also covers ``adamw_embed``,
+        # exactly as the Muon branch clipped it.  ``adamw_vector`` keeps the
+        # pre-Amendment behaviour (no clip): two properties are not changed at once.
+        if clip and weight_clip is not None:
+            p = jnp.clip(p, -weight_clip, weight_clip)
         return p, (m, v)
 
-    def step(params, grads, state, lr):
-        def _one(path, p, g, s):
-            name = leaf_name(path[-1]) if path else ""
-            group = classify_leaf(name, p.ndim, legacy=legacy_muon_all_2d)
-            if group == GROUP_UNCLASSIFIED:
-                raise UnclassifiedMatrixError(
-                    f"2-D параметр {name!r} ({jax.tree_util.keystr(path)}) вне "
-                    "классификации ADR-048: дополни MUON_MATRIX_LEAVES или "
-                    "ADAMW_MATRIX_LEAVES, либо включи legacy_muon_all_2d"
-                )
-            if group == GROUP_MUON_PER_HEAD:
-                return _matrix_step(p, g, s, lr, True)  # (new_p, momentum)
-            if group == GROUP_MUON_MATRIX:
-                return _matrix_step(p, g, s, lr, False)  # (new_p, momentum)
-            if group == GROUP_MUON_BATCHED:
-                return _batched_matrix_step(p, g, s, lr)  # (new_p, momentum)
-            # ``adamw_vector`` (norms, biases, scalars) and ``adamw_embed``
-            # (input embeddings / tied LM head, ADR-048) share the AdamW branch;
-            # it is elementwise, so it works for a 2-D embedding as well.
-            return _vector_step(p, g, s, lr)  # (new_p, (m, v))
+    def _one(path, p, g, s, lr):
+        """Update one leaf; returns ``(new_param, new_state_leaf)``."""
+        name = leaf_name(path[-1]) if path else ""
+        group = classify_leaf(name, p.ndim, legacy=legacy_muon_all_2d)
+        if group == GROUP_UNCLASSIFIED:
+            raise UnclassifiedMatrixError(
+                f"2-D параметр {name!r} ({jax.tree_util.keystr(path)}) вне "
+                "классификации ADR-048: дополни MUON_MATRIX_LEAVES или "
+                "ADAMW_MATRIX_LEAVES, либо включи legacy_muon_all_2d"
+            )
+        if group == GROUP_MUON_PER_HEAD:
+            return _matrix_step(p, g, s, lr, True)  # (new_p, momentum)
+        if group == GROUP_MUON_MATRIX:
+            return _matrix_step(p, g, s, lr, False)  # (new_p, momentum)
+        if group == GROUP_MUON_BATCHED:
+            return _batched_matrix_step(p, g, s, lr)  # (new_p, momentum)
+        if group == GROUP_ADAMW_EMBED:
+            return _adamw_step(p, g, s, lr, clip=True)  # (new_p, (m, v))
+        # ``adamw_vector`` — norms, biases, scalars.
+        return _adamw_step(p, g, s, lr, clip=False)  # (new_p, (m, v))
 
-        # Two passes so params and state come back as separate trees (the tuple
-        # return of ``_one`` is otherwise treated as nested pytree structure).
+    def _walk_once(params, grads, state, lr):
+        """One walk: ``_one`` runs once per leaf, not once per output tree.
+
+        ``jax.tree_util.tree_map`` cannot split the ``(new_param, new_state)``
+        pair directly — ``tree_unflatten`` would read the tuple as *nested
+        structure* (the defect that forced the two-pass version), and
+        ``tree_transpose`` refuses it too, because the state leaf of an Adam
+        group is itself an ``(m, v)`` tuple, so the pair's inner structure is
+        not uniform.  Flattening the parameter tree once and unflattening each
+        output against its own treedef does the split in a single traversal.
+        """
+        path_leaves, param_treedef = jax.tree_util.tree_flatten_with_path(params)
+        grads_for = param_treedef.flatten_up_to(grads)
+        state_for = param_treedef.flatten_up_to(state)
+        new_params: list = []
+        new_state: list = []
+        for (path, p), g, s in zip(path_leaves, grads_for, state_for):
+            updated, next_state = _one(path, p, g, s, lr)
+            new_params.append(updated)
+            new_state.append(next_state)
+        return (
+            param_treedef.unflatten(new_params),
+            jax.tree_util.tree_structure(state).unflatten(
+                [leaf for ns in new_state for leaf in jax.tree_util.tree_leaves(ns)]
+            ),
+        )
+
+    def _walk_twice(params, grads, state, lr):
+        """Pre-Amendment traversal (the parity oracle): two walks, twice the work.
+
+        ``tree_map`` takes the structure of the *first* tree (params) and pulls
+        the state values ``flatten_up_to`` it, so an Adam leaf's ``(m, v)`` pair
+        arrives as one value and the returned tuple is re-flattened as the output
+        tree's leaf.
+        """
         new_params = jax.tree_util.tree_map_with_path(
-            lambda path, p, g, s: _one(path, p, g, s)[0], params, grads, state
+            lambda path, p, g, s: _one(path, p, g, s, lr)[0], params, grads, state
         )
         new_state = jax.tree_util.tree_map_with_path(
-            lambda path, p, g, s: _one(path, p, g, s)[1], params, grads, state
+            lambda path, p, g, s: _one(path, p, g, s, lr)[1], params, grads, state
         )
         return new_params, new_state
 
-    return step
+    def step(params, grads, state, lr):
+        walk = _walk_once if single_pass else _walk_twice
+        return walk(params, grads, state, lr)
+
+    return jax.jit(step) if jit else step
 
 
 def classification_report(

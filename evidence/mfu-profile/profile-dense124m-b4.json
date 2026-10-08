@@ -1,8 +1,8 @@
 {
  "schema": "axiom-mfu-profile/1",
  "version": 1,
- "status": "EMPTY-PENDING",
- "created": "2026-10-08T14:05:34+0300",
+ "status": "COMPLETE",
+ "created": "2026-10-08T08:59:15-0300",
  "cell": {
   "name": "dense124m-b4",
   "config": "net/config-dense124m.json",
@@ -12,12 +12,17 @@
  },
  "steps": 6,
  "warmup": 2,
- "jax_version": null,
- "device": [],
- "backend": null,
- "compile_cache": null,
+ "jax_version": "0.10.2",
+ "device": [
+  "CudaDevice(id=0)"
+ ],
+ "backend": "gpu",
+ "compile_cache": {
+  "enabled": true,
+  "dir": "/tmp/axiom-profile-mfu-xla-cache"
+ },
  "runner": "net/train_loop.train (та же нога, что в претрейне; net/* не меняется)",
- "trace_dir": null,
+ "trace_dir": "/home/roman/axiom/evidence/mfu-profile/trace-dense124m-b4",
  "caveats": [
   "группировка операций по имени — эвристика (канонический префикс HLO), не вердикт",
   "op_total суммирует ДЫРКИ операций как есть (вложенность может учитываться дважды); gap считается по объединению интервалов и потому двойного учёта не несёт",
@@ -25,8 +30,290 @@
   "gap — верхняя оценка хост-диспетчеризации: включает всё, что не классифицировано как операция",
   "сводки CUDA-ядер/API — отдельный прибор tools/profile_mfu_nsys.sh (nsys), не этот файл"
  ],
- "gap": null,
- "top_ops": [],
- "groups": [],
- "note": "GPU недоступен: клетка не исполнена. Отчёт несёт план (cell/steps/warmup); прогон выполняет архитектор на стенде GB10 (AD-7/C-040: лок на ~/gb10-shared/.locks)."
+ "trace": {
+  "files_seen": [
+   "/home/roman/axiom/evidence/mfu-profile/trace-dense124m-b4/plugins/profile/2026_10_08_08_59_00/spark-44c3.trace.json.gz"
+  ],
+  "file_used": "/home/roman/axiom/evidence/mfu-profile/trace-dense124m-b4/plugins/profile/2026_10_08_08_59_00/spark-44c3.trace.json.gz",
+  "event_count": 1000037,
+  "broken_files": [],
+  "duplicate_trace_files": [],
+  "complete_event_count": 1000000
+ },
+ "gap": {
+  "window_seconds": 152.645819234,
+  "covered_seconds": 0.5328520959999483,
+  "gap_seconds": 152.11296713800004,
+  "gap_share": 0.9965092257444463,
+  "op_events_covering": 82928
+ },
+ "top_ops": [
+  {
+   "name": "PjitFunction(convert_element_type)",
+   "group": "einsum",
+   "total_seconds": 0.2695459970000002,
+   "share": 0.12323048110445046,
+   "share_of_window": 0.001765826266009925,
+   "count": 886,
+   "mean_seconds": 0.00030422798758465036
+  },
+  {
+   "name": "PjitFunction(multiply)",
+   "group": "elementwise",
+   "total_seconds": 0.1820242350000003,
+   "share": 0.08321746307261826,
+   "share_of_window": 0.0011924613193694115,
+   "count": 1048,
+   "mean_seconds": 0.00017368724713740487
+  },
+  {
+   "name": "$tree_util.py:399 <genexpr>",
+   "group": "elementwise",
+   "total_seconds": 0.16870190199999976,
+   "share": 0.07712678644118691,
+   "share_of_window": 0.0011051852114035724,
+   "count": 346,
+   "mean_seconds": 0.000487577751445086
+  },
+  {
+   "name": "$lax.py:1665 _convert_element_type",
+   "group": "einsum",
+   "total_seconds": 0.16267828000000006,
+   "share": 0.07437291940063386,
+   "share_of_window": 0.001065723783437663,
+   "count": 1167,
+   "mean_seconds": 0.00013939869751499576
+  },
+  {
+   "name": "$lax.py:5333 _convert_element_type_bind_with_trace",
+   "group": "einsum",
+   "total_seconds": 0.1451594339999999,
+   "share": 0.06636368964021268,
+   "share_of_window": 0.0009509558448992058,
+   "count": 645,
+   "mean_seconds": 0.00022505338604651145
+  },
+  {
+   "name": "CommonPjRtLoadedExecutable::Execute (jit_convert_element_type)",
+   "group": "einsum",
+   "total_seconds": 0.115353237,
+   "share": 0.052736954177307574,
+   "share_of_window": 0.0007556920823567926,
+   "count": 443,
+   "mean_seconds": 0.0002603910541760722
+  },
+  {
+   "name": "$linear_util.py:210 call_wrapped",
+   "group": "copy",
+   "total_seconds": 0.10128611599999998,
+   "share": 0.046305776909316025,
+   "share_of_window": 0.0006635367840945082,
+   "count": 23,
+   "mean_seconds": 0.004403744173913043
+  },
+  {
+   "name": "$ufunc_api.py:175 __call__",
+   "group": "copy",
+   "total_seconds": 0.09698743900000019,
+   "share": 0.044340516654226385,
+   "share_of_window": 0.0006353756656205716,
+   "count": 585,
+   "mean_seconds": 0.00016579049401709435
+  },
+  {
+   "name": "$mla.py:82 init_mla",
+   "group": "attention",
+   "total_seconds": 0.09449516,
+   "share": 0.04320110169857953,
+   "share_of_window": 0.0006190484644400425,
+   "count": 24,
+   "mean_seconds": 0.003937298333333333
+  },
+  {
+   "name": "$array_methods.py:769 _operator_mul",
+   "group": "elementwise",
+   "total_seconds": 0.09430596400000002,
+   "share": 0.043114605462825625,
+   "share_of_window": 0.0006178090200782552,
+   "count": 510,
+   "mean_seconds": 0.00018491365490196082
+  },
+  {
+   "name": "$mla.py:63 _rand",
+   "group": "attention",
+   "total_seconds": 0.06919669499999997,
+   "share": 0.0316352018230414,
+   "share_of_window": 0.00045331536328501853,
+   "count": 240,
+   "mean_seconds": 0.0002883195624999999
+  },
+  {
+   "name": "$vit.py:77 <genexpr>",
+   "group": "elementwise",
+   "total_seconds": 0.065302455,
+   "share": 0.029854841238661466,
+   "share_of_window": 0.00042780375727090124,
+   "count": 26,
+   "mean_seconds": 0.0025116328846153846
+  },
+  {
+   "name": "CommonPjRtLoadedExecutable::Execute (jit_multiply)",
+   "group": "elementwise",
+   "total_seconds": 0.06469366800000004,
+   "share": 0.02957651725783778,
+   "share_of_window": 0.0004238155248839617,
+   "count": 224,
+   "mean_seconds": 0.00028881101785714305
+  },
+  {
+   "name": "PjitFunction(broadcast_in_dim)",
+   "group": "copy",
+   "total_seconds": 0.03860311500000004,
+   "share": 0.017648492229622798,
+   "share_of_window": 0.00025289336579092936,
+   "count": 784,
+   "mean_seconds": 4.9238667091836786e-05
+  },
+  {
+   "name": "$lax.py:2834 broadcast",
+   "group": "copy",
+   "total_seconds": 0.03582055600000004,
+   "share": 0.01637636766428741,
+   "share_of_window": 0.00023466450754926047,
+   "count": 587,
+   "mean_seconds": 6.102309369676327e-05
+  },
+  {
+   "name": "$lax.py:2865 broadcast_in_dim",
+   "group": "copy",
+   "total_seconds": 0.033776604000000016,
+   "share": 0.015441917918723552,
+   "share_of_window": 0.00022127434717502366,
+   "count": 537,
+   "mean_seconds": 6.289870391061455e-05
+  },
+  {
+   "name": "PjitFunction(dynamic_slice)",
+   "group": "copy",
+   "total_seconds": 0.031422702000000004,
+   "share": 0.01436576587357658,
+   "share_of_window": 0.00020585366934832488,
+   "count": 86,
+   "mean_seconds": 0.0003653802558139535
+  },
+  {
+   "name": "$indexing.py:1154 _static_slice",
+   "group": "copy",
+   "total_seconds": 0.029509224,
+   "share": 0.013490965961327163,
+   "share_of_window": 0.0001933182588824364,
+   "count": 93,
+   "mean_seconds": 0.00031730348387096777
+  },
+  {
+   "name": "$slicing.py:60 slice",
+   "group": "copy",
+   "total_seconds": 0.02735792899999997,
+   "share": 0.012507441365161104,
+   "share_of_window": 0.00017922488239302086,
+   "count": 341,
+   "mean_seconds": 8.022853079178877e-05
+  },
+  {
+   "name": "loop_multiply_fusion",
+   "group": "elementwise",
+   "total_seconds": 0.023821897000000043,
+   "share": 0.010890845572938217,
+   "share_of_window": 0.00015605993743911205,
+   "count": 1344,
+   "mean_seconds": 1.772462574404765e-05
+  },
+  {
+   "name": "$slicing.py:1481 _slice_impl",
+   "group": "copy",
+   "total_seconds": 0.016674859999999996,
+   "share": 0.007623377987503019,
+   "share_of_window": 0.00010923889094163855,
+   "count": 43,
+   "mean_seconds": 0.00038778744186046505
+  },
+  {
+   "name": "$ad.py:1114 <genexpr>",
+   "group": "elementwise",
+   "total_seconds": 0.014375181999999983,
+   "share": 0.006572015958463791,
+   "share_of_window": 9.417344066242259e-05,
+   "count": 214,
+   "mean_seconds": 6.717374766355133e-05
+  },
+  {
+   "name": "$mla.py:118 _dense_apply",
+   "group": "attention",
+   "total_seconds": 0.014350195000000001,
+   "share": 0.006560592453512409,
+   "share_of_window": 9.400974800365623e-05,
+   "count": 7,
+   "mean_seconds": 0.0020500278571428574
+  },
+  {
+   "name": "CommonPjRtLoadedExecutable::Execute (jit_dynamic_slice)",
+   "group": "copy",
+   "total_seconds": 0.012961656,
+   "share": 0.005925783066963468,
+   "share_of_window": 8.491327220780476e-05,
+   "count": 43,
+   "mean_seconds": 0.0003014338604651163
+  },
+  {
+   "name": "wrapped_broadcast",
+   "group": "copy",
+   "total_seconds": 0.012869620000000005,
+   "share": 0.005883706238944655,
+   "share_of_window": 8.431033397823616e-05,
+   "count": 1176,
+   "mean_seconds": 1.0943554421768711e-05
+  }
+ ],
+ "groups": [
+  {
+   "group": "einsum",
+   "total_seconds": 0.7456995729999978,
+   "share": 0.34091738761816204,
+   "count": 4797
+  },
+  {
+   "group": "elementwise",
+   "total_seconds": 0.7310173260005934,
+   "share": 0.33420498831871714,
+   "count": 58807
+  },
+  {
+   "group": "copy",
+   "total_seconds": 0.5113727900000378,
+   "share": 0.23378835388688676,
+   "count": 16540
+  },
+  {
+   "group": "attention",
+   "total_seconds": 0.18841724500000007,
+   "share": 0.08614020615459225,
+   "count": 318
+  },
+  {
+   "group": "reduce",
+   "total_seconds": 0.010824430999999949,
+   "share": 0.004948690964280655,
+   "count": 2465
+  },
+  {
+   "group": "scan",
+   "total_seconds": 8.159999999999999e-07,
+   "share": 3.7305719135287875e-07,
+   "count": 1
+  }
+ ],
+ "op_total_seconds": 2.1873321810010005,
+ "op_event_count": 82928,
+ "unclassified_seconds": 212.03088100123261,
+ "unclassified_count": 917072
 }

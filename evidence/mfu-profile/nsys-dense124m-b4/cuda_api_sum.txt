@@ -1,0 +1,4 @@
+Generating SQLite file evidence/mfu-profile/nsys-dense124m-b4/dense124m-b4.sqlite from evidence/mfu-profile/nsys-dense124m-b4/dense124m-b4.nsys-rep
+Processing [evidence/mfu-profile/nsys-dense124m-b4/dense124m-b4.sqlite] with [/opt/nvidia/nsight-systems/2025.3.2/host-linux-armv8/reports/cuda_api_sum.py]... 
+SKIPPED: evidence/mfu-profile/nsys-dense124m-b4/dense124m-b4.sqlite does not contain CUDA trace data.
+

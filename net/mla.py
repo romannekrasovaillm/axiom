@@ -29,6 +29,7 @@ criterion 13 and the A/B against the sparse path (ADR-009 D4).
 
 from __future__ import annotations
 
+import os
 from typing import NamedTuple
 
 import jax
@@ -37,6 +38,11 @@ import jax.numpy as jnp
 from .config import ModelConfig
 from . import attn_sparse
 from . import quant
+
+# MFU-эксперимент 07.10 (директива «поднять MFU»): fused flash attention в
+# dense-оракуле.  По умолчанию ВЫКЛ — pinned oracle байт-точен (ADR-009 D4);
+# включение — только диагностические прогоны (VERIFICATION-LEG).
+_FLASH_DENSE = os.environ.get("AXIOM_MLA_DENSE_FLASH", "0") == "1"
 
 
 def _rand(key, shape, scale: float) -> jnp.ndarray:
@@ -95,19 +101,37 @@ def _project(params: MLAParams, cfg: ModelConfig, x32: jnp.ndarray, c: jnp.ndarr
 
 
 def _dense_apply(params: MLAParams, cfg: ModelConfig, x: jnp.ndarray, mask: jnp.ndarray | None = None) -> jnp.ndarray:
-    """Dense causal gated MLA over ``(B, T, hidden)`` (the oracle, ADR-009 D4)."""
+    """Dense causal gated MLA over ``(B, T, hidden)`` (the oracle, ADR-009 D4).
+
+    ``AXIOM_MLA_DENSE_FLASH=1`` switches attention to the fused flash path
+    (``jax.nn.dot_product_attention``): no ``(B,H,T,T)`` materialisation —
+    the MFU experiment of 07.10 (memory-bound kernels, ~50 GB/step of
+    fp32 scores+attn traffic at l3-full b1).  Diagnostic only: numerics
+    differ from the pinned fp32 oracle (bf16 flash); default OFF keeps the
+    oracle byte-exact.
+    """
     H, dq = cfg.num_heads, cfg.mla_head_dim
     x32 = x.astype(jnp.float32)
     c = x32 @ params.W_c.astype(jnp.float32)  # (B, T, d_c)
     q, k, v = _project(params, cfg, x32, c)
 
-    scale = 1.0 / jnp.sqrt(dq)
-    scores = jnp.einsum("bthd,bshd->bhts", q, k) * scale  # (B, H, T, T)
-    if mask is None:
-        mask = _causal_mask(x.shape[-2])
-    scores = jnp.where(mask, scores, jnp.finfo(jnp.float32).min)
-    attn = jax.nn.softmax(scores, axis=-1)  # (B, H, T, T)
-    o = jnp.einsum("bhts,bshd->bthd", attn, v)  # (B, T, H, dq)
+    if _FLASH_DENSE:
+        qf = jnp.transpose(q, (0, 2, 1, 3))  # (B, H, T, dq)
+        kf = jnp.transpose(k, (0, 2, 1, 3))
+        vf = jnp.transpose(v, (0, 2, 1, 3))
+        m = None
+        if mask is not None:
+            m = mask[:, None, None, :]  # (B,1,T,S) broadcast over heads
+        of = jax.nn.dot_product_attention(qf, kf, vf, mask=m, is_causal=mask is None)
+        o = jnp.transpose(of, (0, 2, 1, 3))  # (B, T, H, dq)
+    else:
+        scale = 1.0 / jnp.sqrt(dq)
+        scores = jnp.einsum("bthd,bshd->bhts", q, k) * scale  # (B, H, T, T)
+        if mask is None:
+            mask = _causal_mask(x.shape[-2])
+        scores = jnp.where(mask, scores, jnp.finfo(jnp.float32).min)
+        attn = jax.nn.softmax(scores, axis=-1)  # (B, H, T, T)
+        o = jnp.einsum("bhts,bshd->bthd", attn, v)  # (B, T, H, dq)
     o = o.reshape(*x.shape[:-1], H * dq)
 
     gate = jax.nn.sigmoid(x32 @ params.W_g.astype(jnp.float32))

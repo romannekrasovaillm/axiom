@@ -1,7 +1,7 @@
 {
  "schema": "axiom-mfu-bf16-report/1",
- "status": "EMPTY-PENDING",
- "created": "2026-10-08T06:56:03+0300",
+ "status": "COMPLETE",
+ "created": "2026-10-08T05:40:44-0300",
  "device": [],
  "data_source": "synthetic (детерминированные id-токены; стоимость упакованного лоадера вне измеряемой величины)",
  "protocol": {
@@ -56,23 +56,342 @@
    "name": "dense124m-b1",
    "batch": 1,
    "seq": 8192,
-   "modes": {}
+   "modes": {
+    "fp32": {
+     "tok_s": 893.9168461083115,
+     "mfu": 0.016194258497016,
+     "peak_tflops": 45.2,
+     "speedup_vs_fp32": 1.0
+    },
+    "bf16": {
+     "tok_s": 875.1740266747739,
+     "mfu": 0.007297688351275554,
+     "peak_tflops": 98.2,
+     "speedup_vs_fp32": 0.9790329273744702
+    },
+    "bf16+flash": {
+     "tok_s": 978.2665544973215,
+     "mfu": 0.008157331252531048,
+     "peak_tflops": 98.2,
+     "speedup_vs_fp32": 1.0943596809437348
+    }
+   }
   },
   {
    "config": "net/config-dense124m.json",
    "name": "dense124m-b4",
    "batch": 4,
    "seq": 8192,
-   "modes": {}
+   "modes": {
+    "fp32": {
+     "tok_s": 1400.1258928137197,
+     "mfu": 0.02536477608102197,
+     "peak_tflops": 45.2,
+     "speedup_vs_fp32": 1.0
+    },
+    "bf16": {
+     "tok_s": 1622.9478433091913,
+     "mfu": 0.013533042811891589,
+     "peak_tflops": 98.2,
+     "speedup_vs_fp32": 1.1591442252722606
+    },
+    "bf16+flash": {
+     "tok_s": 1612.6301426077387,
+     "mfu": 0.013447008078311775,
+     "peak_tflops": 98.2,
+     "speedup_vs_fp32": 1.1517751017138653
+    }
+   }
   },
   {
    "config": "net/config.json",
    "name": "l3full-b1",
    "batch": 1,
    "seq": 8192,
-   "modes": {}
+   "modes": {
+    "fp32": {
+     "tok_s": 99.14568796177308,
+     "mfu": 0.006612042197082635,
+     "peak_tflops": 45.2,
+     "speedup_vs_fp32": 1.0
+    },
+    "bf16": {
+     "tok_s": 101.16761557567976,
+     "mfu": 0.00310549080080427,
+     "peak_tflops": 98.2,
+     "speedup_vs_fp32": 1.0203935002668625
+    },
+    "bf16+flash": {
+     "tok_s": 103.01692972906572,
+     "mfu": 0.003162258256066088,
+     "peak_tflops": 98.2,
+     "speedup_vs_fp32": 1.0390459922854662
+    }
+   }
   }
  ],
- "cells": [],
- "note": "GPU недоступен: клетки не исполнены. Отчёт несёт готовый план (protocol.configs × protocol.modes); прогон выполняет архитектор на стенде GB10 (AD-7/C-040: лок на ~/gb10-shared/.locks перед запуском)."
+ "cells": [
+  {
+   "config": "net/config-dense124m.json",
+   "batch": 1,
+   "seq": 8192,
+   "mode": "fp32",
+   "steps": 10,
+   "warmup_steps": 3,
+   "device": [
+    "CudaDevice(id=0)"
+   ],
+   "backend": "gpu",
+   "jax_version": "0.10.2",
+   "matmul_precision": null,
+   "param_dtype": "float32",
+   "grad_checkpointing": true,
+   "peak_tflops": 45.2,
+   "tok_s_median_tail": 893.9168461083115,
+   "tok_s_warmup": 934.5845755705238,
+   "tflops_median_tail": 0.7319804840651233,
+   "mfu": 0.016194258497016,
+   "loss_first": 13.34704875946045,
+   "loss_last": 13.321412086486816,
+   "wall_seconds": 263.45018196105957,
+   "journal": "evidence/mfu-bf16/journal/config-dense124m__fp32.jsonl",
+   "journal_schema": "pretrain-metrics/v1",
+   "steps_done": 10,
+   "stop_reason": null,
+   "name": "dense124m-b1"
+  },
+  {
+   "config": "net/config-dense124m.json",
+   "batch": 1,
+   "seq": 8192,
+   "mode": "bf16",
+   "steps": 10,
+   "warmup_steps": 3,
+   "device": [
+    "CudaDevice(id=0)"
+   ],
+   "backend": "gpu",
+   "jax_version": "0.10.2",
+   "matmul_precision": null,
+   "param_dtype": "float32",
+   "grad_checkpointing": true,
+   "peak_tflops": 98.2,
+   "tok_s_median_tail": 875.1740266747739,
+   "tok_s_warmup": 845.5551984039262,
+   "tflops_median_tail": 0.7166329960952594,
+   "mfu": 0.007297688351275554,
+   "loss_first": 13.347043991088867,
+   "loss_last": 13.3214111328125,
+   "wall_seconds": 266.30123829841614,
+   "journal": "evidence/mfu-bf16/journal/config-dense124m__bf16.jsonl",
+   "journal_schema": "pretrain-metrics/v1",
+   "steps_done": 10,
+   "stop_reason": null,
+   "name": "dense124m-b1"
+  },
+  {
+   "config": "net/config-dense124m.json",
+   "batch": 1,
+   "seq": 8192,
+   "mode": "bf16+flash",
+   "steps": 10,
+   "warmup_steps": 3,
+   "device": [
+    "CudaDevice(id=0)"
+   ],
+   "backend": "gpu",
+   "jax_version": "0.10.2",
+   "matmul_precision": null,
+   "param_dtype": "float32",
+   "grad_checkpointing": true,
+   "peak_tflops": 98.2,
+   "tok_s_median_tail": 978.2665544973215,
+   "tok_s_warmup": 798.6146758045988,
+   "tflops_median_tail": 0.801049928998549,
+   "mfu": 0.008157331252531048,
+   "loss_first": 13.347139358520508,
+   "loss_last": 13.321430206298828,
+   "wall_seconds": 258.09359073638916,
+   "journal": "evidence/mfu-bf16/journal/config-dense124m__bf16_flash.jsonl",
+   "journal_schema": "pretrain-metrics/v1",
+   "steps_done": 10,
+   "stop_reason": null,
+   "name": "dense124m-b1"
+  },
+  {
+   "config": "net/config-dense124m.json",
+   "batch": 4,
+   "seq": 8192,
+   "mode": "fp32",
+   "steps": 10,
+   "warmup_steps": 3,
+   "device": [
+    "CudaDevice(id=0)"
+   ],
+   "backend": "gpu",
+   "jax_version": "0.10.2",
+   "matmul_precision": null,
+   "param_dtype": "float32",
+   "grad_checkpointing": true,
+   "peak_tflops": 45.2,
+   "tok_s_median_tail": 1400.1258928137197,
+   "tok_s_warmup": 1434.416808503919,
+   "tflops_median_tail": 1.146487878862193,
+   "mfu": 0.02536477608102197,
+   "loss_first": 13.343505859375,
+   "loss_last": 13.318269729614258,
+   "wall_seconds": 711.8378903865814,
+   "journal": "evidence/mfu-bf16/journal/config-dense124m__fp32.jsonl",
+   "journal_schema": "pretrain-metrics/v1",
+   "steps_done": 10,
+   "stop_reason": null,
+   "name": "dense124m-b4"
+  },
+  {
+   "config": "net/config-dense124m.json",
+   "batch": 4,
+   "seq": 8192,
+   "mode": "bf16",
+   "steps": 10,
+   "warmup_steps": 3,
+   "device": [
+    "CudaDevice(id=0)"
+   ],
+   "backend": "gpu",
+   "jax_version": "0.10.2",
+   "matmul_precision": null,
+   "param_dtype": "float32",
+   "grad_checkpointing": true,
+   "peak_tflops": 98.2,
+   "tok_s_median_tail": 1622.9478433091913,
+   "tok_s_warmup": 1691.4942283473551,
+   "tflops_median_tail": 1.328944804127754,
+   "mfu": 0.013533042811891589,
+   "loss_first": 13.343510627746582,
+   "loss_last": 13.3183012008667,
+   "wall_seconds": 593.1410279273987,
+   "journal": "evidence/mfu-bf16/journal/config-dense124m__bf16.jsonl",
+   "journal_schema": "pretrain-metrics/v1",
+   "steps_done": 10,
+   "stop_reason": null,
+   "name": "dense124m-b4"
+  },
+  {
+   "config": "net/config-dense124m.json",
+   "batch": 4,
+   "seq": 8192,
+   "mode": "bf16+flash",
+   "steps": 10,
+   "warmup_steps": 3,
+   "device": [
+    "CudaDevice(id=0)"
+   ],
+   "backend": "gpu",
+   "jax_version": "0.10.2",
+   "matmul_precision": null,
+   "param_dtype": "float32",
+   "grad_checkpointing": true,
+   "peak_tflops": 98.2,
+   "tok_s_median_tail": 1612.6301426077387,
+   "tok_s_warmup": 1554.7899816371842,
+   "tflops_median_tail": 1.3204961932902164,
+   "mfu": 0.013447008078311775,
+   "loss_first": 13.343527793884277,
+   "loss_last": 13.318259239196777,
+   "wall_seconds": 622.7000911235809,
+   "journal": "evidence/mfu-bf16/journal/config-dense124m__bf16_flash.jsonl",
+   "journal_schema": "pretrain-metrics/v1",
+   "steps_done": 10,
+   "stop_reason": null,
+   "name": "dense124m-b4"
+  },
+  {
+   "config": "net/config.json",
+   "batch": 1,
+   "seq": 8192,
+   "mode": "fp32",
+   "steps": 10,
+   "warmup_steps": 3,
+   "device": [
+    "CudaDevice(id=0)"
+   ],
+   "backend": "gpu",
+   "jax_version": "0.10.2",
+   "matmul_precision": null,
+   "param_dtype": "float32",
+   "grad_checkpointing": true,
+   "peak_tflops": 45.2,
+   "tok_s_median_tail": 99.14568796177308,
+   "tok_s_warmup": 99.36542365089068,
+   "tflops_median_tail": 0.2988643073081351,
+   "mfu": 0.006612042197082635,
+   "loss_first": 13.524043083190918,
+   "loss_last": 13.491798400878906,
+   "wall_seconds": 1211.0464460849762,
+   "journal": "evidence/mfu-bf16/journal/config__fp32.jsonl",
+   "journal_schema": "pretrain-metrics/v1",
+   "steps_done": 10,
+   "stop_reason": null,
+   "name": "l3full-b1"
+  },
+  {
+   "config": "net/config.json",
+   "batch": 1,
+   "seq": 8192,
+   "mode": "bf16",
+   "steps": 10,
+   "warmup_steps": 3,
+   "device": [
+    "CudaDevice(id=0)"
+   ],
+   "backend": "gpu",
+   "jax_version": "0.10.2",
+   "matmul_precision": null,
+   "param_dtype": "float32",
+   "grad_checkpointing": true,
+   "peak_tflops": 98.2,
+   "tok_s_median_tail": 101.16761557567976,
+   "tok_s_warmup": 100.96810925608388,
+   "tflops_median_tail": 0.3049591966389793,
+   "mfu": 0.00310549080080427,
+   "loss_first": 13.528358459472656,
+   "loss_last": 13.479761123657227,
+   "wall_seconds": 1182.935512304306,
+   "journal": "evidence/mfu-bf16/journal/config__bf16.jsonl",
+   "journal_schema": "pretrain-metrics/v1",
+   "steps_done": 10,
+   "stop_reason": null,
+   "name": "l3full-b1"
+  },
+  {
+   "config": "net/config.json",
+   "batch": 1,
+   "seq": 8192,
+   "mode": "bf16+flash",
+   "steps": 10,
+   "warmup_steps": 3,
+   "device": [
+    "CudaDevice(id=0)"
+   ],
+   "backend": "gpu",
+   "jax_version": "0.10.2",
+   "matmul_precision": null,
+   "param_dtype": "float32",
+   "grad_checkpointing": true,
+   "peak_tflops": 98.2,
+   "tok_s_median_tail": 103.01692972906572,
+   "tok_s_warmup": 102.90045643108792,
+   "tflops_median_tail": 0.31053376074568984,
+   "mfu": 0.003162258256066088,
+   "loss_first": 13.530776023864746,
+   "loss_last": 13.486316680908203,
+   "wall_seconds": 1166.143898010254,
+   "journal": "evidence/mfu-bf16/journal/config__bf16_flash.jsonl",
+   "journal_schema": "pretrain-metrics/v1",
+   "steps_done": 10,
+   "stop_reason": null,
+   "name": "l3full-b1"
+  }
+ ],
+ "failures": []
 }

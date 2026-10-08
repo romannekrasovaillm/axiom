@@ -1,0 +1,60 @@
+{
+  "schema": "mfu-ladder/1",
+  "device": "cuda:0",
+  "cuda": true,
+  "allow_cpu": false,
+  "cpu_scale": 1,
+  "dtype": "bf16",
+  "mem_fraction": {
+    "XLA_PYTHON_CLIENT_MEM_FRACTION": "0.5"
+  },
+  "denominator_bf16": 98.2,
+  "denominator_fp32": 45.2,
+  "denominator_source": "kpi-pins.json: mfu_reference.peak_used (измеренный) · лог evidence/gemm_peak_0810.log — git-объект в коммите 42b7408 (сертификация: двойное чтение объекта идентично; fetch верифицирует SHA каждого объекта)",
+  "protocol": {
+    "iters": 10,
+    "warmup": 3,
+    "ok": true
+  },
+  "status": "ok",
+  "results": [
+    {
+      "level": "L3",
+      "dtype": "bf16",
+      "compute_dtype": "bf16",
+      "shape": "KDA T=8192 H=12 dk=128 dv=128 chunk=64",
+      "flops": 5307170291712,
+      "flops_active": 5307170291712,
+      "seconds": 2.5870185944995683,
+      "tflops": 2.0514619813695685,
+      "mfu_pct": 2.0890651541441634,
+      "mfu_pct_active": 2.0890651541441634,
+      "denominator_tflops": 98.2,
+      "denominator_name": "bf16",
+      "warmup_s": 7.695279241999742,
+      "compile_s": 33.31078563700066,
+      "iters": 10,
+      "status": "OK",
+      "notes": "KDA слой (chunked, chunked delta rule) fwd+bwd (x3); проекции + ShortConv + intra-chunk + inter-chunk monoid scan + state read; элементные (sigmoid/swish/l2/RMS) не в счёте"
+    },
+    {
+      "level": "L3",
+      "dtype": "bf16",
+      "compute_dtype": "bf16",
+      "shape": "MLA T=8192 latent=512 H=12 dq=128 dense_reference=True",
+      "flops": 1700807049216,
+      "flops_active": 1700807049216,
+      "seconds": 0.14407929250046436,
+      "tflops": 11.804659918152488,
+      "mfu_pct": 12.021038613189907,
+      "mfu_pct_active": 12.021038613189907,
+      "denominator_tflops": 98.2,
+      "denominator_name": "bf16",
+      "warmup_s": 0.6412274579997757,
+      "compile_s": 39.86486513999989,
+      "iters": 10,
+      "status": "OK",
+      "notes": "MLA слой fwd+bwd (x3); режим bf16 через compute-dtype-гейт (AXIOM_COMPUTE_DTYPE): gate-off — побайтовый fp32-путь, gate-on — bf16-операнды + fp32-накопление; знаменатель строки — по режиму; attention O(T*T) по T-записям на запрос"
+    }
+  ]
+}

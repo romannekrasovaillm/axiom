@@ -65,3 +65,16 @@
 {"ts":"2026-10-07T09:13:07.520495956+03:00","tool":"delta_guard","verdict":"pass","duration_ms":6,"session_id":"dca8ee0421c2a1d2","host":"claude-code"}
 {"ts":"2026-10-07T09:13:17.742994512+03:00","tool":"spine_lint","verdict":"pass","duration_ms":2,"session_id":"dca8ee0421c2a1d2","host":"claude-code"}
 {"ts":"2026-10-07T09:37:30.396356137+03:00","tool":"fitness_check","verdict":"pass","duration_ms":912,"session_id":"461171909b32472c","host":"claude-code"}
+{"ts":"2026-10-08T06:33:40.997027591+03:00","tool":"fitness_check","verdict":"pass","duration_ms":1607,"session_id":"4ac9a689315dd220","host":"claude-code"}
+{"ts":"2026-10-08T07:01:24.255118738+03:00","tool":"spine_lint","verdict":"pass","duration_ms":2,"session_id":"4ac9a689315dd220","host":"claude-code"}
+{"ts":"2026-10-08T07:01:24.270343785+03:00","tool":"trace_check","verdict":"pass","duration_ms":12,"session_id":"4ac9a689315dd220","host":"claude-code"}
+{"ts":"2026-10-08T07:01:29.295445772+03:00","tool":"fitness_check","verdict":"pass","duration_ms":1087,"session_id":"4ac9a689315dd220","host":"claude-code"}
+{"ts":"2026-10-08T12:25:36.870096472+03:00","tool":"fitness_check","verdict":"pass","duration_ms":1603,"session_id":"a5854365688f5733","host":"claude-code"}
+{"ts":"2026-10-08T14:06:19.541537868+03:00","tool":"fitness_check","verdict":"pass","duration_ms":1063,"session_id":"696f324fbc55a950","host":"claude-code"}
+{"ts":"2026-10-08T14:06:19.554232875+03:00","tool":"significance_from_diff","verdict":"ok","duration_ms":12,"session_id":"696f324fbc55a950","host":"claude-code"}
+{"ts":"2026-10-08T15:58:25.985627149+03:00","tool":"trace_check","verdict":"pass","duration_ms":42,"session_id":"e9da52bccccd0ee6","host":"claude-code"}
+{"ts":"2026-10-08T16:15:13.779637574+03:00","tool":"delta_guard","verdict":"pass","duration_ms":7,"session_id":"e9da52bccccd0ee6","host":"claude-code"}
+{"ts":"2026-10-08T16:15:15.008457436+03:00","tool":"fitness_check","verdict":"fail","duration_ms":1228,"rules":["ADR: отрицательные последствия описаны (иначе решение продано, а не проверено)"],"session_id":"e9da52bccccd0ee6","host":"claude-code"}
+{"ts":"2026-10-08T16:18:44.123514456+03:00","tool":"fitness_check","verdict":"fail","duration_ms":1207,"rules":["ADR: отрицательные последствия описаны (иначе решение продано, а не проверено)"],"session_id":"e9da52bccccd0ee6","host":"claude-code"}
+{"ts":"2026-10-08T16:29:15.502216297+03:00","tool":"fitness_check","verdict":"pass","duration_ms":1245,"session_id":"edcfd52360d53a0a","host":"claude-code"}
+{"ts":"2026-10-08T18:24:15.391584229+03:00","tool":"fitness_check","verdict":"fail","duration_ms":1224,"rules":["ADR-041: у каждого JAX-инструмента tools/ префлайт памяти вызывается явно — маркер ensure_mem_fraction() обязателен в каждом файле списка (XLA_PYTHON_CLIENT_MEM_FRACTION до import jax)"],"session_id":"a956517b2a419e92","host":"claude-code"}

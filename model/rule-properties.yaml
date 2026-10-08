@@ -136,3 +136,8 @@
   property: null
   migration: not_applicable
   reason: "проверка самих проверок (params/уровни/M4/сопоставление/кандидаты/граф импортов) — мета-свойство конфигурации, а не факт системы"
+
+- rule: C-053
+  property: null
+  migration: not_applicable
+  reason: "источник-гард: наличие вызова ensure_mem_fraction() в JAX-инструментах tools/ (ADR-041 п.3) — проверка текста кода до import jax; вне каталога поведенческих шаблонов над фактами датчиков"

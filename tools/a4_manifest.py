@@ -76,6 +76,14 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Optional
 
+# ADR-041: дисциплина памяти JAX — лимит ДО import jax (гейт стенда — только
+# у прогонных инструментов, ADR-041 п.2; манифест-инструмент его не несёт).
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+import jax_preflight  # noqa: E402
+
+jax_preflight.ensure_mem_fraction()
+
 MANIFEST_SCHEMA = "a4-skeleton-run-manifest/v2"
 MANIFEST_SCHEMA_V1 = "a4-skeleton-run-manifest/v1"
 DEFAULT_MANIFEST_PATH = "evidence/a4-skeleton-run-manifest.json"
@@ -913,6 +921,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[list[str]] = None) -> int:
     args = build_arg_parser().parse_args(argv)
+    # ADR-041 п.2: генерация/верификация манифеста — контрольный контур, а не
+    # прогон; несёт только лимит памяти (ensure_mem_fraction в шапке), без
+    # fail-closed гейта (ложный FAIL C-038 при чужой нагрузке на стенде).
     if args.verify:
         return cmd_verify(args)
     return cmd_generate(args)

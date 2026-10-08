@@ -558,3 +558,27 @@ constraints:
     evidence: "tools/check_claims.py --verify-properties → params каждого утверждения с property проходят param_schema шаблона (tools/properties/**), уровни фактов допустимы для шаблона, мета-правило M4 (утверждение из requires гейта или правила severity>=high обязано иметь mutation_score=1.0 — tools/properties/mutate.py), каждое behavioural/structural правило сопоставлено в model/rule-properties.yaml (full|wrapped|not_applicable с reason), реестр model/candidates.yaml валиден (rejected/deferred с reason, accepted с ref на CL), тест графа импортов G5 (proposer вне пути вердикта, по образцу C-039). Реестры кандидатов, мутаций и матрицы возбуждений не нужны в песочнице RL, поэтому правило инфраструктурное (EXCLUDED_INFRA_RULES)"
     adr: ADR-039
     owner: архитектор
+
+  - id: C-053
+    name: "ADR-041: у каждого JAX-инструмента tools/ префлайт памяти вызывается явно — маркер ensure_mem_fraction() обязателен в каждом файле списка (XLA_PYTHON_CLIENT_MEM_FRACTION до import jax)"
+    type: each_file_must_contain
+    glob:
+      - tools/pretrain_run.py
+      - tools/bench_block_merge.py
+      - tools/bench_kda_wyut.py
+      - tools/check_precision_pinning.py
+      - tools/d8_isolate.py
+      - tools/pool_cost_probe.py
+      - tools/run_a4_pipeline.py
+      - tools/run_rl_smoke.py
+      - tools/run_sft_smoke.py
+      - tools/topk_exact_probe.py
+      - tools/a4_manifest.py
+      - tools/profile_step.py
+    pattern: "ensure_mem_fraction\\(\\)"
+    severity: high
+    scope: case
+    kind: structural
+    evidence: "tools/jax_preflight.py → ensure_mem_fraction() (лимит памяти ДО import jax) + preflight_gate() (fail-closed при чужих compute-процессах). Правило ловит пропажу вызова в любом JAX-инструменте списка. Инцидент 08.10: префлайт не был вызван нигде, JAX взял дефолтный резерв ~75% и стенд GB10 ушёл в global OOM"
+    adr: ADR-041
+    owner: архитектор

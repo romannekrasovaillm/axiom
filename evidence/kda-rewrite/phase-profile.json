@@ -1,0 +1,14 @@
+{
+  "instrument": "tools/kda_phase_profile.py",
+  "adr": "ADR-047",
+  "status": "EMPTY-PENDING",
+  "reason": "нет CUDA-устройства: пофазовые время и память — свойство GPU-ядра, на CPU они не меряются (ADR-047 п. 3: числа не имитируются). Прогон выполняет архитектор на GB10; для проверки провода прибора на CPU — явный --smoke.",
+  "generated_at": "2026-10-08T15:53:11.838946+00:00",
+  "out_path": "/home/roman/.arch-ml/worktrees/axiom-43e236d789188868/kda-rewrite/evidence/kda-rewrite/phase-profile.json",
+  "backend": "cpu",
+  "devices": [
+    "cpu:0"
+  ],
+  "geometries": {},
+  "note": "Числа фаз не имитируются: без CUDA-устройства их измеряет архитектор на GB10 (ADR-047 п. 3); CPU-прогон с --smoke даёт индикативные числа и статус SMOKE-CPU."
+}

@@ -122,6 +122,13 @@ from typing import Iterator, NamedTuple, Sequence
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "net" / "tests"))  # cost_method (ADR-015)
+if str(ROOT / "tools") not in sys.path:
+    sys.path.insert(0, str(ROOT / "tools"))
+
+# ADR-041: дисциплина памяти JAX — префлайт ДО import jax (лимит XLA + гейт стенда).
+import jax_preflight  # noqa: E402
+
+jax_preflight.ensure_mem_fraction()
 
 import jax  # noqa: E402
 import jax.numpy as jnp  # noqa: E402
@@ -1417,6 +1424,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--smoke", action="store_true",
                     help="small length and few rounds — a dry run of the whole path")
     args = ap.parse_args(argv)
+    jax_preflight.gate_or_exit()  # ADR-041: состояние стенда до реального прогона
     if args.smoke:
         args.length = min(args.length, 2048)
         args.rounds = min(args.rounds, 3)

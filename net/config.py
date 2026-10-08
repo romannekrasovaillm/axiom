@@ -243,7 +243,10 @@ class ModelConfig:
     # form ("WY representation + UT transform", arXiv 2510.26692v2): the state
     # transfer between chunks is a matmul, the intra-chunk correction is a
     # ``C x C`` score matrix, and no ``(dk, dk)`` per-token tensor is built.
-    # Both implement the same recurrence (Eq. 1) and are pinned against
+    # ``"chunked_cc"`` — the ADR-047 form: the same WY/UT algebra, but the score
+    # matrices are built tile-wise against a per-tile decay reference, so the
+    # ``(H, C, C, dk)`` decay-ratio tensor of ``"wyut"`` is never materialised.
+    # All forms implement the same recurrence (Eq. 1) and are pinned against
     # ``apply_recurrent`` by ``net/tests/test_kda_wyut.py``.  The schema default
     # is ``"chunked"`` (the regression reference): a config built in code keeps
     # the pre-delta graph.  The dispatcher lives in ``net/kda.py:apply_kda``
@@ -360,9 +363,9 @@ def validate_config(cfg: ModelConfig) -> None:
     # implementation ``net/kda.py`` actually has — an unknown string would fall
     # through to the old path silently, which is exactly the ambiguity the
     # selector exists to remove.
-    assert cfg.kda_impl in ("chunked", "wyut"), (
-        "kda_impl must be 'chunked' (pre-delta form) or 'wyut' (WY/UT form), "
-        f"got {cfg.kda_impl!r}"
+    assert cfg.kda_impl in ("chunked", "wyut", "chunked_cc"), (
+        "kda_impl must be 'chunked' (pre-delta form), 'wyut' (WY/UT form) or "
+        f"'chunked_cc' (tile-wise C x C form, ADR-047), got {cfg.kda_impl!r}"
     )
     assert isinstance(cfg.kda_wyut_chunk, int) and cfg.kda_wyut_chunk > 0, (
         "kda_wyut_chunk must be a positive integer (the chunk width C), "

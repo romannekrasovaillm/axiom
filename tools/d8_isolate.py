@@ -1,7 +1,14 @@
 """D-8 isolation: staged jit-compile of the full l3-full graph on GB10 (sm_121)."""
 import sys, os, time
 sys.path.insert(0, "/home/roman/axiom")
-os.environ.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", "0.15")
+sys.path.insert(0, "/home/roman/axiom/tools")
+
+# ADR-041: дисциплина памяти JAX — префлайт ДО import jax (лимит XLA + гейт стенда).
+import jax_preflight
+
+jax_preflight.ensure_mem_fraction()
+jax_preflight.gate_or_exit()
+
 os.environ.setdefault("JAX_PLATFORMS", "gpu")
 import jax, jax.numpy as jnp
 import net.model as model, net.config as config

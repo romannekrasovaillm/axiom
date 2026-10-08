@@ -1,12 +1,18 @@
 """KDA — Kimi Delta Attention (kda-formulas.md section 1).
 
-Two equivalent forms, both implemented here and checked against each other in
-the parity tests:
+Equivalent forms, all implemented here and checked against each other in the
+parity tests:
 
 * **recurrent** — ``lax.scan`` over tokens, carrying the per-head state
   ``S in R^{dk x dv}`` and the ShortConv buffers (streaming, O(1) memory).
 * **chunked** — ``lax.scan`` over chunks, parallel within each chunk via
-  ``lax.associative_scan`` over the affine delta-rule transition monoid.
+  ``lax.associative_scan`` over the affine delta-rule transition monoid
+  (materialises each token's ``(dk, dk)`` transition — the memory-bound form).
+* **wyut** — WY representation + UT transform: the intra-chunk object is a
+  ``C x C`` score matrix, the inter-chunk transfer a matmul (ADR-031 delta A).
+* **chunked_cc** — the ADR-047 rewrite of the WY/UT form: the ``C x C`` scores
+  are built tile-wise, so the ``(C, C, dk)`` decay-ratio tensor that dominated
+  the ``wyut`` form's memory never exists.
 
 The recurrence (Eq. 1), parameterisation (Eq. 2), lower-bounded decay (Eq. 5)
 and full-rank output gate (Eq. 6) follow the source verbatim.
@@ -472,6 +478,178 @@ def apply_wyut(
     return _with_window(out[:T], params, cfg, x)
 
 
+# ---------------------------------------------------------------------------
+# Chunked (C x C intra-chunk, tile-wise decay factors) form — ADR-047
+# ---------------------------------------------------------------------------
+
+#: Largest row-tile width used to build the intra-chunk ``C x C`` scores.  The
+#: column factor inside a tile is ``exp(G_p - G_i)`` (``p`` — the tile's first
+#: position), i.e. at most ``exp(|g_min| * (tile - 1))``; the tile width is
+#: bounded so that this never leaves the fp32/bf16 range (~3.4e38, ``ln`` ~ 88.7).
+_CC_TILE_MAX = 16
+
+#: Exponent budget the tile width has to fit into (``ln`` of the fp32 ceiling,
+#: with a margin of one decimal order of magnitude).
+_CC_EXP_BUDGET = 80.0
+
+
+def _cc_tile(cfg: ModelConfig) -> int:
+    """Row-tile width for the intra-chunk decay factors (``1 <= tile <= 16``)."""
+    step = abs(float(cfg.kda_g_min))
+    cap = int(_CC_EXP_BUDGET / step) if step > 0 else _CC_TILE_MAX
+    return max(1, min(_CC_TILE_MAX, cap))
+
+
+def _cc_scores(
+    row: jnp.ndarray,
+    col: jnp.ndarray,
+    log_g: jnp.ndarray,
+    tile: int,
+    strict: bool,
+) -> jnp.ndarray:
+    """Decay-weighted ``C x C`` scores ``sum_d exp(G_c - G_i) row_c[d] col_i[d]``.
+
+    ``row``/``col``/``log_g`` are ``(H, C, dk)`` (the per-head layout of
+    :func:`wyut_chunk_step`); ``G`` is the chunk's cumulative log-decay, which is
+    non-increasing along the position axis (``alpha <= 1`` per channel).
+
+    The plain factorisation ``(row * exp(G)) (col * exp(-G))^T`` overflows:
+    ``exp(-G)`` reaches ``e^320`` inside a 64-token chunk and the reciprocal of
+    the underflowed ``exp(G)`` is ``inf``.  Here the chunk is cut into row tiles
+    of ``tile`` positions and each tile measures its decay against its **own
+    first position** ``p``, so that::
+
+        exp(G_c - G_i) = exp(G_c - G_p) * exp(G_p - G_i)
+
+    is a product of two representable factors — the row one is ``<= 1`` for
+    every ``c`` of the tile, and the column one is ``<= 1`` for every position
+    before the tile while inside the tile it is bounded by
+    ``exp(|g_min| * (tile - 1))``: a constant of the model, not of the chunk
+    width.  Nothing is ever divided by a decaying quantity, so real keys cannot
+    produce ``inf``/``NaN`` (padding underflows to ``0``, where the contribution
+    is negligible anyway).  Mask keeps ``c >= i`` (``strict``: ``c > i``).
+
+    Returns ``(H, C, C)`` — the intra-chunk object itself, never ``(H, C, C, dk)``.
+    """
+    H, C, _ = row.shape
+    out = jnp.zeros((H, C, C), dtype=row.dtype)
+    for p in range(0, C, tile):
+        b = min(tile, C - p)
+        ref = log_g[:, p, :]  # (H, dk) = G_p
+        rows = row[:, p : p + b, :] * jnp.exp(log_g[:, p : p + b, :] - ref[:, None, :])
+        cols = col[:, : p + b, :] * jnp.exp(ref[:, None, :] - log_g[:, : p + b, :])
+        blk = jnp.einsum("hbd,hjd->hbj", rows, cols)  # (H, b, p+b)
+        row_ix = jnp.arange(p, p + b)[:, None]
+        col_ix = jnp.arange(p + b)[None, :]
+        keep = (row_ix > col_ix) if strict else (row_ix >= col_ix)
+        out = out.at[:, p : p + b, : p + b].set(jnp.where(keep, blk, 0.0))
+    return out
+
+
+def cc_chunk_step(
+    params: KDAParams, cfg: ModelConfig, carry: KDAState, x: jnp.ndarray
+) -> tuple[KDAState, jnp.ndarray]:
+    """One chunk of ``(C, hidden)``: ``C x C`` intra-chunk, ``dk x dv`` state.
+
+    Same recurrence (Eq. 1), same WY/UT algebra and the same carry as
+    :func:`wyut_chunk_step`; only the two score matrices are built tile-wise by
+    :func:`_cc_scores`, so the ``(H, C, C, dk)`` decay-ratio tensor of the
+    ``wyut`` form — the allocation that made it heavier than ``chunked`` — is
+    never materialised.  The intra-chunk object is the ``C x C`` matrix itself:
+    ``O(C^2)`` per head, on the tensor cores.
+    """
+    C = x.shape[0]
+    proj = _project(params, cfg, x)
+    qp, kp, vp = proj["qp"], proj["kp"], proj["vp"]
+
+    qc, q_buf = _short_conv_chunk(qp, params.conv_q, carry.q_buf)
+    kc, k_buf = _short_conv_chunk(kp, params.conv_k, carry.k_buf)
+    vc, v_buf = _short_conv_chunk(vp, params.conv_v, carry.v_buf)
+    q, k, v = _postprocess(qc, kc, vc, cfg)
+
+    beta = proj["beta"]  # (C, H)
+    alpha = proj["alpha"]  # (C, H, dk)
+
+    log_g = _log_cumulative_decay(alpha)  # (C, H, dk)
+    q_t = q.transpose(1, 0, 2)  # (H, C, dk)
+    k_t = k.transpose(1, 0, 2)
+    v_t = v.transpose(1, 0, 2)
+    log_g_t = log_g.transpose(1, 0, 2)
+    beta_t = beta.transpose(1, 0)  # (H, C)
+
+    tile = _cc_tile(cfg)
+    aqk = _cc_scores(q_t, k_t, log_g_t, tile, strict=False)  # (H, C, C)
+    akk = _cc_scores(k_t, k_t, log_g_t, tile, strict=True)  # (H, C, C)
+
+    # L = strict_tril(diag(beta) Akk); T = (I + L)^{-1} (unit triangular).
+    l_mat = akk * beta_t[:, :, None]
+    eye = jnp.eye(C, dtype=l_mat.dtype)
+    t_mat = jnp.linalg.inv(eye + l_mat)
+
+    # W = T diag(beta) (Gamma . K), U = T diag(beta) V  (Eq. 7).
+    gamma = jnp.exp(log_g).transpose(1, 0, 2)  # (H, C, dk) = Gamma_c
+    xw = (gamma * k_t) * beta_t[:, :, None]
+    vw = v_t * beta_t[:, :, None]
+    w = jnp.einsum("hcs,hsd->hcd", t_mat, xw)
+    u = jnp.einsum("hcs,hsd->hcd", t_mat, vw)
+
+    s_in = carry.S  # (H, dk, dv)
+    v_tilde = u - jnp.einsum("hcd,hde->hce", w, s_in)  # U - W S (pseudo-value)
+
+    # Output (Eq. 9): inter-chunk from S, intra-chunk from the score matrix.
+    gamma_q = gamma * q_t  # Gamma . Q
+    inter = jnp.einsum("hcd,hde->hce", gamma_q, s_in)
+    intra = jnp.einsum("hci,hie->hce", aqk, v_tilde)
+    o = (inter + intra).transpose(1, 0, 2)  # (C, H, dv)
+
+    # State transfer (Eq. 8): decay the carried state, absorb the chunk writes.
+    gamma_c = gamma[:, -1, :]  # (H, dk) = Gamma^C
+    lam = jnp.exp(jnp.minimum(log_g[-1][None] - log_g, 0.0)).transpose(1, 0, 2)
+    y = lam * k_t
+    s_new = gamma_c[:, :, None] * s_in + jnp.einsum("hcd,hce->hde", y, v_tilde)
+
+    out = _output_gate(o, proj["gate"], params)
+    return KDAState(s_new, q_buf, k_buf, v_buf), out
+
+
+def apply_chunked_cc(
+    params: KDAParams,
+    cfg: ModelConfig,
+    x: jnp.ndarray,
+    chunk_size: int | None = None,
+) -> jnp.ndarray:
+    """KDA over ``(T, hidden)`` with a ``C x C`` intra-chunk matrix (ADR-047).
+
+    The target structure of ADR-047 p. 2 — inside a chunk a masked ``C x C``
+    attention-like matrix built by :func:`_cc_scores`; between chunks the compact
+    ``dk x dv`` state, transferred by matmul.  No per-token ``(dk, dk)``
+    transition matrix (``chunked``) and no ``(C, C, dk)`` decay-ratio tensor
+    (``wyut``).  ``chunk_size=None`` reads ``cfg.kda_wyut_chunk`` — the same
+    declarative width the WY/UT form uses.  Semantics are identical to
+    :func:`apply_recurrent` (parity pinned by ``test_kda_chunked_cc.py``).
+    """
+    if chunk_size is None:
+        chunk_size = cfg.kda_wyut_chunk
+    T = x.shape[0]
+    C = chunk_size
+    n_chunks = (T + C - 1) // C
+    pad = n_chunks * C - T
+    x_p = jnp.pad(x, ((0, pad), (0, 0))) if pad else x
+    x_chunks = x_p.reshape(n_chunks, C, -1)
+    carry0 = init_state(cfg)
+
+    def body(carry: KDAState, xc: jnp.ndarray):
+        return cc_chunk_step(params, cfg, carry, xc)
+
+    if cfg.kda_chunked_backward:
+        # Recompute each chunk from its saved carry during backward instead of
+        # retaining the per-chunk score matrices and tiles.
+        body = jax.checkpoint(body)
+    _, out = jax.lax.scan(body, carry0, x_chunks)
+    out = out.reshape(n_chunks * C, -1)
+    return _with_window(out[:T], params, cfg, x)
+
+
 def apply_kda(
     params: KDAParams,
     cfg: ModelConfig,
@@ -481,11 +659,14 @@ def apply_kda(
     """Dispatch on ``cfg.kda_impl`` (``chunked`` — the regression reference).
 
     ``chunked`` is the pre-delta path, byte-for-byte as before; ``wyut`` is the
-    ADR-031 delta-A form.  ``chunked`` honours the caller's ``chunk_size``;
-    ``wyut`` falls back to ``cfg.kda_wyut_chunk`` when it is ``None``.
+    ADR-031 delta-A form; ``chunked_cc`` is the ADR-047 tile-wise ``C x C`` form.
+    ``chunked`` honours the caller's ``chunk_size``; the other two fall back to
+    ``cfg.kda_wyut_chunk`` when it is ``None``.
     """
     if cfg.kda_impl == "wyut":
         return apply_wyut(params, cfg, x, chunk_size=chunk_size or cfg.kda_wyut_chunk)
+    if cfg.kda_impl == "chunked_cc":
+        return apply_chunked_cc(params, cfg, x, chunk_size=chunk_size or cfg.kda_wyut_chunk)
     return apply_chunked(params, cfg, x, chunk_size=chunk_size or cfg.kda_wyut_chunk)
 
 

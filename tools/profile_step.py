@@ -1273,6 +1273,8 @@ def run_window(
     grad_checkpointing: bool = True,
     seed: int = 0,
     name: str = "l3full",
+    ns_steps: int = 5,
+    legacy_muon_all_2d: bool = False,
 ) -> dict[str, Any]:
     """Исполнить окно замера штатной ногой ``net/train_loop.train`` под трейсом.
 
@@ -1301,6 +1303,8 @@ def run_window(
             log_every=0,
             kpi_every=1,  # опорная нога — на каждом шаге окна
             phase_profile=bool(phase_profile),
+            ns_steps=int(ns_steps),
+            legacy_muon_all_2d=bool(legacy_muon_all_2d),
         )
 
     budget = tl.Budget(
@@ -1398,7 +1402,8 @@ def _preflight_memory() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def cell_meta(config: str, batch: int, seq: int, *, impl: str, name: str, steps: int, warmup: int) -> dict[str, Any]:
+def cell_meta(config: str, batch: int, seq: int, *, impl: str, name: str, steps: int, warmup: int,
+              ns_steps: int = 5, legacy_muon_all_2d: bool = False) -> dict[str, Any]:
     return {
         "name": name,
         "config": config,
@@ -1407,6 +1412,10 @@ def cell_meta(config: str, batch: int, seq: int, *, impl: str, name: str, steps:
         "seq": int(seq),
         "steps": int(steps),
         "warmup": int(warmup),
+        # ADR-048: режим оптимизатора — часть условий клетки, иначе «до/после»
+        # по ``sec_backopt`` неотличимо от смены чего-то ещё.
+        "ns_steps": int(ns_steps),
+        "legacy_muon_all_2d": bool(legacy_muon_all_2d),
     }
 
 
@@ -2091,6 +2100,12 @@ def main(argv: Optional[list[str]] = None) -> int:
                         help="metrics.jsonl профильного прогона (опорные ноги; дефолт — рядом с трейсом)")
     parser.add_argument("--no-phase-legs", action="store_true",
                         help="не включать опорную ногу (phase_profile) — короче прогон")
+    parser.add_argument("--ns-steps", type=int, default=5,
+                        help="ADR-048: число Newton-Schulz итераций Muon (дефолт 5)")
+    parser.add_argument("--legacy-muon-all-2d", dest="legacy_muon_all_2d",
+                        action="store_true", default=False,
+                        help="ADR-048: прежняя классификация («любой ndim==2 -> Muon») — "
+                             "для замера sec_backopt «до/после»")
     parser.add_argument("--step-marker", default=DEFAULT_STEP_MARKER,
                         help="регексп маркера шага для per-step раскладки device-времени")
     parser.add_argument("--parse-trace", default=None,
@@ -2120,6 +2135,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     cell = cell_meta(
         args.config, args.batch, args.seq,
         impl=args.impl, name=args.name, steps=args.steps, warmup=args.warmup,
+        ns_steps=args.ns_steps, legacy_muon_all_2d=bool(args.legacy_muon_all_2d),
     )
 
     # --- разбор уже собранного трейса: GPU/jax не нужны -----------------------
@@ -2166,7 +2182,8 @@ def main(argv: Optional[list[str]] = None) -> int:
             args.config, impl=args.impl, batch=args.batch, seq=args.seq,
             steps=args.steps, warmup=args.warmup, trace_dir=trace_dir,
             metrics_path=metrics_path, phase_profile=not args.no_phase_legs,
-            name=args.name,
+            name=args.name, ns_steps=args.ns_steps,
+            legacy_muon_all_2d=bool(args.legacy_muon_all_2d),
         )
     except Exception as exc:  # fail-closed: прогон не состоялся — чисел не будет
         report = build_report(

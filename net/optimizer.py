@@ -11,6 +11,34 @@ Follows MODEL-L3-SKELETON.md section 3 and kda-formulas.md section 5:
 * **Weight clipping** (MuonClip, our value since the exact clip is not
   disclosed) clamps matrix magnitudes after each step.
 * Cosine schedule with a 1% linear warmup and weight decay 0.1 (:772-773).
+
+Parameter groups (ADR-048)
+--------------------------
+The branch is **not** "any ``ndim == 2``": the group is decided by an explicit
+predicate over leaf *names* (:func:`classify_leaf`), and the tree is walked in
+one place.  After the KDA rewrite (ADR-047) the optimizer step became the
+dominant cost of a step (``sec_backopt`` = 20.4 s of ~31 s), because Muon/NS5
+was applied to every 2-D leaf — including the tied embeddings/LM head
+(``vocab x hidden``), where orthogonalisation has no meaning.  ADR-048 routes
+them to AdamW:
+
+============================  ============================================
+group                         leaves
+============================  ============================================
+``muon_matrix``               hidden 2-D projections (attention/MLA/MoE
+                              router/MLP/MTP/AttnRes/ViT)
+``muon_per_head``             Q/K/V-family projections (``_PER_HEAD_LEAVES``)
+``muon_batched``              stacked expert weights (``ndim >= 3``)
+``adamw_vector``              norms, biases, scalars (``ndim <= 1``)
+``adamw_embed``               input embeddings and the (tied) LM head
+============================  ============================================
+
+An unknown **2-D** name is **fail-closed** (``UnclassifiedMatrixError``, and it
+is listed in :func:`classification_report`) instead of silently taking the Muon
+branch.  ``legacy_muon_all_2d=True`` restores the pre-ADR-048 classification
+("any ``ndim == 2`` -> Muon") on the same code, for an honest before/after
+comparison; the number of NS iterations is parameterised by ``ns_steps``
+(default 5 — the ADR keeps that default until a measurement says otherwise).
 """
 
 from __future__ import annotations
@@ -21,11 +49,107 @@ import jax.numpy as jnp
 # Newton-Schulz order-5 coefficients (Muon).
 NS_COEFFS = (3.4445, -4.7750, 2.0315)
 
+#: Default number of Newton-Schulz iterations (ADR-048: parameterised, this
+#: default is the pre-existing value and is not to be changed without a
+#: measurement — the architect decides).
+NS_STEPS_DEFAULT = 5
+
 # Attention-projection leaf names that get per-head orthogonalisation.
-_PER_HEAD_LEAVES = {"W_q", "W_k", "W_v", "W_k_up", "W_v_up"}
+_PER_HEAD_LEAVES = frozenset({"W_q", "W_k", "W_v", "W_k_up", "W_v_up"})
+
+# ---------------------------------------------------------------------------
+# ADR-048 — parameter groups
+# ---------------------------------------------------------------------------
+
+#: Hidden 2-D projections orthogonalised by Muon (everything the model trains
+#: that is not an embedding, a head, or a per-head attention projection).
+#: Explicit on purpose: a new leaf name must be added here, otherwise
+#: :func:`classify_leaf` fails closed.
+MUON_MATRIX_LEAVES = frozenset({
+    # KDA attention: output projection, output gate, decay/first-order
+    # projections and the short convolutions.
+    "W_o", "W_g", "W_a_down", "W_a_up", "W_beta", "conv_q", "conv_k", "conv_v",
+    # MLA (latent attention): latent projection, indexer and the sliding-window
+    # branch.
+    "W_c", "W_idx_k", "W_idx_q", "W_swa_k", "W_swa_v",
+    # MLP / LatentMoE router and the MTP block.
+    "W_up", "W_down", "W_u", "router_w", "W_f",
+    # AttnRes mixing matrix.
+    "w",
+    # ViT tower (image tokens only).
+    "patch_embed", "pos_embed", "projector", "qkv", "out", "fc1", "fc2",
+})
+
+#: 2-D leaves Muon must not touch: the input embedding matrix.  The LM head is
+#: *tied* to it (``tie_embeddings``), so one named leaf covers both — AdamW
+#: (ADR-048), as in Muon recipes.
+ADAMW_MATRIX_LEAVES = frozenset({"embedding"})
+
+#: Group ids, in report/table order.
+GROUP_MUON_MATRIX = "muon_matrix"
+GROUP_MUON_PER_HEAD = "muon_per_head"
+GROUP_MUON_BATCHED = "muon_batched"
+GROUP_ADAMW_VECTOR = "adamw_vector"
+GROUP_ADAMW_EMBED = "adamw_embed"
+GROUP_UNCLASSIFIED = "unclassified"
+
+GROUP_NAMES = (
+    GROUP_MUON_MATRIX,
+    GROUP_MUON_PER_HEAD,
+    GROUP_MUON_BATCHED,
+    GROUP_ADAMW_VECTOR,
+    GROUP_ADAMW_EMBED,
+    GROUP_UNCLASSIFIED,
+)
+
+#: Groups whose state is the AdamW pair ``(m, v)``; all others keep one Muon
+#: momentum buffer.
+_ADAMW_GROUPS = frozenset({GROUP_ADAMW_VECTOR, GROUP_ADAMW_EMBED})
 
 
-def newtonschulz5(g: jnp.ndarray, steps: int = 5, eps: float = 1e-7) -> jnp.ndarray:
+class UnclassifiedMatrixError(ValueError):
+    """A 2-D leaf is outside the classification — fail-closed (ADR-048).
+
+    Raised instead of falling back to Muon: silently orthogonalising a new
+    matrix is exactly the defect ADR-048 removes (Muon on embeddings/LM head),
+    and silently switching it to AdamW would hide a missing entry from the
+    report.  Fix by adding the leaf name to :data:`MUON_MATRIX_LEAVES` or
+    :data:`ADAMW_MATRIX_LEAVES` (or by running with ``legacy_muon_all_2d``).
+    """
+
+
+def leaf_name(entry) -> str:
+    """Name of a pytree key (``GetAttrKey``/``DictKey``/``SequenceKey``)."""
+    return getattr(entry, "name", None) or getattr(entry, "key", None) or getattr(entry, "idx", None) or ""
+
+
+def classify_leaf(name: str, ndim: int, *, legacy: bool = False) -> str:
+    """Group of a parameter leaf — explicit predicate, not "any ``ndim == 2``".
+
+    ``legacy=True`` reproduces the pre-ADR-048 classification (every 2-D leaf
+    Muon, embedding included) so a before/after comparison can run on one code
+    revision.
+    """
+    if legacy:
+        if ndim >= 3:
+            return GROUP_MUON_BATCHED
+        if ndim == 2:
+            return GROUP_MUON_PER_HEAD if name in _PER_HEAD_LEAVES else GROUP_MUON_MATRIX
+        return GROUP_ADAMW_VECTOR
+    if ndim >= 3:
+        return GROUP_MUON_BATCHED
+    if ndim == 2:
+        if name in _PER_HEAD_LEAVES:
+            return GROUP_MUON_PER_HEAD
+        if name in ADAMW_MATRIX_LEAVES:
+            return GROUP_ADAMW_EMBED
+        if name in MUON_MATRIX_LEAVES:
+            return GROUP_MUON_MATRIX
+        return GROUP_UNCLASSIFIED
+    return GROUP_ADAMW_VECTOR
+
+
+def newtonschulz5(g: jnp.ndarray, steps: int = NS_STEPS_DEFAULT, eps: float = 1e-7) -> jnp.ndarray:
     """Newton-Schulz orthogonalisation of a 2-D matrix."""
     a, b, c = NS_COEFFS
     x = g / (jnp.linalg.norm(g) + eps)
@@ -41,32 +165,67 @@ def newtonschulz5(g: jnp.ndarray, steps: int = 5, eps: float = 1e-7) -> jnp.ndar
     return x
 
 
-def per_head_newtonschulz5(g: jnp.ndarray, heads: int) -> jnp.ndarray:
+def per_head_newtonschulz5(
+    g: jnp.ndarray, heads: int, steps: int = NS_STEPS_DEFAULT
+) -> jnp.ndarray:
     """Orthogonalise a Q/K/V momentum matrix ``(dim_in, heads*dim_head)`` per head."""
     dim_in = g.shape[0]
     dim_head = g.shape[-1] // heads
     g = g.reshape(dim_in, heads, dim_head).transpose(1, 0, 2)  # (H, dim_in, dim_head)
-    out = jax.vmap(newtonschulz5)(g)  # (H, dim_in, dim_head)
+    out = jax.vmap(lambda x: newtonschulz5(x, steps))(g)  # (H, dim_in, dim_head)
     return out.transpose(1, 0, 2).reshape(dim_in, heads * dim_head)
 
 
-def init_state(params):
-    """Momentum (matrix) / AdamW m,v (vector) state trees mirroring ``params``."""
-    def _init(leaf):
-        if leaf.ndim >= 2:
-            return jnp.zeros_like(leaf)
-        return (jnp.zeros_like(leaf), jnp.zeros_like(leaf))
-    return jax.tree_util.tree_map(_init, params)
+def init_state(params, *, legacy_muon_all_2d: bool = False):
+    """Momentum (Muon groups) / AdamW m,v (Adam groups) state tree over ``params``.
+
+    The group of every leaf comes from :func:`classify_leaf`, so the state
+    mirrors the optimizer branch that will actually run: an embedding moved to
+    AdamW gets an ``(m, v)`` pair instead of a single momentum buffer.
+    """
+    def _init(path, leaf):
+        group = classify_leaf(leaf_name(path[-1]), leaf.ndim, legacy=legacy_muon_all_2d)
+        if group == GROUP_UNCLASSIFIED:
+            raise UnclassifiedMatrixError(
+                f"2-D параметр {leaf_name(path[-1])!r} ({jax.tree_util.keystr(path)}) "
+                "вне классификации ADR-048: дополни MUON_MATRIX_LEAVES или "
+                "ADAMW_MATRIX_LEAVES, либо включи legacy_muon_all_2d"
+            )
+        if group in _ADAMW_GROUPS:
+            return (jnp.zeros_like(leaf), jnp.zeros_like(leaf))
+        return jnp.zeros_like(leaf)
+    return jax.tree_util.tree_map_with_path(_init, params)
 
 
-def make_step(cfg, muon_momentum: float = 0.95, adam_b1: float = 0.9, adam_b2: float = 0.95, weight_clip: float | None = 1.0):
-    """Build a jittable optimizer step closing over the hyperparameters."""
+def make_step(
+    cfg,
+    muon_momentum: float = 0.95,
+    adam_b1: float = 0.9,
+    adam_b2: float = 0.95,
+    weight_clip: float | None = 1.0,
+    ns_steps: int = NS_STEPS_DEFAULT,
+    legacy_muon_all_2d: bool = False,
+):
+    """Build a jittable optimizer step closing over the hyperparameters.
+
+    ``ns_steps`` — Newton-Schulz iterations for the three Muon groups
+    (ADR-048 п. 2; the default is the pre-existing value 5).
+    ``legacy_muon_all_2d`` — restore the pre-ADR-048 branch ("any ``ndim == 2``
+    -> Muon", embeddings included) for a before/after comparison on one code
+    revision.
+    """
+    if int(ns_steps) < 1:
+        raise ValueError(f"ns_steps must be >= 1, got {ns_steps!r}")
     heads = cfg.num_heads
     wd = cfg.weight_decay
 
     def _matrix_step(p, g, m, lr, per_head):
         m = muon_momentum * m + (1.0 - muon_momentum) * g
-        upd = per_head_newtonschulz5(m, heads) if per_head else newtonschulz5(m)
+        upd = (
+            per_head_newtonschulz5(m, heads, ns_steps)
+            if per_head
+            else newtonschulz5(m, ns_steps)
+        )
         p = p * (1.0 - lr * wd) - lr * upd
         if weight_clip is not None:
             p = jnp.clip(p, -weight_clip, weight_clip)
@@ -76,7 +235,7 @@ def make_step(cfg, muon_momentum: float = 0.95, adam_b1: float = 0.9, adam_b2: f
         """Muon for stacked matrices (n, d_in, d_out) — LatentMoE expert weights."""
         m = muon_momentum * m + (1.0 - muon_momentum) * g
         flat = m.reshape(-1, *m.shape[-2:])
-        upd = jax.vmap(newtonschulz5)(flat).reshape(m.shape)
+        upd = jax.vmap(lambda x: newtonschulz5(x, ns_steps))(flat).reshape(m.shape)
         p = p * (1.0 - lr * wd) - lr * upd
         if weight_clip is not None:
             p = jnp.clip(p, -weight_clip, weight_clip)
@@ -92,16 +251,24 @@ def make_step(cfg, muon_momentum: float = 0.95, adam_b1: float = 0.9, adam_b2: f
         return p, (m, v)
 
     def step(params, grads, state, lr):
-        def _leaf_name(entry):
-            return getattr(entry, "name", None) or getattr(entry, "key", None) or getattr(entry, "idx", None) or ""
-
         def _one(path, p, g, s):
-            name = _leaf_name(path[-1]) if path else ""
-            if p.ndim == 2:
-                per_head = name in _PER_HEAD_LEAVES
-                return _matrix_step(p, g, s, lr, per_head)  # (new_p, momentum)
-            if p.ndim >= 3:
+            name = leaf_name(path[-1]) if path else ""
+            group = classify_leaf(name, p.ndim, legacy=legacy_muon_all_2d)
+            if group == GROUP_UNCLASSIFIED:
+                raise UnclassifiedMatrixError(
+                    f"2-D параметр {name!r} ({jax.tree_util.keystr(path)}) вне "
+                    "классификации ADR-048: дополни MUON_MATRIX_LEAVES или "
+                    "ADAMW_MATRIX_LEAVES, либо включи legacy_muon_all_2d"
+                )
+            if group == GROUP_MUON_PER_HEAD:
+                return _matrix_step(p, g, s, lr, True)  # (new_p, momentum)
+            if group == GROUP_MUON_MATRIX:
+                return _matrix_step(p, g, s, lr, False)  # (new_p, momentum)
+            if group == GROUP_MUON_BATCHED:
                 return _batched_matrix_step(p, g, s, lr)  # (new_p, momentum)
+            # ``adamw_vector`` (norms, biases, scalars) and ``adamw_embed``
+            # (input embeddings / tied LM head, ADR-048) share the AdamW branch;
+            # it is elementwise, so it works for a 2-D embedding as well.
             return _vector_step(p, g, s, lr)  # (new_p, (m, v))
 
         # Two passes so params and state come back as separate trees (the tuple
@@ -115,6 +282,81 @@ def make_step(cfg, muon_momentum: float = 0.95, adam_b1: float = 0.9, adam_b2: f
         return new_params, new_state
 
     return step
+
+
+def classification_report(
+    params,
+    *,
+    legacy_muon_all_2d: bool = False,
+    examples: int = 3,
+) -> dict:
+    """Group -> {leaves, params, names, examples} over a parameter tree.
+
+    ADR-048 п. 4: the classification is fixed by a report, so "how much of what"
+    is a number and not a belief.  Accepts any pytree with ``ndim``/``size`` on
+    its leaves — including the abstract tree of ``jax.eval_shape``, which lets
+    the real ``l3-full`` geometry be reported without allocating it.
+
+    Unlike :func:`make_step`/:func:`init_state`, this never raises on an
+    unknown 2-D name: the point is to *record* the gap (``unclassified``),
+    while those two fail closed.
+    """
+    groups = {
+        group: {"leaves": 0, "params": 0, "names": [], "examples": []}
+        for group in GROUP_NAMES
+    }
+    unclassified: list[str] = []
+
+    def visit(path, leaf):
+        name = leaf_name(path[-1]) if path else ""
+        group = classify_leaf(name, leaf.ndim, legacy=legacy_muon_all_2d)
+        entry = groups[group]
+        entry["leaves"] += 1
+        entry["params"] += int(leaf.size)
+        if name not in entry["names"]:
+            entry["names"].append(name)
+        if group == GROUP_UNCLASSIFIED and name not in unclassified:
+            unclassified.append(name)
+        if len(entry["examples"]) < examples:
+            entry["examples"].append(jax.tree_util.keystr(path))
+
+    jax.tree_util.tree_map_with_path(visit, params)
+    for entry in groups.values():
+        entry["names"].sort()
+    return {
+        "legacy_muon_all_2d": bool(legacy_muon_all_2d),
+        "groups": groups,
+        "group_order": list(GROUP_NAMES),
+        "unclassified": sorted(unclassified),
+        "total_leaves": sum(entry["leaves"] for entry in groups.values()),
+        "total_params": sum(entry["params"] for entry in groups.values()),
+    }
+
+
+def format_report(report: dict) -> str:
+    """Human-readable table of :func:`classification_report` (markdown)."""
+    lines = [
+        "| группа | листьев | параметров | имена |",
+        "|---|---:|---:|---|",
+    ]
+    for group in report["group_order"]:
+        entry = report["groups"][group]
+        names = ", ".join(entry["names"][:8])
+        if len(entry["names"]) > 8:
+            names += f", … (+{len(entry['names']) - 8})"
+        lines.append(
+            f"| {group} | {entry['leaves']} | {entry['params']} | {names or '—'} |"
+        )
+    lines.append("")
+    lines.append(
+        f"всего: листьев {report['total_leaves']}, параметров {report['total_params']}"
+        f", legacy_muon_all_2d={report['legacy_muon_all_2d']}"
+    )
+    if report["unclassified"]:
+        lines.append(
+            "НЕ КЛАССИФИЦИРОВАНО (fail-closed): " + ", ".join(report["unclassified"])
+        )
+    return "\n".join(lines)
 
 
 def cosine_schedule(peak_lr: float, total_steps: int, warmup_ratio: float = 0.01, min_ratio: float = 0.0):

@@ -2234,6 +2234,13 @@ class TrainConfig:
     #: при resume (H4) — продолжать packed-прогон raw-курсором значило бы молча
     #: поставить поток на чужую позицию.
     data_kind: str = "raw"
+    #: ADR-048: число Newton-Schulz итераций Muon (дефолт — прежние 5; решение
+    #: о снижении принимает архитектор по замеру, здесь только параметр).
+    ns_steps: int = 5
+    #: ADR-048: вернуть прежнюю классификацию параметров («любой ndim==2 ->
+    #: Muon», embeddings/LM head включительно) — для честного сравнения «до/после»
+    #: на одной ревизии кода.  ``False`` — решение ADR-048 (emb/head -> AdamW).
+    legacy_muon_all_2d: bool = False
 
 
 @dataclass
@@ -2330,7 +2337,12 @@ def train(
     cursor_data: dict[str, Any] = {}
 
     master = model.init_params(jax.random.PRNGKey(train_config.seed), cfg)
-    state = optimizer.init_state(master)
+    # ADR-048: классификация параметров по именам листьев — состояние и шаг
+    # строятся по одному и тому же предикату (иначе форма состояния разошлась бы
+    # с веткой обновления).
+    state = optimizer.init_state(
+        master, legacy_muon_all_2d=train_config.legacy_muon_all_2d
+    )
     if manager is not None:
         latest = manager.latest()
         if latest is None:
@@ -2385,7 +2397,11 @@ def train(
         loss_fn = jax.checkpoint(loss_fn, policy=policy)
 
     grad_fn = jax.jit(jax.value_and_grad(loss_fn))
-    step_fn = optimizer.make_step(cfg)
+    step_fn = optimizer.make_step(
+        cfg,
+        ns_steps=train_config.ns_steps,
+        legacy_muon_all_2d=train_config.legacy_muon_all_2d,
+    )
 
     use_bf16 = train_config.param_dtype == "bfloat16"
 

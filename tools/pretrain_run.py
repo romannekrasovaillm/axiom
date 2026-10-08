@@ -176,6 +176,13 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
                              "запрещает авто-уменьшение под объём Q (H1)")
     parser.add_argument("--seed", type=int, default=1337)
     parser.add_argument("--chunk-size", type=int, default=64)
+    parser.add_argument("--ns-steps", type=int, default=5,
+                        help="ADR-048: число Newton-Schulz итераций Muon (дефолт 5 — "
+                             "прежнее значение; снижение — решение по замеру)")
+    parser.add_argument("--legacy-muon-all-2d", dest="legacy_muon_all_2d",
+                        action="store_true", default=False,
+                        help="ADR-048: прежняя классификация («любой ndim==2 -> Muon», "
+                             "embeddings/LM head включительно) — для сравнения «до/после»")
     parser.add_argument("--param-dtype", choices=("bfloat16", "float32"), default="bfloat16",
                         help="bfloat16 — bf16-параметры при fp32-мастере (прод), float32 — parity")
     parser.add_argument("--grad-checkpointing", dest="grad_checkpointing",
@@ -1224,6 +1231,8 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
         data_kind=data_kind,
         micro_batch=loader_batch,
         accum_tokens=args.accum_tokens,
+        ns_steps=args.ns_steps,
+        legacy_muon_all_2d=bool(args.legacy_muon_all_2d),
     )
     journal["loop"] = {
         "steps_requested": args.steps,
@@ -1254,6 +1263,10 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
             int(args.accum_tokens) if int(args.accum_tokens) > 0
             else loader_batch * int(args.seq_len)
         ),
+        # ADR-048: режим оптимизатора — часть условий прогона: без него
+        # сравнение «до/после» по метрикам неотличимо от смены чего-то ещё.
+        "ns_steps": args.ns_steps,
+        "legacy_muon_all_2d": bool(args.legacy_muon_all_2d),
     }
     journal["gpu"] = {
         "peak_tflops": args.peak_tflops,

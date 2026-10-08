@@ -57,6 +57,13 @@ SCRIPT = Path(__file__).resolve()
 CASE_DIR = SCRIPT.parents[1]
 DEFAULT_CONFTEST = CASE_DIR / "net" / "tests" / "conftest.py"
 
+# ADR-041: дисциплина памяти JAX — префлайт ДО import jax (лимит XLA + гейт стенда).
+if str(SCRIPT.parent) not in sys.path:
+    sys.path.insert(0, str(SCRIPT.parent))
+import jax_preflight  # noqa: E402
+
+jax_preflight.ensure_mem_fraction()
+
 #: Страж импортирует модули каталога кейса (``net/tests/conftest.py`` →
 #: ``net/config.py``), а ``command_succeeds``-правило исполняется гейтом
 #: **внутри проверяемого workspace**.  Байткод-кеш рядом с исходником (``.pyc``)
@@ -515,6 +522,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_arg_parser().parse_args(argv)
+    jax_preflight.gate_or_exit()  # ADR-041: состояние стенда до прогона JAX
     case_dir = Path(args.case_dir)
     conftest_path = Path(args.conftest)
 

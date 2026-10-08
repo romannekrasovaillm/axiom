@@ -59,6 +59,11 @@ for _path in (str(CASE_DIR), str(CASE_DIR / "tools")):
     if _path not in sys.path:
         sys.path.insert(0, _path)
 
+# ADR-041: дисциплина памяти JAX — префлайт ДО import jax (лимит XLA + гейт стенда).
+import jax_preflight  # noqa: E402
+
+jax_preflight.ensure_mem_fraction()
+
 import run_sft_smoke as sft_stage  # noqa: E402 — источник общих хелперов стадий
 
 #: Схема журнала прогона.
@@ -1421,6 +1426,7 @@ def _write_journal(
 
 def main(argv: Optional[Iterable[str]] = None) -> int:
     args = parse_args(argv)
+    jax_preflight.gate_or_exit()  # ADR-041: состояние стенда до реального прогона
     journal, ok = execute(args)
     if args.json:
         print(json.dumps(journal, ensure_ascii=False, indent=1))

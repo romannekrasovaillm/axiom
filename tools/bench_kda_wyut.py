@@ -41,14 +41,19 @@ import time
 from pathlib import Path
 from statistics import median
 
-import jax
-import jax.numpy as jnp
-import jax.random as jr
-
 # Run as ``python tools/bench_kda_wyut.py``: ``net`` lives in the repo root.
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
+
+# ADR-041: дисциплина памяти JAX — префлайт ДО import jax (лимит XLA + гейт стенда).
+import jax_preflight  # noqa: E402
+
+jax_preflight.ensure_mem_fraction()
+
+import jax  # noqa: E402
+import jax.numpy as jnp  # noqa: E402
+import jax.random as jr  # noqa: E402
 
 from net import kda  # noqa: E402
 from net.config import ModelConfig  # noqa: E402
@@ -163,6 +168,7 @@ def run(args: argparse.Namespace) -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
+    jax_preflight.gate_or_exit()  # ADR-041: состояние стенда до реального прогона
     ap = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,

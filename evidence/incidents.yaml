@@ -70,3 +70,11 @@
   sensor: S-010
   guard: {pending: {reason: "нумерация ADR — процессная дисциплина без fitness-правила", owner: line-2, since: 2026-10-06}}
   violated_property: safety
+
+- id: INC-009
+  date: 2026-10-08
+  title: "global OOM 08.10 на стенде GB10: JAX стартовал без XLA_PYTHON_CLIENT_MEM_FRACTION (дефолтный резерв ~75%) при живых чужих процессах — 34 oom-kill, ребут стенда (повторение 26.09)"
+  evidence: [docs/adr/ADR-041-disciplina-pamyati-jax-progonov-na-gb10-xla-python-client-mem-fraction-obyazatelen-preflayt-geyt-pered-startom-incident-oom-08-10.md, tools/tests/test_jax_preflight.py]
+  sensor: S-018
+  guard: {rule: C-053}
+  violated_property: bounds

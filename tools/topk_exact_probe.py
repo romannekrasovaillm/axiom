@@ -40,6 +40,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "net" / "tests"))
+sys.path.insert(0, str(ROOT / "tools"))
+
+# ADR-041: дисциплина памяти JAX — префлайт ДО import jax (лимит XLA + гейт стенда).
+import jax_preflight  # noqa: E402
+
+jax_preflight.ensure_mem_fraction()
 
 import jax  # noqa: E402
 import jax.random as jr  # noqa: E402
@@ -91,6 +97,7 @@ def _dense_probe_stack(params_list, cfg, x):
 
 
 def main() -> None:
+    jax_preflight.gate_or_exit()  # ADR-041: состояние стенда до реального прогона
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--length", type=int, default=8192)
     ap.add_argument("--rounds", type=int, default=cost_method.DEFAULT_ROUNDS)

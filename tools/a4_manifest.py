@@ -76,6 +76,13 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Optional
 
+# ADR-041: дисциплина памяти JAX — префлайт ДО import jax (лимит XLA + гейт стенда).
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+import jax_preflight  # noqa: E402
+
+jax_preflight.ensure_mem_fraction()
+
 MANIFEST_SCHEMA = "a4-skeleton-run-manifest/v2"
 MANIFEST_SCHEMA_V1 = "a4-skeleton-run-manifest/v1"
 DEFAULT_MANIFEST_PATH = "evidence/a4-skeleton-run-manifest.json"
@@ -913,6 +920,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[list[str]] = None) -> int:
     args = build_arg_parser().parse_args(argv)
+    jax_preflight.gate_or_exit()  # ADR-041: состояние стенда до реального прогона
     if args.verify:
         return cmd_verify(args)
     return cmd_generate(args)

@@ -74,6 +74,13 @@ CASE_DIR = Path(__file__).resolve().parent.parent
 if str(CASE_DIR) not in sys.path:
     sys.path.insert(0, str(CASE_DIR))
 
+# ADR-041: дисциплина памяти JAX — префлайт ДО import jax (лимит XLA + гейт стенда).
+if str(CASE_DIR / "tools") not in sys.path:
+    sys.path.insert(0, str(CASE_DIR / "tools"))
+import jax_preflight  # noqa: E402
+
+jax_preflight.ensure_mem_fraction()
+
 #: Схема журнала стадии.
 JOURNAL_SCHEMA = "sft-stage-journal/v1"
 
@@ -1406,6 +1413,7 @@ def _write_journal(journal: dict[str, Any], out_dir: Path) -> None:
 
 def main(argv: Optional[Iterable[str]] = None) -> int:
     args = parse_args(argv)
+    jax_preflight.gate_or_exit()  # ADR-041: состояние стенда до реального прогона
     try:
         from tools.stage_preflight import enforce as _enforce_preflight
     except ImportError:  # запуск как скрипт из tools/

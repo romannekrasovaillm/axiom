@@ -95,6 +95,12 @@ from typing import Any, Optional
 CASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(CASE_DIR))
 
+# ADR-041: дисциплина памяти JAX — префлайт ДО import jax (лимит XLA + гейт стенда).
+sys.path.insert(0, str(CASE_DIR / "tools"))
+import jax_preflight  # noqa: E402
+
+jax_preflight.ensure_mem_fraction()
+
 import jax  # noqa: E402
 import jax.numpy as jnp  # noqa: E402
 
@@ -765,6 +771,7 @@ def call_generator(
 
 
 def main(argv: Optional[list[str]] = None) -> int:
+    jax_preflight.gate_or_exit()  # ADR-041: состояние стенда до реального прогона
     parser = argparse.ArgumentParser(
         description="Оркестратор прогона A4: доступные стадии + честный журнал.",
     )

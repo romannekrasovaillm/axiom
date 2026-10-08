@@ -25,32 +25,113 @@
       "DataHardware/TechPowerUp (перекрёстно): 1 PFLOP FP4 — sparse; dense FP4 ≈ 500 TFLOPS; стандартная лесенка Blackwell: FP8 dense ≈ 250 TFLOPS, BF16 dense ≈ 125 TFLOPS [точные dense-числа GB10 ТРЕБУЮТ ПРОВЕРКИ по NV техотчёту — datasheet публикует только FP4-sparse]"
     ],
     "peak_used": {
-      "bf16_dense_tflops": 125,
-      "precision_note": "наша тренировка: MXFP4 QAT веса, compute в BF16 — считаем от BF16-dense как консервативный знаменатель"
+      "bf16_dense_tflops_measured": 98.2,
+      "bf16_dense_tflops_theoretical": 125,
+      "fp32_tflops_measured": 45.2,
+      "precision_note": "знаменатель MFU = измеренный cuBLAS bf16-пик (лучший из 3 форм); теоретические 125 — справочно"
     },
     "measured_baseline": {
-      "dense124m_smoke_b1": { "tok_s": 336, "tflops": 0.283, "mfu_pct": 0.23, "runs": 2, "bitwise_identical": true },
-      "l3full_pilot_b1": { "tok_s": 77.7, "tflops": 0.56, "mfu_pct": 0.45, "source": "базис линии-1, batch=1" }
+      "dense124m_smoke_b1": {
+        "tok_s": 336,
+        "tflops": 0.283,
+        "mfu_pct": 0.23,
+        "runs": 2,
+        "bitwise_identical": true
+      },
+      "l3full_pilot_b1": {
+        "tok_s": 77.7,
+        "tflops": 0.56,
+        "mfu_pct": 0.45,
+        "source": "базис линии-1, batch=1"
+      }
     },
     "sweep_results_0710": {
       "verdict": "быстрые ручки исчерпаны — ни одна не двигает MFU за шум; узкое место внутри компилируемого графа (хост-диспетчеризация/интенсивность микроопераций) — нужна профайлер-кампания (§26 таймеры линии-1, nsys)",
       "points": [
-        { "cfg": "dense124m", "bs": 1, "seq": 8192, "tok_s": 336, "tflops": 0.283, "note": "baseline, побитовая повторяемость ×3 (вкл. через ребут)" },
-        { "cfg": "dense124m", "bs": 4, "seq": 8192, "tok_s": 469, "tflops": 0.385, "note": "1.39x на 4x batch — почти линейная стоимость, GPU не насыщается" },
-        { "cfg": "dense124m", "bs": 8, "seq": 8192, "tok_s": null, "note": "OOM 124.87 GiB — материализация O(b*seq^2); b8/16/32 l3: 243/484/963 GiB — batch=1 был необходимостью" },
-        { "cfg": "dense124m", "bs": 1, "seq": 8192, "tok_s": 337, "flash": true, "note": "flash-путь (jax.nn.dot_product_attention, parity 0.0): 0 дельты — XLA и так сливал softmax" },
-        { "cfg": "dense124m", "bs": 4, "seq": 8192, "tok_s": 464, "flash": true, "note": "0 дельты" },
-        { "cfg": "dense124m", "bs": 1, "seq": 8192, "tok_s": 346, "ckpt": false, "note": "без grad-checkpointing: 0 дельты — recompute не стоимость" },
-        { "cfg": "l3-full", "bs": 2, "seq": 8192, "tok_s": 63.3, "tflops": 0.19, "note": "ХУЖЕ b1 (77.7): деградация от роста batch; подтверждено дважды (async-alloc и bfc соло)" }
+        {
+          "cfg": "dense124m",
+          "bs": 1,
+          "seq": 8192,
+          "tok_s": 336,
+          "tflops": 0.283,
+          "note": "baseline, побитовая повторяемость ×3 (вкл. через ребут)"
+        },
+        {
+          "cfg": "dense124m",
+          "bs": 4,
+          "seq": 8192,
+          "tok_s": 469,
+          "tflops": 0.385,
+          "note": "1.39x на 4x batch — почти линейная стоимость, GPU не насыщается"
+        },
+        {
+          "cfg": "dense124m",
+          "bs": 8,
+          "seq": 8192,
+          "tok_s": null,
+          "note": "OOM 124.87 GiB — материализация O(b*seq^2); b8/16/32 l3: 243/484/963 GiB — batch=1 был необходимостью"
+        },
+        {
+          "cfg": "dense124m",
+          "bs": 1,
+          "seq": 8192,
+          "tok_s": 337,
+          "flash": true,
+          "note": "flash-путь (jax.nn.dot_product_attention, parity 0.0): 0 дельты — XLA и так сливал softmax"
+        },
+        {
+          "cfg": "dense124m",
+          "bs": 4,
+          "seq": 8192,
+          "tok_s": 464,
+          "flash": true,
+          "note": "0 дельты"
+        },
+        {
+          "cfg": "dense124m",
+          "bs": 1,
+          "seq": 8192,
+          "tok_s": 346,
+          "ckpt": false,
+          "note": "без grad-checkpointing: 0 дельты — recompute не стоимость"
+        },
+        {
+          "cfg": "l3-full",
+          "bs": 2,
+          "seq": 8192,
+          "tok_s": 63.3,
+          "tflops": 0.19,
+          "note": "ХУЖЕ b1 (77.7): деградация от роста batch; подтверждено дважды (async-alloc и bfc соло)"
+        }
       ],
       "data_gate": "tokens-v2 пакован на seq 8192 — раннер отказывает seq≠8192 (целостность); трейд seq↓ требует перепаковки (prep_pretrain, зона линии-1)",
       "allocator": "TF_GPU_ALLOCATOR=cuda_malloc_async vs bfc — одинаково",
-      "eliminated": ["attention-материализация", "grad-checkpointing recompute", "allocator", "batch-голодание"]
+      "eliminated": [
+        "attention-материализация",
+        "grad-checkpointing recompute",
+        "allocator",
+        "batch-голодание"
+      ]
     },
     "staged_targets": [
-      { "stage": 1, "name": "batch-fill", "mfu_pct": 3, "mechanism": "устранение batch=1 (свип 8/32/64), снятие host-sync; ожидаемо 5-20x ток/с" },
-      { "stage": 2, "name": "phase-fusion", "mfu_pct": 10, "mechanism": "пофазовые таймеры (линия-1, §26) → таргетный фикс крупнейшей memory-bound фазы, fusion jit" },
-      { "stage": 3, "name": "kernel-class", "mfu_pct": 20, "mechanism": "MXFP4/FP8 matmul в compute-пути, custom pallas-кернелы" }
+      {
+        "stage": 1,
+        "name": "batch-fill",
+        "mfu_pct": 3,
+        "mechanism": "устранение batch=1 (свип 8/32/64), снятие host-sync; ожидаемо 5-20x ток/с"
+      },
+      {
+        "stage": 2,
+        "name": "phase-fusion",
+        "mfu_pct": 10,
+        "mechanism": "пофазовые таймеры (линия-1, §26) → таргетный фикс крупнейшей memory-bound фазы, fusion jit"
+      },
+      {
+        "stage": 3,
+        "name": "kernel-class",
+        "mfu_pct": 20,
+        "mechanism": "MXFP4/FP8 matmul в compute-пути, custom pallas-кернелы"
+      }
     ],
     "verdict_50pct": "50% MFU на GB10 для тренировки — за пределами достоверного горизонта: класс железа (LPDDR5x 273 ГБ/с против HBM3e 3.35 ТБ/с у H100) и зрелость стека JAX на GB10; 30-50% MFU — цифры датацентрового класса (H100/B200 NVL, HBM, глубокий стек). 50% фиксировать как пин нельзя — будет вечным красным C-046. Лестница 3/10/20% — честные гейты; пересмотр после стадии 2 с реальными числами.",
     "kpi_note": "tok/s-пин 800 (C-048 аренда) остаётся как запиннен — НЕ ослаблять задним числом; но после свипа пересмотреть БАЗИС (86 ток/с измерен на batch=1 — заполнение батча легитимно добьёт порог инфраструктурно; решение о пересмотре базиса — владельцу, с числами свипа)",
@@ -58,6 +139,29 @@
       "script": "/home/roman/axiom-run/mfu-sweep-0710.sh (стенд, nohup)",
       "points": "dense-124M batch 8 и 32, 10 шагов, seq 8192",
       "status": "запущен 07.10 ~17:1x; стенд ушёл в banner-timeout до получения результатов"
+    },
+    "measured_denominator": {
+      "added": "2026-10-08",
+      "source_log": "evidence/gemm_peak_0810.log — git-объект в коммите 42b7408 (сертификация: двойное чтение объекта идентично; fetch верифицирует SHA каждого объекта)",
+      "run_provenance": "владелец-ассистированный прогон на стенде, 00:06 стендового времени; скрипт evidence/gemm_peak_bench.py из репо (HEAD 9512549)",
+      "bf16_tflops": [
+        86.8,
+        89.7,
+        98.2
+      ],
+      "fp32_tflops": [
+        42.9,
+        45.2,
+        45.0
+      ],
+      "denominator_bf16_best": 98.2,
+      "consistency_note": "второй независимый прогон 07.10 согласован в ±3% (bf16 84.2/89.9/98.2); untracked-копия лога на ПК расходилась с объектом — сертифицирован git-объект, копия сохранена /tmp/untracked_log_backup.log"
+    },
+    "target_55pct": {
+      "mfu_pct": 55,
+      "effective_tflops": 54.0,
+      "implies_l3full_tok_s": "~7.5k ток/с (6*N*D/token = 7.2 GFLOP/token по замеру 0.56 TFLOPS @ 77.7 tok/s)",
+      "note": "55% от ИЗМЕРЕННОГО пика — честная формулировка цели (Опция A, BF16-кампания); 55% от маркетингового 1 PFLOP FP4-sparse физически недостижим и не пиннуется"
     }
   }
 }

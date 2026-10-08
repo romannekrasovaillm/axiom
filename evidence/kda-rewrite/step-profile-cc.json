@@ -1,0 +1,51 @@
+{
+ "schema": "axiom-step-profile/1",
+ "version": 1,
+ "instrument": "tools/profile_step.py",
+ "adr": "ADR-047",
+ "status": "TRACE-ERROR",
+ "created": "2026-10-08T17:00:34.637426+00:00",
+ "cell": {
+  "name": "l3full-chunked-cc",
+  "config": "net/config.json",
+  "impl": "chunked_cc",
+  "batch": 1,
+  "seq": 8192,
+  "steps": 4,
+  "warmup": 2
+ },
+ "runner": "net/train_loop.train (та же нога, что в претрейне; net/* не меняется)",
+ "jax_version": null,
+ "device": [],
+ "backend": null,
+ "compile_cache": null,
+ "trace_dir": null,
+ "warmup_seconds": null,
+ "measured_wall_seconds": null,
+ "kda_impl": "chunked_cc",
+ "losses": null,
+ "categories": [],
+ "top_ops": [],
+ "steps": null,
+ "gap": null,
+ "containers": null,
+ "origins": null,
+ "reconciliation": null,
+ "findings": [],
+ "phase_legs": {
+  "available": false,
+  "reason": "файл метрик не найден: /tmp/metrics.jsonl"
+ },
+ "caveats": [
+  "раскладка по категориям частично эвристична (имена XLA-операций не несут семантики слоя); доля структурных свидетельств выведена полем structural_share — при низком значении семантические категории гипотеза, а не разметка",
+  "scan_layers=true: 24 слоя l3-full исполняются одним lax.scan, поэтому «слой → секунды» из трейса не выводится; категории kda/mla/moe получены по именам и опорной ноге, не по разметке скан-тела",
+  "интервалы категории считаются ОБЪЕДИНЕНИЕМ, а не суммой длительностей: вложенность и перекрытие не удваиваются; величина перекрытия выведена полем overlap_seconds",
+  "gap — время окна ВНЕ операций (хост-диспетчеризация, ожидание, device-простой), а не «прочее»: это верхняя оценка неучтённого",
+  "внешняя сходимость (порог 95 %) считается против стенного времени шага из metrics.jsonl; если metrics не собраны, поле пустое — порог не выдумывается",
+  "опорные ноги phase_legs (kda/mla/moe/ce/backopt) — дополнительные декомпозированные проходы, они НЕ интерливаются как в forward, поэтому их сумма не равна времени шага и не выдаётся за него",
+  "опорные ноги компилируют 4 дополнительные jit-функции: их компиляция (хостовое время) ложится в ПЕРВЫЙ измеренный шаг — это видно в полях first_step_share/compile_share; device-раскладка ею не затронута, а внешняя сходимость считается по МЕДИАНЕ шагов и потому устойчива; --no-phase-legs снимает эффект",
+  "данные синтетические: прибор меряет форму шага, стоимость упакованного лоадера в раскладку не входит"
+ ],
+ "note": "прогон клетки не состоялся; отчёт несёт только причину",
+ "error": "JaxRuntimeError: RESOURCE_EXHAUSTED: Out of memory while trying to allocate 52.06GiB. [tf-allocator-allocation-error=''] [executable_name='jit_loss_fn']"
+}

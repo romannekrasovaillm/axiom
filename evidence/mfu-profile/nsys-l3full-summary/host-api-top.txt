@@ -1,0 +1,16 @@
+cuCtxSetCurrent|3597678|507802.0
+cuEventRecord|1515276|1731820.0
+cuStreamWaitEvent|1066269|1223578.0
+cuLaunchHostFunc|740716|4257773.0
+cuLaunchKernelEx|460114|4152445.0
+cuMemcpyHtoDAsync_v2|164729|3020399.0
+cuGraphExecMemcpyNodeSetParams|144388|101736.0
+cuLaunchKernel|130061|394978.0
+cuStreamSynchronize|93437|239113347.0
+cuMemcpyDtoHAsync_v2|58105|23382016.0
+cudaGetFuncBySymbol_v11000|55327|39571.0
+cuMemHostAlloc|54794|811281.0
+cuMemFreeHost|54794|436105.0
+cuEventCreate|44767|37670.0
+cuEventDestroy_v2|44761|12129.0
+cuGraphLaunch|43759|335530837.0

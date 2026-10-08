@@ -1,0 +1,32 @@
+{
+ "schema": "axiom-mfu-profile/1",
+ "version": 1,
+ "status": "EMPTY-PENDING",
+ "created": "2026-10-08T14:05:34+0300",
+ "cell": {
+  "name": "dense124m-b4",
+  "config": "net/config-dense124m.json",
+  "batch": 4,
+  "seq": 8192,
+  "mode": "fp32"
+ },
+ "steps": 6,
+ "warmup": 2,
+ "jax_version": null,
+ "device": [],
+ "backend": null,
+ "compile_cache": null,
+ "runner": "net/train_loop.train (та же нога, что в претрейне; net/* не меняется)",
+ "trace_dir": null,
+ "caveats": [
+  "группировка операций по имени — эвристика (канонический префикс HLO), не вердикт",
+  "op_total суммирует ДЫРКИ операций как есть (вложенность может учитываться дважды); gap считается по объединению интервалов и потому двойного учёта не несёт",
+  "окно трейса покрывает только замер (--steps шагов); разогрев --warmup вне окна",
+  "gap — верхняя оценка хост-диспетчеризации: включает всё, что не классифицировано как операция",
+  "сводки CUDA-ядер/API — отдельный прибор tools/profile_mfu_nsys.sh (nsys), не этот файл"
+ ],
+ "gap": null,
+ "top_ops": [],
+ "groups": [],
+ "note": "GPU недоступен: клетка не исполнена. Отчёт несёт план (cell/steps/warmup); прогон выполняет архитектор на стенде GB10 (AD-7/C-040: лок на ~/gb10-shared/.locks)."
+}

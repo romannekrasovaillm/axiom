@@ -1,0 +1,201 @@
+{
+  "instrument": "tools/kda_phase_profile.py",
+  "adr": "ADR-047",
+  "status": "OK",
+  "reason": "измерено на CUDA-устройстве",
+  "generated_at": "2026-10-08T16:26:49.421723+00:00",
+  "backend": "gpu",
+  "devices": [
+    "cuda:0"
+  ],
+  "impls": [
+    "chunked",
+    "chunked_cc"
+  ],
+  "geometries": {
+    "l3": {
+      "requested": {
+        "seq_len": 8192,
+        "heads": 12,
+        "dk": 128,
+        "chunk": 64,
+        "rounds": 5,
+        "warmup": 2
+      },
+      "impls": {
+        "chunked": {
+          "impl": "chunked",
+          "geometry": {
+            "seq_len": 8192,
+            "heads": 12,
+            "dk": 128,
+            "chunk": 64,
+            "rounds": 5,
+            "warmup": 2
+          },
+          "fused": {
+            "fused_fwd": {
+              "seconds_p50": 0.7620386609996785,
+              "seconds_min": 0.7612909919989761,
+              "seconds_max": 0.7631748099993274,
+              "seconds": 0.7620386609996785,
+              "xla_scratch_bytes": 294180760,
+              "xla_peak_bytes": 393424840
+            },
+            "fused_fwd_bwd": {
+              "seconds_p50": 3.154659799998626,
+              "seconds_min": 3.152503474000696,
+              "seconds_max": 3.6149466869974276,
+              "seconds": 3.154659799998626,
+              "xla_scratch_bytes": 57942762712,
+              "xla_peak_bytes": 58040587704
+            },
+            "backward": {
+              "seconds_p50": 2.3926211389989476,
+              "derived": true,
+              "note": "fused_fwd_bwd - fused_fwd (раздельные пофазовые backward-замеры прибор не заявляет)"
+            }
+          },
+          "phases": {
+            "projections": {
+              "seconds": 0.12936613580823178,
+              "share": 0.07985203872102442,
+              "calls": 640,
+              "xla_scratch_bytes": 4826192,
+              "xla_peak_bytes": 8872096
+            },
+            "shortconv": {
+              "seconds": 0.13261678480630507,
+              "share": 0.08185852170083134,
+              "calls": 640,
+              "xla_scratch_bytes": 80,
+              "xla_peak_bytes": 5621920
+            },
+            "intra": {
+              "seconds": 0.2080174212103884,
+              "share": 0.12840002578234716,
+              "calls": 640,
+              "xla_scratch_bytes": 528,
+              "xla_peak_bytes": 105102928
+            },
+            "inter": {
+              "seconds": 0.8460226715906174,
+              "share": 0.5222126695572193,
+              "calls": 640,
+              "xla_scratch_bytes": 198181424,
+              "xla_peak_bytes": 302101088
+            },
+            "output_gate": {
+              "seconds": 0.15865259939746465,
+              "share": 0.09792928753052692,
+              "calls": 640,
+              "xla_scratch_bytes": 40,
+              "xla_peak_bytes": 2863184
+            },
+            "out_proj": {
+              "seconds": 0.14539743579371134,
+              "share": 0.08974745670805079,
+              "calls": 640,
+              "xla_scratch_bytes": 3145768,
+              "xla_peak_bytes": 5615696
+            }
+          },
+          "phase_sum_seconds": 1.6200730486067187,
+          "chunks": 128,
+          "phase_chain_max_abs_diff": 6.770342588424683e-05,
+          "phase_chain_matches_fused": true,
+          "phase_chain_tolerance": 0.0021089398860931396,
+          "backend": "gpu",
+          "device": "cuda:0"
+        },
+        "chunked_cc": {
+          "impl": "chunked_cc",
+          "geometry": {
+            "seq_len": 8192,
+            "heads": 12,
+            "dk": 128,
+            "chunk": 64,
+            "rounds": 5,
+            "warmup": 2
+          },
+          "fused": {
+            "fused_fwd": {
+              "seconds_p50": 0.10721161900073639,
+              "seconds_min": 0.10702941400086274,
+              "seconds_max": 0.10743760599871166,
+              "seconds": 0.10721161900073639,
+              "xla_scratch_bytes": 43062936,
+              "xla_peak_bytes": 142307016
+            },
+            "fused_fwd_bwd": {
+              "seconds_p50": 0.344644201999472,
+              "seconds_min": 0.343892525001138,
+              "seconds_max": 0.34512306999749853,
+              "seconds": 0.344644201999472,
+              "xla_scratch_bytes": 3458816608,
+              "xla_peak_bytes": 3556641600
+            },
+            "backward": {
+              "seconds_p50": 0.2374325829987356,
+              "derived": true,
+              "note": "fused_fwd_bwd - fused_fwd (раздельные пофазовые backward-замеры прибор не заявляет)"
+            }
+          },
+          "phases": {
+            "projections": {
+              "seconds": 0.12308938159549143,
+              "share": 0.16457590158512703,
+              "calls": 640,
+              "xla_scratch_bytes": 4826192,
+              "xla_peak_bytes": 8872096
+            },
+            "shortconv": {
+              "seconds": 0.12035224520514021,
+              "share": 0.16091623018728152,
+              "calls": 640,
+              "xla_scratch_bytes": 80,
+              "xla_peak_bytes": 5621920
+            },
+            "intra": {
+              "seconds": 0.15150720140518387,
+              "share": 0.20257177300508,
+              "calls": 640,
+              "xla_scratch_bytes": 812120,
+              "xla_peak_bytes": 6633648
+            },
+            "inter": {
+              "seconds": 0.11845514160741004,
+              "share": 0.15837971947490448,
+              "calls": 640,
+              "xla_scratch_bytes": 393472,
+              "xla_peak_bytes": 5032240
+            },
+            "output_gate": {
+              "seconds": 0.11257575960480608,
+              "share": 0.15051872788245538,
+              "calls": 640,
+              "xla_scratch_bytes": 40,
+              "xla_peak_bytes": 2863184
+            },
+            "out_proj": {
+              "seconds": 0.12193889299232978,
+              "share": 0.1630376478651516,
+              "calls": 640,
+              "xla_scratch_bytes": 3145768,
+              "xla_peak_bytes": 5615696
+            }
+          },
+          "phase_sum_seconds": 0.7479186224103614,
+          "chunks": 128,
+          "phase_chain_max_abs_diff": 0.00032645463943481445,
+          "phase_chain_matches_fused": true,
+          "phase_chain_tolerance": 0.0021089205741882324,
+          "backend": "gpu",
+          "device": "cuda:0"
+        }
+      }
+    }
+  },
+  "note": "Фазовые стадии компилируются раздельно — их сумма есть атрибуция, а не время шага; ground truth — fused_fwd/fused_fwd_bwd. Каждая геометрия несёт phase_chain_max_abs_diff — сверку прибора с реализацией.",
+  "out_path": "evidence/kda-rewrite/phase-profile-l3.json"
+}

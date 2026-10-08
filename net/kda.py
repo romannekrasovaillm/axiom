@@ -20,7 +20,7 @@ import jax
 import jax.numpy as jnp
 
 from .config import ModelConfig
-from . import attn_sparse, quant
+from . import attn_sparse, compute_dtype, quant
 from .norm import headwise_rms_norm, l2_norm, swish
 from .shortconv import short_conv, short_conv_step
 
@@ -141,16 +141,18 @@ def _project(params: KDAParams, cfg: ModelConfig, x: jnp.ndarray) -> dict:
     expose a final ``(heads, d)`` axis.
     """
     H, dk, dv = cfg.num_heads, cfg.kda_dk, cfg.kda_dv
-    qp = x @ params.W_q  # (..., H*dk)
-    kp = x @ params.W_k  # (..., H*dk)
-    vp = x @ params.W_v  # (..., H*dv)
-    beta = jax.nn.sigmoid(x @ params.W_beta)  # (..., H)
-    z = (x @ params.W_a_down) @ params.W_a_up + params.b_alpha  # (..., H*dk)
+    qp = compute_dtype.gemm(x, params.W_q)  # (..., H*dk)
+    kp = compute_dtype.gemm(x, params.W_k)  # (..., H*dk)
+    vp = compute_dtype.gemm(x, params.W_v)  # (..., H*dv)
+    beta = jax.nn.sigmoid(compute_dtype.gemm(x, params.W_beta))  # (..., H)
+    z = compute_dtype.gemm(
+        compute_dtype.gemm(x, params.W_a_down), params.W_a_up
+    ) + params.b_alpha  # (..., H*dk)
     z = z.reshape(*z.shape[:-1], H, dk)  # (..., H, dk)
     # lower-bounded log-decay (Eq. 5): g = g_min * sigmoid(exp(A) * z)
     g = cfg.kda_g_min * jax.nn.sigmoid(jnp.exp(params.A)[..., None] * z)  # (..., H, dk)
     alpha = jnp.exp(g)  # (..., H, dk), in (e^gmin, 1)
-    gate = jax.nn.sigmoid(x @ params.W_g)  # (..., hid)
+    gate = jax.nn.sigmoid(compute_dtype.gemm(x, params.W_g))  # (..., hid)
     return {
         "qp": qp,
         "kp": kp,
@@ -181,7 +183,7 @@ def _output_gate(o: jnp.ndarray, gate: jnp.ndarray, params: KDAParams) -> jnp.nd
     """
     o = headwise_rms_norm(o)  # (..., H, dv)
     o = o.reshape(*o.shape[:-2], -1)  # (..., H*dv)
-    return (gate * o) @ params.W_o
+    return compute_dtype.gemm(gate * o, params.W_o)
 
 
 # ---------------------------------------------------------------------------
@@ -204,10 +206,10 @@ def _window_projection(params: KDAParams, cfg: ModelConfig, x: jnp.ndarray):
         vc = short_conv(proj["vp"], params.conv_v)
         gate = proj["gate"]
     else:
-        qc = short_conv(x @ params.W_swa_q, params.conv_swa_q)
-        kc = short_conv(x @ params.W_swa_k, params.conv_swa_k)
-        vc = short_conv(x @ params.W_swa_v, params.conv_swa_v)
-        gate = jax.nn.sigmoid(x @ params.W_g)
+        qc = short_conv(compute_dtype.gemm(x, params.W_swa_q), params.conv_swa_q)
+        kc = short_conv(compute_dtype.gemm(x, params.W_swa_k), params.conv_swa_k)
+        vc = short_conv(compute_dtype.gemm(x, params.W_swa_v), params.conv_swa_v)
+        gate = jax.nn.sigmoid(compute_dtype.gemm(x, params.W_g))
     q, k, v = _postprocess(qc, kc, vc, cfg)
     return q, k, v, gate
 
@@ -328,6 +330,11 @@ def chunk_step(
     M, N = _delta_transitions(k, v, beta, alpha)  # (C, H, dk, dk), (C, H, dk, dv)
     P, Q = jax.lax.associative_scan(_combine, (M, N))  # prefix compositions S0 -> S_t
 
+    # State algebra, deliberately NOT gated by ``AXIOM_COMPUTE_DTYPE``: the
+    # recurrent state is an accumulator, and the recipe (``net/compute_dtype.py``)
+    # keeps accumulators fp32 — ``net/kda.py``'s ``_combine`` below is the same
+    # decision on the associative-scan side.  The parameter/attention
+    # contractions above (``_project``, ``_output_gate``) are gated.
     # Output: o_t = (P_t S0 + Q_t)^T q_t = S0^T (P_t^T q_t) + (Q_t^T q_t)
     pq = jnp.einsum("chab,cha->chb", P, q)  # (C, H, dk) = P^T q
     inter = jnp.einsum("hdv,chd->chv", carry.S, pq)  # (C, H, dv) = S0^T (P^T q)

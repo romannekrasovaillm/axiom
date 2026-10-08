@@ -40,6 +40,7 @@ import jax
 import jax.numpy as jnp
 
 from .config import ModelConfig
+from . import compute_dtype
 from . import mlp as mlp_mod
 from .norm import rms_norm
 
@@ -95,7 +96,7 @@ def _flat(x: jnp.ndarray) -> jnp.ndarray:
 def _scores(params: LatentMoEParams, x: jnp.ndarray) -> jnp.ndarray:
     """Unbiased router scores ``s = Sigmoid(W_r x)``, flattened ``(N, n)``."""
     xf = _flat(x)
-    return jax.nn.sigmoid(xf @ params.router_w)
+    return jax.nn.sigmoid(compute_dtype.gemm(xf, params.router_w))
 
 
 def _dispatch(params: LatentMoEParams, cfg: ModelConfig, x: jnp.ndarray):
@@ -195,22 +196,33 @@ def apply(
     _, topk, sel_p, p_full = _dispatch(params, cfg, x)
 
     # routed experts in latent space
-    z = xf @ params.W_down  # (N, latent)
-    hg = jnp.einsum("nl,elj->nej", z, params.expert_g)  # (N, nr, ei)
-    hu = jnp.einsum("nl,elj->nej", z, params.expert_u)  # (N, nr, ei)
+    z = compute_dtype.gemm(xf, params.W_down)  # (N, latent)
+    hg = compute_dtype.gemm_einsum("nl,elj->nej", z, params.expert_g)  # (N, nr, ei)
+    hu = compute_dtype.gemm_einsum("nl,elj->nej", z, params.expert_u)  # (N, nr, ei)
     a = mlp_mod.siti_glu((hg, hu), cfg.siti_beta_gate, cfg.siti_beta_up)  # (N, nr, ei)
-    e_out = jnp.einsum("nej,ejl->nel", a, params.expert_d)  # (N, nr, latent)
+    # Expert application.  The fp32 spelling is the pinned einsum — gate off must
+    # stay bit-for-bit the baseline, and an equivalent batched matmul is *not*
+    # bit-identical to it (measured: the pilot forward hash moves).  Under bf16
+    # the CPU backend rejects that einsum's lowering ("Unsupported element type
+    # for DotThunk::Execute: BF16 x BF16 = F32") while the matmul over the expert
+    # axis runs, so the bf16 branch spells the same contraction that way.
+    if compute_dtype.is_bf16():
+        e_out = compute_dtype.gemm_batched(
+            a.transpose(1, 0, 2), params.expert_d
+        ).transpose(1, 0, 2)  # (N, nr, latent)
+    else:
+        e_out = jnp.einsum("nej,ejl->nel", a, params.expert_d)  # (N, nr, latent)
     sel_out = jnp.take_along_axis(e_out, topk[..., None], axis=1)  # (N, k, latent)
-    u = jnp.einsum("nk,nkl->nl", sel_p, sel_out)  # (N, latent)
+    u = compute_dtype.gemm_einsum("nk,nkl->nl", sel_p, sel_out)  # (N, latent)
 
     # shared experts (full-width path)
-    sg = jnp.einsum("nh,shj->nsj", xf, params.shared_g)  # (N, ns, si)
-    su = jnp.einsum("nh,shj->nsj", xf, params.shared_u)  # (N, ns, si)
+    sg = compute_dtype.gemm_einsum("nh,shj->nsj", xf, params.shared_g)  # (N, ns, si)
+    su = compute_dtype.gemm_einsum("nh,shj->nsj", xf, params.shared_u)  # (N, ns, si)
     sa = mlp_mod.siti_glu((sg, su), cfg.siti_beta_gate, cfg.siti_beta_up)  # (N, ns, si)
-    s_out = jnp.einsum("nsj,sjh->nsh", sa, params.shared_d)  # (N, ns, hidden)
+    s_out = compute_dtype.gemm_einsum("nsj,sjh->nsh", sa, params.shared_d)  # (N, ns, hidden)
     shared_sum = jnp.sum(s_out, axis=1)  # (N, hidden)
 
-    y = shared_sum + rms_norm(u, params.norm) @ params.W_up  # (N, hidden)
+    y = shared_sum + compute_dtype.gemm(rms_norm(u, params.norm), params.W_up)  # (N, hidden)
     out = y.reshape(*lead, hid)
     if want_qb:
         # The QB term is a monitoring load-balancing loss, not a gradient

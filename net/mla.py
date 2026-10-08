@@ -25,6 +25,13 @@ Delta v1.5 (ADR-009, D1/D2/D3), all behind ``config.attn_dense_reference``:
 The dense causal path is kept verbatim as the oracle: it is what
 ``attn_dense_reference = True`` (the default) selects, and the reference for
 criterion 13 and the A/B against the sparse path (ADR-009 D4).
+
+Compute dtype (``AXIOM_COMPUTE_DTYPE``, BF16-кампания фаза 1): every GEMM and
+attention contraction of this module goes through ``net/compute_dtype.py``, whose
+``fp32`` mode returns the caller's own expression unchanged (the oracle stays
+byte-exact, ADR-009 D4) and whose ``bf16`` mode casts the *operands* to bf16
+while the products accumulate and return in fp32.  Nothing else changes dtype:
+the residual stream, the gate and the loss path stay fp32.
 """
 
 from __future__ import annotations
@@ -37,12 +44,20 @@ import jax.numpy as jnp
 
 from .config import ModelConfig
 from . import attn_sparse
+from . import compute_dtype
 from . import quant
 
 # MFU-эксперимент 07.10 (директива «поднять MFU»): fused flash attention в
 # dense-оракуле.  По умолчанию ВЫКЛ — pinned oracle байт-точен (ADR-009 D4);
 # включение — только диагностические прогоны (VERIFICATION-LEG).
-_FLASH_DENSE = os.environ.get("AXIOM_MLA_DENSE_FLASH", "0") == "1"
+def _flash_dense() -> bool:
+    """Whether the fused flash attention path of the dense oracle is selected.
+
+    Read per call (not pinned at import) so a parity test can flip the switch
+    in-process; the branch is resolved at trace time, so a compiled graph
+    carries the value it was traced with.
+    """
+    return os.environ.get("AXIOM_MLA_DENSE_FLASH", "0") == "1"
 
 
 def _rand(key, shape, scale: float) -> jnp.ndarray:
@@ -94,9 +109,9 @@ def _causal_mask(T: int) -> jnp.ndarray:
 def _project(params: MLAParams, cfg: ModelConfig, x32: jnp.ndarray, c: jnp.ndarray):
     """Per-head q, k, v from the latent (shared by the dense and sparse paths)."""
     H, dq = cfg.num_heads, cfg.mla_head_dim
-    q = (x32 @ params.W_q.astype(jnp.float32)).reshape(*x32.shape[:-1], H, dq)
-    k = (c @ params.W_k_up.astype(jnp.float32)).reshape(*x32.shape[:-1], H, dq)
-    v = (c @ params.W_v_up.astype(jnp.float32)).reshape(*x32.shape[:-1], H, dq)
+    q = compute_dtype.gemm(x32, params.W_q.astype(jnp.float32)).reshape(*x32.shape[:-1], H, dq)
+    k = compute_dtype.gemm(c, params.W_k_up.astype(jnp.float32)).reshape(*x32.shape[:-1], H, dq)
+    v = compute_dtype.gemm(c, params.W_v_up.astype(jnp.float32)).reshape(*x32.shape[:-1], H, dq)
     return q, k, v
 
 
@@ -106,36 +121,53 @@ def _dense_apply(params: MLAParams, cfg: ModelConfig, x: jnp.ndarray, mask: jnp.
     ``AXIOM_MLA_DENSE_FLASH=1`` switches attention to the fused flash path
     (``jax.nn.dot_product_attention``): no ``(B,H,T,T)`` materialisation —
     the MFU experiment of 07.10 (memory-bound kernels, ~50 GB/step of
-    fp32 scores+attn traffic at l3-full b1).  Diagnostic only: numerics
-    differ from the pinned fp32 oracle (bf16 flash); default OFF keeps the
-    oracle byte-exact.
+    fp32 scores+attn traffic at l3-full b1).  Diagnostic only; default OFF
+    keeps the oracle byte-exact.
+
+    Layout note (re-test 08.10, BF16-кампания фаза 1): ``dot_product_attention``
+    takes ``(B, T, N, H)`` — sequence *before* heads — while the projections here
+    are ``(B, T, H, dq)``.  The pre-re-test code transposed to ``(B, H, T, dq)``
+    and the kernel then read *heads* as the sequence axis, which is why the old
+    "parity 0.0" reading did not survive a re-measurement on a fresh checkout:
+    the shapes happened to round-trip, the arithmetic did not.  The operands are
+    therefore passed in their native ``(B, T, H, dq)`` order and the mask in the
+    kernel's ``(B, T, S)`` broadcast form.
     """
     H, dq = cfg.num_heads, cfg.mla_head_dim
     x32 = x.astype(jnp.float32)
-    c = x32 @ params.W_c.astype(jnp.float32)  # (B, T, d_c)
+    c = compute_dtype.gemm(x32, params.W_c.astype(jnp.float32))  # (B, T, d_c)
     q, k, v = _project(params, cfg, x32, c)
 
-    if _FLASH_DENSE:
-        qf = jnp.transpose(q, (0, 2, 1, 3))  # (B, H, T, dq)
-        kf = jnp.transpose(k, (0, 2, 1, 3))
-        vf = jnp.transpose(v, (0, 2, 1, 3))
-        m = None
-        if mask is not None:
-            m = mask[:, None, None, :]  # (B,1,T,S) broadcast over heads
-        of = jax.nn.dot_product_attention(qf, kf, vf, mask=m, is_causal=mask is None)
-        o = jnp.transpose(of, (0, 2, 1, 3))  # (B, T, H, dq)
+    if _flash_dense():
+        # The kernel takes the mask as ``(B, N, T, S)`` with ``N`` the query-head
+        # count (``jax/_src/nn/functions.py``); the caller's ``(T, S)`` boolean
+        # mask is broadcast to that shape over batch and heads.
+        m = (
+            None
+            if mask is None
+            else jnp.broadcast_to(mask[None, None], (x.shape[0], H) + mask.shape)
+        )
+        o = compute_dtype.cast_out(
+            jax.nn.dot_product_attention(
+                compute_dtype.cast_in(q),
+                compute_dtype.cast_in(k),
+                compute_dtype.cast_in(v),
+                mask=m,
+                is_causal=mask is None,
+            )
+        )
     else:
         scale = 1.0 / jnp.sqrt(dq)
-        scores = jnp.einsum("bthd,bshd->bhts", q, k) * scale  # (B, H, T, T)
+        scores = compute_dtype.gemm_einsum("bthd,bshd->bhts", q, k) * scale  # (B, H, T, T)
         if mask is None:
             mask = _causal_mask(x.shape[-2])
         scores = jnp.where(mask, scores, jnp.finfo(jnp.float32).min)
         attn = jax.nn.softmax(scores, axis=-1)  # (B, H, T, T)
-        o = jnp.einsum("bhts,bshd->bthd", attn, v)  # (B, T, H, dq)
+        o = compute_dtype.gemm_einsum("bhts,bshd->bthd", attn, v)  # (B, T, H, dq)
     o = o.reshape(*x.shape[:-1], H * dq)
 
-    gate = jax.nn.sigmoid(x32 @ params.W_g.astype(jnp.float32))
-    return (gate * o) @ params.W_o.astype(jnp.float32)
+    gate = jax.nn.sigmoid(compute_dtype.gemm(x32, params.W_g.astype(jnp.float32)))
+    return compute_dtype.gemm(gate * o, params.W_o.astype(jnp.float32))
 
 
 def layer_mode(cfg: ModelConfig, ordinal: int) -> str:
@@ -167,7 +199,7 @@ def _sparse_apply(
     """Sparse + sliding-window gated MLA (ADR-009 D1/D2/D3 + ADR-012 pool)."""
     H, dq = cfg.num_heads, cfg.mla_head_dim
     x32 = x.astype(jnp.float32)
-    c = x32 @ params.W_c.astype(jnp.float32)  # (B, T, d_c)
+    c = compute_dtype.gemm(x32, params.W_c.astype(jnp.float32))  # (B, T, d_c)
     if cfg.qat_kv_enabled:
         # D3: fake-quant the cached latent in MXFP4, dequantise before attention.
         c = quant.fake_quant_mxfp4_latent(c)
@@ -175,8 +207,8 @@ def _sparse_apply(
 
     window = int(cfg.swa_window)
     if window > 0:
-        ks = (x32 @ params.W_swa_k.astype(jnp.float32)).reshape(*x32.shape[:-1], H, dq)
-        vs = (x32 @ params.W_swa_v.astype(jnp.float32)).reshape(*x32.shape[:-1], H, dq)
+        ks = compute_dtype.gemm(x32, params.W_swa_k.astype(jnp.float32)).reshape(*x32.shape[:-1], H, dq)
+        vs = compute_dtype.gemm(x32, params.W_swa_v.astype(jnp.float32)).reshape(*x32.shape[:-1], H, dq)
         # The SWA KV stays FP8 (source: the window is quantisation-sensitive).
         ks = quant.fake_quant_fp8_e4m3(ks)
         vs = quant.fake_quant_fp8_e4m3(vs)
@@ -190,8 +222,8 @@ def _sparse_apply(
     if mode == "reuse" and pool is not None and pool.selection is not None:
         idx_q = idx_k = None
     else:
-        idx_q = (x32 @ params.W_idx_q.astype(jnp.float32)).reshape(*x32.shape[:-1], cfg.mla_index_heads, cfg.mla_index_dim)
-        idx_k = (c @ params.W_idx_k.astype(jnp.float32)).reshape(*x32.shape[:-1], cfg.mla_index_heads, cfg.mla_index_dim)
+        idx_q = compute_dtype.gemm(x32, params.W_idx_q.astype(jnp.float32)).reshape(*x32.shape[:-1], cfg.mla_index_heads, cfg.mla_index_dim)
+        idx_k = compute_dtype.gemm(c, params.W_idx_k.astype(jnp.float32)).reshape(*x32.shape[:-1], cfg.mla_index_heads, cfg.mla_index_dim)
 
     o, pool_out = attn_sparse.sparse_union_attention(
         q, k, v, ks, vs, idx_q, idx_k,
@@ -207,8 +239,8 @@ def _sparse_apply(
         exact_topk=bool(cfg.attn_topk_exact),
     )
     o = o.reshape(*x.shape[:-1], H * dq)
-    gate = jax.nn.sigmoid(x32 @ params.W_g.astype(jnp.float32))
-    return (gate * o) @ params.W_o.astype(jnp.float32), pool_out
+    gate = jax.nn.sigmoid(compute_dtype.gemm(x32, params.W_g.astype(jnp.float32)))
+    return compute_dtype.gemm(gate * o, params.W_o.astype(jnp.float32)), pool_out
 
 
 def apply_with_pool(
@@ -252,14 +284,14 @@ def topk_indices(
     re-scores the published pool, and ``reuse`` takes this one verbatim.
     """
     x32 = x.astype(jnp.float32)
-    c = x32 @ params.W_c.astype(jnp.float32)
+    c = compute_dtype.gemm(x32, params.W_c.astype(jnp.float32))
     if cfg.qat_kv_enabled:
         c = quant.fake_quant_mxfp4_latent(c)
     B, T = x.shape[:2]
     k_eff = min(int(cfg.mla_top_k), T)
-    idx_q = (x32 @ params.W_idx_q.astype(jnp.float32)).reshape(B, T, cfg.mla_index_heads, cfg.mla_index_dim)
-    idx_k = (c @ params.W_idx_k.astype(jnp.float32)).reshape(B, T, cfg.mla_index_heads, cfg.mla_index_dim)
-    sc = jnp.einsum("bqhi,bshi->bqs", idx_q, idx_k) / cfg.mla_index_heads
+    idx_q = compute_dtype.gemm(x32, params.W_idx_q.astype(jnp.float32)).reshape(B, T, cfg.mla_index_heads, cfg.mla_index_dim)
+    idx_k = compute_dtype.gemm(c, params.W_idx_k.astype(jnp.float32)).reshape(B, T, cfg.mla_index_heads, cfg.mla_index_dim)
+    sc = compute_dtype.gemm_einsum("bqhi,bshi->bqs", idx_q, idx_k) / cfg.mla_index_heads
     causal = jnp.arange(T)[None, :] <= jnp.arange(T)[:, None]
     sc = jnp.where(causal[None, :, :], sc, jnp.finfo(jnp.float32).min)
     if cfg.attn_topk_exact:
@@ -277,17 +309,17 @@ def reference_full_kv(params: MLAParams, cfg: ModelConfig, x: jnp.ndarray, mask:
     """
     H, dq = cfg.num_heads, cfg.mla_head_dim
     x32 = x.astype(jnp.float32)
-    W_k = (params.W_c @ params.W_k_up).astype(jnp.float32)
-    W_v = (params.W_c @ params.W_v_up).astype(jnp.float32)
-    q = (x32 @ params.W_q.astype(jnp.float32)).reshape(*x.shape[:-1], H, dq)
-    k = (x32 @ W_k).reshape(*x.shape[:-1], H, dq)
-    v = (x32 @ W_v).reshape(*x.shape[:-1], H, dq)
+    W_k = compute_dtype.gemm(params.W_c, params.W_k_up).astype(jnp.float32)
+    W_v = compute_dtype.gemm(params.W_c, params.W_v_up).astype(jnp.float32)
+    q = compute_dtype.gemm(x32, params.W_q.astype(jnp.float32)).reshape(*x.shape[:-1], H, dq)
+    k = compute_dtype.gemm(x32, W_k).reshape(*x.shape[:-1], H, dq)
+    v = compute_dtype.gemm(x32, W_v).reshape(*x.shape[:-1], H, dq)
     scale = 1.0 / jnp.sqrt(dq)
-    scores = jnp.einsum("bthd,bshd->bhts", q, k) * scale
+    scores = compute_dtype.gemm_einsum("bthd,bshd->bhts", q, k) * scale
     if mask is None:
         mask = _causal_mask(x.shape[-2])
     scores = jnp.where(mask, scores, jnp.finfo(jnp.float32).min)
     attn = jax.nn.softmax(scores, axis=-1)
-    o = jnp.einsum("bhts,bshd->bthd", attn, v).reshape(*x.shape[:-1], H * dq)
-    gate = jax.nn.sigmoid(x32 @ params.W_g.astype(jnp.float32))
-    return (gate * o) @ params.W_o.astype(jnp.float32)
+    o = compute_dtype.gemm_einsum("bhts,bshd->bthd", attn, v).reshape(*x.shape[:-1], H * dq)
+    gate = jax.nn.sigmoid(compute_dtype.gemm(x32, params.W_g.astype(jnp.float32)))
+    return compute_dtype.gemm(gate * o, params.W_o.astype(jnp.float32))

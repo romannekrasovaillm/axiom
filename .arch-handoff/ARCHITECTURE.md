@@ -1,15 +1,13 @@
 # Архитектурный контекст (epic-context)
 
-Собран: 2026-10-09T15:40:02.466625448+00:00
+Собран: 2026-10-09T17:33:11.567225129+00:00
 
 Источники:
-- ~/axiom/ARCHITECTURE-SPINE.md
-- ~/axiom/docs/adr/ADR-047-perepisyvanie-realizacii-kda-sloya-matematika-delta-rule-sohranyaetsya-realizaciya-zamenyaetsya-vnutri-chanka-c-c-matrica-mezhdu-chankami-sostoyanie-dk-dv-kak-edinstvennyy-rychag-mfu-modeli.md
-- ~/axiom/docs/adr/ADR-050-kampaniya-mfu-55-na-gb10-predmet-i-konvenciya-chislitelya-geyty-g0-g4-rychagi-po-profil-dokazannym-adresam.md
-- ~/axiom/changes/mfu-g1-kda-solve/DELTA.md
-- ~/axiom/evidence/mfu-55/G0b/REPORT.md
+- /home/roman/axiom/ARCHITECTURE-SPINE.md
+- /home/roman/axiom/docs/adr/ADR-040-politika-compute-dtype-bf16-geyt-infrastruktura-prinyata-vklyuchenie-otlozheno-do-parity-verdikta-i-stage-2.md
+- /home/roman/axiom/docs/adr/ADR-050-kampaniya-mfu-55-na-gb10-predmet-i-konvenciya-chislitelya-geyty-g0-g4-rychagi-po-profil-dokazannym-adresam.md
 
-<!-- источник: ~/axiom/ARCHITECTURE-SPINE.md -->
+<!-- источник: /home/roman/axiom/ARCHITECTURE-SPINE.md -->
 
 # ARCHITECTURE-SPINE — кейс «axiom» (модель с нуля против Kimi K3)
 
@@ -54,6 +52,9 @@
 - **Rule**: каждый прогон ссылается на хеш/дату весов модели, хеш датасета, версию среды (`environment v1`) и версию архитектурной базы. Прогон без пиннинга не считается доказательством. Манифест несёт состав исполненных стадий конвейера (схема `v2`, `stage_set v1`: `pretrain_checkpoint`, `spark_inference`, `rl_environment`, `sft`, `rl_base_scheme`) и **вычисляемое** поле `pipeline_complete`; пути в манифесте — **относительные от корня репозитория**, абсолютные запрещены (K11–K12); гейт A4 закрывается только при полном покрытии, частичный прогон даёт красный гейт с поимённым списком непокрытых стадий (ADR-014, дельта `docs/specs/A4-RUN.delta.md`). Страж: C-038 (behavioural: манифест прогона A4, `evidence/a4-skeleton-run-manifest.json`).
 - **Статус**: [PROPOSED]
 
-## AD-5: Архитектурная база — оп
+## AD-5: Архитектурная база — опубликованный дизайн; отклонения только через ADR
+
+- **Binds**: код модели ↔ техотчёт K3 (`k3_tech_report.pdf`, проверен 11.09.2026)
+- **Prevents**: самовольные архитектурные эксперименты
 
 > **Контекст усечён** до 6000 символов; полные тексты — в файлах-источниках (см. MANIFEST.json).

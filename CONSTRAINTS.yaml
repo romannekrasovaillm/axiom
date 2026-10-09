@@ -25,6 +25,9 @@ constraints:
     scope: case
     kind: documentary
     evidence: "docs/adr/*.md → секция «## Alternatives Considered»"
+    owner: "архитектор"
+    expiry: "2027-01-31"
+    effort_hours: 0.5
 
   - id: C-002
     name: "ADR: отрицательные последствия описаны (иначе решение продано, а не проверено)"
@@ -35,6 +38,9 @@ constraints:
     scope: case
     kind: documentary
     evidence: "docs/adr/*.md → секция «### Negative»"
+    owner: "архитектор"
+    expiry: "2027-01-31"
+    effort_hours: 0.5
 
   - id: C-003
     name: "ADR: обратимость указана явно (reversible | costly | irreversible)"
@@ -45,6 +51,9 @@ constraints:
     scope: case
     kind: documentary
     evidence: "docs/adr/*.md → секция «## Reversibility»"
+    owner: "архитектор"
+    expiry: "2027-01-31"
+    effort_hours: 0.5
 
   - id: C-004
     name: "Спинальные инварианты: каждый AD имеет проверяемое Rule"
@@ -55,6 +64,9 @@ constraints:
     scope: case
     kind: documentary
     evidence: "model/AD-*.md → поле «**Rule**»"
+    owner: "архитектор"
+    expiry: "2027-01-31"
+    effort_hours: 0.5
 
   - id: C-005
     name: "Спинальные инварианты: каждый AD привязан к fitness-правилу ИЛИ честно объявлен unverifiable (ADR-024; выравнивание с контрактом trace_check — третьего состояния нет)"
@@ -65,6 +77,9 @@ constraints:
     scope: case
     kind: documentary
     evidence: "model/AD-*.md → frontmatter verified_by: [C-0NN] ИЛИ unverifiable: <почему механический страж не строится и чем заменяется>; расширение 05.10 по ADR-024/AD-13 — невозможно выразить прежним паттерном честное состояние «стража нет по решению, проверка процедурная», при этом контракту трассируемости такое состояние уже соответствовало"
+    owner: "архитектор"
+    expiry: "2027-01-31"
+    effort_hours: 0.5
 
   - id: C-006
     name: "Spine: у каждого инварианта заполнены Binds и Prevents"
@@ -75,6 +90,9 @@ constraints:
     scope: case
     kind: documentary
     evidence: "ARCHITECTURE-SPINE.md → пары «**Binds**»/«**Prevents**» в блоках AD-n"
+    owner: "архитектор"
+    expiry: "2027-01-31"
+    effort_hours: 0.5
 
   - id: C-007
     name: "Артефакты без заглушек (TODO/TBD в архитектурном пакете недопустимы)"
@@ -85,6 +103,9 @@ constraints:
     scope: workspace
     kind: documentary
     evidence: "**/*.md → отсутствие TODO/TBD/FIXME"
+    owner: "архитектор"
+    expiry: "2027-01-31"
+    effort_hours: 0.5
 
   - id: C-008
     name: "Пакет решения A3 имеет срок годности (expiry) и поведение по истечении"
@@ -95,6 +116,9 @@ constraints:
     scope: case
     kind: documentary
     evidence: "docs/DECISION-PACKAGE.json → поля expiry/on_expiry"
+    owner: "архитектор"
+    expiry: "2027-01-31"
+    effort_hours: 0.5
 
   - id: C-009
     name: "Смета: NFR стоимости имеет измеримую цель и способ верификации"
@@ -105,6 +129,9 @@ constraints:
     scope: case
     kind: documentary
     evidence: "model/NFR-*.md → поле verification:"
+    owner: "архитектор"
+    expiry: "2027-01-31"
+    effort_hours: 0.5
 
   - id: C-010
     name: "Незакреплённые снапшоты запрещены: NFR и AD ссылаются на модель-сущности, а не на прозу"
@@ -115,6 +142,9 @@ constraints:
     scope: case
     kind: documentary
     evidence: "model/AD-*.md → поле affects:"
+    owner: "архитектор"
+    expiry: "2027-01-31"
+    effort_hours: 0.5
 
   - id: C-011
     name: "Приватность: в артефактах нет подключений к внешним LLM/данным с ключами в открытом виде"
@@ -125,6 +155,9 @@ constraints:
     scope: workspace
     kind: documentary
     evidence: "**/*.{md,json,yaml,yml,toml} → отсутствие пар «ключ/секрет» длиной ≥20 символов"
+    owner: "архитектор"
+    expiry: "2027-01-31"
+    effort_hours: 0.5
 
   - id: C-012
     name: "Ресурсный инвариант Spark зафиксирован в spine и модели"
@@ -135,6 +168,9 @@ constraints:
     scope: case
     kind: documentary
     evidence: "ARCHITECTURE-SPINE.md → блок AD-7 со строкой «одна нагрузка за раз»"
+    owner: "архитектор"
+    expiry: "2027-01-31"
+    effort_hours: 0.5
 
   - id: C-013
     name: "Ось победы объявлена в пакете решения (без оси нет предмета доказывания)"
@@ -145,6 +181,9 @@ constraints:
     scope: case
     kind: documentary
     evidence: "docs/DECISION-PACKAGE.json → поле victory_axis"
+    owner: "архитектор"
+    expiry: "2027-01-31"
+    effort_hours: 0.5
 
   - id: C-014
     name: "Паспорт кейса существует (точка входа для исполнителя)"
@@ -154,6 +193,9 @@ constraints:
     scope: workspace
     kind: structural
     evidence: "README.md → файл паспорта кейса существует"
+    owner: "архитектор"
+    expiry: "2027-01-31"
+    effort_hours: 0.25
 
   - id: C-015
     name: "Сравнение с K3 опирается на первичный источник, а не на пересказ"
@@ -164,6 +206,9 @@ constraints:
     scope: case
     kind: documentary
     evidence: "docs/adr/ADR-001-*.md → ссылка на 104B или k3_tech_report.pdf"
+    owner: "архитектор"
+    expiry: "2027-01-31"
+    effort_hours: 0.5
 
   - id: C-016
     name: "Арена: вердикт определён как детерминированный (иначе reward-hacking)"
@@ -174,6 +219,9 @@ constraints:
     scope: case
     kind: documentary
     evidence: "docs/adr/ADR-002-*.md → признак детерминированного вердикта"
+    owner: "архитектор"
+    expiry: "2027-01-31"
+    effort_hours: 0.5
 
   - id: C-017
     name: "Пост-тренировка: награда привязана к механическому сигналу среды"
@@ -184,6 +232,9 @@ constraints:
     scope: case
     kind: documentary
     evidence: "docs/adr/ADR-005-*.md → привязка награды к фитнес-гейту"
+    owner: "архитектор"
+    expiry: "2027-01-31"
+    effort_hours: 0.5
 
   - id: C-018
     name: "Сравнение: условия прогона фиксируются манифестом (равный бюджет рассуждений)"
@@ -194,6 +245,9 @@ constraints:
     scope: case
     kind: documentary
     evidence: "docs/adr/ADR-002-*.md → манифест прогона (run manifest)"
+    owner: "архитектор"
+    expiry: "2027-01-31"
+    effort_hours: 0.5
 
   - id: C-019
     name: "Пиннинг снапшотов: прогон ссылается на хеш весов и датасета"
@@ -205,6 +259,9 @@ constraints:
     scope: case
     kind: documentary
     evidence: "docs/adr/ADR-004-*.md → упоминание хеша весов/датасета"
+    owner: "архитектор"
+    expiry: "2027-01-31"
+    effort_hours: 0.5
 
   - id: C-020
     name: "Архитектурная база запиннена на первичный техотчёт K3"
@@ -215,6 +272,9 @@ constraints:
     scope: case
     kind: documentary
     evidence: "docs/adr/ADR-003-*.md → ссылка на k3_tech_report.pdf"
+    owner: "архитектор"
+    expiry: "2027-01-31"
+    effort_hours: 0.5
 
   - id: C-021
     name: "Приватный корпус не покидает контур (запрет вывоза на аренду и во внешние API)"
@@ -225,6 +285,9 @@ constraints:
     scope: case
     kind: documentary
     evidence: "docs/adr/ADR-004-*.md → запрет вывоза приватного корпуса"
+    owner: "архитектор"
+    expiry: "2027-01-31"
+    effort_hours: 0.5
 
   - id: C-022
     name: "Лимит стоимости: смета в H800-часах до запуска прогона"
@@ -237,6 +300,9 @@ constraints:
     scope: case
     kind: documentary
     evidence: "docs/adr/ADR-004-*.md → смета в H800-часах"
+    owner: "архитектор"
+    expiry: "2027-01-31"
+    effort_hours: 0.5
 
   - id: C-023
     name: "Мультимодальность v1 зафиксирована в решении (принято владельцем 2026-09-11)"
@@ -247,6 +313,9 @@ constraints:
     scope: case
     kind: documentary
     evidence: "docs/adr/ADR-003-*.md → мультимодальность v1"
+    owner: "архитектор"
+    expiry: "2027-01-31"
+    effort_hours: 0.5
 
   - id: C-024
     name: "Пост-тренировка: консолидация экспертов (MOPD) зафиксирована в решении"
@@ -257,6 +326,9 @@ constraints:
     scope: case
     kind: documentary
     evidence: "docs/adr/ADR-005-*.md → консолидация экспертов MOPD"
+    owner: "архитектор"
+    expiry: "2027-01-31"
+    effort_hours: 0.5
 
   - id: C-025
     name: "Арена: runner изолирован microVM, а не контейнером (обоснование вендора)"
@@ -267,6 +339,9 @@ constraints:
     scope: case
     kind: documentary
     evidence: "docs/adr/ADR-002-*.md → изоляция runner через microVM"
+    owner: "архитектор"
+    expiry: "2027-01-31"
+    effort_hours: 0.5
 
   - id: C-026
     name: "Разграничение: RL-алгоритм базы не назван в отчёте K3 (запрет атрибуции GRPO вендору)"
@@ -277,6 +352,9 @@ constraints:
     scope: case
     kind: documentary
     evidence: "docs/adr/ADR-005-*.md → оговорка «не тождествен» о RL-алгоритме базы"
+    owner: "архитектор"
+    expiry: "2027-01-31"
+    effort_hours: 0.5
 
   - id: C-027
     name: "RL воспроизводит схему базы (K2.5/K1.5), а не сторонний алгоритм"
@@ -287,6 +365,9 @@ constraints:
     scope: case
     kind: documentary
     evidence: "docs/adr/ADR-005-*.md → схема mirror descent / log-ratio"
+    owner: "архитектор"
+    expiry: "2027-01-31"
+    effort_hours: 0.5
 
   - id: C-028
     name: "Матрица верности существует и честно фиксирует неполноту источника"
@@ -297,6 +378,9 @@ constraints:
     scope: case
     kind: documentary
     evidence: "docs/FIDELITY-TO-K3.md → признание буквальной копии невозможной"
+    owner: "архитектор"
+    expiry: "2027-01-31"
+    effort_hours: 0.5
 
   - id: C-029
     name: "Скелет L3 размечен по рецепту базы (что входит, что вне)"
@@ -307,6 +391,9 @@ constraints:
     scope: case
     kind: documentary
     evidence: "docs/FIDELITY-TO-K3.md → разметка «входит в скелет»"
+    owner: "архитектор"
+    expiry: "2027-01-31"
+    effort_hours: 0.5
 
   - id: C-030
     name: "Среда RL содержит механики базы: скрытые верификаторы и изоляция агента"
@@ -317,6 +404,9 @@ constraints:
     scope: case
     kind: documentary
     evidence: "docs/adr/ADR-002-*.md → скрытые верификаторы и изоляция агента"
+    owner: "архитектор"
+    expiry: "2027-01-31"
+    effort_hours: 0.5
 
   - id: C-031
     name: "Сравнительный стенд отделён от стадий рецепта (не блокирует скелет)"
@@ -327,6 +417,9 @@ constraints:
     scope: case
     kind: documentary
     evidence: "docs/adr/ADR-002-*.md → стенд как инструмент отчётности"
+    owner: "архитектор"
+    expiry: "2027-01-31"
+    effort_hours: 0.5
 
   - id: C-032
     name: "Веса моделей канонически на сетевом диске ~/gb10-shared: в рабочих каталогах — только симлинки, копий нет (решение владельца 2026-09-12)"
@@ -337,6 +430,9 @@ constraints:
     scope: workspace
     kind: behavioural
     evidence: "find . -type f по расширениям *.safetensors, *.gguf, *.pt, *.pth, *.ckpt → пусто: веса только симлинками на ~/gb10-shared"
+    owner: "архитектор"
+    expiry: "2027-01-31"
+    effort_hours: 2.0
 
   - id: C-033
     name: "Датасеты (SFT/RL/претрейн) канонически на ~/gb10-shared: крупные файлы-копии в рабочих каталогах запрещены — симлинки (решение владельца 2026-09-12)"
@@ -347,6 +443,9 @@ constraints:
     scope: workspace
     kind: behavioural
     evidence: "find . -type f -size +500M -not -path './.git/*' → пусто: датасеты только симлинками на ~/gb10-shared"
+    owner: "архитектор"
+    expiry: "2027-01-31"
+    effort_hours: 2.0
 
   - id: C-034
     name: "Длинноконтекстная дельта скелета оформлена решением до реализации (ADR-009), а не правками кода по месту"
@@ -359,6 +458,8 @@ constraints:
     evidence: "ls docs/adr/ADR-009-*.md → файл решения существует (структура пакета)"
     adr: ADR-009
     owner: архитектор
+    expiry: "2027-01-31"
+    effort_hours: 2.0
 
   - id: C-035
     name: "AD-9: механика длинного контекста декларативна — объявленное в net/config.json читается кодом net/, а не живёт в прозе (сверка config ↔ код)"
@@ -371,6 +472,8 @@ constraints:
     evidence: "tools/check_declarative_context.py → net/config.json (mla_block_merge: enabled/block + механики AD-9: swa_window, mla_top_k, swa_share_kda_projections, qat_kv_enabled, indexer_seed, mla_pool_block, mla_pool_size, mla_layer_modes) + net/config.py (поле схемы, читатель declared_block_merge) + net/attn_sparse.py (параметр block_merge у sparse_union_attention, вызов читателя) + проба читателя на живом модуле (enabled=true → ширина блока, выключено/отсутствует → 0) + строка deviations со ссылкой на ADR-018 и источник + swa_window >= block при enabled"
     adr: ADR-018
     owner: архитектор
+    expiry: "2027-01-31"
+    effort_hours: 2.0
 
   - id: C-036
     name: "Мета-валидатор контура: стражи предметны — поведение, а не проза (ADR-011, AD-10)"
@@ -381,6 +484,9 @@ constraints:
     scope: case
     kind: behavioural
     evidence: "tools/check_constraints_meta.py + model/AD-*.md + ARCHITECTURE-SPINE.md"
+    owner: "архитектор"
+    expiry: "2027-01-31"
+    effort_hours: 2.0
 
   - id: C-037
     name: "Канал гейта: пакет несёт рабочий ruleset кейса, а не заготовку (ADR-011, п. 5)"
@@ -391,6 +497,9 @@ constraints:
     scope: case
     kind: behavioural
     evidence: "CONSTRAINTS.yaml + .arch-handoff/CONSTRAINTS.yaml — число правил и sha256; отсутствие пакета — NOT-VERIFIED (не PASS)"
+    owner: "архитектор"
+    expiry: "2027-01-31"
+    effort_hours: 2.0
   - id: C-038
     name: "AD-4: манифест прогона A4 существует, валиден (схема v2) и покрывает конвейер полностью (behavioural-страж пиннинга снапшотов)"
     type: command_succeeds
@@ -400,6 +509,9 @@ constraints:
     scope: case
     kind: behavioural
     evidence: "evidence/a4-skeleton-run-manifest.json"
+    owner: "архитектор"
+    expiry: "2027-01-31"
+    effort_hours: 2.0
   - id: C-039
     name: "AD-2: LLM-судья, LLM-клиенты и внешние API вне контура награды RL (import-замыкание пути награды)"
     type: command_succeeds
@@ -409,6 +521,9 @@ constraints:
     scope: case
     kind: behavioural
     evidence: "tools/check_reward_isolation.py → контур = import-замыкание от корней REWARD_PATH_ROOTS (env/reward.py, env/verifier.py, env/run.py) транзитивно (включая helpers вне env/); отсутствие импортов/вызовов судейских модулей, LLM-клиентов и внешних API в замыкании; приборы env/ (eval_*, calibrate, main) и clients/ — вне контура (амендмент ADR-033 06.10, E-5.1 84533d4: замыкание 1401→5 файлов)"
+    owner: "архитектор"
+    expiry: "2027-01-31"
+    effort_hours: 2.0
   - id: C-040
     name: "Ресурсный инвариант GB10: одна модельная нагрузка за раз (AD-7, поведенческий страж)"
     type: command_succeeds
@@ -419,6 +534,9 @@ constraints:
     scope: case
     kind: behavioural
     evidence: "tools/check_gb10_single_load.py → nvidia-smi (compute-процессы с памятью >= 1 ГиБ) + реестр локов ~/gb10-shared/.locks; три исхода OK/FAIL/НЕ ПРОВЕРЕНО"
+    owner: "архитектор"
+    expiry: "2027-01-31"
+    effort_hours: 2.0
   - id: C-046
     name: "Performance-roofline гейт: KPI-объявленный прогон не деградирует ниже пина (самоулучшение по rubric axiom_fitness_blind_spot_assessment 4.88/5 — слепое пятно «MFU<1% прошло все 45 правил»)"
     type: command_succeeds
@@ -428,6 +546,9 @@ constraints:
     scope: case
     kind: behavioural
     evidence: "tools/check_performance_roofline.py → медиана tok_s последнего окна (>=10 записей) против порога пина evidence/kpi-pins.json (baseline 86, приёмка >=800 — ADR-032); порог — данные пина, правило-вызов без дублирования числа; семантика: ок/neutral (прогон не выполнялся или не пиннут)/fail-closed (прогон начат, данных нет или скорость ниже пина); evidence/kpi-pins.json защищён от правок (опустошение пина = обход стража)"
+    owner: "архитектор"
+    expiry: "2027-01-31"
+    effort_hours: 2.0
   - id: C-041
     name: "AD-8: смета прогона существует до запуска и не превышает лимит (behavioural-страж лимита стоимости)"
     type: command_succeeds
@@ -437,6 +558,9 @@ constraints:
     scope: case
     kind: behavioural
     evidence: "evidence/budget/ + tools/check_budget_gate.py"
+    owner: "архитектор"
+    expiry: "2027-01-31"
+    effort_hours: 2.0
 
   - id: C-042
     name: "ADR-010+ADR-013: бэкенд, политика точности матмулов и режим детерминизма операций запиннены в приёмочных тестах сети — страж проверяет runtime-конфигурацию JAX, а не строку в conftest"
@@ -450,6 +574,8 @@ constraints:
     evidence: "tools/check_precision_pinning.py + net/tests/conftest.py: применяет пиннинг и читает обратно jax_default_matmul_precision, jax.devices() и фактическое наличие --xla_gpu_deterministic_ops в XLA_FLAGS процесса; PASS только при политике highest, CUDA-устройстве и флаге детерминизма в гейтовом профиле (ADR-013: без флага A5-манифест не воспроизводится побитово)"
     adr: ADR-010, ADR-013
     owner: архитектор
+    expiry: "2027-01-31"
+    effort_hours: 2.0
 
   - id: C-043
     name: "AD-12: страж чистоты eval-набора существует и рабоч — selftest с мутантами (красный на пересечении, зелёный на чистой синтетике); без leak_check вердикт по набору не выносится"
@@ -462,6 +588,8 @@ constraints:
     evidence: "tools/check_eval_leak.py → selftest: подстрока-пересечение и 12-граммовое окно на синтетических корпусах дают FAIL, чистая пара — PASS; нечитаемый вход — FAIL (fail-closed). Поведенческий прогон на реальных eval-наборах — при их сборке (PENDING-EVIDENCE в AD-12)"
     adr: ADR-023
     owner: архитектор
+    expiry: "2027-01-31"
+    effort_hours: 2.0
 
   - id: C-044
     name: "SFT-STAGE §8.1: структурный аудитор SFT-набора существует и рабоч — selftest с мутантами на три класса дефектов; ход, обрезанный бюджетом пробы, дефектом не считается"
@@ -474,6 +602,8 @@ constraints:
     evidence: "tools/check_sft_structure.py → selftest: набор с незакрытым <think> / <tool_call> внутри <think> / без ответа даёт FAIL по каждому классу отдельно; think, обрезанный бюджетом пробы (не естественно завершённый ход), НЕ считается незакрытым (мутант на пере-подсчёт); цитата тега в прозе дефектом не считается; --normalize: исходник байт-в-байт не меняется, выход — новый файл, журнал обратим (правки old→new в координатах до правки, откат в обратном порядке), неизменённые записи байт-в-байт"
     adr: ADR-023
     owner: архитектор
+    expiry: "2027-01-31"
+    effort_hours: 2.0
 
   - id: C-045
     name: "RL-STAGE §8.1: страж вырождения награды RL существует и рабоч — selftest с мутантами (стоп-классы красные на вырожденном ряде, зелёные на здоровом; warn ≠ стоп)"
@@ -486,6 +616,8 @@ constraints:
     evidence: "tools/check_rl_health.py → selftest на синтетических рядах метрик: pass_rate=0 ∧ reward_mean≤0.05 → стоп; zero_reward_share≥90 % → стоп; no_group_variance (adv_nonzero_share=0 на окне) → стоп; энтропия <0.5 два шага подряд → стоп; здоровый ряд → OK; template_collapse (повтор 4-граммы ≥8) и clip_frac≥0.2 → warn (не стоп); нечитаемый вход/строка без обязательного поля — fail-closed (exit 2)"
     adr: ADR-023
     owner: архитектор
+    expiry: "2027-01-31"
+    effort_hours: 2.0
 
 
   - id: C-047
@@ -499,6 +631,8 @@ constraints:
     evidence: "tools/check_adr_config_consistency.py: карта 1 — ADR-009↔net/config.json (8 соответствий), карта 2 — ADR-032↔evidence/kpi-pins.json (2 соответствия, list-путь pins.0.x); selftest 5/5; паттерн не найден в ADR → adr-unverifiable (fail-closed); план ENVIRONMENT-V1 §9"
     adr: ADR-032
     owner: архитектор
+    expiry: "2026-12-31"
+    effort_hours: 2.0
 
   - id: C-048
     name: "Страж эффективности с блокировкой аренды: смета аренды GPU не одобрена, пока KPI ток/с не добит до пинового порога (ADR-032/034 §5, пин blocks_rental); selftest с мутантами; fail-closed (нет метрик = unmet = блокировка действует; файл сметы без статуса = нарушение)"
@@ -511,6 +645,8 @@ constraints:
     evidence: "tools/check_rental_block.py (канон C-048; дубль rental-budget-gate выведен архитектором 07.10 — вторая реализация того же инварианта): медиана tok_s последнего окна ≥20 шагов vs threshold пина (вычисление — носитель roofline-стража); rental_budget_paths пина сканируются: approved/unknown при unmet = нарушение, draft = оценка для планирования допустима; selftest 6/6"
     adr: ADR-034
     owner: архитектор
+    expiry: "2027-01-31"
+    effort_hours: 2.0
 
   - id: C-049
     name: "ADR и конфиг согласованы: config-привязки реестра утверждений совпадают с net/config.json; реестры claims/sensors/incidents валидны (ADR-037)"
@@ -524,6 +660,8 @@ constraints:
     evidence: "tools/check_claims.py → selftest: дрейф anchor, факт с чужим пином, просроченный факт, предикат против unverified-факта, дубль id дают корректные классы; --mode config-bindings сверяет каждую пару {binding.path: value} с net/config.json и валит C-049 при расхождении (атом drift_config_value, env/corruption.py). Правило исполняется В воркспейсе без сети и GPU (model/ + tools/ попадают в снапшот), поэтому не инфраструктурное (infra: false): сообщение называет CL-id, файл и ключ, но не ожидаемое значение (урок DEF-1)"
     adr: ADR-037
     owner: архитектор
+    expiry: "2027-01-31"
+    effort_hours: 2.0
 
   - id: C-050
     name: "Утверждения ADR не опровергнуты фактами датчиков: ни одного fail в check_claims --evaluate (unverified не валит гейт, но не открывает расход — ADR-037)"
@@ -536,6 +674,8 @@ constraints:
     evidence: "tools/check_claims.py --evaluate --fail-on fail → exit 0, когда ни одно утверждение не опровергнуто фактами; подтверждённый контрапример (fail) даёт exit 1. Классы pass | fail | unverified: нет факта / просрочен / предмет не совпал / факт unverified — только unverified, не pass (ADR-037). Факты живут в evidence/, которого нет в песочнице, поэтому правило инфраструктурное (EXCLUDED_INFRA_RULES)"
     adr: ADR-037
     owner: архитектор
+    expiry: "2027-01-31"
+    effort_hours: 2.0
 
   - id: C-051
     name: "Реестры поведенческого слоя согласованы: наследование прозаических правил, ставки, решения триажа, открывающие гейты, уровни и пары прокси, окна и допуски (ADR-038)"
@@ -548,6 +688,8 @@ constraints:
     evidence: "tools/check_claims.py --verify-layer → покрытие model/rule-lineage.yaml по всем 30 documentary-правилам (successor существует и не documentary; none/pending с причиной), stake money|irreversible|public с датчиком или pending, решения model/claims-triage.yaml по кандидатам --scan-adr, состав model/opening-gates.yaml (fail-open страж только с require_verified), уровень end_to_end у утверждений гейтов и высоких правил (кроме config_binding), наличие e2e_pair у компонентных ускорений/сжатия, окна/tolerance/tolerance_source у рядовых предикатов. Правило проверяет согласованность реестров, а не поведение системы; реестры гейтов, сырья и истории не нужны в песочнице RL, а атомы порчи их не касаются, поэтому правило инфраструктурное (EXCLUDED_INFRA_RULES)"
     adr: ADR-038
     owner: архитектор
+    expiry: "2027-01-31"
+    effort_hours: 2.0
 
   - id: C-052
     name: "Проверки проверены: утверждения через шаблоны каталога валидны, гейтовые утверждения убивают все неэквивалентные мутанты, стражи сопоставлены шаблонам, генераторы не в пути вердикта (ADR-039)"
@@ -560,6 +702,8 @@ constraints:
     evidence: "tools/check_claims.py --verify-properties → params каждого утверждения с property проходят param_schema шаблона (tools/properties/**), уровни фактов допустимы для шаблона, мета-правило M4 (утверждение из requires гейта или правила severity>=high обязано иметь mutation_score=1.0 — tools/properties/mutate.py), каждое behavioural/structural правило сопоставлено в model/rule-properties.yaml (full|wrapped|not_applicable с reason), реестр model/candidates.yaml валиден (rejected/deferred с reason, accepted с ref на CL), тест графа импортов G5 (proposer вне пути вердикта, по образцу C-039). Реестры кандидатов, мутаций и матрицы возбуждений не нужны в песочнице RL, поэтому правило инфраструктурное (EXCLUDED_INFRA_RULES)"
     adr: ADR-039
     owner: архитектор
+    expiry: "2027-01-31"
+    effort_hours: 2.0
 
   - id: C-053
     name: "ADR-041: у каждого JAX-инструмента tools/ префлайт памяти вызывается явно — маркер ensure_mem_fraction() обязателен в каждом файле списка (XLA_PYTHON_CLIENT_MEM_FRACTION до import jax)"
@@ -584,3 +728,5 @@ constraints:
     evidence: "tools/jax_preflight.py → ensure_mem_fraction() (лимит памяти ДО import jax) + preflight_gate() (fail-closed при чужих compute-процессах). Правило ловит пропажу вызова в любом JAX-инструменте списка. Инцидент 08.10: префлайт не был вызван нигде, JAX взял дефолтный резерв ~75% и стенд GB10 ушёл в global OOM"
     adr: ADR-041
     owner: архитектор
+    expiry: "2027-01-31"
+    effort_hours: 0.5

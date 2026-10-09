@@ -2011,6 +2011,22 @@ def mfu(flops: float, *, seconds: float, peak_tflops: float | None) -> float | N
 #   ``memory_analysis``): она отделяет «упор в память» от «упор в арифметику» и
 #   не входит в арифметику шага.  Меряется один раз на прогреве (компиляция), не
 #   на каждом профильном шаге.
+# * **Декомпозиция CE (attribution).**  CE-голова держит ~31 % шага l3-full и не
+#   реагирует ни на dtype, ни на ``ce_chunk_tokens``, поэтому нога ``sec_ce``
+#   разложена дальше: NTP — на проекцию в словарь (``sec_ce_logits``, тот же
+#   ``compute_dtype.gemm`` по той же нарезке чанков, но чанк сводится ``jnp.sum``,
+#   без softmax) и приведение к loss (``sec_ce_softmax``, разностная нога —
+#   ``sec_ce_ntp − sec_ce_logits``), MTP — целиком (``sec_ce_mtp``).  Обратные
+#   под-ноги (``CE_BWD_LEG_FIELDS``) — тот же граф под ``jax.grad``.  Сумма
+#   ног-партиции (``CE_PARTITION_LEGS``: ntp + mtp) сверяется с ``sec_ce``
+#   (``CE_RECONCILIATION_FIELD``, находка ``ce_legs_diverge``); внутреннее
+#   расщепление NTP в сумму не входит — иначе NTP считался бы дважды.
+# * **Dtype стадий (``PHASE_DTYPE_FIELD``).**  Для каждой CE-ноги подаётся dtype
+#   операнда GEMM, logits, softmax и loss — абстрактным проходом
+#   (``ce_leg_dtypes``, ``jax.eval_shape``: ни исполнения, ни памяти) один раз на
+#   прогреве.  Это прямой ответ на «почему bf16 не помог»: гейт кастует операнд,
+#   а logits возвращает в fp32 (аккумулятор), поэтому обратный проход CE от смены
+#   dtype не меняется — свойство графа, а не шум замера.
 #
 # Фаза, которую собрать или исполнить не удалось, записывается ``null``:
 # неизмеренное не выдаётся за измеренное (ADR-011).
@@ -2021,10 +2037,18 @@ PHASE_PROFILE_FIELDS = (
     "sec_mla",
     "sec_moe",
     "sec_ce",
+    "sec_ce_ntp",
+    "sec_ce_logits",
+    "sec_ce_softmax",
+    "sec_ce_mtp",
     "sec_bwd_kda",
     "sec_bwd_mla",
     "sec_bwd_moe",
     "sec_bwd_ce",
+    "sec_bwd_ce_ntp",
+    "sec_bwd_ce_logits",
+    "sec_bwd_ce_softmax",
+    "sec_bwd_ce_mtp",
     "sec_bwd_other",
     "sec_backopt",
     "sec_forward",
@@ -2060,6 +2084,70 @@ BWD_LEG_FIELDS = (
     "sec_bwd_moe",
     "sec_bwd_ce",
     "sec_bwd_other",
+)
+
+#: Ноги CE-декомпозиции (диагностика): CE-голова держит ~31 % шага l3-full и НЕ
+#: реагирует ни на dtype, ни на ``ce_chunk_tokens`` (fp32 ``sec_bwd_ce`` 3.850 с
+#: против bf16 3.887 с; 1024→4096 дал −3 %), то есть её узкое место не в
+#: арифметике матмулов.  NTP-голова разложена на проекцию в словарь
+#: (``sec_ce_logits`` — тот же ``compute_dtype.gemm`` по той же нарезке чанков,
+#: но каждый чанк сводится ``jnp.sum``, без softmax) и приведение к loss
+#: (``sec_ce_softmax``); MTP-голова выделена целиком (``sec_ce_mtp``).  Нога
+#: ``sec_ce_ntp`` — носитель: полная NTP-голова, из которой разность
+#: ``sec_ce_ntp − sec_ce_logits`` и даёт ``sec_ce_softmax`` (та же конвенция
+#: разностной ноги, что у ``sec_backward``).
+CE_FWD_LEG_FIELDS = (
+    "sec_ce_ntp",
+    "sec_ce_logits",
+    "sec_ce_softmax",
+    "sec_ce_mtp",
+)
+
+#: Обратные двойники ног CE-декомпозиции (диагностика): отдельные
+#: ``jax.grad``-проходы по скалярному отклику того же подмножества.  ``sec_bwd_ce``
+#: остаётся полной обратной ногой (и входит в ``BWD_LEG_FIELDS``): под-ноги CE в
+#: сумму backward-ног НЕ входят — иначе CE считался бы дважды.
+CE_BWD_LEG_FIELDS = (
+    "sec_bwd_ce_ntp",
+    "sec_bwd_ce_logits",
+    "sec_bwd_ce_softmax",
+    "sec_bwd_ce_mtp",
+)
+
+#: Все ноги CE-декомпозиции (forward + backward).
+CE_LEG_FIELDS = CE_FWD_LEG_FIELDS + CE_BWD_LEG_FIELDS
+
+#: Ноги-партиция CE-фазы: их сумма сверяется с ``sec_ce``.  ``sec_ce_logits`` и
+#: ``sec_ce_softmax`` — внутреннее РАСЩЕПЛЕНИЕ ``sec_ce_ntp`` (по построению
+#: logits + softmax = ntp), поэтому в сумму не входят: иначе NTP считался бы
+#: дважды.  Расщепление подаётся рядом и названо в пометке.
+CE_PARTITION_LEGS = ("sec_ce_ntp", "sec_ce_mtp")
+
+#: Внутреннее расщепление NTP-головы (в сумму CE-ног не входит, см. выше).
+CE_INTERNAL_SPLIT_LEGS = ("sec_ce_logits", "sec_ce_softmax")
+
+#: Поле-носитель dtype стадий CE-ног (``ce_leg_dtypes``): ключ — имя ноги CE,
+#: значение — отображение «стадия → dtype» (``logits``/``softmax``/``loss`` и
+#: т.п.).  Отвечает на вопрос «почему bf16 не помог» кодом, а не прозой: гейт
+#: кастует ОПЕРАНД GEMM, а logits возвращает в fp32 (аккумулятор), поэтому
+#: неизменность обратного прохода CE от bf16 — свойство графа, а не шум замера.
+PHASE_DTYPE_FIELD = "phase_dtype"
+
+#: Поле-носитель сверки суммы CE-ног с ``sec_ce`` (партиция).
+CE_RECONCILIATION_FIELD = "ce_reconciliation"
+
+#: Допуск сверки CE-ног: ноги — раздельные jit-графы, полная нога — их сумма в
+#: одном графе, поэтому расхождение ожидаемо — но обязано быть видно (ADR-011).
+CE_RECONCILIATION_TOLERANCE = 0.20
+
+#: Находка: сумма CE-ног ушла от полного ``sec_ce`` дальше допуска.
+FINDING_CE_LEGS_DIVERGE = "ce_legs_diverge"
+
+#: Пометка к сверке CE-ног: сумма — только партиция, расщепление — рядом.
+CE_RECONCILIATION_NOTE = (
+    "партиция CE: sec_ce_ntp + sec_ce_mtp = sec_ce; sec_ce_logits и "
+    "sec_ce_softmax — внутреннее расщепление NTP (logits + softmax = ntp), "
+    "в сумму не входят: иначе NTP считался бы дважды"
 )
 
 #: Поле-носитель пиковой XLA-памяти скомпилированных исполнителей ног (байт).
@@ -2177,6 +2265,80 @@ def reconcile_backward_legs(
     result["finding"] = (
         FINDING_BACKWARD_LEGS_DIVERGE
         if abs(pct - 100.0) > BWD_RECONCILIATION_TOLERANCE * 100.0
+        else None
+    )
+    return result
+
+
+def derive_leg_difference(full: Any, part: Any) -> float | None:
+    """Разностная нога ``full − part`` (не меньше нуля); неизвестное — ``None``.
+
+    Та же конвенция, что у ``sec_backward`` (разность «fwd+bwd минус forward»):
+    часть, которую нельзя исполнить отдельно, читается вычитанием.  Так читается
+    ``sec_ce_softmax`` = ``sec_ce_ntp − sec_ce_logits``: softmax живёт на logits
+    и собственного прохода без проекции не имеет.  Отрицательная разность — шум
+    host-таймера, а не измерение, поэтому зажимается в ``0.0``; ``bool`` — не
+    измерение (как и в сверках); любое неизвестное даёт ``None``, а не ноль
+    (ADR-011: неизмеренное не выдаётся за нулевое).
+    """
+    if not isinstance(full, (int, float)) or isinstance(full, bool):
+        return None
+    if not isinstance(part, (int, float)) or isinstance(part, bool):
+        return None
+    return max(0.0, float(full) - float(part))
+
+
+def reconcile_ce_legs(sec_ce: float | None, legs: Mapping[str, Any]) -> dict[str, Any]:
+    """Сверка суммы ног-партиции CE с полным ``sec_ce``.
+
+    Суммируются только ``CE_PARTITION_LEGS`` (``sec_ce_ntp`` + ``sec_ce_mtp``),
+    присутствующие числом: отсутствующая нога честно снижает сумму и может
+    поднять находку, а не подставляется нулём.  Ноги ``CE_INTERNAL_SPLIT_LEGS``
+    (``sec_ce_logits``/``sec_ce_softmax``) — внутреннее расщепление NTP, их сумма
+    равна ``sec_ce_ntp``, поэтому в сумму они не входят (иначе NTP считался бы
+    дважды); их имена уезжают в запись (``internal_split_legs``), а не
+    растворяются.
+
+    ``pct`` — сумма партиции к полному ``sec_ce`` в процентах; ``finding`` —
+    ``ce_legs_diverge`` при уходе от 100 % дальше ``CE_RECONCILIATION_TOLERANCE``;
+    ``note`` — пометка о том, что сумма есть партиция, а расщепление — рядом.
+
+    Полный CE неизвестен/неположителен — сверка не определена: ``pct`` и
+    ``finding`` ``None``, сумма партиции (если есть) и пометка остаются.
+    Ни одной ноги-партиции не измерено — суммы тоже нет.
+    """
+    measured = {
+        name: float(legs[name])
+        for name in CE_PARTITION_LEGS
+        if isinstance(legs.get(name), (int, float))
+        and not isinstance(legs.get(name), bool)
+    }
+    result: dict[str, Any] = {
+        "legs_sum": math.fsum(measured.values()) if measured else None,
+        "full_ce": None,
+        "pct": None,
+        "tolerance": CE_RECONCILIATION_TOLERANCE,
+        "partition_legs": list(CE_PARTITION_LEGS),
+        "internal_split_legs": list(CE_INTERNAL_SPLIT_LEGS),
+        "finding": None,
+        "note": CE_RECONCILIATION_NOTE,
+    }
+    if not measured:
+        return result
+    if (
+        not isinstance(sec_ce, (int, float))
+        or isinstance(sec_ce, bool)
+        or sec_ce <= 0
+    ):
+        return result
+    total = result["legs_sum"]
+    full = float(sec_ce)
+    pct = 100.0 * total / full
+    result["full_ce"] = full
+    result["pct"] = pct
+    result["finding"] = (
+        FINDING_CE_LEGS_DIVERGE
+        if abs(pct - 100.0) > CE_RECONCILIATION_TOLERANCE * 100.0
         else None
     )
     return result
@@ -2334,22 +2496,229 @@ def _phase_moe_stack(params, cfg, input_ids):
     return h
 
 
-def _phase_ce_head(params, cfg, hidden, input_ids, chunk_size, ce_tokens):
-    """CE-фаза: головы NTP (chunked или наивная) + MTP — та же формула, что в loss."""
+def _ce_ntp_head(params, cfg, hidden, input_ids, ce_tokens):
+    """NTP-голова CE — ровно та ветка, что была в ``_phase_ce_head``.
+
+    Наивная ветка повторяет ``_phase_ce_head`` (проекция ``hidden[:, :-1] @
+    embedding.T``), а не ``compute_loss`` (там тот же смысл идёт через
+    ``compute_dtype.gemm``): нога обязана мерить тот граф, который профилируется,
+    а не «похожий».
+    """
     from net import model as model_mod
 
     if ce_tokens > 0:
-        ntp = model_mod._chunked_cross_entropy(
+        return model_mod._chunked_cross_entropy(
             hidden[:, :-1], input_ids[:, 1:], params.embedding, ce_tokens
         )
-    else:
-        ntp = model_mod._cross_entropy(
-            hidden[:, :-1] @ params.embedding.T, input_ids[:, 1:]
-        )
-    aux = model_mod.mtp_loss(
+    return model_mod._cross_entropy(
+        hidden[:, :-1] @ params.embedding.T, input_ids[:, 1:]
+    )
+
+
+def _ce_mtp_head(params, cfg, hidden, input_ids, chunk_size, ce_tokens):
+    """MTP-голова CE (вспомогательный лосс) — отдельной ногой от NTP."""
+    from net import model as model_mod
+
+    return model_mod.mtp_loss(
         params, cfg, hidden, input_ids, chunk_size, ce_chunk_tokens=ce_tokens
     )
-    return ntp + aux
+
+
+def _ce_logits_only(params, cfg, hidden, input_ids, ce_tokens):
+    """Проекция NTP-головы в словарь: logits, сведённые к скаляру (без softmax).
+
+    Chunked-путь повторяет нарезку ``model._chunked_cross_entropy`` (тот же
+    ``compute_dtype.gemm``, та же ширина чанка) и ту же обёртку ``jax.checkpoint``
+    вокруг чанка — но каждый чанк сводится ``jnp.sum``: softmax, gather и
+    глобальное усреднение в ногу не входят, остаётся проекция и её трафик.
+    Наивный путь — та же проекция ``hidden[:, :-1] @ embedding.T``, что и в
+    ``_ce_ntp_head``.
+
+    ``cfg`` и ``input_ids`` не участвуют (проекция не знает ни конфига, ни
+    целей) — параметры оставлены, чтобы подпись совпадала с остальными ногами CE
+    и вызов был один на все ноги.
+    """
+    import jax
+    import jax.numpy as jnp
+
+    from net import compute_dtype
+
+    features = hidden[:, :-1]
+    embedding = params.embedding
+    if ce_tokens <= 0:
+        return jnp.sum(features @ embedding.T)
+
+    def chunk_logits(chunk):
+        return compute_dtype.gemm(chunk, embedding.T)
+
+    total_rows = features.shape[1]
+    n_chunks = -(-total_rows // ce_tokens)  # ceil, как в _chunked_cross_entropy
+    total = jnp.zeros(())
+    for chunk_index in range(n_chunks):
+        start = chunk_index * ce_tokens
+        end = min(start + ce_tokens, total_rows)
+        total = total + jnp.sum(jax.checkpoint(chunk_logits)(features[:, start:end]))
+    return total
+
+
+def _phase_ce_head(params, cfg, hidden, input_ids, chunk_size, ce_tokens):
+    """CE-фаза: головы NTP (chunked или наивная) + MTP — та же формула, что в loss.
+
+    Результат тот же, что до декомпозиции: сумма тех же двух слагаемых в том же
+    порядке (побитовое равенство сторожит ``test_phase_ce_decomposition``).
+    """
+    return _ce_ntp_head(params, cfg, hidden, input_ids, ce_tokens) + _ce_mtp_head(
+        params, cfg, hidden, input_ids, chunk_size, ce_tokens
+    )
+
+
+def ce_leg_dtypes(
+    cfg,
+    *,
+    params,
+    hidden,
+    input_ids,
+    ce_tokens: int,
+    chunk_size: int,
+) -> dict[str, dict[str, str | None] | None]:
+    """dtype стадий каждой CE-ноги — абстрактный проход, без исполнения и памяти.
+
+    Отвечает на вопрос «почему bf16 не помог» кодом, а не прозой: показывает, в
+    каком dtype считаются ОПЕРАНД GEMM, logits, softmax и loss каждой ноги.
+    Ничего не исполняет и не выделяет память устройства — трассирует **те же**
+    операции (``compute_dtype.gemm``, ``jax.nn.log_softmax``, ``model._cross_entropy``)
+    на абстрактных массивах тех же форм/dtype через ``jax.eval_shape``; поэтому
+    проба безопасна и на ``l3-full``, где eager-проход logits не помещается в
+    память.  Читается один раз на прогреве профиля, а не на каждом шаге.
+
+    Ключи — ноги ``CE_LEG_FIELDS`` плюс полная ``sec_ce``; значение — отображение
+    «стадия → dtype» (``str``) либо ``None``, если ногу не удалось трассировать
+    (честный ``None``, ADR-011).  Обратные ноги дифференцируют тот же граф,
+    поэтому несут отчёт стадий своего прямого двойника: ``jax.grad`` по
+    float-листьям считает в том же dtype, и отдельная проба grad'а мерила бы то
+    же самое (заведена не была — это было бы дублирование, а не факт).
+
+    Проба повторяет путь ноги: наивный — проекцию ``f @ e.T``, chunked — гейт
+    ``compute_dtype.gemm`` на чанке ширины ``ce_chunk_tokens``.
+    """
+    import jax
+    import jax.numpy as jnp
+
+    from net import compute_dtype
+    from net import model as model_mod
+    from net import mtp as mtp_mod
+
+    def spec(array) -> "jax.ShapeDtypeStruct":
+        return jax.ShapeDtypeStruct(array.shape, array.dtype)
+
+    def spec_tree(tree):
+        return jax.tree_util.tree_map(spec, tree)
+
+    def name(array_or_spec) -> str:
+        return str(jnp.dtype(array_or_spec.dtype))
+
+    def traced(fn, *specs):
+        """dtype результата ``fn`` на абстрактных спеках; сбой — ``None``."""
+        try:
+            return name(jax.eval_shape(fn, *specs))
+        except Exception:
+            return None
+
+    batch, seq, hidden_dim = hidden.shape
+    embedding_spec = spec(params.embedding)
+    ntp_rows = max(seq - 1, 0)
+    chunk = ntp_rows if ce_tokens <= 0 else min(ce_tokens, ntp_rows)
+    features_spec = jax.ShapeDtypeStruct((batch, chunk, hidden_dim), hidden.dtype)
+    ntp_targets_spec = jax.ShapeDtypeStruct((batch, chunk), input_ids.dtype)
+
+    def project(features, embedding):
+        # Тот же выбор, что у ног: chunked идёт через гейт, наивный — через «@».
+        if ce_tokens > 0:
+            return compute_dtype.gemm(features, embedding.T)
+        return features @ embedding.T
+
+    dtypes: dict[str, dict[str, str | None] | None] = {}
+    try:
+        logits_spec = jax.eval_shape(project, features_spec, embedding_spec)
+        dtypes["sec_ce_logits"] = {
+            "operand": traced(lambda f: compute_dtype.cast_in(f), features_spec),
+            "logits": name(logits_spec),
+            "reduce": traced(lambda logits: jnp.sum(logits), logits_spec),
+        }
+        dtypes["sec_ce_ntp"] = {
+            "logits": name(logits_spec),
+            "softmax": traced(lambda logits: jax.nn.log_softmax(logits, axis=-1), logits_spec),
+            "loss": traced(
+                lambda logits, targets: model_mod._cross_entropy(logits, targets),
+                logits_spec,
+                ntp_targets_spec,
+            ),
+        }
+    except Exception:
+        dtypes["sec_ce_logits"] = None
+        dtypes["sec_ce_ntp"] = None
+    ntp_record = dtypes.get("sec_ce_ntp")
+    dtypes["sec_ce_softmax"] = (
+        None if ntp_record is None else {k: ntp_record.get(k) for k in ("softmax", "loss")}
+    )
+
+    mtp_rows = max(seq - 2, 0)
+    mtp_hidden_spec = jax.ShapeDtypeStruct((batch, mtp_rows, hidden_dim), hidden.dtype)
+    next_emb_spec = jax.ShapeDtypeStruct(
+        (batch, mtp_rows, embedding_spec.shape[-1]), embedding_spec.dtype
+    )
+    mtp_targets_spec = jax.ShapeDtypeStruct((batch, mtp_rows), input_ids.dtype)
+    try:
+        mtp_params_spec = spec_tree(params.mtp)
+        fused = traced(
+            lambda p, h, next_emb: compute_dtype.gemm(
+                jnp.concatenate([h, next_emb], axis=-1), p.W_f
+            ),
+            mtp_params_spec,
+            mtp_hidden_spec,
+            next_emb_spec,
+        )
+        mtp_out_spec = jax.eval_shape(
+            lambda p, h, next_emb: mtp_mod.apply(p, cfg, h, next_emb, chunk_size),
+            mtp_params_spec,
+            mtp_hidden_spec,
+            next_emb_spec,
+        )
+        mtp_logits_spec = jax.eval_shape(
+            lambda features, embedding: compute_dtype.gemm(features, embedding.T),
+            mtp_out_spec,
+            embedding_spec,
+        )
+        dtypes["sec_ce_mtp"] = {
+            "next_emb": name(next_emb_spec),
+            "fused": fused,
+            "hidden": name(mtp_out_spec),
+            "logits": name(mtp_logits_spec),
+            "softmax": traced(
+                lambda logits: jax.nn.log_softmax(logits, axis=-1), mtp_logits_spec
+            ),
+            "loss": traced(
+                lambda logits, targets: model_mod._cross_entropy(logits, targets),
+                mtp_logits_spec,
+                mtp_targets_spec,
+            ),
+        }
+    except Exception:
+        dtypes["sec_ce_mtp"] = None
+
+    ntp_logits = dtypes.get("sec_ce_ntp") or {}
+    mtp_record = dtypes.get("sec_ce_mtp") or {}
+    dtypes["sec_ce"] = {
+        "ntp_logits": ntp_logits.get("logits"),
+        "ntp_softmax": ntp_logits.get("softmax"),
+        "mtp_logits": mtp_record.get("logits"),
+        "mtp_softmax": mtp_record.get("softmax"),
+    }
+    # Обратные двойники: тот же граф под grad — тот же отчёт стадий.
+    for forward_leg, backward_leg in zip(CE_FWD_LEG_FIELDS, CE_BWD_LEG_FIELDS):
+        dtypes[backward_leg] = dtypes.get(forward_leg)
+    dtypes["sec_bwd_ce"] = dtypes.get("sec_ce")
+    return dtypes
 
 
 def _phase_other_stack(params, cfg, input_ids):
@@ -2387,6 +2756,14 @@ class _PhaseProfiler:
     лоссу головы NTP+MTP): grad по подмножеству не равен «доле» полного backward
     (общие активации), поэтому их сумма идёт ориентиром (``bwd_reconciliation``),
     а не партицией.
+
+    Ноги CE (``CE_LEG_FIELDS``) — дальнейшее разложение головы: NTP на проекцию
+    (``sec_ce_logits``) и приведение к loss (``sec_ce_softmax``, разностная нога),
+    MTP отдельно (``sec_ce_mtp``), плюс обратные двойники.  Рядом с ними уезжают
+    dtype стадий (``PHASE_DTYPE_FIELD``, абстрактный проход ``ce_leg_dtypes``) и
+    сверка суммы ног-партиции с ``sec_ce`` (``CE_RECONCILIATION_FIELD``).  Математика
+    CE эта декомпозиция не трогает: ``_phase_ce_head`` — та же сумма тех же
+    слагаемых (побитово).
     """
 
     def __init__(self, cfg, train_config, *, grad_fn, forward_fn):
@@ -2399,6 +2776,11 @@ class _PhaseProfiler:
         # Реальные графы шага — только для ног сверки (forward/backward).
         self._grad_fn = grad_fn
         self._forward_fn = forward_fn
+        # Статические константы графа ног CE и dtype-пробы: конфиг модели — не
+        # данные шага, поэтому захвачен замыканием, а не передан аргументом jit.
+        self._cfg = cfg
+        self._chunk_size = chunk_size
+        self._ce_tokens = ce_tokens
         # ``cfg`` захвачен замыканием (статическая константа графа), а не передан
         # аргументом jit: конфиг модели — не данные шага.
         self._fns = {
@@ -2407,6 +2789,18 @@ class _PhaseProfiler:
             "moe": jax.jit(lambda p, ids: _phase_moe_stack(p, cfg, ids)),
             "ce": jax.jit(
                 lambda p, hidden, ids: _phase_ce_head(
+                    p, cfg, hidden, ids, chunk_size, ce_tokens
+                )
+            ),
+            # Ноги CE-декомпозиции: тот же ``hidden``, что у ``sec_ce``.
+            "ce_ntp": jax.jit(
+                lambda p, hidden, ids: _ce_ntp_head(p, cfg, hidden, ids, ce_tokens)
+            ),
+            "ce_logits": jax.jit(
+                lambda p, hidden, ids: _ce_logits_only(p, cfg, hidden, ids, ce_tokens)
+            ),
+            "ce_mtp": jax.jit(
+                lambda p, hidden, ids: _ce_mtp_head(
                     p, cfg, hidden, ids, chunk_size, ce_tokens
                 )
             ),
@@ -2434,6 +2828,29 @@ class _PhaseProfiler:
                     argnums=0,
                 )
             ),
+            # Под-ноги CE: тот же граф, что у прямых двойников, под grad.
+            "bwd_ce_ntp": jax.jit(
+                jax.grad(
+                    lambda p, hidden, ids: _ce_ntp_head(p, cfg, hidden, ids, ce_tokens),
+                    argnums=0,
+                )
+            ),
+            "bwd_ce_logits": jax.jit(
+                jax.grad(
+                    lambda p, hidden, ids: _ce_logits_only(
+                        p, cfg, hidden, ids, ce_tokens
+                    ),
+                    argnums=0,
+                )
+            ),
+            "bwd_ce_mtp": jax.jit(
+                jax.grad(
+                    lambda p, hidden, ids: _ce_mtp_head(
+                        p, cfg, hidden, ids, chunk_size, ce_tokens
+                    ),
+                    argnums=0,
+                )
+            ),
             "bwd_other": jax.jit(
                 jax.grad(lambda p, ids: jnp.sum(_phase_other_stack(p, cfg, ids)))
             ),
@@ -2445,6 +2862,11 @@ class _PhaseProfiler:
         self._memory: dict[str, Any] = {
             name: None for name in PHASE_PROFILE_FIELDS
         }
+        #: dtype стадий CE-ног (``PHASE_DTYPE_FIELD``): заполняется на прогреве
+        #: абстрактным проходом ``ce_leg_dtypes`` (без исполнения и памяти),
+        #: читается справкой на каждом профильном шаге.  Пустой словарь — проба ещё
+        #: не снята; ``None`` на ногу — нога не трассируется (ADR-011).
+        self._dtypes: dict[str, Any] = {}
 
     def measure(
         self,
@@ -2464,10 +2886,12 @@ class _PhaseProfiler:
         Возвращает запись со всеми полями ``PHASE_PROFILE_FIELDS`` плюс
         ``reconciliation_pct``/``sec_other``/``finding`` (сверка
         ``reconcile_phases``), карту пиковой памяти ног (``PHASE_MEMORY_FIELD``,
-        снятую на прогреве) и сверку backward-ног (``BWD_RECONCILIATION_FIELD``,
-        ориентир с пометкой).  ``loader_seconds`` — справка вне шага: лоадер
-        меряется до ``tick`` и в ``step_seconds`` не входит, поэтому он НЕ нога
-        сверки.
+        снятую на прогреве), сверку backward-ног (``BWD_RECONCILIATION_FIELD``,
+        ориентир с пометкой), dtype стадий CE-ног (``PHASE_DTYPE_FIELD``, снятый
+        на прогреве абстрактным проходом) и сверку CE-ног
+        (``CE_RECONCILIATION_FIELD``, партиция).  ``loader_seconds`` — справка вне
+        шага: лоадер меряется до ``tick`` и в ``step_seconds`` не входит, поэтому
+        он НЕ нога сверки.
         """
         if not self._warmed:
             self._warmed = True
@@ -2487,8 +2911,12 @@ class _PhaseProfiler:
         )
         record.update(reconcile_phases(step_seconds, record))
         record[PHASE_MEMORY_FIELD] = dict(self._memory)
+        record[PHASE_DTYPE_FIELD] = dict(self._dtypes)
         record[BWD_RECONCILIATION_FIELD] = reconcile_backward_legs(
             record.get("sec_backward"), record
+        )
+        record[CE_RECONCILIATION_FIELD] = reconcile_ce_legs(
+            record.get("sec_ce"), record
         )
         return record
 
@@ -2549,6 +2977,41 @@ class _PhaseProfiler:
             lambda: ce_fn(params, hidden, batch),
             lambda: ce_fn.lower(params, hidden, batch),
         )
+        # Ноги CE-декомпозиции: NTP разложена на проекцию в словарь (``logits``) и
+        # приведение к loss, MTP — отдельной ногой.  ``sec_ce_ntp`` — носитель:
+        # полная NTP-голова; ``sec_ce_softmax`` читается из неё разностью с
+        # ``sec_ce_logits`` (softmax живёт на logits и без проекции не существует —
+        # та же конвенция разностной ноги, что у ``sec_backward``).  Вход — та же
+        # ``hidden``, что у ``sec_ce``.
+        for field, name in (
+            ("sec_ce_ntp", "ce_ntp"),
+            ("sec_ce_logits", "ce_logits"),
+            ("sec_ce_mtp", "ce_mtp"),
+        ):
+            fn = self._fns[name]
+            attempt(
+                field,
+                lambda fn=fn: fn(params, hidden, batch),
+                lambda fn=fn: fn.lower(params, hidden, batch),
+            )
+        record["sec_ce_softmax"] = derive_leg_difference(
+            record.get("sec_ce_ntp"), record.get("sec_ce_logits")
+        )
+        # dtype стадий CE-ног: абстрактный проход (``jax.eval_shape``) — ни
+        # исполнения, ни памяти устройства; снимается один раз на прогреве, как и
+        # память ног, а не на каждом профильном шаге.
+        if not time_it:
+            self._dtypes.clear()
+            self._dtypes.update(
+                ce_leg_dtypes(
+                    self._cfg,
+                    params=params,
+                    hidden=hidden,
+                    input_ids=batch,
+                    ce_tokens=self._ce_tokens,
+                    chunk_size=self._chunk_size,
+                )
+            )
         attempt(
             "sec_backopt",
             lambda: step_fn(master, grads, state, lr),
@@ -2579,6 +3042,23 @@ class _PhaseProfiler:
             lambda: bwd_ce(params, hidden, batch),
             lambda: bwd_ce.lower(params, hidden, batch),
             graph="grad",
+        )
+        # Обратные под-ноги CE: тот же граф, что у прямых двойников, под ``grad``;
+        # разностная нога — тем же правилом, что и в forward.
+        for field, name in (
+            ("sec_bwd_ce_ntp", "bwd_ce_ntp"),
+            ("sec_bwd_ce_logits", "bwd_ce_logits"),
+            ("sec_bwd_ce_mtp", "bwd_ce_mtp"),
+        ):
+            fn = self._bwd_fns[name]
+            attempt(
+                field,
+                lambda fn=fn: fn(params, hidden, batch),
+                lambda fn=fn: fn.lower(params, hidden, batch),
+                graph="grad",
+            )
+        record["sec_bwd_ce_softmax"] = derive_leg_difference(
+            record.get("sec_bwd_ce_ntp"), record.get("sec_bwd_ce_logits")
         )
 
         # Ноги сверки: forward — реальный ``loss_fn`` под jit, backward — разность
@@ -3136,6 +3616,49 @@ def train(
                 print(
                     f"[pretrain] пиковая XLA-память ног: "
                     f"{render_phase_memory(phase_record.get(PHASE_MEMORY_FIELD))}",
+                    flush=True,
+                )
+                rendered_ce = ", ".join(
+                    f"{name}={'null' if phase_record.get(name) is None else format(phase_record[name], '.3f')}"
+                    for name in CE_LEG_FIELDS
+                )
+                print(
+                    f"[pretrain] CE по компонентам, с (NTP: проекция / приведение к "
+                    f"loss; MTP отдельно; обратные — отдельные grad-проходы; "
+                    f"диагностика): {rendered_ce}",
+                    flush=True,
+                )
+                ce_rec = phase_record.get(CE_RECONCILIATION_FIELD) or {}
+                ce_sum = ce_rec.get("legs_sum")
+                ce_full = ce_rec.get("full_ce")
+                ce_pct = ce_rec.get("pct")
+                print(
+                    f"[pretrain] сверка CE: сумма ног = "
+                    f"{'null' if ce_sum is None else format(ce_sum, '.3f')} с из "
+                    f"sec_ce={format(ce_full, '.3f') if ce_full is not None else 'null'} с "
+                    f"({format(ce_pct, '.1f') if ce_pct is not None else 'null'}%) — "
+                    f"{CE_RECONCILIATION_NOTE}",
+                    flush=True,
+                )
+                if ce_rec.get("finding"):
+                    print(
+                        f"[pretrain] НАХОДКА: {ce_rec['finding']} — сумма CE-ног ушла от "
+                        f"sec_ce дальше "
+                        f"±{format(CE_RECONCILIATION_TOLERANCE * 100.0, '.0f')}%",
+                        flush=True,
+                    )
+                dtypes = phase_record.get(PHASE_DTYPE_FIELD) or {}
+                rendered_dtype = ", ".join(
+                    f"{leg}["
+                    + ", ".join(
+                        f"{stage}={value}" for stage, value in (stages or {}).items()
+                    )
+                    + "]"
+                    for leg, stages in dtypes.items()
+                )
+                print(
+                    f"[pretrain] dtype стадий CE-ног (операнд/logits/softmax/loss; "
+                    f"проба jax.eval_shape, без исполнения): {rendered_dtype or 'null'}",
                     flush=True,
                 )
 

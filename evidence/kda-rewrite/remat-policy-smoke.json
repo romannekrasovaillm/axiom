@@ -1,0 +1,111 @@
+{
+  "schema": "axiom/remat-policy-smoke/1",
+  "adr": "ADR-049 (09.10.2026)",
+  "passed": true,
+  "backend": [
+    "cpu:0"
+  ],
+  "geometry": {
+    "vocab_size": 1024,
+    "hidden": 64,
+    "num_layers": 4,
+    "batch": 2,
+    "seq_len": 64,
+    "kda_impl": "chunked_cc",
+    "kda_wyut_chunk": 16
+  },
+  "switches_forced": {
+    "grad_ckpt_policy": "per_layer",
+    "kda_impl": "chunked_cc",
+    "kda_chunked_backward": true
+  },
+  "expected_remat_boundaries": 4,
+  "policies": {
+    "none": {
+      "compile_ms": 8154.032228980213,
+      "median_ms": 0.322050997056067,
+      "min_ms": 0.2840550150722265,
+      "max_ms": 2.7735730400308967,
+      "repeats": 20,
+      "xla_memory": {
+        "peak_bytes": 3589884,
+        "temp_bytes": 6906256,
+        "argument_bytes": 1147376,
+        "output_bytes": 1413088
+      },
+      "loss": 7.661279201507568,
+      "loss_bits": "3329f540",
+      "grad_sha256": "d330c6f867be3fa6ccb48f81c24f941179cc5980ca1bb6cb8d7a0c53058ed290",
+      "remat_boundaries": 4,
+      "remat_policy_in_graph": [
+        "None"
+      ],
+      "parity_vs_none": {
+        "loss_bitwise": true,
+        "grads_allclose": true,
+        "grads_sha_equal": true
+      }
+    },
+    "dots_saveable": {
+      "compile_ms": 6793.169558979571,
+      "median_ms": 0.28908398235216737,
+      "min_ms": 0.26079698000103235,
+      "max_ms": 2.699816948734224,
+      "repeats": 20,
+      "xla_memory": {
+        "peak_bytes": 3589788,
+        "temp_bytes": 10018616,
+        "argument_bytes": 1147376,
+        "output_bytes": 1413088
+      },
+      "loss": 7.661279201507568,
+      "loss_bits": "3329f540",
+      "grad_sha256": "caaede0f929299865f5545f07c7d58f974826341e3e09ec0d3adb1caed5cc7d6",
+      "remat_boundaries": 4,
+      "remat_policy_in_graph": [
+        "DotsSaveable(only_if_no_batch_dims=False)"
+      ],
+      "parity_vs_none": {
+        "loss_bitwise": true,
+        "grads_allclose": true,
+        "grads_sha_equal": false
+      }
+    },
+    "dots_with_no_batch_dims_saveable": {
+      "compile_ms": 6190.79415500164,
+      "median_ms": 0.2949854824692011,
+      "min_ms": 0.2672229893505573,
+      "max_ms": 3.067402052693069,
+      "repeats": 20,
+      "xla_memory": {
+        "peak_bytes": 3589860,
+        "temp_bytes": 7595016,
+        "argument_bytes": 1147376,
+        "output_bytes": 1413088
+      },
+      "loss": 7.661279201507568,
+      "loss_bits": "3329f540",
+      "grad_sha256": "9be977771ca8606eacf62d563874350afd232f6d8df71467acd6365664684dfb",
+      "remat_boundaries": 4,
+      "remat_policy_in_graph": [
+        "DotsSaveable(only_if_no_batch_dims=True)"
+      ],
+      "parity_vs_none": {
+        "loss_bitwise": true,
+        "grads_allclose": true,
+        "grads_sha_equal": false
+      }
+    }
+  },
+  "pre_delta_bitwise": {
+    "construction": "jax.checkpoint(fn) без аргумента policy (код до ADR-049)",
+    "loss_bitwise": true,
+    "grads_bitwise": true,
+    "digest": {
+      "loss_bits": "3329f540",
+      "grad_sha256": "d330c6f867be3fa6ccb48f81c24f941179cc5980ca1bb6cb8d7a0c53058ed290"
+    },
+    "bitwise": true
+  },
+  "caveat": "CPU-числа проверяют механику (политика доходит до remat-границ, память XLA меняется в ожидаемую сторону) и численный паритет, а не выигрыш на целевом профиле: матрицу «политика → время/память» для l3-full даёт архитектор тремя прогонами на GB10 (none / dots_saveable / dots_with_no_batch_dims_saveable) под лимитом памяти XLA (ADR-041)."
+}

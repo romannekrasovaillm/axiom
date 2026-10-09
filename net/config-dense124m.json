@@ -50,6 +50,7 @@
   "lr_schedule": "cosine",
   "qat_enabled": false,
   "grad_ckpt_policy": "per_layer",
+  "remat_policy": "none",
   "ce_chunk_tokens": 1024,
   "kda_chunked_backward": true,
   "kda_impl": "chunked",

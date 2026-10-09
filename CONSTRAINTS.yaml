@@ -575,6 +575,8 @@ constraints:
       - tools/topk_exact_probe.py
       - tools/a4_manifest.py
       - tools/profile_step.py
+      - tools/mfu_bf16_protocol.py
+      - tools/loss_parity_bf16.py
     pattern: "ensure_mem_fraction\\(\\)"
     severity: high
     scope: case

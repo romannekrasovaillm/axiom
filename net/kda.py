@@ -26,11 +26,24 @@ import jax
 import jax.numpy as jnp
 
 from .config import ModelConfig
+from .remat import DEFAULT_REMAT_POLICY, remat_checkpoint
 from . import attn_sparse, compute_dtype, quant
 from .norm import headwise_rms_norm, l2_norm, swish
 from .shortconv import short_conv, short_conv_step
 
 DEFAULT_EPS = 1e-6
+
+
+def _remat_policy(cfg: ModelConfig) -> str:
+    """Объявленная политика рематериализации (ADR-049) — ``none`` по умолчанию.
+
+    ``getattr`` держит совместимость с cfg-подобными объектами, собранными в
+    коде (тесты, приборы) до появления поля.  Молчаливым остаётся только
+    *отсутствие* объявления, которое и означает ``none``; неизвестное значение
+    падает в :func:`net.remat.remat_checkpoint` (fail-closed) — подмены политики
+    не происходит.
+    """
+    return getattr(cfg, "remat_policy", DEFAULT_REMAT_POLICY)
 
 
 def _rand(key, shape, scale: float) -> jnp.ndarray:
@@ -564,6 +577,17 @@ def cc_chunk_step(
     ``wyut`` form — the allocation that made it heavier than ``chunked`` — is
     never materialised.  The intra-chunk object is the ``C x C`` matrix itself:
     ``O(C^2)`` per head, on the tensor cores.
+
+    Compute dtype (``AXIOM_COMPUTE_DTYPE``, see ``net/compute_dtype.py``): the
+    parameter projections and the output gate below are the *same* gated helpers
+    every other form uses (:func:`_project`, :func:`_output_gate`), so this form
+    inherits the gate — bf16 GEMM operands with an fp32 accumulator — without a
+    second implementation.  The intra-chunk algebra of :func:`_cc_scores` and of
+    the WY/UT (``t_mat``/``w``/``u``/``v_tilde``) steps stays fp32 on purpose,
+    the same decision the committed ``chunk_step`` records for the scan side: it
+    is accumulator state algebra, and the recipe keeps accumulators fp32.  The
+    ``wyut`` form's analogous score einsums are ungated for the same reason, so
+    the two ADR-047 arms remain comparable.
     """
     C = x.shape[0]
     proj = _project(params, cfg, x)
@@ -650,8 +674,11 @@ def apply_chunked_cc(
 
     if cfg.kda_chunked_backward:
         # Recompute each chunk from its saved carry during backward instead of
-        # retaining the per-chunk score matrices and tiles.
-        body = jax.checkpoint(body)
+        # retaining the per-chunk score matrices and tiles.  ADR-049: *what*
+        # stays saved inside that boundary is the declared ``remat_policy``
+        # (``none`` — the pre-ADR-049 bar, applied by ``remat_checkpoint``
+        # without a ``policy`` argument).
+        body = remat_checkpoint(body, _remat_policy(cfg))
     _, out = jax.lax.scan(body, carry0, x_chunks)
     out = out.reshape(n_chunks * C, -1)
     return _with_window(out[:T], params, cfg, x)
@@ -705,7 +732,9 @@ def apply_chunked(
     if cfg.kda_chunked_backward:
         # Recompute each chunk's trajectory (M, N, P, Q and projections) from
         # its saved carry in the backward pass rather than retaining them.
-        body = jax.checkpoint(body)
+        # ADR-049: the declared ``remat_policy`` chooses what stays saved
+        # inside this boundary (``none`` reproduces the pre-ADR-049 graph).
+        body = remat_checkpoint(body, _remat_policy(cfg))
     _, out = jax.lax.scan(body, carry0, x_chunks)
     out = out.reshape(n_chunks * C, -1)
     return _with_window(out[:T], params, cfg, x)

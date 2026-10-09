@@ -42,6 +42,7 @@ bf16-параметры при fp32-мастере, grad-checkpointing для ``
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import hashlib
 import json
 import os
@@ -197,6 +198,26 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     parser.add_argument("--no-grad-checkpointing", dest="grad_checkpointing",
                         action="store_false")
     parser.add_argument("--grad-checkpointing-policy", choices=("full", "selective"), default="full")
+    # ADR-049: политика рематериализации внутри remat-границ.  Не задана —
+    # берётся значение конфига (``net/config.json``/schema, дефолт ``none``);
+    # задана — заменяет его.  ``choices`` — тот же список, что валидирует
+    # ``net.config`` (единый источник имён), поэтому неизвестное значение
+    # отсекается argparse-ом, а не молчаливым дефолтом.
+    from net.config import REMAT_POLICIES
+
+    parser.add_argument(
+        "--remat-policy",
+        choices=REMAT_POLICIES,
+        default=None,
+        help="политика рематериализации jax.checkpoint (ADR-049): none — "
+             "пересчитывать всё внутри remat-границы (текущее поведение, "
+             "побитово прежнее); dots_saveable — сохранять выходы matmul, "
+             "пересчитывать elementwise-хвост; "
+             "dots_with_no_batch_dims_saveable — то же только для matmul без "
+             "batch-измерений; everything_saveable — сохранять всё (как без "
+             "remat-границы; на целевой геометрии ожидается OOM). "
+             "По умолчанию — значение net/config.json (none)",
+    )
     parser.add_argument("--checkpoint-every", type=int, default=0,
                         help="шагов между чекпойнтами (0 — выключено)")
     parser.add_argument("--ckpt-every-min", type=float, default=None,
@@ -845,6 +866,22 @@ def metrics_summary(rows: list[dict], path: Path, repo_root: Optional[Path]) -> 
 # ---------------------------------------------------------------------------
 
 
+def apply_remat_policy(cfg, remat_policy: Optional[str]):
+    """CLI-флаг поверх объявленного значения (ADR-049).
+
+    ``None`` (флаг не задан) — конфиг первичен: остаётся ``cfg.remat_policy``
+    (``net/config.json`` или дефолт схемы ``none``).  Заданное значение
+    заменяет объявленное явным намерением прогона — и попадает в журнал, чтобы
+    сравнение прогонов «none vs dots_saveable» нельзя было спутать со сменой
+    чего-то ещё.  Неизвестное значение сюда не доходит: ``argparse`` ограничен
+    ``net.config.REMAT_POLICIES`` (fail-closed на уровне CLI), а сама схема
+    проверяет поле в ``validate_config``.
+    """
+    if remat_policy is None:
+        return cfg
+    return dataclasses.replace(cfg, remat_policy=remat_policy)
+
+
 def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
     """Исполнить прогон; вернуть (журнал, успех).  Журнал пишется всегда."""
     from net import train_loop as tl
@@ -916,6 +953,12 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
         )
         if canonical_warning:
             print(canonical_warning, file=sys.stderr, flush=True)
+
+    # ADR-049: CLI-флаг поверх объявленного значения — здесь и только здесь,
+    # после того как конфиг собран окончательно (packed-путь выше мог его
+    # пересобрать).  Дальше ``cfg`` — единственный носитель политики: модель
+    # читает ``cfg.remat_policy``, журнал пишет фактическое значение.
+    cfg = apply_remat_policy(cfg, args.remat_policy)
 
     journal["tokenizer"] = tokenizer_info
     journal["model"] = {
@@ -1266,6 +1309,11 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
         "grad_checkpointing": bool(grad_checkpointing),
         "grad_checkpointing_policy": args.grad_checkpointing_policy,
         "grad_ckpt_policy": getattr(cfg, "grad_ckpt_policy", None),
+        # ADR-049: фактическая политика рематериализации — условие прогона,
+        # как и grad_ckpt_policy: без неё сравнение «none vs dots_saveable»
+        # неотличимо от смены чего-то ещё.
+        "remat_policy": getattr(cfg, "remat_policy", None),
+        "remat_policy_requested": args.remat_policy,
         "ce_chunk_tokens": getattr(cfg, "ce_chunk_tokens", None),
         "loss_impl": _loss_impl(cfg),
         "param_dtype": args.param_dtype,
@@ -1299,6 +1347,7 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
         f"T={args.seq_len}, B={args.batch_size} (micro={loader_batch}, "
         f"accum={args.accum_tokens or 'off'}), шагов {args.steps}, "
         f"grad-checkpointing={bool(grad_checkpointing)}, "
+        f"remat={getattr(cfg, 'remat_policy', None)}, "
         f"токенизатор={tokenizer_info['hash'][:16]}…",
         flush=True,
     )

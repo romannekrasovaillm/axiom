@@ -421,12 +421,30 @@ def test_cc_dedicated_window_projections_parity(cfg):
 
 
 def test_schema_default_is_chunked():
+    """The *schema* default stays ``chunked``: it is the regression etalon.
+
+    ``net/config.py`` keeps ``kda_impl = "chunked"`` on purpose — it is the
+    baseline any config built in code falls back to, and the reference the
+    other forms are compared against.  It is not the case's choice (see below).
+    """
     assert small_config().kda_impl == "chunked"
 
 
-def test_declared_config_is_chunked_for_pretrain():
+def test_declared_config_is_chunked_cc_for_pretrain():
+    """The *case's declarative* config chooses ``chunked_cc`` (ADR-047 Amendment).
+
+    Two different things, deliberately kept apart:
+
+    * the **schema default** (``net/config.py``) is ``"chunked"`` — the
+      regression etalon for configs assembled in code;
+    * the **declarative choice of the case** (``net/config.json``) is
+      ``"chunked_cc"`` — switched by the architect on 09.10.2026 (ADR-047
+      Amendment) after the measured step x2.58-2.63 (85.5 -> 33.0 s), KPI
+      99 -> 260 tok/s, XLA scratch 55 258 -> 3 299 MiB and parity with
+      ``apply_recurrent`` (85 passed).
+    """
     cfg = load_config(CONFIG_PATH)
-    assert cfg.kda_impl == "chunked"
+    assert cfg.kda_impl == "chunked_cc"
     validate_config(cfg)
 
 

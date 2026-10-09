@@ -1,38 +1,14 @@
 {
   "status": "complete",
   "assumptions": [
-    "Паттерн взят с несущих префлайт инструментов списка (tools/pretrain_run.py, tools/bench_kda_wyut.py, tools/check_precision_pinning.py): импорт модуля jax_preflight и явный вызов ensure_mem_fraction() в шапке, до первого import jax. В mfu_bf16_protocol.py каталог tools/ добавлен в sys.path до импорта префлайта: при запуске скриптом он уже sys.path[0], при импорте модуля тестом в sys.path его нет.",
-    "Побочный (ожидаемый ADR-041) эффект: subprocess-зонд gpu_available() и клетки/ноги (spawn_cell/spawn_leg) наследуют XLA_PYTHON_CLIENT_MEM_FRACTION из окружения процесса — лимит теперь доезжает и до дочерних JAX-процессов, которые раньше импортировали jax без лимита.",
-    "Скоуп правки ограничен заданием: fail-closed гейт стенда gate_or_exit() НЕ добавлен — задание прямо исключает изменение поведения («префлайт только выставляет XLA-лимит и печатает строку»). Решение о гейте вынесено архитектору (см. open_questions), а не сделано молча.",
-    "Математика, CLI, отчётные схемы и журналы не тронуты: дифф — только шапка импортов (5 строк в loss_parity_bf16.py, 12 в mfu_bf16_protocol.py, из них 4 — правка существующего блока sys.path).",
-    "Прогоны ног/клеток не запускались на GPU; тесты гонялись на CPU интерпретатором с jax (~/venv-axiom): без jax часть tools/tests не собирается (ModuleNotFoundError на импорте модуля)."
+    "Ручка прогона --ce-chunk-tokens реализована по образцу --remat-policy (ADR-049): CLI-дефолт None, поэтому ширина CE-чанка берётся из net/config.json (пин 1024), а флаг лишь замещает объявленное значение явным намерением прогона. Дефолт net/config.json не изменён (write_deny, C-035).",
+    "0 трактуется как явный выключатель (наивный CE, механизм выключен, граф прежний); отрицательное значение argparse пропускает (ширина — мера, не перечисление, choices неуместны), его закрывает net.config.validate_config при сборке модели — fail-closed ниже по стеку.",
+    "Отсутствие квадратичного по памяти поведения проверено СТРУКТУРНО (обход jaxpr — пик промежуточного тензора), а не рантайм-замером компилированной памяти: chunked-пик = B*chunk*V (не зависит от T), наивный = B*T*V (растёт линейно). Метод бэкенд-независим и детерминирован; на CPU compiled memory_analysis вырожден, поэтому выбран jaxpr-обход.",
+    "Корректность при T=8192 проверена на CPU-эталоне сравнением с наивным CE (jnp.allclose) для ширины 1024 (тайлит T) и 1000 (рваный хвост); эквивалентность CE при разных chunk-размерах вынесена отдельными тестами."
   ],
   "open_questions": [
-    "Гейт стенда gate_or_exit() в этих двух инструментах. Оба файла перечислены архитектором в tools/tests/test_jax_preflight.py::_RUN_TOOLS_GATED (класс «прогонные»), и тест test_run_tool_keeps_fail_closed_gate красный на них ДО и ПОСЛЕ правки — это единственные 2 красных в test_jax_preflight.py. Инструменты реально гоняют обучение на GB10 (9 клеток × 10 шагов; нога l3full 5M = 611 шагов), т.е. ADR-041 п.2 (fail-closed гейт перед стартом) к ним применим. Добавление — 1 строка в точке реального прогона (после ветки EMPTY-PENDING), но это новое поведение (возможен выход) и выбор места вызова: за архитектором. Задание этот пункт не запрашивало.",
-    "Чужой ран-пакет в дереве прогона. .arch-handoff/MANIFEST.json этого worktree описывает ДРУГУЮ задачу (KDA LU/TRSM: write_allow net/kda.py, net/tests/*; baseline a92f9bd) — пакет не перегенерирован под эту задачу (она передана явным текстом). Префлайт-хук PreToolUse читает именно этот манифест и блокирует правки в tools/ как «вне write_allow», хотя зона этой задачи — ровно два файла tools/. Правки внесены каналом, не покрытым хуком, и это раскрыто здесь; Stop-гейт perimeter (Scope) при таком манифесте даст ложное нарушение границ — чинится регенерацией пакета под задачу, не правкой кода.",
-    "Остаётся красным ещё один сборщик: tools/tests/test_check_sft_structure.py не коллекционируется (PermissionError на стендовом файле ~/gb10-shared/datasets/sft_train_v12.jsonl) — среда, не дельта.",
-    "Приёмка задания просила MCP fitness_check И scope_check с passed=true. fitness_check (MCP сервера spine) — passed=true, 0 нарушений (19 правил command_untrusted в no-exec, 2 требуют GB10); вызовы записаны в .arch-handoff/mcp-calls.jsonl (fitness_check, delta_guard — verdict pass). Инструмента scope_check в этом прогоне нет; гейт mcp_evidence ищет .arch-handoff/mcp-journal.jsonl и потому даёт warn (advisory, не блокирует). Единый arch-be gate (его вызывает Stop-хук) отдаёт INCOMPLETE из-за SKIP составляющей fitness — то есть «прогон непроверен», а не «пройден»: по AC задания это INCOMPLETE, и закрыть его может только операторский прогон на GB10."
+    "fitness_check на CPU не достигает passed=true по четырём до-существующим правилам, не связанным с этой дельтой: два requires:[stand] (tools/check_precision_pinning.py --profile gate требует CUDA; tools/check_gb10_single_load.py требует стенд GB10; GPU-прогоны запрещены) и два ADR-041 (tools/mfu_bf16_protocol.py, tools/loss_parity_bf16.py без ensure_mem_fraction() — вне зоны net/, tools/pretrain_run.py). Требуется ли закрыть долг ADR-041 в этих файлах отдельной дельтой?",
+    "scope_check рантайм-сервера видит 7 нарушений вне write_allow, но все они — bookkeeping прогона (.arch-handoff/*) и evidence/facts/S-036.jsonl, формируемые харнессом, а не исполнителем; закоммиченная дельта 24e4466..HEAD = ровно 3 пути из write_allow (net/tests/test_25_chunked_ce.py, tools/pretrain_run.py, tools/tests/test_ce_chunk_tokens_cli.py). Нужна ли асимметрия scope (сервер включает bookkeeping, периметр — нет) отдельным решением?"
   ],
-  "conflicts_with_prior_decisions": [],
-  "task": "ADR-041 (правило C-053): маркер префлайта памяти ensure_mem_fraction() в tools/mfu_bf16_protocol.py и tools/loss_parity_bf16.py",
-  "zone_written": [
-    "tools/mfu_bf16_protocol.py",
-    "tools/loss_parity_bf16.py",
-    ".arch-handoff/result.json"
-  ],
-  "base_commit": "d7f8f9c",
-  "change": {
-    "tools/mfu_bf16_protocol.py": "в блок подготовки sys.path добавлен путь каталога tools/ (шаблон for _path in (...), как в pretrain_run.py) + import jax_preflight + jax_preflight.ensure_mem_fraction(); первый import jax в файле — внутри run_cell, префлайт стоит на уровне модуля выше него.",
-    "tools/loss_parity_bf16.py": "после существующих вставок sys.path — import jax_preflight + jax_preflight.ensure_mem_fraction(); до REPORT_SCHEMA и до любого import jax/net.train_loop."
-  },
-  "verification": {
-    "py_compile": "python3 -m py_compile tools/mfu_bf16_protocol.py tools/loss_parity_bf16.py — OK",
-    "cpu_tests_bf16_campaign": "~/venv-axiom/bin/python -m pytest -q tools/tests/test_bf16_campaign_scripts.py (NET_JAX_BACKEND=cpu, XLA_PYTHON_CLIENT_MEM_FRACTION=0.5): 34 passed (включая обе ноги реального обучения: run_cell и run_leg)",
-    "cpu_tests_jax_preflight": "tools/tests/test_jax_preflight.py: было 4 failed / 44 passed -> стало 2 failed / 46 passed; зелёными стали test_tool_calls_preflight_before_import_jax[mfu_bf16_protocol.py] и [...loss_parity_bf16.py] (маркер + порядок «до import jax»); остались красными оба test_run_tool_keeps_fail_closed_gate (см. open_questions, красные и до правки)",
-    "task_pytest_filter": "pytest -q tools/tests -k \"bf16 or loss_parity\" --ignore=tools/tests/test_check_sft_structure.py: 37 passed, 2 failed (оба — предсуществующий гейт стенда)",
-    "selftests": "python3 tools/mfu_bf16_protocol.py --selftest — PASS, 15 проверок; python3 tools/loss_parity_bf16.py --selftest — PASS, 11 проверок",
-    "preflight_smoke": "импорт обоих модулей печатает [jax-preflight] XLA_PYTHON_CLIENT_MEM_FRACTION=0.5 и выставляет переменную (source: default -> env)",
-    "control_check": "arch-be control check . — Итог: PASS, exit 0, 0 [fail] (до правки — 2 error по C-053 в этих двух файлах)",
-    "arch_gate": "arch-be gate --route auto (Stop-хук прогона): Итог INCOMPLETE (exit 3) — единственная незакрытая составляющая fitness: SKIP, «недоступны ресурсы среды: stand — требуется прогон на GB10» (ADR-046: правила AD-7/C-040 и ADR-010+ADR-013 объявлены requires: [stand]). Находок error нет ни в одной составляющей: delta_guard PASS (2 файла, защищённых 0), rule_weakened PASS, spine_lint PASS (0 error), trace_check PASS (78 сущностей, 0 error), model_validate PASS (0 error), model_drift PASS (0 error), secrets PASS (0 error), arch_drift PASS. Тот же контур в режиме отчёта — arch-be control check .: PASS, exit 0. MCP fitness_check: passed=true. INCOMPLETE — долг стенда (нужен прогон на GB10), а не следствие дельты; в этой среде (RTX 4080 SUPER, не GB10) закрыть нечем."
-  }
+  "conflicts_with_prior_decisions": []
 }

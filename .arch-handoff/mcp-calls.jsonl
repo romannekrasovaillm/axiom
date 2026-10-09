@@ -80,6 +80,4 @@
 {"ts":"2026-10-08T18:24:15.391584229+03:00","tool":"fitness_check","verdict":"fail","duration_ms":1224,"rules":["ADR-041: у каждого JAX-инструмента tools/ префлайт памяти вызывается явно — маркер ensure_mem_fraction() обязателен в каждом файле списка (XLA_PYTHON_CLIENT_MEM_FRACTION до import jax)"],"session_id":"a956517b2a419e92","host":"claude-code"}
 {"ts":"2026-10-09T06:58:21.653340500+03:00","tool":"fitness_check","verdict":"invalid","duration_ms":0,"session_id":"82d138e357d95e01","host":"claude-code"}
 {"ts":"2026-10-09T06:58:25.669027316+03:00","tool":"fitness_check","verdict":"pass","duration_ms":1341,"session_id":"82d138e357d95e01","host":"claude-code"}
-{"ts":"2026-10-09T19:39:01.679495089+03:00","tool":"fitness_check","verdict":"pass","duration_ms":87,"session_id":"23cf73cbf328a03b","host":"claude-code"}
-{"ts":"2026-10-09T19:39:07.366830732+03:00","tool":"delta_guard","verdict":"pass","duration_ms":8,"session_id":"23cf73cbf328a03b","host":"claude-code"}
-{"ts":"2026-10-09T19:40:21.873394117+03:00","tool":"fitness_check","verdict":"pass","duration_ms":90,"session_id":"23cf73cbf328a03b","host":"claude-code"}
+{"ts":"2026-10-09T19:32:02.151495340+03:00","tool":"fitness_check","verdict":"fail","duration_ms":106,"rules":["ADR-041: у каждого JAX-инструмента tools/ префлайт памяти вызывается явно — маркер ensure_mem_fraction() обязателен в каждом файле списка (XLA_PYTHON_CLIENT_MEM_FRACTION до import jax)"],"session_id":"ef86293a67f51a2c","host":"claude-code"}

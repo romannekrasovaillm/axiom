@@ -14,6 +14,7 @@ import jax
 import jax.numpy as jnp
 
 from .config import ModelConfig
+from . import compute_dtype
 
 
 def _rand(key, shape, scale: float) -> jnp.ndarray:
@@ -47,8 +48,14 @@ def siti_glu(x: jnp.ndarray, beta_gate: float, beta_up: float) -> jnp.ndarray:
 
 
 def apply(params: MLPParams, cfg: ModelConfig, x: jnp.ndarray) -> jnp.ndarray:
-    """SiTU-GLU MLP over ``(..., hidden)``."""
-    h_g = x @ params.W_g
-    h_u = x @ params.W_u
+    """SiTU-GLU MLP over ``(..., hidden)``.
+
+    The three projections are the dense MLP's GEMMs; the activation between them
+    is element-wise and stays in the input dtype (fp32 under both gate modes,
+    because a boundary returns fp32 — ``AXIOM_COMPUTE_DTYPE``, see
+    ``net/compute_dtype.py``).
+    """
+    h_g = compute_dtype.gemm(x, params.W_g)
+    h_u = compute_dtype.gemm(x, params.W_u)
     a = siti_glu((h_g, h_u), cfg.siti_beta_gate, cfg.siti_beta_up)
-    return a @ params.W_down
+    return compute_dtype.gemm(a, params.W_down)

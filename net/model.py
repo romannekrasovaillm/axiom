@@ -52,6 +52,7 @@ from .config import ModelConfig, validate_config
 from .remat import remat_checkpoint, validate_remat_policy
 from . import attnres as attnres_mod
 from . import attn_sparse as attn_sparse_mod
+from . import compute_dtype
 from . import kda as kda_mod
 from . import mla as mla_mod
 from . import mlp as mlp_mod
@@ -493,7 +494,7 @@ def forward(
     h = rms_norm(h, params.norm_final)
     out: list = []
     if emit_logits:
-        out.append(h @ params.embedding.T)
+        out.append(compute_dtype.gemm(h, params.embedding.T))
     if return_hidden:
         out.append(h)
     if collect_qb:
@@ -641,7 +642,7 @@ def _forward_group_scan(
     h = rms_norm(h, params.norm_final)
     out: list = []
     if emit_logits:
-        out.append(h @ params.embedding.T)
+        out.append(compute_dtype.gemm(h, params.embedding.T))
     if return_hidden:
         out.append(h)
     if collect_qb:
@@ -707,7 +708,7 @@ def _chunked_cross_entropy(
     n_chunks = -(-total_rows // ce_chunk_tokens)  # ceil
 
     def chunk_sum(f, t, emb, mask):
-        logits = f @ emb.T
+        logits = compute_dtype.gemm(f, emb.T)
         logp = jax.nn.log_softmax(logits, axis=-1)
         nll = -jnp.take_along_axis(logp, t[..., None], axis=-1)[..., 0]  # (b, chunk)
         if mask is None:
@@ -755,7 +756,7 @@ def mtp_loss(
         return _chunked_cross_entropy(
             mtp_out, targets, params.embedding, ce_chunk_tokens
         )
-    logits = mtp_out @ params.embedding.T  # (B, T-2, vocab)
+    logits = compute_dtype.gemm(mtp_out, params.embedding.T)  # (B, T-2, vocab)
     return _cross_entropy(logits, targets)
 
 

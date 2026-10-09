@@ -58,7 +58,7 @@ from typing import NamedTuple
 import jax
 import jax.numpy as jnp
 
-from . import topk_exact
+from . import compute_dtype, topk_exact
 from .config import declared_block_merge
 
 # Query-block size for the blocked scan.  Small enough that the largest
@@ -114,7 +114,7 @@ def merged_block_selection(
     """
     n_blk = idx_k_merged.shape[1]
     width = min(int(top_k), int(n_blk))
-    scores = jnp.einsum(
+    scores = compute_dtype.gemm_einsum(
         "bqhi,bjhi->bqj", idx_q.astype(jnp.float32), idx_k_merged.astype(jnp.float32)
     ) / idx_q.shape[2]
     ids = jnp.arange(n_blk)[None, :]
@@ -270,7 +270,7 @@ def _reindex_from_pool(idx_q, idx_k, records, raw, pos_c, k_eff, T, neg, exact_t
     """
     Hi = idx_q.shape[2]
     kg = _gather_time(idx_k, records)  # (B, Q, P, Hi, Di)
-    scp = jnp.einsum("bqhi,bqphi->bqp", idx_q, kg) / Hi  # (B, Q, P)
+    scp = compute_dtype.gemm_einsum("bqhi,bqphi->bqp", idx_q, kg) / Hi  # (B, Q, P)
     valid = (raw < T) & (raw <= pos_c[:, None])  # causal + real records
     scp = jnp.where(valid, scp, neg)
     kk = min(int(k_eff), scp.shape[-1])
@@ -305,10 +305,10 @@ def _dense_causal_blocked(
         alive = pos < T
         qb = jnp.take(q, pos_c, axis=1)
         causal = all_pos[None, :] <= pos_c[:, None]
-        sc = jnp.einsum("bqhd,bshd->bqhs", qb, k) * scale
+        sc = compute_dtype.gemm_einsum("bqhd,bshd->bqhs", qb, k) * scale
         sc = jnp.where(causal[None, :, None, :], sc, neg)
         attn = jax.nn.softmax(sc, axis=-1)
-        o = jnp.einsum("bqhs,bshd->bqhd", attn, v)
+        o = compute_dtype.gemm_einsum("bqhs,bshd->bqhd", attn, v)
         return None, jnp.where(alive[None, :, None, None], o, 0.0)
 
     _, ys = jax.lax.scan(step, None, jnp.arange(n))
@@ -346,11 +346,11 @@ def window_attention(q: jnp.ndarray, k: jnp.ndarray, v: jnp.ndarray, window: int
         qb = jnp.take(q, pos_c, axis=1)  # (B, Q, H, D)
         kg = _gather_time(k, wb)  # (B, Q, W, H, D)
         vg = _gather_time(v, wb)
-        scores = jnp.einsum("bqhd,bqwhd->bqhw", qb, kg) * scale
+        scores = compute_dtype.gemm_einsum("bqhd,bqwhd->bqhw", qb, kg) * scale
         neg = jnp.finfo(jnp.float32).min
         scores = jnp.where(valid[None, :, None, :], scores, neg)
         attn = jax.nn.softmax(scores, axis=-1)
-        return None, jnp.einsum("bqhw,bqwhd->bqhd", attn, vg)
+        return None, compute_dtype.gemm_einsum("bqhw,bqwhd->bqhd", attn, vg)
 
     _, ys = jax.lax.scan(step, None, jnp.arange(n))
     ys = jnp.transpose(ys, (1, 0, 2, 3, 4)).reshape(B, n * block, H, D)
@@ -538,7 +538,7 @@ def sparse_union_attention(
                     qi, idx_k, records, raw, pos_c, k_eff, T, neg, exact_topk=exact_topk
                 )
             else:  # full: score the whole causal prefix
-                sc = jnp.einsum("bqhi,bshi->bqs", qi, idx_k) / Hi  # (B, Q, T)
+                sc = compute_dtype.gemm_einsum("bqhi,bshi->bqs", qi, idx_k) / Hi  # (B, Q, T)
                 causal = all_pos[None, :] <= pos_c[:, None]  # (Q, T)
                 sc = jnp.where(causal[None, :, :], sc, neg)
                 if exact_topk:
@@ -585,13 +585,13 @@ def sparse_union_attention(
         mkg = _gather_time(k_merged if merge else k_main, top_idx)  # (B, Q, k_sel, H, D)
         mvg = _gather_time(v_merged if merge else v_main, top_idx)
         qb = jnp.take(q, pos_c, axis=1)  # (B, Q, H, D)
-        o_s = jnp.einsum("bqhd,bqkhd->bqhk", qb, mkg) * scale
+        o_s = compute_dtype.gemm_einsum("bqhd,bqkhd->bqhk", qb, mkg) * scale
         o_s = jnp.where(sparse_valid[..., None, :], o_s, neg)
         if W > 0:
             wb = jnp.broadcast_to(widx[None], (B,) + widx.shape)
             skg = _gather_time(k_swa, wb)  # (B, Q, W, H, D)
             svg = _gather_time(v_swa, wb)
-            o_w = jnp.einsum("bqhd,bqwhd->bqhw", qb, skg) * scale + window_bias
+            o_w = compute_dtype.gemm_einsum("bqhd,bqwhd->bqhw", qb, skg) * scale + window_bias
             o_w = jnp.where(wvalid[..., None, :], o_w, neg)
 
         if fused:
@@ -606,9 +606,9 @@ def sparse_union_attention(
                 jnp.concatenate([o_s, o_w], axis=-1) if W > 0 else o_s
             )  # (B, Q, H, k_sel+W)
             attn = jax.nn.softmax(score, axis=-1)
-            o = jnp.einsum("bqhk,bqkhd->bqhd", attn[..., :k_sel], mvg)
+            o = compute_dtype.gemm_einsum("bqhk,bqkhd->bqhd", attn[..., :k_sel], mvg)
             if W > 0:
-                o = o + jnp.einsum("bqhw,bqwhd->bqhd", attn[..., k_sel:], svg)
+                o = o + compute_dtype.gemm_einsum("bqhw,bqwhd->bqhd", attn[..., k_sel:], svg)
         else:
             vals = [mvg]
             scores = [o_s]
@@ -618,7 +618,7 @@ def sparse_union_attention(
             score = jnp.concatenate(scores, axis=-1)  # (B, Q, H, k_sel+W)
             val = jnp.concatenate(vals, axis=2)  # (B, Q, k_sel+W, H, D)
             attn = jax.nn.softmax(score, axis=-1)
-            o = jnp.einsum("bqhs,bqshd->bqhd", attn, val)
+            o = compute_dtype.gemm_einsum("bqhs,bqshd->bqhd", attn, val)
         o = jnp.where(alive[None, :, None, None], o, 0.0)
         zero = jnp.zeros((B, pos_c.shape[0], 0), jnp.int32)
         return None, (

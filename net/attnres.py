@@ -22,6 +22,7 @@ import jax
 import jax.numpy as jnp
 
 from .config import ModelConfig
+from . import compute_dtype
 from .norm import headwise_rms_norm
 
 
@@ -40,9 +41,9 @@ def apply_layer(w_l: jnp.ndarray, sources: jnp.ndarray) -> jnp.ndarray:
     deltas.  Returns ``(B, T, hidden)``.
     """
     keys = headwise_rms_norm(sources)  # RMSNorm(k), Eq. 8
-    scores = jnp.einsum("d,nbtd->nbt", w_l, keys)  # (N, B, T)
+    scores = compute_dtype.gemm_einsum("d,nbtd->nbt", w_l, keys)  # (N, B, T)
     weights = jax.nn.softmax(scores, axis=0)  # (N, B, T)
-    return jnp.einsum("nbt,nbtd->btd", weights, sources)  # (B, T, hidden)
+    return compute_dtype.gemm_einsum("nbt,nbtd->btd", weights, sources)  # (B, T, hidden)
 
 
 def apply_layer_masked(
@@ -66,10 +67,10 @@ def apply_layer_masked(
     live, which is the same lower bound the unrolled loop relies on).
     """
     keys = headwise_rms_norm(sources)  # RMSNorm(k), Eq. 8
-    scores = jnp.einsum("d,nbtd->nbt", w_l, keys)  # (N, B, T)
+    scores = compute_dtype.gemm_einsum("d,nbtd->nbt", w_l, keys)  # (N, B, T)
     n = jnp.arange(scores.shape[0], dtype=scores.dtype)
     scores = jnp.where(
         (n < valid_n)[:, None, None], scores, jnp.finfo(scores.dtype).min
     )
     weights = jax.nn.softmax(scores, axis=0)  # (N, B, T)
-    return jnp.einsum("nbt,nbtd->btd", weights, sources)  # (B, T, hidden)
+    return compute_dtype.gemm_einsum("nbt,nbtd->btd", weights, sources)  # (B, T, hidden)

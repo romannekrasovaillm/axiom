@@ -14,6 +14,7 @@ import jax
 import jax.numpy as jnp
 
 from .config import ModelConfig
+from . import compute_dtype
 from . import kda as kda_mod
 from . import mlp as mlp_mod
 from .norm import rms_norm
@@ -54,7 +55,9 @@ def apply(params: MTPParams, cfg: ModelConfig, h: jnp.ndarray, next_emb: jnp.nda
     of the next token.  Returns ``(B, T, hidden)`` before the shared head.
     """
     B, T, hid = h.shape
-    fused = jnp.concatenate([h, next_emb], axis=-1) @ params.W_f  # (B, T, hid)
+    fused = compute_dtype.gemm(
+        jnp.concatenate([h, next_emb], axis=-1), params.W_f
+    )  # (B, T, hid)
     z = rms_norm(fused, params.norm_in)
 
     # KDA attention (chunked) vmap'd over the batch.

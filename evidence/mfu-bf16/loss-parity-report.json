@@ -1,0 +1,30 @@
+{
+ "schema": "axiom-loss-parity-bf16/1",
+ "created": "2026-10-08T06:59:21+0300",
+ "leg": {
+  "config": "net/config-dense124m.json",
+  "batch": 1,
+  "seq": 8192,
+  "tokens": 50000000,
+  "steps": 6104
+ },
+ "cells": {
+  "fp32": {
+   "env": {
+    "AXIOM_COMPUTE_DTYPE": "fp32"
+   }
+  },
+  "bf16": {
+   "env": {
+    "AXIOM_COMPUTE_DTYPE": "bf16"
+   }
+  }
+ },
+ "tokens_per_byte": 0.25,
+ "tolerance_bpb": 0.05,
+ "runner": "net/train_loop.train (та же нога, что в претрейне)",
+ "journal_schema": "pretrain-metrics/v1 (не изменяется)",
+ "status": "EMPTY-PENDING",
+ "verdict": null,
+ "note": "GPU недоступен: нога не исполнена. План ноги сохранён (leg/cells); прогон выполняет архитектор на стенде GB10 (AD-7/C-040, AD-8/C-041)."
+}

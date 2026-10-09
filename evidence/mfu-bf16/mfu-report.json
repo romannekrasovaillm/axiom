@@ -1,0 +1,78 @@
+{
+ "schema": "axiom-mfu-bf16-report/1",
+ "status": "EMPTY-PENDING",
+ "created": "2026-10-08T06:56:03+0300",
+ "device": [],
+ "data_source": "synthetic (детерминированные id-токены; стоимость упакованного лоадера вне измеряемой величины)",
+ "protocol": {
+  "steps": 10,
+  "warmup_steps": 3,
+  "metric": "медиана хвоста (шаги >= warmup) ток/с и MFU; разгон — отдельным полем",
+  "modes": {
+   "fp32": {
+    "AXIOM_COMPUTE_DTYPE": "fp32",
+    "AXIOM_MLA_DENSE_FLASH": "0"
+   },
+   "bf16": {
+    "AXIOM_COMPUTE_DTYPE": "bf16",
+    "AXIOM_MLA_DENSE_FLASH": "0"
+   },
+   "bf16+flash": {
+    "AXIOM_COMPUTE_DTYPE": "bf16",
+    "AXIOM_MLA_DENSE_FLASH": "1"
+   }
+  },
+  "configs": [
+   {
+    "name": "dense124m-b1",
+    "config": "net/config-dense124m.json",
+    "batch": 1,
+    "seq": 8192
+   },
+   {
+    "name": "dense124m-b4",
+    "config": "net/config-dense124m.json",
+    "batch": 4,
+    "seq": 8192
+   },
+   {
+    "name": "l3full-b1",
+    "config": "net/config.json",
+    "batch": 1,
+    "seq": 8192
+   }
+  ],
+  "runner": "net/train_loop.train (та же нога, что в претрейне)",
+  "journal_schema": "pretrain-metrics/v1 (не изменяется)"
+ },
+ "denominator": {
+  "bf16": 98.2,
+  "fp32": 45.2,
+  "source": "evidence/gemm_peak_0810.log — git-объект в коммите 42b7408 (сертификация: двойное чтение объекта идентично; fetch верифицирует SHA каждого объекта)"
+ },
+ "comparisons": [
+  {
+   "config": "net/config-dense124m.json",
+   "name": "dense124m-b1",
+   "batch": 1,
+   "seq": 8192,
+   "modes": {}
+  },
+  {
+   "config": "net/config-dense124m.json",
+   "name": "dense124m-b4",
+   "batch": 4,
+   "seq": 8192,
+   "modes": {}
+  },
+  {
+   "config": "net/config.json",
+   "name": "l3full-b1",
+   "batch": 1,
+   "seq": 8192,
+   "modes": {}
+  }
+ ],
+ "cells": [],
+ "note": "GPU недоступен: клетки не исполнены. Отчёт несёт готовый план (protocol.configs × protocol.modes); прогон выполняет архитектор на стенде GB10 (AD-7/C-040: лок на ~/gb10-shared/.locks перед запуском)."
+}

@@ -59,15 +59,15 @@
 
 ```bash
 cd ~/axiom && ~/venv-axiom/bin/python tools/pretrain_run.py \
-  --run-ref pretrain-pilot-gb10 --shard-root /home/roman/axiom-run/raw-v2 \
-  --tokens-root /home/roman/gb10-shared/datasets/axiom-pretrain-l3/tokens-v2 \
+  --run-ref pretrain-pilot-gb10 --shard-root ~/axiom-run/raw-v2 \
+  --tokens-root ~/gb10-shared/datasets/axiom-pretrain-l3/tokens-v2 \
   --model-preset l3-full --seq-len 8192 --batch-size 1 --grad-checkpointing \
   --steps 300 --checkpoint-every 25 --ckpt-every-min 30 \
-  --stop-file /home/roman/axiom-run/STOP \
+  --stop-file ~/axiom-run/STOP \
   --budget-file evidence/budget/pretrain-pilot-gb10.json \
-  --out /home/roman/axiom-run/pilot-l3full-endurance \
-  --journal /home/roman/axiom-run/pilot-l3full-endurance-journal.jsonl \
-  --metrics /home/roman/axiom-run/pilot-l3full-endurance/metrics.jsonl --resume
+  --out ~/axiom-run/pilot-l3full-endurance \
+  --journal ~/axiom-run/pilot-l3full-endurance-journal.jsonl \
+  --metrics ~/axiom-run/pilot-l3full-endurance/metrics.jsonl --resume
 ```
 
 Первый шаг возобновлённой ноги сверяется с курсором (шаг > 300). Окно зафиксировать в `~/gb10-shared/.locks/axiom-run.lock`; C-040 (одна нагрузка) — до запуска.

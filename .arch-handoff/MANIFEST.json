@@ -1,26 +1,28 @@
 {
-  "created_at": "2026-10-09T16:18:07.977699750+00:00",
-  "task": "Зона: реализация chunked CE (ce_chunk_tokens, loss_impl=chunked_ce) — файл(ы) net/, где живёт chunked CE, + net/tests/*. Контекст: измерено линией mfu-int, ce4096 даёт 532.8 ток/с против базовых 407 (лучший одиночный рычаг). Задача: сделать параметр CE-чанка штатной ручкой прогона (без смены дефолта в net/config.json — пин), проверить отсутствие квадратичного по памяти поведения и корректность при T=8192, добавить тест на эквивалентность CE при разных chunk-размерах. GPU-прогоны запрещены. Коммит обязателен.",
+  "created_at": "2026-10-09T15:40:12.480301959+00:00",
+  "task": "ЗАДАЧА (гейт G1 кампании MFU-55, первый рычаг — LU/TRSM-шторм в KDA).\n\nКОНТЕКСТ. G0-диагностика (evidence/mfu-55/G0b/REPORT.md) на линии arch/mfu-int (kda_impl=chunked_cc): шаг = шторм мелких ядер — 493 173 запуска ядер за 120 с стационара при занятости GPU 5.1%; в топе — LU-ядра getrf_panel, batch_trsm_left_kernel, LuPivotsToPermutation (по 34 560 запусков каждого). Источник: net/kda.py, cc_chunk_step (и симметричное место WY/UT-пути): `t_mat = jnp.linalg.inv(eye + l_mat)` — инверсия единичной нижней треугольной (H, C, C) через LU на каждый чанк × голову × слой.\n\nЧТО СДЕЛАТЬ. Заменить инверсию батчевым РЕШЕНИЕМ треугольных систем, не строя обратную матрицу:\n- либо `jax.lax.linalg.triangular_solve(a=eye+l_mat, b=xw, lower=True, left_side=True)` и то же для vw (batched TRSM: одно крупное ядро вместо десятков тысяч мелких);\n- либо явная прямая подстановка через `jax.lax.scan` по строкам чанка, если triangular_solve недоступен/медленнее.\nМатематика НЕ меняется: (I+L) — единичная нижняя треугольная; w = T·xw, u = T·vw эквивалентны решениям систем.\n\nОГРАНИЧЕНИЯ. НЕ менять математику KDA, публичные сигнатуры, семантику kda_impl и net/config.json (пин скелета). Правки только net/kda.py и net/tests/*. GPU-прогоны НЕ запускать (стенд занят кампанией). Один рычаг за раз — никаких сопутствующих «оптимизаций» тем же коммитом. Если та же инверсия встретится в других местах net/kda.py — приведи тем же способом или перечисли в отчёте.\n\nПРОВЕРКА. `python3 -m pytest -q net/tests/test_kda_chunked_cc.py` (+ родственные WY/UT-тесты) — зелёные, те же atol. Приложить статический счёт: сколько вызовов linalg.inv было и стало, оценка сокращения запусков ядер (форма H × n_chunks × слои).\n\nРЕЗУЛЬТАТ. .arch-handoff/result.json (status/assumptions/open_questions) + коммит. В assumptions — выбранный путь и почему; в open_questions — что должен измерить архитектор на GB10.",
   "model": "deepseek",
-  "sources": [],
-  "epic_context_chars": 98,
-  "epic_context_tokens": 24,
+  "sources": [
+    "~/axiom/ARCHITECTURE-SPINE.md",
+    "~/axiom/docs/adr/ADR-047-perepisyvanie-realizacii-kda-sloya-matematika-delta-rule-sohranyaetsya-realizaciya-zamenyaetsya-vnutri-chanka-c-c-matrica-mezhdu-chankami-sostoyanie-dk-dv-kak-edinstvennyy-rychag-mfu-modeli.md",
+    "~/axiom/docs/adr/ADR-050-kampaniya-mfu-55-na-gb10-predmet-i-konvenciya-chislitelya-geyty-g0-g4-rychagi-po-profil-dokazannym-adresam.md",
+    "~/axiom/changes/mfu-g1-kda-solve/DELTA.md",
+    "~/axiom/evidence/mfu-55/G0b/REPORT.md"
+  ],
+  "epic_context_chars": 6000,
+  "epic_context_tokens": 1500,
   "route": "Standard",
   "recommended_timeout_secs": 3600,
-  "baseline_commit": "24e4466",
+  "baseline_commit": "a92f9bd",
   "scope": {
     "write_allow": [
-      "net/model.py",
-      "net/config.py",
-      "net/tests/*",
-      "tools/pretrain_run.py",
-      "tools/tests/*"
+      "net/kda.py",
+      "net/tests/*"
     ],
     "write_deny": [
       "model/",
       "ARCHITECTURE-SPINE.md",
-      "CONSTRAINTS.yaml",
-      "net/config.json"
+      "CONSTRAINTS.yaml"
     ],
     "exec_allow": [
       "python3 -m pytest*",
@@ -29,8 +31,8 @@
     ],
     "net": "none"
   },
-  "scope_hash": "d921bbd24ce4f080fff87278fa2545eb0930dc7b3aae098e2a13b8f156cf7551",
-  "rollback_plan": "Откат: `git reset --hard 24e4466` (baseline — последний коммит до работы исполнителя; вся его работа приходит одним коммитом поверх).\nСигналы отката: провал fitness-гейта (`arch-ml control check`), непустой `conflicts_with_prior_decisions`, статус `blocked`.\nВладелец решения об откате — solution-архитектор; исполнитель откат не выполняет и не маскирует проблему обходным редизайном.\nОбратимость: полная — единая точка изменений, коммит исполнителя.",
+  "scope_hash": "446865dc23f93aa08ee400de8c3c97680d0b40335249e51bd1176e716ccd56b2",
+  "rollback_plan": "Откат: `git reset --hard f773337` (baseline — последний коммит до работы исполнителя; вся его работа приходит одним коммитом поверх).\nСигналы отката: провал fitness-гейта (`arch-ml control check`), непустой `conflicts_with_prior_decisions`, статус `blocked`.\nВладелец решения об откате — solution-архитектор; исполнитель откат не выполняет и не маскирует проблему обходным редизайном.\nОбратимость: полная — единая точка изменений, коммит исполнителя.",
   "skills": [
     "aar-benchmark-architecture",
     "agent-verification-eval",
@@ -54,7 +56,6 @@
     "gb10-full-setup",
     "gb10-pipeline-template",
     "generative-verifier-genv",
-    "glm52-anti-reward-hacking",
     "grpo-grouping-portability",
     "gse-globalized-skill-evolution",
     "harness-context-window-control",
@@ -69,7 +70,6 @@
     "kda-core",
     "kda-variants",
     "kimi-delta-attention",
-    "kimi-k3-eval-methodology",
     "laguna-01-hybrid-attention",
     "laguna-02-moe-router",
     "laguna-03-muon-wsd-lr-law",
@@ -102,8 +102,6 @@
     "pretrain-moe-config",
     "qat-sft",
     "qwen-hybrid-gdn-kernels",
-    "qwen37-reward-hacking-guard",
-    "reward-hacking-audit-terminal",
     "rlvr-verifier-design",
     "safe-refactor",
     "selfcompact-context-management",
@@ -118,7 +116,6 @@
     "stepfun-05-mtp-speculative",
     "stepfun-06-rl-mispo",
     "stepfun-07-pacore-agents",
-    "stepfun-08-data-recipes",
     "trace-skill-bank-evolution",
     "train-bench-builder",
     "trajectory-data-engineering",
@@ -145,15 +142,6 @@
       ]
     },
     {
-      "card": "dflash-drafter-gb10",
-      "state": "latent",
-      "score": 24,
-      "skills": [
-        "llm-speculative-decoding",
-        "logit-distillation-muse-recipe"
-      ]
-    },
-    {
       "card": "contextpilot-proactive-context",
       "state": "fleeting",
       "score": 22,
@@ -161,6 +149,15 @@
         "selfcompact-context-management",
         "bodhi-branching-entropy-rlvr",
         "partial-rollouts-infra"
+      ]
+    },
+    {
+      "card": "dflash-drafter-gb10",
+      "state": "latent",
+      "score": 22,
+      "skills": [
+        "llm-speculative-decoding",
+        "logit-distillation-muse-recipe"
       ]
     },
     {
@@ -191,15 +188,6 @@
       ]
     },
     {
-      "card": "harness-token-economics",
-      "state": "latent",
-      "score": 21,
-      "skills": [
-        "harness-context-window-control",
-        "harness-tool-calling-trends"
-      ]
-    },
-    {
       "card": "kda-kalman-write-rule",
       "state": "latent",
       "score": 21,
@@ -207,33 +195,6 @@
         "kda-core",
         "kda-variants",
         "kimi-delta-attention"
-      ]
-    },
-    {
-      "card": "verify-by-separate-role",
-      "state": "active",
-      "score": 21,
-      "skills": [
-        "agent-verification-eval",
-        "rlvr-verifier-design"
-      ]
-    },
-    {
-      "card": "arcticswarm-fleet-isolation",
-      "state": "latent",
-      "score": 20,
-      "skills": [
-        "arcticswarm-multiagent-research",
-        "hierarchical-skill-orchestration"
-      ]
-    },
-    {
-      "card": "harness-ab-selection",
-      "state": "latent",
-      "score": 20,
-      "skills": [
-        "harness-context-window-control",
-        "harness-tool-calling-trends"
       ]
     },
     {
@@ -247,15 +208,6 @@
       ]
     },
     {
-      "card": "moe-sparsity-scaling-law",
-      "state": "latent",
-      "score": 20,
-      "skills": [
-        "pretrain-moe-config",
-        "ling26-pretraining-recipe"
-      ]
-    },
-    {
       "card": "per-head-qk-norm-muon",
       "state": "latent",
       "score": 20,
@@ -265,14 +217,21 @@
       ]
     },
     {
-      "card": "axiom-pretrain-gb10",
+      "card": "verify-by-separate-role",
+      "state": "active",
+      "score": 20,
+      "skills": [
+        "agent-verification-eval",
+        "rlvr-verifier-design"
+      ]
+    },
+    {
+      "card": "moe-sparsity-scaling-law",
       "state": "latent",
       "score": 19,
       "skills": [
-        "gb10-full-setup",
-        "gb10-cuda-stack",
-        "gb10-data-pipeline",
-        "gb10-pipeline-template"
+        "pretrain-moe-config",
+        "ling26-pretraining-recipe"
       ]
     },
     {
@@ -295,26 +254,6 @@
       ]
     },
     {
-      "card": "execution-grounded-benchmark-gen",
-      "state": "active",
-      "score": 18,
-      "skills": [
-        "aar-benchmark-architecture",
-        "train-bench-builder",
-        "kat-tui-11-benchmark-evaluator"
-      ]
-    },
-    {
-      "card": "locus-output-length-budget",
-      "state": "latent",
-      "score": 18,
-      "skills": [
-        "ling26-token-efficiency-posttraining",
-        "effort-sft-budget-truncation",
-        "long2short"
-      ]
-    },
-    {
       "card": "moe-pad-pathology-router",
       "state": "latent",
       "score": 18,
@@ -333,34 +272,6 @@
       ]
     },
     {
-      "card": "mxfp4-kappa-qat-guard",
-      "state": "latent",
-      "score": 18,
-      "skills": [
-        "qat-sft",
-        "mxfp4-moe-gb10"
-      ]
-    },
-    {
-      "card": "proof-carrying-reward",
-      "state": "active",
-      "score": 18,
-      "skills": [
-        "generative-verifier-genv",
-        "benchshield-reward-integrity",
-        "rlvr-verifier-design"
-      ]
-    },
-    {
-      "card": "sparse-supervision-loss",
-      "state": "active",
-      "score": 18,
-      "skills": [
-        "effort-sft-budget-truncation",
-        "dash-adaptive-supervision-horizons"
-      ]
-    },
-    {
       "card": "attention-gate-as-input-sink",
       "state": "latent",
       "score": 17,
@@ -376,6 +287,25 @@
       "skills": [
         "agentic-rl-patterns",
         "lego-rl-harness-native-rl"
+      ]
+    },
+    {
+      "card": "execution-grounded-benchmark-gen",
+      "state": "active",
+      "score": 17,
+      "skills": [
+        "aar-benchmark-architecture",
+        "train-bench-builder",
+        "kat-tui-11-benchmark-evaluator"
+      ]
+    },
+    {
+      "card": "harness-token-economics",
+      "state": "latent",
+      "score": 17,
+      "skills": [
+        "harness-context-window-control",
+        "harness-tool-calling-trends"
       ]
     },
     {
@@ -398,6 +328,25 @@
       ]
     },
     {
+      "card": "locus-output-length-budget",
+      "state": "latent",
+      "score": 17,
+      "skills": [
+        "ling26-token-efficiency-posttraining",
+        "effort-sft-budget-truncation",
+        "long2short"
+      ]
+    },
+    {
+      "card": "mxfp4-kappa-qat-guard",
+      "state": "latent",
+      "score": 17,
+      "skills": [
+        "qat-sft",
+        "mxfp4-moe-gb10"
+      ]
+    },
+    {
       "card": "progress-report-unreliable",
       "state": "latent",
       "score": 17,
@@ -407,20 +356,32 @@
       ]
     },
     {
-      "card": "t1-routing-replay",
-      "state": "latent",
+      "card": "sparse-supervision-loss",
+      "state": "active",
       "score": 17,
       "skills": [
-        "moe-router-health",
-        "stable-latent-moe"
+        "effort-sft-budget-truncation",
+        "dash-adaptive-supervision-horizons"
       ]
     },
     {
-      "card": "agent-federation-governance",
+      "card": "arcticswarm-fleet-isolation",
       "state": "latent",
       "score": 16,
       "skills": [
+        "arcticswarm-multiagent-research",
         "hierarchical-skill-orchestration"
+      ]
+    },
+    {
+      "card": "axiom-pretrain-gb10",
+      "state": "latent",
+      "score": 16,
+      "skills": [
+        "gb10-full-setup",
+        "gb10-cuda-stack",
+        "gb10-data-pipeline",
+        "gb10-pipeline-template"
       ]
     },
     {
@@ -432,11 +393,30 @@
       ]
     },
     {
+      "card": "harness-ab-selection",
+      "state": "latent",
+      "score": 16,
+      "skills": [
+        "harness-context-window-control",
+        "harness-tool-calling-trends"
+      ]
+    },
+    {
       "card": "muon-moonlight-lr-rule",
       "state": "latent",
       "score": 16,
       "skills": [
         "laguna-03-muon-wsd-lr-law"
+      ]
+    },
+    {
+      "card": "proof-carrying-reward",
+      "state": "active",
+      "score": 16,
+      "skills": [
+        "generative-verifier-genv",
+        "benchshield-reward-integrity",
+        "rlvr-verifier-design"
       ]
     },
     {
@@ -448,12 +428,12 @@
       ]
     },
     {
-      "card": "single-agent-beats-multiagent",
+      "card": "t1-routing-replay",
       "state": "latent",
       "score": 16,
       "skills": [
-        "safe-refactor",
-        "harness-eval"
+        "moe-router-health",
+        "stable-latent-moe"
       ]
     },
     {
@@ -491,29 +471,11 @@
       ]
     },
     {
-      "card": "selective-revalidation",
-      "state": "latent",
-      "score": 15,
-      "skills": [
-        "skill-library-manager",
-        "skill-management"
-      ]
-    },
-    {
       "card": "fp8-blockwise-hadamard-qat",
       "state": "latent",
       "score": 13,
       "skills": [
         "laguna-07-quantization"
-      ]
-    },
-    {
-      "card": "latent-success-probe",
-      "state": "fleeting",
-      "score": 13,
-      "skills": [
-        "effort-calibration-eval",
-        "agent-verification-eval"
       ]
     },
     {
@@ -533,11 +495,37 @@
       ]
     },
     {
+      "card": "agent-federation-governance",
+      "state": "latent",
+      "score": 12,
+      "skills": [
+        "hierarchical-skill-orchestration"
+      ]
+    },
+    {
+      "card": "latent-success-probe",
+      "state": "fleeting",
+      "score": 12,
+      "skills": [
+        "effort-calibration-eval",
+        "agent-verification-eval"
+      ]
+    },
+    {
       "card": "moe-expert-death-activation-blowup",
       "state": "latent",
       "score": 12,
       "skills": [
         "stepfun-03-moe-stability-lab"
+      ]
+    },
+    {
+      "card": "single-agent-beats-multiagent",
+      "state": "latent",
+      "score": 12,
+      "skills": [
+        "safe-refactor",
+        "harness-eval"
       ]
     },
     {
@@ -549,31 +537,21 @@
       ]
     },
     {
+      "card": "selective-revalidation",
+      "state": "latent",
+      "score": 11,
+      "skills": [
+        "skill-library-manager",
+        "skill-management"
+      ]
+    },
+    {
       "card": "consistency-gap",
       "state": "active",
-      "score": 10,
+      "score": 8,
       "skills": [
         "effort-calibration-eval",
         "agent-verification-eval"
-      ]
-    },
-    {
-      "card": "synapse-typed-skill-exchange",
-      "state": "latent",
-      "score": 9,
-      "skills": [
-        "codewhale-fleet-automation",
-        "harness-fleet-model-rollout",
-        "map-graph-provenance-memory"
-      ]
-    },
-    {
-      "card": "system-one-typed-decisions",
-      "state": "latent",
-      "score": 8,
-      "skills": [
-        "agentic-rl-patterns",
-        "lego-rl-harness-native-rl"
       ]
     },
     {
@@ -585,29 +563,12 @@
       ]
     },
     {
-      "card": "closed-loop-tool-traj-synthesis",
-      "state": "active",
-      "score": 7,
-      "skills": [
-        "trajectory-data-engineering",
-        "agentic-posttraining-tool-synthesis",
-        "trajectory-flywheel"
-      ]
-    },
-    {
-      "card": "memory-lifecycle-governance",
+      "card": "system-one-typed-decisions",
       "state": "latent",
       "score": 7,
       "skills": [
-        "memory-as-plans-wam"
-      ]
-    },
-    {
-      "card": "skill-closure-authorization",
-      "state": "latent",
-      "score": 7,
-      "skills": [
-        "skill-management"
+        "agentic-rl-patterns",
+        "lego-rl-harness-native-rl"
       ]
     },
     {
@@ -627,20 +588,11 @@
       ]
     },
     {
-      "card": "skills-from-traces",
-      "state": "fleeting",
+      "card": "skill-closure-authorization",
+      "state": "latent",
       "score": 6,
       "skills": [
         "skill-management"
-      ]
-    },
-    {
-      "card": "synthetic-corpus-staging",
-      "state": "active",
-      "score": 6,
-      "skills": [
-        "data-mixture-automixer",
-        "corpus-mixture-audit"
       ]
     },
     {
@@ -652,30 +604,37 @@
       ]
     },
     {
-      "card": "skill-graph-evolution",
-      "state": "latent",
+      "card": "synthetic-corpus-staging",
+      "state": "active",
       "score": 5,
       "skills": [
-        "trace-skill-bank-evolution",
-        "gse-globalized-skill-evolution",
-        "skill-library-manager"
+        "data-mixture-automixer",
+        "corpus-mixture-audit"
+      ]
+    },
+    {
+      "card": "memory-lifecycle-governance",
+      "state": "latent",
+      "score": 4,
+      "skills": [
+        "memory-as-plans-wam"
+      ]
+    },
+    {
+      "card": "closed-loop-tool-traj-synthesis",
+      "state": "active",
+      "score": 3,
+      "skills": [
+        "trajectory-data-engineering",
+        "agentic-posttraining-tool-synthesis",
+        "trajectory-flywheel"
       ]
     },
     {
       "card": "dream-rsi-replay-simulator",
       "state": "latent",
-      "score": 4,
+      "score": 3,
       "skills": []
-    },
-    {
-      "card": "skill-routing-diversity",
-      "state": "latent",
-      "score": 4,
-      "skills": [
-        "cobra-skill-optimization",
-        "lasko-skill-optimizer",
-        "skill-management"
-      ]
     },
     {
       "card": "manifest-head-hash-blindness",
@@ -684,48 +643,46 @@
       "skills": []
     },
     {
-      "card": "midtrain-agentic-token-budget",
+      "card": "skill-graph-evolution",
       "state": "latent",
       "score": 3,
-      "skills": []
-    },
-    {
-      "card": "midtrain-decay-budget",
-      "state": "latent",
-      "score": 3,
-      "skills": []
-    },
-    {
-      "card": "benchmark-leak-defense",
-      "state": "active",
-      "score": 2,
       "skills": [
-        "glm52-anti-reward-hacking",
-        "reward-hacking-audit-terminal",
-        "qwen37-reward-hacking-guard"
+        "trace-skill-bank-evolution",
+        "gse-globalized-skill-evolution",
+        "skill-library-manager"
       ]
     },
     {
-      "card": "contradiction-is-cheapest-detector",
+      "card": "skill-routing-diversity",
       "state": "latent",
-      "score": 2,
-      "skills": []
+      "score": 3,
+      "skills": [
+        "cobra-skill-optimization",
+        "lasko-skill-optimizer",
+        "skill-management"
+      ]
+    },
+    {
+      "card": "skills-from-traces",
+      "state": "fleeting",
+      "score": 3,
+      "skills": [
+        "skill-management"
+      ]
+    },
+    {
+      "card": "synapse-typed-skill-exchange",
+      "state": "latent",
+      "score": 3,
+      "skills": [
+        "codewhale-fleet-automation",
+        "harness-fleet-model-rollout",
+        "map-graph-provenance-memory"
+      ]
     },
     {
       "card": "cost-estimate-needs-skeleton",
       "state": "latent",
-      "score": 2,
-      "skills": []
-    },
-    {
-      "card": "dataset-reproducibility-by-rebuild",
-      "state": "active",
-      "score": 2,
-      "skills": []
-    },
-    {
-      "card": "decision-needs-execution-proof",
-      "state": "active",
       "score": 2,
       "skills": []
     },
@@ -744,59 +701,7 @@
       ]
     },
     {
-      "card": "lexical-leak-gate-blind",
-      "state": "active",
-      "score": 2,
-      "skills": []
-    },
-    {
-      "card": "meta-tokens-loss-masked",
-      "state": "latent",
-      "score": 2,
-      "skills": [
-        "stepfun-08-data-recipes"
-      ]
-    },
-    {
       "card": "metric-instrument-sensitivity",
-      "state": "latent",
-      "score": 2,
-      "skills": []
-    },
-    {
-      "card": "midtrain-selfgen-diversity",
-      "state": "latent",
-      "score": 2,
-      "skills": []
-    },
-    {
-      "card": "passk-identifiability",
-      "state": "active",
-      "score": 2,
-      "skills": [
-        "kimi-k3-eval-methodology"
-      ]
-    },
-    {
-      "card": "probe-during-live-stage-contends",
-      "state": "latent",
-      "score": 2,
-      "skills": []
-    },
-    {
-      "card": "rlvr-spurious-reward-baseline",
-      "state": "latent",
-      "score": 2,
-      "skills": []
-    },
-    {
-      "card": "sft-depth-entropy-triage",
-      "state": "latent",
-      "score": 2,
-      "skills": []
-    },
-    {
-      "card": "sft-tail-filtering",
       "state": "latent",
       "score": 2,
       "skills": []
@@ -806,12 +711,7 @@
       "state": "active",
       "score": 2,
       "skills": []
-    },
-    {
-      "card": "verifier-soundness-audit",
-      "state": "active",
-      "score": 2,
-      "skills": []
     }
-  ]
+  ],
+  "baseline_note": "обновлено 09.10 после сведения линий (мерж mfu-int 24e4466) — scope-гейт сравнивал с устаревшей базой и давал ложные нарушения"
 }

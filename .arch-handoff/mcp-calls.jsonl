@@ -78,3 +78,5 @@
 {"ts":"2026-10-08T16:18:44.123514456+03:00","tool":"fitness_check","verdict":"fail","duration_ms":1207,"rules":["ADR: отрицательные последствия описаны (иначе решение продано, а не проверено)"],"session_id":"e9da52bccccd0ee6","host":"claude-code"}
 {"ts":"2026-10-08T16:29:15.502216297+03:00","tool":"fitness_check","verdict":"pass","duration_ms":1245,"session_id":"edcfd52360d53a0a","host":"claude-code"}
 {"ts":"2026-10-08T18:24:15.391584229+03:00","tool":"fitness_check","verdict":"fail","duration_ms":1224,"rules":["ADR-041: у каждого JAX-инструмента tools/ префлайт памяти вызывается явно — маркер ensure_mem_fraction() обязателен в каждом файле списка (XLA_PYTHON_CLIENT_MEM_FRACTION до import jax)"],"session_id":"a956517b2a419e92","host":"claude-code"}
+{"ts":"2026-10-09T06:58:21.653340500+03:00","tool":"fitness_check","verdict":"invalid","duration_ms":0,"session_id":"82d138e357d95e01","host":"claude-code"}
+{"ts":"2026-10-09T06:58:25.669027316+03:00","tool":"fitness_check","verdict":"pass","duration_ms":1341,"session_id":"82d138e357d95e01","host":"claude-code"}

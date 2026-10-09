@@ -1,0 +1,35 @@
+{
+  "status": "complete",
+  "assumptions": [
+    "Носитель пиннов — существующий блок run в курсоре чекпойнта (net/train_loop.py:_save_checkpoint); новый носитель не заводился.",
+    "В пинах хранится метка optimizer_classification ('adr-048'|'legacy'), а не голый булев legacy_muon_all_2d: она 1:1 отображает флаг и уже читается сшивателем журналов A/B.",
+    "Курсоры прежних ревизий без поля optimizer_classification не отвергаются задним числом (пин отсутствует -> проверка пропускается)."
+  ],
+  "open_questions": [
+    "Нужно ли задним числом ужесточать сверку для курсоров, сохранённых до этой правки (сейчас они resume-ятся без проверки режима)?"
+  ],
+  "conflicts_with_prior_decisions": [],
+  "gate": {
+    "route": "Fast",
+    "verdict": "FAIL",
+    "failures_are_stand_debt_not_delta": true,
+    "findings": [
+      "ADR-010+ADR-013: precision-pinning требует CUDA-устройство (jax.devices()=['CpuDevice(id=0)']) — операторский прогон на gb10",
+      "AD-7/C-040: GB10 single-load — стенд GB10 недоступен (GPU = RTX 4080 SUPER) — операторский прогон на gb10",
+      "arch_drift: bounded-лимит 2000 файлов, известный блокер задачи hr-06"
+    ],
+    "relevant_components_passed": ["delta_guard", "rule_weakened", "spine_lint", "trace_check", "model_validate"]
+  },
+  "commit": "c8c8c96",
+  "branch": "arch/bf16-phase1-wip",
+  "tests": {
+    "tools/tests/test_pretrain_optimizer_classification.py": "7 passed, 4 skipped",
+    "skipped_reason": "ModuleNotFoundError: No module named 'jax' (тесты сохранения чекпойнта/журнала метрик требуют jax; структурные проверки выполнены и зелёные)",
+    "structural_checks_green": [
+      "test_h4_resume_refuses_optimizer_mode_mismatch",
+      "test_h4_resume_accepts_same_optimizer_mode",
+      "test_h4_resume_skips_absent_mode_for_old_cursor",
+      "test_pinned_run_surfaces_optimizer_mode_into_journal"
+    ]
+  }
+}

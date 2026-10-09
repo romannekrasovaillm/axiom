@@ -443,7 +443,7 @@ constraints:
     type: command_succeeds
     command: 'python3 tools/check_precision_pinning.py --profile gate'
     timeout_secs: 600
-    requires: [cuda]
+    requires: [stand]
     severity: high
     scope: case
     kind: behavioural

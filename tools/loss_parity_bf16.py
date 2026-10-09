@@ -34,6 +34,11 @@ dense-124m (``net/config-dense124m.json``), seq 8192, batch 1, 50M токено�
 AD-8/C-041 — смета до запуска). 50M токенов × 2 ноги на dense-124m b1 — это часы,
 не минуты: сначала 50-шаговый смоук каждой клетки (в отчёт он не идёт).
 
+Префлайт ADR-041 подключён: ``jax_preflight.ensure_mem_fraction()`` на импорте
+модуля (лимит XLA до создания рантайма), ``gate_or_exit()`` — в прогонных путях
+(нога ``--leg`` и цикл драйвера до спавна ног): на занятом стенде GB10 отказ
+происходит до реального прогона, а не по факту OOM.
+
 Запуск::
 
     python3 tools/loss_parity_bf16.py --selftest
@@ -59,6 +64,14 @@ if str(CASE_DIR) not in sys.path:
     sys.path.insert(0, str(CASE_DIR))
 if str(CASE_DIR / "tools") not in sys.path:
     sys.path.insert(0, str(CASE_DIR / "tools"))
+
+# ADR-041: дисциплина памяти JAX — префлайт ДО создания рантайма.  Лимит
+# ``XLA_PYTHON_CLIENT_MEM_FRACTION`` выставляется здесь (до первого ``import
+# jax``: и в ноге, и в пробе ``gpu_available`` — она наследует этот же
+# ``os.environ``), а fail-closed гейт стенда — в прогонных путях ``main``.
+import jax_preflight  # noqa: E402
+
+jax_preflight.ensure_mem_fraction()
 
 REPORT_SCHEMA = "axiom-loss-parity-bf16/1"
 
@@ -301,6 +314,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     out_path = Path(args.out)
 
     if args.leg is not None:
+        jax_preflight.gate_or_exit()  # ADR-041: состояние стенда до реального прогона
         payload = run_leg(args.leg, out_path.parent, steps)
         if args.leg_out:
             Path(args.leg_out).write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -349,6 +363,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 0
 
     cells: dict[str, dict[str, Any]] = {}
+    jax_preflight.gate_or_exit()  # ADR-041: состояние стенда до реального прогона
     for name, _env in CELLS:
         print(f"[loss-parity] нога {name} ({steps} шагов) …", flush=True)
         cells[name] = spawn_leg(name, out_path.parent, steps)

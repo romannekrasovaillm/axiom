@@ -1994,6 +1994,23 @@ def mfu(flops: float, *, seconds: float, peak_tflops: float | None) -> float | N
 #   forward считался бы дважды.  ``sec_loader`` меряется отдельно и в сверку не
 #   входит: получение батча идёт ДО ``tick``, то есть вне ``step_seconds`` (см.
 #   ветку лоадера в ``train``), и подаётся как справка, а не как нога шага.
+# * **Декомпозиция backward (attribution).**  Ноги ``sec_bwd_kda`` / ``sec_bwd_mla``
+#   / ``sec_bwd_moe`` / ``sec_bwd_ce`` / ``sec_bwd_other`` — отдельные
+#   ``jax.jit(jax.grad(...))``-проходы по скалярному отклику того же подмножества,
+#   что и forward-ноги (оболочка ``sec_bwd_other`` — лукап эмбеддинга + финальная
+#   RMSNorm).  Мотивация: backward l3-full — 73 % шага, и удвоение пика матмулов
+#   (bf16) ускоряет его лишь ×1.05, то есть он упирается в память/трафик
+#   активаций, а не в FLOPs; разложить это можно только по компонентам.
+#   Grad по подмножеству **не равен** «доле» полного backward из-за общих
+#   активаций, поэтому сумма ног подаётся рядом с ``sec_backward`` как ориентир
+#   (``bwd_reconciliation``, с пометкой и находкой ``backward_legs_diverge`` при
+#   уходе дальше ``BWD_RECONCILIATION_TOLERANCE``), а не как партиция — расхождение
+#   ожидаемо, но обязано быть видно.
+# * **Память ног.**  Рядом с временем каждой ноги подаётся пиковая XLA-память её
+#   скомпилированного исполнителя (``PHASE_MEMORY_FIELD``, разбор
+#   ``memory_analysis``): она отделяет «упор в память» от «упор в арифметику» и
+#   не входит в арифметику шага.  Меряется один раз на прогреве (компиляция), не
+#   на каждом профильном шаге.
 #
 # Фаза, которую собрать или исполнить не удалось, записывается ``null``:
 # неизмеренное не выдаётся за измеренное (ADR-011).
@@ -2004,6 +2021,11 @@ PHASE_PROFILE_FIELDS = (
     "sec_mla",
     "sec_moe",
     "sec_ce",
+    "sec_bwd_kda",
+    "sec_bwd_mla",
+    "sec_bwd_moe",
+    "sec_bwd_ce",
+    "sec_bwd_other",
     "sec_backopt",
     "sec_forward",
     "sec_backward",
@@ -2014,11 +2036,56 @@ PHASE_PROFILE_FIELDS = (
 #: Ноги, сумма которых сверяется со временем шага.  Декомпозиция прямого прохода
 #: (kda/mla/moe/ce) сюда НЕ входит — она не партиционирует шаг; ``sec_loader``
 #: тоже вне: лоадер меряется до ``tick`` и в ``step_seconds`` не попадает.
+#: Ноги backward-декомпозиции (``BWD_LEG_FIELDS``) — тоже вне: они меряют не
+#: части шага, а стоимость обратного прохода подмножеств (см. их сверку ниже).
 RECONCILIATION_LEGS = ("sec_forward", "sec_backward", "sec_backopt")
 
 #: Порог покрытия шага измеренными ногами: ниже — находка, а не тишина.
 UNEXPLAINED_SHARE_THRESHOLD = 0.95
 FINDING_UNEXPLAINED_SHARE_HIGH = "unexplained_share_high"
+
+#: Ноги backward-декомпозиции (диагностика): каждая — свой ``jax.grad``-проход по
+#: скалярному отклику своего подмножества модели (``sec_bwd_kda`` — KDA-слои,
+#: ``sec_bwd_mla`` — MLA с пулом ADR-012, ``sec_bwd_moe`` — канальные MLP/MoE,
+#: ``sec_bwd_ce`` — головы NTP+MTP, ``sec_bwd_other`` — оболочка остатка: лукап
+#: эмбеддинга + финальная RMSNorm).  Это **не** доли полного ``sec_backward``:
+#: у подмножества с полным проходом общие активации (лукап эмбеддинга,
+#: остаточный поток), поэтому сумма ног не обязана сходиться с ``sec_backward``.
+#: Их стоимость — ключ к вопросу «на что уходит backward» (память активаций или
+#: FLOPs): рядом с временем каждой ноги подаётся пиковая XLA-память её
+#: исполнителя (``PHASE_MEMORY_FIELD``).
+BWD_LEG_FIELDS = (
+    "sec_bwd_kda",
+    "sec_bwd_mla",
+    "sec_bwd_moe",
+    "sec_bwd_ce",
+    "sec_bwd_other",
+)
+
+#: Поле-носитель пиковой XLA-памяти скомпилированных исполнителей ног (байт).
+#: Ключи — имена ног из ``PHASE_PROFILE_FIELDS``; значение — разбор
+#: ``memory_analysis`` (``_executable_memory``) или ``None`` (бэкенд не отдал).
+#: Ключ ``sec_backward`` несёт память графа fwd+bwd (``grad_fn``): отдельного
+#: исполнителя «только обратный проход» у шага нет.
+PHASE_MEMORY_FIELD = "phase_memory_bytes"
+
+#: Поле-носитель сверки суммы backward-ног с полным ``sec_backward`` (ориентир).
+BWD_RECONCILIATION_FIELD = "bwd_reconciliation"
+
+#: Допуск ориентира: сумма backward-ног против полного ``sec_backward``.
+#: Широкий (±20 %), потому что ноги и полный проход меряют разное: подмножества
+#: делят общие активации, а нога ``sec_backward`` — ещё и разность времён.
+BWD_RECONCILIATION_TOLERANCE = 0.20
+
+#: Находка: сумма backward-ног ушла от полного backward дальше допуска.
+FINDING_BACKWARD_LEGS_DIVERGE = "backward_legs_diverge"
+
+#: Пометка к сверке backward-ног — «ориентир, не партиция» (видна в записи).
+BWD_RECONCILIATION_NOTE = (
+    "ориентир, не партиция: ноги — отдельные grad-проходы по подмножествам; "
+    "с полным backward у них общие активации (лукап эмбеддинга, остаточный "
+    "поток), поэтому расхождение ожидаемо; sec_backward — разность времён"
+)
 
 
 def reconcile_phases(
@@ -2060,6 +2127,102 @@ def reconcile_phases(
         "sec_other": span - reconciled,
         "finding": finding,
     }
+
+
+def reconcile_backward_legs(
+    sec_backward: float | None, legs: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Сверка суммы backward-ног с полным ``sec_backward`` — **ориентир**.
+
+    Ноги ``BWD_LEG_FIELDS`` складываются только те, что присутствуют числом:
+    отсутствующая (``None``) не подставляется нулём (ADR-011).  ``pct`` — сумма
+    ног к полному проходу в процентах; ``finding`` — ``backward_legs_diverge``
+    при уходе от 100 % дальше ``BWD_RECONCILIATION_TOLERANCE``.  ``note`` —
+    пометка о том, что это ориентир, а не партиция: ноги меряют графы
+    подмножеств (у них общие активации с полным проходом), а ``sec_backward`` —
+    разность времён, поэтому расхождение ожидаемо — но обязано быть видно, а не
+    растворяться в тишине (ADR-011).
+
+    Полный backward неизвестен/неположителен — сверка не определена: ``pct`` и
+    ``finding`` ``None``, сумма ног (если есть) и пометка остаются.  Ни одна
+    нога не измерена — сумма тоже ``None``.
+    """
+    measured = {
+        name: float(legs[name])
+        for name in BWD_LEG_FIELDS
+        if isinstance(legs.get(name), (int, float))
+        and not isinstance(legs.get(name), bool)
+    }
+    result: dict[str, Any] = {
+        "legs_sum": math.fsum(measured.values()) if measured else None,
+        "full_backward": None,
+        "pct": None,
+        "tolerance": BWD_RECONCILIATION_TOLERANCE,
+        "finding": None,
+        "note": BWD_RECONCILIATION_NOTE,
+    }
+    if not measured:
+        return result
+    if (
+        not isinstance(sec_backward, (int, float))
+        or isinstance(sec_backward, bool)
+        or sec_backward <= 0
+    ):
+        return result
+    total = result["legs_sum"]
+    full = float(sec_backward)
+    pct = 100.0 * total / full
+    result["full_backward"] = full
+    result["pct"] = pct
+    result["finding"] = (
+        FINDING_BACKWARD_LEGS_DIVERGE
+        if abs(pct - 100.0) > BWD_RECONCILIATION_TOLERANCE * 100.0
+        else None
+    )
+    return result
+
+
+def _executable_memory(compiled) -> dict[str, int | None] | None:
+    """Пиковая XLA-память скомпилированного исполнителя (байт); ``None`` — нет.
+
+    ``peak_bytes`` — temp + аргументы + выход (та же свёртка, что в
+    ``tools/remat_policy_smoke.py`` и ``tools/kda_phase_profile.py``).  Бэкенд не
+    отдал разбор (``memory_analysis`` бросил или вернул ``None``) — честный
+    ``None``, а не выдуманный ноль (ADR-011).
+    """
+    try:
+        analysis = compiled.memory_analysis()
+    except Exception:
+        return None
+    if analysis is None:
+        return None
+    temp = getattr(analysis, "temp_size_in_bytes", None)
+    argument = getattr(analysis, "argument_size_in_bytes", None)
+    output = getattr(analysis, "output_size_in_bytes", None)
+    peak = getattr(analysis, "peak_memory_in_bytes", None)
+    if peak is None and None not in (temp, argument, output):
+        peak = int(temp) + int(argument) + int(output)
+    return {
+        "peak_bytes": None if peak is None else int(peak),
+        "temp_bytes": None if temp is None else int(temp),
+        "argument_bytes": None if argument is None else int(argument),
+        "output_bytes": None if output is None else int(output),
+    }
+
+
+def render_phase_memory(memory: Mapping[str, Any] | None) -> str:
+    """Строка пиковой памяти ног: ``имя=NN.NМиБ`` / ``имя=null`` (по полям ног).
+
+    Чистая функция — годится и для печати, и для теста контракта записи.
+    """
+    memory = memory or {}
+    parts = []
+    for name in PHASE_PROFILE_FIELDS:
+        entry = memory.get(name)
+        peak = entry.get("peak_bytes") if isinstance(entry, Mapping) else None
+        rendered = "null" if peak is None else f"{peak / (1024.0 * 1024.0):.1f}МиБ"
+        parts.append(f"{name}={rendered}")
+    return ", ".join(parts)
 
 
 def kpi_window_values(
@@ -2189,6 +2352,21 @@ def _phase_ce_head(params, cfg, hidden, input_ids, chunk_size, ce_tokens):
     return ntp + aux
 
 
+def _phase_other_stack(params, cfg, input_ids):
+    """Остаток-оболочка: лукап эмбеддинга + финальная RMSNorm (диагностика).
+
+    Это та часть графа ``model.forward``, что не попадает ни в один стековый
+    разбор (``_phase_kda_stack`` и соседи): скаттер-аддиция градиента в таблицу
+    эмбеддингов (``params.embedding[input_ids]``) и обратный проход финальной
+    нормы (``rms_norm(h, params.norm_final)``).  Своих слоёв у ноги нет, поэтому
+    её backward — не «доля» полного прохода, а мера стоимости именно этой части.
+    """
+    from net.norm import rms_norm
+
+    h = params.embedding[input_ids]
+    return rms_norm(h, params.norm_final)
+
+
 class _PhaseProfiler:
     """Декомпозированный прогон фаз с host-таймерами (только opt-in).
 
@@ -2203,10 +2381,17 @@ class _PhaseProfiler:
     (forward = тот же ``loss_fn`` под ``jax.jit``, fwd+bwd = тот же ``grad_fn``),
     поэтому ``sec_forward``/``sec_backward`` меряют шаг, а не его копию.  Ноги
     декомпозиции строятся внутри из ``cfg``.
+
+    Ноги backward (``BWD_LEG_FIELDS``) — свои ``jax.grad``-проходы по скалярному
+    отклику подмножества (``jnp.sum`` стекового выхода; ``sec_bwd_ce`` — прямо по
+    лоссу головы NTP+MTP): grad по подмножеству не равен «доле» полного backward
+    (общие активации), поэтому их сумма идёт ориентиром (``bwd_reconciliation``),
+    а не партицией.
     """
 
     def __init__(self, cfg, train_config, *, grad_fn, forward_fn):
         import jax
+        import jax.numpy as jnp
 
         chunk_size = int(train_config.chunk_size)
         ce_tokens = int(cfg.ce_chunk_tokens)
@@ -2226,6 +2411,40 @@ class _PhaseProfiler:
                 )
             ),
         }
+        # Ноги backward: отдельный ``jax.grad`` на подмножество.  ``sec_bwd_ce``
+        # дифференцирует голову по параметрам (``argnums=0``); ``hidden`` —
+        # данные (активация канального прохода), а не параметр.
+        self._bwd_fns = {
+            "bwd_kda": jax.jit(
+                jax.grad(
+                    lambda p, ids: jnp.sum(_phase_kda_stack(p, cfg, ids, chunk_size))
+                )
+            ),
+            "bwd_mla": jax.jit(
+                jax.grad(lambda p, ids: jnp.sum(_phase_mla_stack(p, cfg, ids)))
+            ),
+            "bwd_moe": jax.jit(
+                jax.grad(lambda p, ids: jnp.sum(_phase_moe_stack(p, cfg, ids)))
+            ),
+            "bwd_ce": jax.jit(
+                jax.grad(
+                    lambda p, hidden, ids: _phase_ce_head(
+                        p, cfg, hidden, ids, chunk_size, ce_tokens
+                    ),
+                    argnums=0,
+                )
+            ),
+            "bwd_other": jax.jit(
+                jax.grad(lambda p, ids: jnp.sum(_phase_other_stack(p, cfg, ids)))
+            ),
+        }
+        #: Пиковая XLA-память ног: заполняется один раз на прогреве (там же, где
+        #: компилируются исполнители), читается справкой на каждом профильном шаге.
+        #: Все ключи ``PHASE_PROFILE_FIELDS`` присутствуют сразу (``None`` — нет
+        #: исполнителя/бэкенд не отдал разбор).
+        self._memory: dict[str, Any] = {
+            name: None for name in PHASE_PROFILE_FIELDS
+        }
 
     def measure(
         self,
@@ -2244,7 +2463,9 @@ class _PhaseProfiler:
 
         Возвращает запись со всеми полями ``PHASE_PROFILE_FIELDS`` плюс
         ``reconciliation_pct``/``sec_other``/``finding`` (сверка
-        ``reconcile_phases``).  ``loader_seconds`` — справка вне шага: лоадер
+        ``reconcile_phases``), карту пиковой памяти ног (``PHASE_MEMORY_FIELD``,
+        снятую на прогреве) и сверку backward-ног (``BWD_RECONCILIATION_FIELD``,
+        ориентир с пометкой).  ``loader_seconds`` — справка вне шага: лоадер
         меряется до ``tick`` и в ``step_seconds`` не входит, поэтому он НЕ нога
         сверки.
         """
@@ -2265,6 +2486,10 @@ class _PhaseProfiler:
             else None
         )
         record.update(reconcile_phases(step_seconds, record))
+        record[PHASE_MEMORY_FIELD] = dict(self._memory)
+        record[BWD_RECONCILIATION_FIELD] = reconcile_backward_legs(
+            record.get("sec_backward"), record
+        )
         return record
 
     def _sweep(self, *, params, batch, grads, master, state, lr, step_fn, time_it):
@@ -2282,12 +2507,24 @@ class _PhaseProfiler:
             jax.block_until_ready(value)
             return time.perf_counter() - start, value
 
-        def attempt(field, thunk):
+        def remember_memory(field, lower, graph):
+            """Пиковая память исполнителя ноги — один раз, на прогреве."""
+            if time_it:
+                return
+            try:
+                memory = _executable_memory(lower().compile())
+            except Exception:
+                memory = None
+            self._memory[field] = None if memory is None else {"graph": graph, **memory}
+
+        def attempt(field, thunk, lower=None, graph=None):
             try:
                 elapsed, value = run(thunk)
             except Exception:
                 return None, None
             record[field] = elapsed
+            if lower is not None:
+                remember_memory(field, lower, graph or "forward")
             return elapsed, value
 
         # Скрытое состояние для CE-ноги — выход канального прохода: настоящая
@@ -2296,20 +2533,74 @@ class _PhaseProfiler:
         # (B, T, vocab, ce_chunk_tokens), а не значениями.
         hidden = None
         for field, name in (("sec_kda", "kda"), ("sec_mla", "mla"), ("sec_moe", "moe")):
-            _, value = attempt(field, lambda name=name: self._fns[name](params, batch))
+            fn = self._fns[name]
+            _, value = attempt(
+                field,
+                lambda fn=fn: fn(params, batch),
+                lambda fn=fn: fn.lower(params, batch),
+            )
             if name == "moe" and value is not None:
                 hidden = value
         if hidden is None:
             hidden = params.embedding[batch]
-        attempt("sec_ce", lambda: self._fns["ce"](params, hidden, batch))
-        attempt("sec_backopt", lambda: step_fn(master, grads, state, lr))
+        ce_fn = self._fns["ce"]
+        attempt(
+            "sec_ce",
+            lambda: ce_fn(params, hidden, batch),
+            lambda: ce_fn.lower(params, hidden, batch),
+        )
+        attempt(
+            "sec_backopt",
+            lambda: step_fn(master, grads, state, lr),
+            lambda: step_fn.lower(master, grads, state, lr),
+            graph="optimizer-step",
+        )
+
+        # Backward-декомпозиция: те же подмножества, что и forward-ноги, но grad
+        # собственного скалярного отклика.  ``sec_bwd_ce`` берёт ту же ``hidden``,
+        # что и ``sec_ce``; ``sec_bwd_other`` — оболочку (эмбеддинг + финальная
+        # норма).  Результаты выбрасываются: это диагностика.
+        for field, name in (
+            ("sec_bwd_kda", "bwd_kda"),
+            ("sec_bwd_mla", "bwd_mla"),
+            ("sec_bwd_moe", "bwd_moe"),
+            ("sec_bwd_other", "bwd_other"),
+        ):
+            fn = self._bwd_fns[name]
+            attempt(
+                field,
+                lambda fn=fn: fn(params, batch),
+                lambda fn=fn: fn.lower(params, batch),
+                graph="grad",
+            )
+        bwd_ce = self._bwd_fns["bwd_ce"]
+        attempt(
+            "sec_bwd_ce",
+            lambda: bwd_ce(params, hidden, batch),
+            lambda: bwd_ce.lower(params, hidden, batch),
+            graph="grad",
+        )
 
         # Ноги сверки: forward — реальный ``loss_fn`` под jit, backward — разность
         # «fwd+bwd минус forward» на реальном ``grad_fn``.  Оба прохода читают те
-        # же параметры и выбрасывают результат: веса не меняются.
+        # же параметры и выбрасывают результат: веса не меняются.  Память ноги
+        # ``sec_backward`` — память графа fwd+bwd: отдельного backward-исполнителя
+        # у шага нет, и разбор именно этого графа и есть ключ к «упор в память».
         forward_seconds, _ = attempt(
-            "sec_forward", lambda: self._forward_fn(params, batch)
+            "sec_forward",
+            lambda: self._forward_fn(params, batch),
+            lambda: self._forward_fn.lower(params, batch),
         )
+        grad_memory = None
+        try:
+            if not time_it:
+                grad_memory = _executable_memory(
+                    self._grad_fn.lower(params, batch).compile()
+                )
+        except Exception:
+            grad_memory = None
+        if grad_memory is not None:
+            self._memory["sec_backward"] = {"graph": "fwd+bwd", **grad_memory}
         fwd_bwd_seconds = None
         try:
             fwd_bwd_seconds, _ = run(lambda: self._grad_fn(params, batch))
@@ -2813,6 +3104,40 @@ def train(
                         f"не растворяется в тишине (ADR-011)",
                         flush=True,
                     )
+                rendered_bwd = ", ".join(
+                    f"{name}={'null' if phase_record.get(name) is None else format(phase_record[name], '.3f')}"
+                    for name in BWD_LEG_FIELDS
+                )
+                print(
+                    f"[pretrain] backward по компонентам, с (отдельные grad-проходы, "
+                    f"диагностика): {rendered_bwd}",
+                    flush=True,
+                )
+                bwd = phase_record.get(BWD_RECONCILIATION_FIELD) or {}
+                bwd_sum = bwd.get("legs_sum")
+                bwd_full = bwd.get("full_backward")
+                bwd_pct = bwd.get("pct")
+                print(
+                    f"[pretrain] сверка backward: сумма ног = "
+                    f"{'null' if bwd_sum is None else format(bwd_sum, '.3f')} с из "
+                    f"sec_backward={format(bwd_full, '.3f') if bwd_full is not None else 'null'} с "
+                    f"({format(bwd_pct, '.1f') if bwd_pct is not None else 'null'}%) — "
+                    f"{BWD_RECONCILIATION_NOTE}",
+                    flush=True,
+                )
+                if bwd.get("finding"):
+                    print(
+                        f"[pretrain] НАХОДКА: {bwd['finding']} — сумма backward-ног ушла "
+                        f"от полного прохода дальше "
+                        f"±{format(BWD_RECONCILIATION_TOLERANCE * 100.0, '.0f')}% "
+                        f"(ориентир): видно, что ноги меряют не доли шага",
+                        flush=True,
+                    )
+                print(
+                    f"[pretrain] пиковая XLA-память ног: "
+                    f"{render_phase_memory(phase_record.get(PHASE_MEMORY_FIELD))}",
+                    flush=True,
+                )
 
         if train_config.ckpt_dir is not None:
             by_steps = bool(train_config.checkpoint_every) and (

@@ -198,6 +198,8 @@ _TOOLS_WITH_PREFLIGHT = (
     "run_sft_smoke.py",
     "topk_exact_probe.py",
     "a4_manifest.py",
+    "mfu_bf16_protocol.py",
+    "loss_parity_bf16.py",
 )
 
 
@@ -230,6 +232,8 @@ _RUN_TOOLS_GATED = (
     "pool_cost_probe.py",
     "topk_exact_probe.py",
     "run_a4_pipeline.py",
+    "mfu_bf16_protocol.py",
+    "loss_parity_bf16.py",
 )
 
 

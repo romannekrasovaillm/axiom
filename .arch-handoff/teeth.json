@@ -1,0 +1,431 @@
+{
+  "schema": "arch-be/rules-teeth/v1",
+  "case": ".",
+  "measured_at": "2026-10-09T17:00:28.683199881+03:00",
+  "entries": [
+    {
+      "name": "ADR: обязательные секции (Alternatives) — решение без альтернатив не решение",
+      "id": "C-001",
+      "kind": "each_file_must_contain",
+      "status": "confirmed",
+      "fingerprint": "6a297a69d1458ca4d723c467cf09dd3b491e173151daff5c464045b1f568d509",
+      "detail": "удаление совпадений pattern из docs/adr/ADR-001-masshtabnyy-klass-i-os-pobedy-modeli-s-nulya.md, docs/adr/ADR-002-arena-sravneniya-determinirovannyy-kontrakt-zadacha-reshenie-verdikt-kak-pervyy-srez.md, docs/adr/ADR-003-arhitektura-modeli-i-ispolnenie-na-dgx-spark.md, docs/adr/ADR-004-konveyer-pretreyna-dannye-arenda-gpu-i-stadiynost.md, docs/adr/ADR-005-post-trenirovka-sft-grpo-i-agentnyy-kontur.md, docs/adr/ADR-006-domen-osi-pobedy-arhitekturnye-geyty-sobstvennogo-kontura.md, docs/adr/ADR-007-stek-realizacii-modeli-pytorch-triton-fla-ne-jax.md, docs/adr/ADR-008-stek-realizacii-modeli-jax-maxtext-supersede-adr-007.md, docs/adr/ADR-009-import-kv-dlinnokontekstnoy-discipliny-deepseek-v4-1-flash-v-skelet-l3-swa-vetka-v-kazhdom-sloe-sparse-vybor-v-mla-sloyah-fp4-na-latentnom-keshe.md, docs/adr/ADR-010-bekend-i-politika-tochnosti-matmulov-pinnutsya-v-priyomochnyh-testah-seti-verdikt-geyta-ne-zavisit-ot-okruzheniya.md, docs/adr/ADR-011-predmetnost-strazhey-fitness-pravila-proveryayut-povedenie-a-ne-prozu.md, docs/adr/ADR-012-ierarhicheskiy-razrezhennyy-indeksator-obschiy-pul-kandidatov-import-2-3-2-istochnika-v-skelet-l3.md, docs/adr/ADR-013-determinizm-vychisleniy-na-gpu-dlya-a5-xla-gpu-deterministic-ops-v-geytovom-profile.md, docs/adr/ADR-014-manifest-progona-a4-nesyot-sostav-stadiy-konveyera-chastichnyy-progon-geyt-ne-zakryvaet.md, docs/adr/ADR-015-metodika-zamera-ceny-kriteriy-16-pinning-chastot-cheredovanie-nog-mediana-s-razbrosom-zapret-verdikta-po-shumu.md, docs/adr/ADR-016-skoup-geytov-pravila-keysa-ne-primenyayutsya-k-snapshotu-zadachi-workspace.md, docs/adr/ADR-017-vychislitelnyy-stek-ostayotsya-jax-rust-tolko-tochechno-cherez-ffi-i-na-inferense.md, docs/adr/ADR-018-block-wise-token-merging-v-mla-sloyah-skeleta-zaimstvovanie-step-5.md, docs/adr/ADR-019-narrow-but-deep-gipoteza-proporcij-l1-zaimstvovanie-step-5.md, docs/adr/ADR-020-domenovyy-dataset-axiom-agentnye-epizody-koncepty-iz-statey.md, docs/adr/ADR-021-pretreyn-miks-l3-veb-kod-annealing-17b-fweb-3b-stack-1b-decay.md, docs/adr/ADR-022-rl-stadiya-na-spine-aiml-onlayn-sintez-sred-po-frognano-i-praktiki-laguna.md, docs/adr/ADR-023-perenos-urokov-laguny-v-reglamenty-i-strazhi-axiom.md, docs/adr/ADR-024-isklyuchitelnyy-zahvat-chekauta-na-vremya-zhivogo-progona-ispolnitelya.md, docs/adr/ADR-025-zony-arhitektura-i-operacii-dve-sessii.md, docs/adr/ADR-027-rl-dve-metodologii-vetki-laguna-i-frognano.md, docs/adr/ADR-028-zony-po-temam-dve-ravnocennye-linii.md, docs/adr/ADR-029-qat-mxfp4-sobstvennyy-fake-quant.md, docs/adr/ADR-030-hf-kanal-publikacii-artefaktov-axiom.md, docs/adr/ADR-031-tretya-vetka-ornith-samoscaffolding.md, docs/adr/ADR-032-kda-wyut-tok-s-kpi-bolshoy-batch.md, docs/adr/ADR-033-track2-obkatka-na-otkrytoy-modeli.md, docs/adr/ADR-034-multi-gpu-dp-jax-sharding.md, docs/adr/ADR-035-rl-proverka-konveyera-verdikt-na-track2.md, docs/adr/ADR-036-model-ladder-bystrogo-prototipirovaniya.md, docs/adr/ADR-037-povedencheskiy-sloy-datchiki-fakty.md, docs/adr/ADR-038-prioritizaciya-i-zashchita-povedencheskogo-sloya.md, docs/adr/ADR-039-katalog-svoystv-generatory-proverka-proverok.md, docs/adr/ADR-040-politika-compute-dtype-bf16-geyt-infrastruktura-prinyata-vklyuchenie-otlozheno-do-parity-verdikta-i-stage-2.md, docs/adr/ADR-041-disciplina-pamyati-jax-progonov-na-gb10-xla-python-client-mem-fraction-obyazatelen-preflayt-geyt-pered-startom-incident-oom-08-10.md, docs/adr/ADR-042-aktualizaciya-russkoyazychnogo-domennogo-korpusa-v-obuchenii-tokenizatora-korpus-v10-1-ustarel-na-165-mb-kandidat-v3-pereklyuchenie-kanona-otdelnoe-reshenie.md, docs/adr/ADR-043-treysy-spine-kak-potok-t-v-korpuse-obucheniya-tokenizatora-strogiy-otbor-sessionnyh-jsonl-obyazatelnyy-skrab-sekretov-ogranichenie-doli.md, docs/adr/ADR-044-potok-s-skilly-i-metodiki-biblioteki-plaginov-v-korpuse-obucheniya-tokenizatora-27-mb-md-70-kirillicy.md, docs/adr/ADR-045-traktovka-rangov-mfu-lestnicy-ceiling-l0-l2-ne-yavlyaetsya-trenirovochnym-svidetelstvom-l3-l4-50-mfu-k-trenirovke-ne-pinitsya.md, docs/adr/ADR-046-stand-bound-pravila-geyta-cuda-locks-yavnyy-skip-s-obyazatelnoy-otmetkoy-vmesto-lozhnogo-fail-progon-na-gb10-kak-uslovie-priyomki.md, docs/adr/ADR-047-perepisyvanie-realizacii-kda-sloya-matematika-delta-rule-sohranyaetsya-realizaciya-zamenyaetsya-vnutri-chanka-c-c-matrica-mezhdu-chankami-sostoyanie-dk-dv-kak-edinstvennyy-rychag-mfu-modeli.md, docs/adr/ADR-048-optimizator-kak-dominanta-shaga-muon-ns5-ne-primenyaetsya-k-embeddings-lm-head-chislo-ns-iteraciy-parametrizuetsya.md, docs/adr/ADR-049-spine-bank-arch-be-0-3-16-kak-vneshniy-kontur-arhitekturnogo-upravleniya-i-kontrolya-dreyfa-keysa-axiom.md — находок правила: 0 → 48 (зубья подтверждены)"
+    },
+    {
+      "name": "ADR: отрицательные последствия описаны (иначе решение продано, а не проверено)",
+      "id": "C-002",
+      "kind": "each_file_must_contain",
+      "status": "confirmed",
+      "fingerprint": "aa668843fadfd8a07172916a56a7f7de580a7ba02fe5a3b8641a6b1a652adba1",
+      "detail": "удаление совпадений pattern из docs/adr/ADR-001-masshtabnyy-klass-i-os-pobedy-modeli-s-nulya.md, docs/adr/ADR-002-arena-sravneniya-determinirovannyy-kontrakt-zadacha-reshenie-verdikt-kak-pervyy-srez.md, docs/adr/ADR-003-arhitektura-modeli-i-ispolnenie-na-dgx-spark.md, docs/adr/ADR-004-konveyer-pretreyna-dannye-arenda-gpu-i-stadiynost.md, docs/adr/ADR-005-post-trenirovka-sft-grpo-i-agentnyy-kontur.md, docs/adr/ADR-006-domen-osi-pobedy-arhitekturnye-geyty-sobstvennogo-kontura.md, docs/adr/ADR-007-stek-realizacii-modeli-pytorch-triton-fla-ne-jax.md, docs/adr/ADR-008-stek-realizacii-modeli-jax-maxtext-supersede-adr-007.md, docs/adr/ADR-009-import-kv-dlinnokontekstnoy-discipliny-deepseek-v4-1-flash-v-skelet-l3-swa-vetka-v-kazhdom-sloe-sparse-vybor-v-mla-sloyah-fp4-na-latentnom-keshe.md, docs/adr/ADR-010-bekend-i-politika-tochnosti-matmulov-pinnutsya-v-priyomochnyh-testah-seti-verdikt-geyta-ne-zavisit-ot-okruzheniya.md, docs/adr/ADR-011-predmetnost-strazhey-fitness-pravila-proveryayut-povedenie-a-ne-prozu.md, docs/adr/ADR-012-ierarhicheskiy-razrezhennyy-indeksator-obschiy-pul-kandidatov-import-2-3-2-istochnika-v-skelet-l3.md, docs/adr/ADR-013-determinizm-vychisleniy-na-gpu-dlya-a5-xla-gpu-deterministic-ops-v-geytovom-profile.md, docs/adr/ADR-014-manifest-progona-a4-nesyot-sostav-stadiy-konveyera-chastichnyy-progon-geyt-ne-zakryvaet.md, docs/adr/ADR-015-metodika-zamera-ceny-kriteriy-16-pinning-chastot-cheredovanie-nog-mediana-s-razbrosom-zapret-verdikta-po-shumu.md, docs/adr/ADR-016-skoup-geytov-pravila-keysa-ne-primenyayutsya-k-snapshotu-zadachi-workspace.md, docs/adr/ADR-017-vychislitelnyy-stek-ostayotsya-jax-rust-tolko-tochechno-cherez-ffi-i-na-inferense.md, docs/adr/ADR-018-block-wise-token-merging-v-mla-sloyah-skeleta-zaimstvovanie-step-5.md, docs/adr/ADR-019-narrow-but-deep-gipoteza-proporcij-l1-zaimstvovanie-step-5.md, docs/adr/ADR-020-domenovyy-dataset-axiom-agentnye-epizody-koncepty-iz-statey.md, docs/adr/ADR-021-pretreyn-miks-l3-veb-kod-annealing-17b-fweb-3b-stack-1b-decay.md, docs/adr/ADR-022-rl-stadiya-na-spine-aiml-onlayn-sintez-sred-po-frognano-i-praktiki-laguna.md, docs/adr/ADR-023-perenos-urokov-laguny-v-reglamenty-i-strazhi-axiom.md, docs/adr/ADR-024-isklyuchitelnyy-zahvat-chekauta-na-vremya-zhivogo-progona-ispolnitelya.md, docs/adr/ADR-025-zony-arhitektura-i-operacii-dve-sessii.md, docs/adr/ADR-027-rl-dve-metodologii-vetki-laguna-i-frognano.md, docs/adr/ADR-028-zony-po-temam-dve-ravnocennye-linii.md, docs/adr/ADR-029-qat-mxfp4-sobstvennyy-fake-quant.md, docs/adr/ADR-030-hf-kanal-publikacii-artefaktov-axiom.md, docs/adr/ADR-031-tretya-vetka-ornith-samoscaffolding.md, docs/adr/ADR-032-kda-wyut-tok-s-kpi-bolshoy-batch.md, docs/adr/ADR-033-track2-obkatka-na-otkrytoy-modeli.md, docs/adr/ADR-034-multi-gpu-dp-jax-sharding.md, docs/adr/ADR-035-rl-proverka-konveyera-verdikt-na-track2.md, docs/adr/ADR-036-model-ladder-bystrogo-prototipirovaniya.md, docs/adr/ADR-037-povedencheskiy-sloy-datchiki-fakty.md, docs/adr/ADR-038-prioritizaciya-i-zashchita-povedencheskogo-sloya.md, docs/adr/ADR-039-katalog-svoystv-generatory-proverka-proverok.md, docs/adr/ADR-040-politika-compute-dtype-bf16-geyt-infrastruktura-prinyata-vklyuchenie-otlozheno-do-parity-verdikta-i-stage-2.md, docs/adr/ADR-041-disciplina-pamyati-jax-progonov-na-gb10-xla-python-client-mem-fraction-obyazatelen-preflayt-geyt-pered-startom-incident-oom-08-10.md, docs/adr/ADR-042-aktualizaciya-russkoyazychnogo-domennogo-korpusa-v-obuchenii-tokenizatora-korpus-v10-1-ustarel-na-165-mb-kandidat-v3-pereklyuchenie-kanona-otdelnoe-reshenie.md, docs/adr/ADR-043-treysy-spine-kak-potok-t-v-korpuse-obucheniya-tokenizatora-strogiy-otbor-sessionnyh-jsonl-obyazatelnyy-skrab-sekretov-ogranichenie-doli.md, docs/adr/ADR-044-potok-s-skilly-i-metodiki-biblioteki-plaginov-v-korpuse-obucheniya-tokenizatora-27-mb-md-70-kirillicy.md, docs/adr/ADR-045-traktovka-rangov-mfu-lestnicy-ceiling-l0-l2-ne-yavlyaetsya-trenirovochnym-svidetelstvom-l3-l4-50-mfu-k-trenirovke-ne-pinitsya.md, docs/adr/ADR-046-stand-bound-pravila-geyta-cuda-locks-yavnyy-skip-s-obyazatelnoy-otmetkoy-vmesto-lozhnogo-fail-progon-na-gb10-kak-uslovie-priyomki.md, docs/adr/ADR-047-perepisyvanie-realizacii-kda-sloya-matematika-delta-rule-sohranyaetsya-realizaciya-zamenyaetsya-vnutri-chanka-c-c-matrica-mezhdu-chankami-sostoyanie-dk-dv-kak-edinstvennyy-rychag-mfu-modeli.md, docs/adr/ADR-048-optimizator-kak-dominanta-shaga-muon-ns5-ne-primenyaetsya-k-embeddings-lm-head-chislo-ns-iteraciy-parametrizuetsya.md, docs/adr/ADR-049-spine-bank-arch-be-0-3-16-kak-vneshniy-kontur-arhitekturnogo-upravleniya-i-kontrolya-dreyfa-keysa-axiom.md — находок правила: 0 → 48 (зубья подтверждены)"
+    },
+    {
+      "name": "ADR: обратимость указана явно (reversible | costly | irreversible)",
+      "id": "C-003",
+      "kind": "each_file_must_contain",
+      "status": "confirmed",
+      "fingerprint": "b2b5fa271f2bb7161091ce8ebde66057b599ac4073defddeb37ca99d81c19a7e",
+      "detail": "удаление совпадений pattern из docs/adr/ADR-001-masshtabnyy-klass-i-os-pobedy-modeli-s-nulya.md, docs/adr/ADR-002-arena-sravneniya-determinirovannyy-kontrakt-zadacha-reshenie-verdikt-kak-pervyy-srez.md, docs/adr/ADR-003-arhitektura-modeli-i-ispolnenie-na-dgx-spark.md, docs/adr/ADR-004-konveyer-pretreyna-dannye-arenda-gpu-i-stadiynost.md, docs/adr/ADR-005-post-trenirovka-sft-grpo-i-agentnyy-kontur.md, docs/adr/ADR-006-domen-osi-pobedy-arhitekturnye-geyty-sobstvennogo-kontura.md, docs/adr/ADR-007-stek-realizacii-modeli-pytorch-triton-fla-ne-jax.md, docs/adr/ADR-008-stek-realizacii-modeli-jax-maxtext-supersede-adr-007.md, docs/adr/ADR-009-import-kv-dlinnokontekstnoy-discipliny-deepseek-v4-1-flash-v-skelet-l3-swa-vetka-v-kazhdom-sloe-sparse-vybor-v-mla-sloyah-fp4-na-latentnom-keshe.md, docs/adr/ADR-010-bekend-i-politika-tochnosti-matmulov-pinnutsya-v-priyomochnyh-testah-seti-verdikt-geyta-ne-zavisit-ot-okruzheniya.md, docs/adr/ADR-011-predmetnost-strazhey-fitness-pravila-proveryayut-povedenie-a-ne-prozu.md, docs/adr/ADR-012-ierarhicheskiy-razrezhennyy-indeksator-obschiy-pul-kandidatov-import-2-3-2-istochnika-v-skelet-l3.md, docs/adr/ADR-013-determinizm-vychisleniy-na-gpu-dlya-a5-xla-gpu-deterministic-ops-v-geytovom-profile.md, docs/adr/ADR-014-manifest-progona-a4-nesyot-sostav-stadiy-konveyera-chastichnyy-progon-geyt-ne-zakryvaet.md, docs/adr/ADR-015-metodika-zamera-ceny-kriteriy-16-pinning-chastot-cheredovanie-nog-mediana-s-razbrosom-zapret-verdikta-po-shumu.md, docs/adr/ADR-016-skoup-geytov-pravila-keysa-ne-primenyayutsya-k-snapshotu-zadachi-workspace.md, docs/adr/ADR-017-vychislitelnyy-stek-ostayotsya-jax-rust-tolko-tochechno-cherez-ffi-i-na-inferense.md, docs/adr/ADR-018-block-wise-token-merging-v-mla-sloyah-skeleta-zaimstvovanie-step-5.md, docs/adr/ADR-019-narrow-but-deep-gipoteza-proporcij-l1-zaimstvovanie-step-5.md, docs/adr/ADR-020-domenovyy-dataset-axiom-agentnye-epizody-koncepty-iz-statey.md, docs/adr/ADR-021-pretreyn-miks-l3-veb-kod-annealing-17b-fweb-3b-stack-1b-decay.md, docs/adr/ADR-022-rl-stadiya-na-spine-aiml-onlayn-sintez-sred-po-frognano-i-praktiki-laguna.md, docs/adr/ADR-023-perenos-urokov-laguny-v-reglamenty-i-strazhi-axiom.md, docs/adr/ADR-024-isklyuchitelnyy-zahvat-chekauta-na-vremya-zhivogo-progona-ispolnitelya.md, docs/adr/ADR-025-zony-arhitektura-i-operacii-dve-sessii.md, docs/adr/ADR-027-rl-dve-metodologii-vetki-laguna-i-frognano.md, docs/adr/ADR-028-zony-po-temam-dve-ravnocennye-linii.md, docs/adr/ADR-029-qat-mxfp4-sobstvennyy-fake-quant.md, docs/adr/ADR-030-hf-kanal-publikacii-artefaktov-axiom.md, docs/adr/ADR-031-tretya-vetka-ornith-samoscaffolding.md, docs/adr/ADR-032-kda-wyut-tok-s-kpi-bolshoy-batch.md, docs/adr/ADR-033-track2-obkatka-na-otkrytoy-modeli.md, docs/adr/ADR-034-multi-gpu-dp-jax-sharding.md, docs/adr/ADR-035-rl-proverka-konveyera-verdikt-na-track2.md, docs/adr/ADR-036-model-ladder-bystrogo-prototipirovaniya.md, docs/adr/ADR-037-povedencheskiy-sloy-datchiki-fakty.md, docs/adr/ADR-038-prioritizaciya-i-zashchita-povedencheskogo-sloya.md, docs/adr/ADR-039-katalog-svoystv-generatory-proverka-proverok.md, docs/adr/ADR-040-politika-compute-dtype-bf16-geyt-infrastruktura-prinyata-vklyuchenie-otlozheno-do-parity-verdikta-i-stage-2.md, docs/adr/ADR-041-disciplina-pamyati-jax-progonov-na-gb10-xla-python-client-mem-fraction-obyazatelen-preflayt-geyt-pered-startom-incident-oom-08-10.md, docs/adr/ADR-042-aktualizaciya-russkoyazychnogo-domennogo-korpusa-v-obuchenii-tokenizatora-korpus-v10-1-ustarel-na-165-mb-kandidat-v3-pereklyuchenie-kanona-otdelnoe-reshenie.md, docs/adr/ADR-043-treysy-spine-kak-potok-t-v-korpuse-obucheniya-tokenizatora-strogiy-otbor-sessionnyh-jsonl-obyazatelnyy-skrab-sekretov-ogranichenie-doli.md, docs/adr/ADR-044-potok-s-skilly-i-metodiki-biblioteki-plaginov-v-korpuse-obucheniya-tokenizatora-27-mb-md-70-kirillicy.md, docs/adr/ADR-045-traktovka-rangov-mfu-lestnicy-ceiling-l0-l2-ne-yavlyaetsya-trenirovochnym-svidetelstvom-l3-l4-50-mfu-k-trenirovke-ne-pinitsya.md, docs/adr/ADR-046-stand-bound-pravila-geyta-cuda-locks-yavnyy-skip-s-obyazatelnoy-otmetkoy-vmesto-lozhnogo-fail-progon-na-gb10-kak-uslovie-priyomki.md, docs/adr/ADR-047-perepisyvanie-realizacii-kda-sloya-matematika-delta-rule-sohranyaetsya-realizaciya-zamenyaetsya-vnutri-chanka-c-c-matrica-mezhdu-chankami-sostoyanie-dk-dv-kak-edinstvennyy-rychag-mfu-modeli.md, docs/adr/ADR-048-optimizator-kak-dominanta-shaga-muon-ns5-ne-primenyaetsya-k-embeddings-lm-head-chislo-ns-iteraciy-parametrizuetsya.md, docs/adr/ADR-049-spine-bank-arch-be-0-3-16-kak-vneshniy-kontur-arhitekturnogo-upravleniya-i-kontrolya-dreyfa-keysa-axiom.md — находок правила: 0 → 48 (зубья подтверждены)"
+    },
+    {
+      "name": "Спинальные инварианты: каждый AD имеет проверяемое Rule",
+      "id": "C-004",
+      "kind": "each_file_must_contain",
+      "status": "confirmed",
+      "fingerprint": "11c57d7c28591216c65e3d53cff08d0c05fc06018984e12f6d4b3a0424e3b675",
+      "detail": "удаление совпадений pattern из model/AD-1-os-pobedy-odna.md, model/AD-10-strazhi-predmetny.md, model/AD-11-verdikt-ne-zavisit-ot-okruzheniya.md, model/AD-12-eval-nabor-chist-do-verdikta.md, model/AD-13-zahvat-chekauta-ispolnitelem.md, model/AD-2-mehanicheskiy-verdikt.md, model/AD-3-edinyy-kontrakt-progona.md, model/AD-4-pinning-snapshotov.md, model/AD-5-arhitekturnaya-baza-pinnuta.md, model/AD-6-privatnyy-korpus-v-konture.md, model/AD-7-resursnyy-invariant-gb10.md, model/AD-8-limit-stoimosti.md, model/AD-9-dlinnokontekstnye-mehanizmy.md — находок правила: 0 → 13 (зубья подтверждены)"
+    },
+    {
+      "name": "Спинальные инварианты: каждый AD привязан к fitness-правилу ИЛИ честно объявлен unverifiable (ADR-024; выравнивание с контрактом trace_check — третьего состояния нет)",
+      "id": "C-005",
+      "kind": "each_file_must_contain",
+      "status": "unknown",
+      "fingerprint": "2683f435cb2df8dd9b0039854401aa7bb6be8e460073196a41ba199d53200900",
+      "detail": "копия кейса не собрана: io: /tmp/arch-be-teeth-2868705-1791554338301152841/Спинальные инварианты: каждый AD привязан к fitness-правилу ИЛИ честно объявлен unverifiable (ADR-024; выравнивание с контрактом trace_check — третьего состояния нет): File name too long (os error 36)"
+    },
+    {
+      "name": "Spine: у каждого инварианта заполнены Binds и Prevents",
+      "id": "C-006",
+      "kind": "must_contain",
+      "status": "confirmed",
+      "fingerprint": "55f866abf8dfeaf52712b26bf8c8b228510edc6f7f016948b5f5c0202b913f39",
+      "detail": "удаление совпадений pattern из ARCHITECTURE-SPINE.md — находок правила: 0 → 1 (зубья подтверждены)"
+    },
+    {
+      "name": "Артефакты без заглушек (TODO/TBD в архитектурном пакете недопустимы)",
+      "id": "C-007",
+      "kind": "must_not_contain",
+      "status": "confirmed",
+      "fingerprint": "8f72f1975a7d6e1b10416c2aa7509a730a53906a8f35fe52e17f080b945076a7",
+      "detail": "вставка строки под pattern в .arch-fleet/nodes/n5-env-proposals.md — находок правила: 0 → 1 (зубья подтверждены)"
+    },
+    {
+      "name": "Пакет решения A3 имеет срок годности (expiry) и поведение по истечении",
+      "id": "C-008",
+      "kind": "must_contain",
+      "status": "confirmed",
+      "fingerprint": "afaafd5baad2871e123ea2b8d48509a7621d4120455595a9efdd4a08dda696aa",
+      "detail": "удаление совпадений pattern из docs/DECISION-PACKAGE.json — находок правила: 0 → 1 (зубья подтверждены)"
+    },
+    {
+      "name": "Смета: NFR стоимости имеет измеримую цель и способ верификации",
+      "id": "C-009",
+      "kind": "each_file_must_contain",
+      "status": "confirmed",
+      "fingerprint": "d6ec700c126af1ec1c801973f9d53e959675fbd130975724af886a813f2b9b24",
+      "detail": "удаление совпадений pattern из model/NFR-001-kachestvo-na-osi.md, model/NFR-002-vosproizvodimost-progona.md, model/NFR-003-stoimost-etapov-obucheniya.md, model/NFR-004-inferens-na-spark.md, model/NFR-005-kontekst-1m.md, model/NFR-006-multimodalnost-v1.md — находок правила: 0 → 6 (зубья подтверждены)"
+    },
+    {
+      "name": "Незакреплённые снапшоты запрещены: NFR и AD ссылаются на модель-сущности, а не на прозу",
+      "id": "C-010",
+      "kind": "each_file_must_contain",
+      "status": "confirmed",
+      "fingerprint": "3f9041bdb88a08df8ab25aa095369e85c91e1e1c5ca6674f6fc78a49ebfa100a",
+      "detail": "удаление совпадений pattern из model/AD-1-os-pobedy-odna.md, model/AD-10-strazhi-predmetny.md, model/AD-11-verdikt-ne-zavisit-ot-okruzheniya.md, model/AD-12-eval-nabor-chist-do-verdikta.md, model/AD-13-zahvat-chekauta-ispolnitelem.md, model/AD-2-mehanicheskiy-verdikt.md, model/AD-3-edinyy-kontrakt-progona.md, model/AD-4-pinning-snapshotov.md, model/AD-5-arhitekturnaya-baza-pinnuta.md, model/AD-6-privatnyy-korpus-v-konture.md, model/AD-7-resursnyy-invariant-gb10.md, model/AD-8-limit-stoimosti.md, model/AD-9-dlinnokontekstnye-mehanizmy.md — находок правила: 0 → 13 (зубья подтверждены)"
+    },
+    {
+      "name": "Приватность: в артефактах нет подключений к внешним LLM/данным с ключами в открытом виде",
+      "id": "C-011",
+      "kind": "must_not_contain",
+      "status": "glob_empty",
+      "fingerprint": "4709a743c5d43638567b2d33e1e0283c9a7a8920f28485df703e0dbbc304e775",
+      "detail": "по glob '**/*.{md,json,yaml,yml,toml}' нет ни одного файла — правилу нечего проверять (`rule_glob_empty`)"
+    },
+    {
+      "name": "Ресурсный инвариант Spark зафиксирован в spine и модели",
+      "id": "C-012",
+      "kind": "must_contain",
+      "status": "confirmed",
+      "fingerprint": "afa1c4a29516b76939231c1cbd309c084c71fbee26d7591a56b05d6a620d4058",
+      "detail": "удаление совпадений pattern из ARCHITECTURE-SPINE.md — находок правила: 0 → 1 (зубья подтверждены)"
+    },
+    {
+      "name": "Ось победы объявлена в пакете решения (без оси нет предмета доказывания)",
+      "id": "C-013",
+      "kind": "must_contain",
+      "status": "confirmed",
+      "fingerprint": "e4af68f754499e220595a3a83ebe588a7fa5b722c3d89305b50c761d76d98351",
+      "detail": "удаление совпадений pattern из docs/DECISION-PACKAGE.json — находок правила: 0 → 1 (зубья подтверждены)"
+    },
+    {
+      "name": "Паспорт кейса существует (точка входа для исполнителя)",
+      "id": "C-014",
+      "kind": "file_exists",
+      "status": "confirmed",
+      "fingerprint": "660b33025e72f89ae6d314990e823935bfef386f348497bb6a652dee7c4ed7d4",
+      "detail": "удаление файла README.md — находок правила: 0 → 1 (зубья подтверждены)"
+    },
+    {
+      "name": "Сравнение с K3 опирается на первичный источник, а не на пересказ",
+      "id": "C-015",
+      "kind": "must_contain",
+      "status": "confirmed",
+      "fingerprint": "4cff07f52266e0a9c7d04cb37be709e8b517721d23b4089d3074ba1cb432e769",
+      "detail": "удаление совпадений pattern из docs/adr/ADR-001-masshtabnyy-klass-i-os-pobedy-modeli-s-nulya.md — находок правила: 0 → 1 (зубья подтверждены)"
+    },
+    {
+      "name": "Арена: вердикт определён как детерминированный (иначе reward-hacking)",
+      "id": "C-016",
+      "kind": "must_contain",
+      "status": "confirmed",
+      "fingerprint": "26dea9412652243f14f3b2c96f4d8cccc35e86fc4bb63538b29504a9697cf7fc",
+      "detail": "удаление совпадений pattern из docs/adr/ADR-002-arena-sravneniya-determinirovannyy-kontrakt-zadacha-reshenie-verdikt-kak-pervyy-srez.md — находок правила: 0 → 1 (зубья подтверждены)"
+    },
+    {
+      "name": "Пост-тренировка: награда привязана к механическому сигналу среды",
+      "id": "C-017",
+      "kind": "must_contain",
+      "status": "confirmed",
+      "fingerprint": "c9768c82b28d433b7defd91fd6405130faa1ef162a17599ec83fe3e57c970d6e",
+      "detail": "удаление совпадений pattern из docs/adr/ADR-005-post-trenirovka-sft-grpo-i-agentnyy-kontur.md — находок правила: 0 → 1 (зубья подтверждены)"
+    },
+    {
+      "name": "Сравнение: условия прогона фиксируются манифестом (равный бюджет рассуждений)",
+      "id": "C-018",
+      "kind": "must_contain",
+      "status": "confirmed",
+      "fingerprint": "c5028ed95a2aa38c1533201552862c3bb98670f2176d0a134e4399fbaaa04b48",
+      "detail": "удаление совпадений pattern из docs/adr/ADR-002-arena-sravneniya-determinirovannyy-kontrakt-zadacha-reshenie-verdikt-kak-pervyy-srez.md — находок правила: 0 → 1 (зубья подтверждены)"
+    },
+    {
+      "name": "Пиннинг снапшотов: прогон ссылается на хеш весов и датасета",
+      "id": "C-019",
+      "kind": "must_contain",
+      "status": "confirmed",
+      "fingerprint": "45cdcca1aa5f744be5ea20caf29d213e0b8a3c477a848b55be1b104b817be2ff",
+      "detail": "удаление совпадений pattern из docs/adr/ADR-004-konveyer-pretreyna-dannye-arenda-gpu-i-stadiynost.md — находок правила: 0 → 1 (зубья подтверждены)"
+    },
+    {
+      "name": "Архитектурная база запиннена на первичный техотчёт K3",
+      "id": "C-020",
+      "kind": "must_contain",
+      "status": "confirmed",
+      "fingerprint": "d3b43ed01bab0d2a4526368eef9f5e1044cccc6b8a0c7b0b4a867ba8d38c09bc",
+      "detail": "удаление совпадений pattern из docs/adr/ADR-003-arhitektura-modeli-i-ispolnenie-na-dgx-spark.md — находок правила: 0 → 1 (зубья подтверждены)"
+    },
+    {
+      "name": "Приватный корпус не покидает контур (запрет вывоза на аренду и во внешние API)",
+      "id": "C-021",
+      "kind": "must_contain",
+      "status": "confirmed",
+      "fingerprint": "4166ed2be60919488b785ed57c12b20b7e4efd95cd39fb6a5bb2282f7b43bc88",
+      "detail": "удаление совпадений pattern из docs/adr/ADR-004-konveyer-pretreyna-dannye-arenda-gpu-i-stadiynost.md — находок правила: 0 → 1 (зубья подтверждены)"
+    },
+    {
+      "name": "Лимит стоимости: смета в H800-часах до запуска прогона",
+      "id": "C-022",
+      "kind": "must_contain",
+      "status": "confirmed",
+      "fingerprint": "50712bb10477b8372a5385c666aa8643d6e1a5a7330bf6f4b3728fe5708860bc",
+      "detail": "удаление совпадений pattern из docs/adr/ADR-004-konveyer-pretreyna-dannye-arenda-gpu-i-stadiynost.md — находок правила: 0 → 1 (зубья подтверждены)"
+    },
+    {
+      "name": "Мультимодальность v1 зафиксирована в решении (принято владельцем 2026-09-11)",
+      "id": "C-023",
+      "kind": "must_contain",
+      "status": "confirmed",
+      "fingerprint": "b42c757b15d7556b73a4f5328b14678aa00c43761ab403bb0e7db2f25f0e3d52",
+      "detail": "удаление совпадений pattern из docs/adr/ADR-003-arhitektura-modeli-i-ispolnenie-na-dgx-spark.md — находок правила: 0 → 1 (зубья подтверждены)"
+    },
+    {
+      "name": "Пост-тренировка: консолидация экспертов (MOPD) зафиксирована в решении",
+      "id": "C-024",
+      "kind": "must_contain",
+      "status": "confirmed",
+      "fingerprint": "7ec6fb8a1a9405b3203133d3497687a92556237ad1462f08d294d7e15759d0a9",
+      "detail": "удаление совпадений pattern из docs/adr/ADR-005-post-trenirovka-sft-grpo-i-agentnyy-kontur.md — находок правила: 0 → 1 (зубья подтверждены)"
+    },
+    {
+      "name": "Арена: runner изолирован microVM, а не контейнером (обоснование вендора)",
+      "id": "C-025",
+      "kind": "must_contain",
+      "status": "confirmed",
+      "fingerprint": "c67ec7c9b2624b527ee38bcfe2c802031b8a300fda869482b6509cac4c17e748",
+      "detail": "удаление совпадений pattern из docs/adr/ADR-002-arena-sravneniya-determinirovannyy-kontrakt-zadacha-reshenie-verdikt-kak-pervyy-srez.md — находок правила: 0 → 1 (зубья подтверждены)"
+    },
+    {
+      "name": "Разграничение: RL-алгоритм базы не назван в отчёте K3 (запрет атрибуции GRPO вендору)",
+      "id": "C-026",
+      "kind": "must_contain",
+      "status": "confirmed",
+      "fingerprint": "65cd3868ff33e4cee721291f8c10ff701da966b22e2a38866d5ed20ed83a2450",
+      "detail": "удаление совпадений pattern из docs/adr/ADR-005-post-trenirovka-sft-grpo-i-agentnyy-kontur.md — находок правила: 0 → 1 (зубья подтверждены)"
+    },
+    {
+      "name": "RL воспроизводит схему базы (K2.5/K1.5), а не сторонний алгоритм",
+      "id": "C-027",
+      "kind": "must_contain",
+      "status": "confirmed",
+      "fingerprint": "d768bcd318c7c5f42c5ac186702761edc5bcf9fc89f0ed0c069ba409b0078435",
+      "detail": "удаление совпадений pattern из docs/adr/ADR-005-post-trenirovka-sft-grpo-i-agentnyy-kontur.md — находок правила: 0 → 1 (зубья подтверждены)"
+    },
+    {
+      "name": "Матрица верности существует и честно фиксирует неполноту источника",
+      "id": "C-028",
+      "kind": "must_contain",
+      "status": "confirmed",
+      "fingerprint": "343fb7a2dce817ca4883f38f49a3ca7c1452f77cf6704c7fb0b109ba76f730a9",
+      "detail": "удаление совпадений pattern из docs/FIDELITY-TO-K3.md — находок правила: 0 → 1 (зубья подтверждены)"
+    },
+    {
+      "name": "Скелет L3 размечен по рецепту базы (что входит, что вне)",
+      "id": "C-029",
+      "kind": "must_contain",
+      "status": "confirmed",
+      "fingerprint": "a8c50faf5359c3b3ecba6ce246af77f5d4f1753ea0793247f96fe2ea96af1e73",
+      "detail": "удаление совпадений pattern из docs/FIDELITY-TO-K3.md — находок правила: 0 → 1 (зубья подтверждены)"
+    },
+    {
+      "name": "Среда RL содержит механики базы: скрытые верификаторы и изоляция агента",
+      "id": "C-030",
+      "kind": "must_contain",
+      "status": "confirmed",
+      "fingerprint": "2bb9d351fa80ae0cc9e1c5f7165f0e8a2162b3542b01d6494cb4cd48dac1fd4f",
+      "detail": "удаление совпадений pattern из docs/adr/ADR-002-arena-sravneniya-determinirovannyy-kontrakt-zadacha-reshenie-verdikt-kak-pervyy-srez.md — находок правила: 0 → 1 (зубья подтверждены)"
+    },
+    {
+      "name": "Сравнительный стенд отделён от стадий рецепта (не блокирует скелет)",
+      "id": "C-031",
+      "kind": "must_contain",
+      "status": "confirmed",
+      "fingerprint": "863d6549af911d97bd91804fb5f579fac18b6665ddfa7c7611c64b1dd2886c01",
+      "detail": "удаление совпадений pattern из docs/adr/ADR-002-arena-sravneniya-determinirovannyy-kontrakt-zadacha-reshenie-verdikt-kak-pervyy-srez.md — находок правила: 0 → 1 (зубья подтверждены)"
+    },
+    {
+      "name": "Веса моделей канонически на сетевом диске ~/gb10-shared: в рабочих каталогах — только симлинки, копий нет (решение владельца 2026-09-12)",
+      "id": "C-032",
+      "kind": "command_succeeds",
+      "status": "unknown",
+      "fingerprint": "4c9e64d7230fae34c17b9501775573e9828d4a6e34bb4c84c38720b9c5918caf",
+      "detail": "копия кейса не собрана: control: копия кейса .: Permission denied (os error 13)"
+    },
+    {
+      "name": "Датасеты (SFT/RL/претрейн) канонически на ~/gb10-shared: крупные файлы-копии в рабочих каталогах запрещены — симлинки (решение владельца 2026-09-12)",
+      "id": "C-033",
+      "kind": "command_succeeds",
+      "status": "unknown",
+      "fingerprint": "1cb59cc684e757a7d1f1c92cd7c2d20cf3c2d0e4fe82778081217ec4ccbdcaa9",
+      "detail": "копия кейса не собрана: control: копия кейса .: Permission denied (os error 13)"
+    },
+    {
+      "name": "Длинноконтекстная дельта скелета оформлена решением до реализации (ADR-009), а не правками кода по месту",
+      "id": "C-034",
+      "kind": "command_succeeds",
+      "status": "unknown",
+      "fingerprint": "e4b15b1ab85ae21ef31e072855ffbe6438da0583da57cf9c47cdf8872619eb76",
+      "detail": "копия кейса не собрана: control: копия кейса .: Permission denied (os error 13)"
+    },
+    {
+      "name": "AD-9: механика длинного контекста декларативна — объявленное в net/config.json читается кодом net/, а не живёт в прозе (сверка config ↔ код)",
+      "id": "C-035",
+      "kind": "command_succeeds",
+      "status": "unknown",
+      "fingerprint": "66d0a3bce1270398ee9a50736ad17f4c091fecd42ff20d4d3f32d1d3842419ac",
+      "detail": "копия кейса не собрана: control: копия кейса .: Permission denied (os error 13)"
+    },
+    {
+      "name": "Мета-валидатор контура: стражи предметны — поведение, а не проза (ADR-011, AD-10)",
+      "id": "C-036",
+      "kind": "command_succeeds",
+      "status": "unknown",
+      "fingerprint": "9e8ccc7562253eb5974f470699ecadf2b3f6d669a453754b4c2275cbb147cf1a",
+      "detail": "копия кейса не собрана: control: копия кейса .: Permission denied (os error 13)"
+    },
+    {
+      "name": "Канал гейта: пакет несёт рабочий ruleset кейса, а не заготовку (ADR-011, п. 5)",
+      "id": "C-037",
+      "kind": "command_succeeds",
+      "status": "unknown",
+      "fingerprint": "734beb77bf5edddf059de5af22fb96eadd28930a728c0aa1ee3b8f3676fdedd2",
+      "detail": "копия кейса не собрана: control: копия кейса .: Permission denied (os error 13)"
+    },
+    {
+      "name": "AD-4: манифест прогона A4 существует, валиден (схема v2) и покрывает конвейер полностью (behavioural-страж пиннинга снапшотов)",
+      "id": "C-038",
+      "kind": "command_succeeds",
+      "status": "unknown",
+      "fingerprint": "e81e3ca171d3caedc21e6bd301a40786daace087705bb696dafb571e1ac0dcdc",
+      "detail": "копия кейса не собрана: control: копия кейса .: Permission denied (os error 13)"
+    },
+    {
+      "name": "AD-2: LLM-судья, LLM-клиенты и внешние API вне контура награды RL (import-замыкание пути награды)",
+      "id": "C-039",
+      "kind": "command_succeeds",
+      "status": "unknown",
+      "fingerprint": "2b98791834dacef57a673b9ccb2ff5c730c342bfa4726eedefeceeccb64b9309",
+      "detail": "копия кейса не собрана: control: копия кейса .: Permission denied (os error 13)"
+    },
+    {
+      "name": "Ресурсный инвариант GB10: одна модельная нагрузка за раз (AD-7, поведенческий страж)",
+      "id": "C-040",
+      "kind": "command_succeeds",
+      "status": "unknown",
+      "fingerprint": "0f20b9c9620edbdfa798fd0f42a3600a54995d9a6171929d4c47ae433f6dc6e5",
+      "detail": "копия кейса не собрана: control: копия кейса .: Permission denied (os error 13)"
+    },
+    {
+      "name": "Performance-roofline гейт: KPI-объявленный прогон не деградирует ниже пина (самоулучшение по rubric axiom_fitness_blind_spot_assessment 4.88/5 — слепое пятно «MFU<1% прошло все 45 правил»)",
+      "id": "C-046",
+      "kind": "command_succeeds",
+      "status": "unknown",
+      "fingerprint": "7ef0f0d52ca1a9ad06ec870edb9d74572d4d8d58f627e8a038af94257cc2a7d9",
+      "detail": "копия кейса не собрана: control: копия кейса .: Permission denied (os error 13)"
+    },
+    {
+      "name": "AD-8: смета прогона существует до запуска и не превышает лимит (behavioural-страж лимита стоимости)",
+      "id": "C-041",
+      "kind": "command_succeeds",
+      "status": "unknown",
+      "fingerprint": "4aa1384d5ad90c1029d1da374032f371d745b0ae43bd50112a4cd2bf9c112b58",
+      "detail": "копия кейса не собрана: control: копия кейса .: Permission denied (os error 13)"
+    },
+    {
+      "name": "ADR-010+ADR-013: бэкенд, политика точности матмулов и режим детерминизма операций запиннены в приёмочных тестах сети — страж проверяет runtime-конфигурацию JAX, а не строку в conftest",
+      "id": "C-042",
+      "kind": "command_succeeds",
+      "status": "unknown",
+      "fingerprint": "6f7a7c4bb678c96291e11ede7dec39fb8cf72b0a4de18af8cc854709c912250a",
+      "detail": "копия кейса не собрана: io: /tmp/arch-be-teeth-2868705-1791554338301152841/ADR-010+ADR-013: бэкенд, политика точности матмулов и режим детерминизма операций запиннены в приёмочных тестах сети — страж проверяет runtime-конфигурацию JAX, а не строку в conftest: File name too long (os error 36)"
+    },
+    {
+      "name": "AD-12: страж чистоты eval-набора существует и рабоч — selftest с мутантами (красный на пересечении, зелёный на чистой синтетике); без leak_check вердикт по набору не выносится",
+      "id": "C-043",
+      "kind": "command_succeeds",
+      "status": "unknown",
+      "fingerprint": "86f250b5fa4591a771797158c12f7fc1dfbb631b496b50026d1aa00e6305e2a9",
+      "detail": "копия кейса не собрана: io: /tmp/arch-be-teeth-2868705-1791554338301152841/AD-12: страж чистоты eval-набора существует и рабоч — selftest с мутантами (красный на пересечении, зелёный на чистой синтетике); без leak_check вердикт по набору не выносится: File name too long (os error 36)"
+    },
+    {
+      "name": "SFT-STAGE §8.1: структурный аудитор SFT-набора существует и рабоч — selftest с мутантами на три класса дефектов; ход, обрезанный бюджетом пробы, дефектом не считается",
+      "id": "C-044",
+      "kind": "command_succeeds",
+      "status": "unknown",
+      "fingerprint": "cb697f8addb80c84abfd675e89156be07ae737ac640832747a22b0a72606d4a9",
+      "detail": "копия кейса не собрана: io: /tmp/arch-be-teeth-2868705-1791554338301152841/SFT-STAGE §8.1: структурный аудитор SFT-набора существует и рабоч — selftest с мутантами на три класса дефектов; ход, обрезанный бюджетом пробы, дефектом не считается: File name too long (os error 36)"
+    },
+    {
+      "name": "RL-STAGE §8.1: страж вырождения награды RL существует и рабоч — selftest с мутантами (стоп-классы красные на вырожденном ряде, зелёные на здоровом; warn ≠ стоп)",
+      "id": "C-045",
+      "kind": "command_succeeds",
+      "status": "unknown",
+      "fingerprint": "94741cb4d052cec1c710c98230406c007fc266782b5778805d46cf7d22dede29",
+      "detail": "копия кейса не собрана: io: /tmp/arch-be-teeth-2868705-1791554338301152841/RL-STAGE §8.1: страж вырождения награды RL существует и рабоч — selftest с мутантами (стоп-классы красные на вырожденном ряде, зелёные на здоровом; warn ≠ стоп): File name too long (os error 36)"
+    },
+    {
+      "name": "Страж согласованности ADR↔конфиг: числа, заявленные в ADR, совпадают с носителем (config/pin) по декларативным картам; selftest с мутантами (дрейф config-стороны, дрейф ADR-стороны, исчезновение паттерна = fail-closed, list-путь); мутатор L2/L3 (numeric_drift/config_drift) строит порчу по тем же картам — один носитель соответствий для стража и генератора задач",
+      "id": "C-047",
+      "kind": "command_succeeds",
+      "status": "unknown",
+      "fingerprint": "fed3317e3bb2d27bf8a4904e51605f58871a422c5c7fa3e39bb9f157efb06559",
+      "detail": "копия кейса не собрана: control: копия кейса .: Permission denied (os error 13)"
+    },
+    {
+      "name": "Страж эффективности с блокировкой аренды: смета аренды GPU не одобрена, пока KPI ток/с не добит до пинового порога (ADR-032/034 §5, пин blocks_rental); selftest с мутантами; fail-closed (нет метрик = unmet = блокировка действует; файл сметы без статуса = нарушение)",
+      "id": "C-048",
+      "kind": "command_succeeds",
+      "status": "unknown",
+      "fingerprint": "8862376d3868c42c06241249a961de1bab4ca8ff5205acd43ea1146c2add33b4",
+      "detail": "копия кейса не собрана: control: копия кейса .: Permission denied (os error 13)"
+    },
+    {
+      "name": "ADR и конфиг согласованы: config-привязки реестра утверждений совпадают с net/config.json; реестры claims/sensors/incidents валидны (ADR-037)",
+      "id": "C-049",
+      "kind": "command_succeeds",
+      "status": "unknown",
+      "fingerprint": "a4de63e7d48607249593633421f11d0671643f27bd0fd75c44b367883ddad595",
+      "detail": "копия кейса не собрана: control: копия кейса .: Permission denied (os error 13)"
+    },
+    {
+      "name": "Утверждения ADR не опровергнуты фактами датчиков: ни одного fail в check_claims --evaluate (unverified не валит гейт, но не открывает расход — ADR-037)",
+      "id": "C-050",
+      "kind": "command_succeeds",
+      "status": "unknown",
+      "fingerprint": "5b86252b983f18894f44824dd3faa1a1ac186530cf2bd5cd4e34be182a3f6a51",
+      "detail": "копия кейса не собрана: control: копия кейса .: Permission denied (os error 13)"
+    },
+    {
+      "name": "Реестры поведенческого слоя согласованы: наследование прозаических правил, ставки, решения триажа, открывающие гейты, уровни и пары прокси, окна и допуски (ADR-038)",
+      "id": "C-051",
+      "kind": "command_succeeds",
+      "status": "unknown",
+      "fingerprint": "e070f3ed651ff1a8e1b6367a633cc89534fe2177147c0ec0f9f50fc325914e77",
+      "detail": "копия кейса не собрана: io: /tmp/arch-be-teeth-2868705-1791554338301152841/Реестры поведенческого слоя согласованы: наследование прозаических правил, ставки, решения триажа, открывающие гейты, уровни и пары прокси, окна и допуски (ADR-038): File name too long (os error 36)"
+    },
+    {
+      "name": "Проверки проверены: утверждения через шаблоны каталога валидны, гейтовые утверждения убивают все неэквивалентные мутанты, стражи сопоставлены шаблонам, генераторы не в пути вердикта (ADR-039)",
+      "id": "C-052",
+      "kind": "command_succeeds",
+      "status": "unknown",
+      "fingerprint": "f774828bbc7e91c08b23ec975e13578eb4ac215ac6e51c7823bdf92cf56d8388",
+      "detail": "копия кейса не собрана: io: /tmp/arch-be-teeth-2868705-1791554338301152841/Проверки проверены: утверждения через шаблоны каталога валидны, гейтовые утверждения убивают все неэквивалентные мутанты, стражи сопоставлены шаблонам, генераторы не в пути вердикта (ADR-039): File name too long (os error 36)"
+    },
+    {
+      "name": "ADR-041: у каждого JAX-инструмента tools/ префлайт памяти вызывается явно — маркер ensure_mem_fraction() обязателен в каждом файле списка (XLA_PYTHON_CLIENT_MEM_FRACTION до import jax)",
+      "id": "C-053",
+      "kind": "each_file_must_contain",
+      "status": "confirmed",
+      "fingerprint": "c3c40f5ccdda24e3c4cd610dd0bb2b6af6d95b8a1c93169f65caf45eeed68762",
+      "detail": "удаление совпадений pattern из tools/a4_manifest.py, tools/bench_block_merge.py, tools/bench_kda_wyut.py, tools/check_precision_pinning.py, tools/d8_isolate.py, tools/pool_cost_probe.py, tools/pretrain_run.py, tools/profile_step.py, tools/run_a4_pipeline.py, tools/run_rl_smoke.py, tools/run_sft_smoke.py, tools/topk_exact_probe.py — находок правила: 0 → 12 (зубья подтверждены)"
+    }
+  ]
+}

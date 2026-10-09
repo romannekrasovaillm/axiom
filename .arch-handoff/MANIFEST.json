@@ -3,11 +3,11 @@
   "task": "ЗАДАЧА (гейт G1 кампании MFU-55, первый рычаг — LU/TRSM-шторм в KDA).\n\nКОНТЕКСТ. G0-диагностика (evidence/mfu-55/G0b/REPORT.md) на линии arch/mfu-int (kda_impl=chunked_cc): шаг = шторм мелких ядер — 493 173 запуска ядер за 120 с стационара при занятости GPU 5.1%; в топе — LU-ядра getrf_panel, batch_trsm_left_kernel, LuPivotsToPermutation (по 34 560 запусков каждого). Источник: net/kda.py, cc_chunk_step (и симметричное место WY/UT-пути): `t_mat = jnp.linalg.inv(eye + l_mat)` — инверсия единичной нижней треугольной (H, C, C) через LU на каждый чанк × голову × слой.\n\nЧТО СДЕЛАТЬ. Заменить инверсию батчевым РЕШЕНИЕМ треугольных систем, не строя обратную матрицу:\n- либо `jax.lax.linalg.triangular_solve(a=eye+l_mat, b=xw, lower=True, left_side=True)` и то же для vw (batched TRSM: одно крупное ядро вместо десятков тысяч мелких);\n- либо явная прямая подстановка через `jax.lax.scan` по строкам чанка, если triangular_solve недоступен/медленнее.\nМатематика НЕ меняется: (I+L) — единичная нижняя треугольная; w = T·xw, u = T·vw эквивалентны решениям систем.\n\nОГРАНИЧЕНИЯ. НЕ менять математику KDA, публичные сигнатуры, семантику kda_impl и net/config.json (пин скелета). Правки только net/kda.py и net/tests/*. GPU-прогоны НЕ запускать (стенд занят кампанией). Один рычаг за раз — никаких сопутствующих «оптимизаций» тем же коммитом. Если та же инверсия встретится в других местах net/kda.py — приведи тем же способом или перечисли в отчёте.\n\nПРОВЕРКА. `python3 -m pytest -q net/tests/test_kda_chunked_cc.py` (+ родственные WY/UT-тесты) — зелёные, те же atol. Приложить статический счёт: сколько вызовов linalg.inv было и стало, оценка сокращения запусков ядер (форма H × n_chunks × слои).\n\nРЕЗУЛЬТАТ. .arch-handoff/result.json (status/assumptions/open_questions) + коммит. В assumptions — выбранный путь и почему; в open_questions — что должен измерить архитектор на GB10.",
   "model": "deepseek",
   "sources": [
-    "/home/roman/axiom/ARCHITECTURE-SPINE.md",
-    "/home/roman/axiom/docs/adr/ADR-047-perepisyvanie-realizacii-kda-sloya-matematika-delta-rule-sohranyaetsya-realizaciya-zamenyaetsya-vnutri-chanka-c-c-matrica-mezhdu-chankami-sostoyanie-dk-dv-kak-edinstvennyy-rychag-mfu-modeli.md",
-    "/home/roman/axiom/docs/adr/ADR-050-kampaniya-mfu-55-na-gb10-predmet-i-konvenciya-chislitelya-geyty-g0-g4-rychagi-po-profil-dokazannym-adresam.md",
-    "/home/roman/axiom/changes/mfu-g1-kda-solve/DELTA.md",
-    "/home/roman/axiom/evidence/mfu-55/G0b/REPORT.md"
+    "~/axiom/ARCHITECTURE-SPINE.md",
+    "~/axiom/docs/adr/ADR-047-perepisyvanie-realizacii-kda-sloya-matematika-delta-rule-sohranyaetsya-realizaciya-zamenyaetsya-vnutri-chanka-c-c-matrica-mezhdu-chankami-sostoyanie-dk-dv-kak-edinstvennyy-rychag-mfu-modeli.md",
+    "~/axiom/docs/adr/ADR-050-kampaniya-mfu-55-na-gb10-predmet-i-konvenciya-chislitelya-geyty-g0-g4-rychagi-po-profil-dokazannym-adresam.md",
+    "~/axiom/changes/mfu-g1-kda-solve/DELTA.md",
+    "~/axiom/evidence/mfu-55/G0b/REPORT.md"
   ],
   "epic_context_chars": 6000,
   "epic_context_tokens": 1500,

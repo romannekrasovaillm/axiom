@@ -3,13 +3,13 @@
 Собран: 2026-10-09T15:40:02.466625448+00:00
 
 Источники:
-- /home/roman/axiom/ARCHITECTURE-SPINE.md
-- /home/roman/axiom/docs/adr/ADR-047-perepisyvanie-realizacii-kda-sloya-matematika-delta-rule-sohranyaetsya-realizaciya-zamenyaetsya-vnutri-chanka-c-c-matrica-mezhdu-chankami-sostoyanie-dk-dv-kak-edinstvennyy-rychag-mfu-modeli.md
-- /home/roman/axiom/docs/adr/ADR-050-kampaniya-mfu-55-na-gb10-predmet-i-konvenciya-chislitelya-geyty-g0-g4-rychagi-po-profil-dokazannym-adresam.md
-- /home/roman/axiom/changes/mfu-g1-kda-solve/DELTA.md
-- /home/roman/axiom/evidence/mfu-55/G0b/REPORT.md
+- ~/axiom/ARCHITECTURE-SPINE.md
+- ~/axiom/docs/adr/ADR-047-perepisyvanie-realizacii-kda-sloya-matematika-delta-rule-sohranyaetsya-realizaciya-zamenyaetsya-vnutri-chanka-c-c-matrica-mezhdu-chankami-sostoyanie-dk-dv-kak-edinstvennyy-rychag-mfu-modeli.md
+- ~/axiom/docs/adr/ADR-050-kampaniya-mfu-55-na-gb10-predmet-i-konvenciya-chislitelya-geyty-g0-g4-rychagi-po-profil-dokazannym-adresam.md
+- ~/axiom/changes/mfu-g1-kda-solve/DELTA.md
+- ~/axiom/evidence/mfu-55/G0b/REPORT.md
 
-<!-- источник: /home/roman/axiom/ARCHITECTURE-SPINE.md -->
+<!-- источник: ~/axiom/ARCHITECTURE-SPINE.md -->
 
 # ARCHITECTURE-SPINE — кейс «axiom» (модель с нуля против Kimi K3)
 

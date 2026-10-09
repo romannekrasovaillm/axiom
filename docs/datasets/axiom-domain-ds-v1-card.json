@@ -1461,7 +1461,7 @@
   "приватные корпуса в репозиторий не попадают: в git — карточка и симлинк (C-032/C-033, AD-6)"
  ],
  "outputs": {
-  "markdown": "/home/roman/axiom/docs/datasets/axiom-domain-ds-v1-card.md",
-  "json": "/home/roman/axiom/docs/datasets/axiom-domain-ds-v1-card.json"
+  "markdown": "~/axiom/docs/datasets/axiom-domain-ds-v1-card.md",
+  "json": "~/axiom/docs/datasets/axiom-domain-ds-v1-card.json"
  }
 }

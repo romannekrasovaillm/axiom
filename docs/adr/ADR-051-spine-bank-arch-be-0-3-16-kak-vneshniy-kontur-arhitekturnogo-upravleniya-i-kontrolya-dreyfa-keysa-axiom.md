@@ -18,7 +18,7 @@ spec_files: [ARCHITECTURE-SPINE.md]
 
 Кейс Axiom ведёт собственный контур контроля на `arch-ml 0.5.3`: 53 правила `CONSTRAINTS.yaml` (C-001…C-053), спайн из 13 инвариантов (AD-1…AD-13), типизированная модель (75 сущностей), поведенческий слой (AD-036/037/038/039: `model/sensors.yaml`, `claims.yaml`, `properties.yaml`, `rule-lineage.yaml`, `opening-gates.yaml`). Этот контур проверен и здоров: `trace check` PASS (7/7 звеньев, 100%), `spine_lint` — 0 находок, `model validate model` — PASS (75 сущностей, 0 находок), `arch_drift` — 0 рёбер вне модели.
 
-Одновременно на машине развёрнут **Spine Bank — arch-be 0.3.16** (banking edition, `/home/roman/spine-bank`), чей арсенал шире ML-редакции:
+Одновременно на машине развёрнут **Spine Bank — arch-be 0.3.16** (banking edition, `~/spine-bank`), чей арсенал шире ML-редакции:
 
 | Что даёт Bank | Чего нет в arch-ml 0.5.3 |
 |---|---|
@@ -88,5 +88,5 @@ spec_files: [ARCHITECTURE-SPINE.md]
 
 - `ARCHITECTURE-SPINE.md` — AD-12 (eval чист до вердикта), AD-13 (захват чекаута исполнителем); ADR-046 (stand-bound правила), ADR-024 (захват чекаута), ADR-037–039 (поведенческий слой).
 - `docs/OPEN-QUESTIONS.md` — открытые долги кампании; `docs/RESULTS-2026-10-05.ru.md` §2 (инцидент параллельных сессий).
-- Spine Bank: `/home/roman/spine-bank` (arch-be 0.3.16), `banking/library/README.md` (фильтр 5 форм, карточка 7 полей, 8 антипаттернов), `banking/presets/compliance/profiles/evidence-docs.yaml` (стек-агностичный профиль правил), `banking/compliance/reg-map.md` (протокол верификации первоисточников), `docs/control.md` (составляющие единого гейта).
+- Spine Bank: `~/spine-bank` (arch-be 0.3.16), `banking/library/README.md` (фильтр 5 форм, карточка 7 полей, 8 антипаттернов), `banking/presets/compliance/profiles/evidence-docs.yaml` (стек-агностичный профиль правил), `banking/compliance/reg-map.md` (протокол верификации первоисточников), `docs/control.md` (составляющие единого гейта).
 - Прогон-основание: `docs/reviews/SPINE-BANK-AUDIT-2026-10-09.ru.md` (числа, вердикты, сырые выдержки).

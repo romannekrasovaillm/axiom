@@ -74,7 +74,7 @@
   status: active
   pack: ml
   level: component
-  raw: {path: "/home/roman/gb10-shared/datasets/axiom-pretrain-l3/tokens-v2/tokenizer/tokenizer.model", format: text, retention_days: null, in_git: false}
+  raw: {path: "~/gb10-shared/datasets/axiom-pretrain-l3/tokens-v2/tokenizer/tokenizer.model", format: text, retention_days: null, in_git: false}
 
 - id: S-005
   name: "токены корпуса претрейна по шардам"
@@ -88,7 +88,7 @@
   status: active
   pack: ml
   level: component
-  raw: {path: "/home/roman/gb10-shared/datasets/axiom-pretrain-l3/tokens-v2/**/manifest*.json", format: json, retention_days: null, in_git: false}
+  raw: {path: "~/gb10-shared/datasets/axiom-pretrain-l3/tokens-v2/**/manifest*.json", format: json, retention_days: null, in_git: false}
 
 - id: S-006
   name: "объём снапшота чистого кейса"
@@ -245,7 +245,7 @@
   pack: ml
   level: end_to_end
   fact_levels: {holdout_sha256: diagnostic}
-  raw: {path: "/home/roman/gb10-shared/datasets/**/eval*/**", format: jsonl, retention_days: null, in_git: false}
+  raw: {path: "~/gb10-shared/datasets/**/eval*/**", format: jsonl, retention_days: null, in_git: false}
 
 - id: S-017
   name: "обёртка check_sft_structure: доли дефектов набора"
@@ -259,7 +259,7 @@
   status: active
   pack: ml
   level: component
-  raw: {path: "/home/roman/gb10-shared/datasets/sft_train_v12.jsonl", format: jsonl, retention_days: null, in_git: false}
+  raw: {path: "~/gb10-shared/datasets/sft_train_v12.jsonl", format: jsonl, retention_days: null, in_git: false}
 
 - id: S-018
   name: "обёртка check_gb10_single_load: число загрузок модели"

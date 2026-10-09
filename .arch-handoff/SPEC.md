@@ -7,7 +7,7 @@
 
 ---
 
-## Источник: /home/roman/axiom/ARCHITECTURE-SPINE.md
+## Источник: ~/axiom/ARCHITECTURE-SPINE.md
 
 # ARCHITECTURE-SPINE — кейс «axiom» (модель с нуля против Kimi K3)
 
@@ -109,7 +109,7 @@
 
 ---
 
-## Источник: /home/roman/axiom/docs/adr/ADR-011-predmetnost-strazhey-fitness-pravila-proveryayut-povedenie-a-ne-prozu.md
+## Источник: ~/axiom/docs/adr/ADR-011-predmetnost-strazhey-fitness-pravila-proveryayut-povedenie-a-ne-prozu.md
 
 # ADR-011. Предметность стражей: fitness-правила проверяют поведение, а не прозу
 
@@ -201,7 +201,7 @@ fitness_check: mapping values are not allowed in this context at line 7 column 9
 
 ---
 
-## Источник: /home/roman/axiom/docs/adr/ADR-014-manifest-progona-a4-nesyot-sostav-stadiy-konveyera-chastichnyy-progon-geyt-ne-zakryvaet.md
+## Источник: ~/axiom/docs/adr/ADR-014-manifest-progona-a4-nesyot-sostav-stadiy-konveyera-chastichnyy-progon-geyt-ne-zakryvaet.md
 
 ---
 id: ADR-014
@@ -334,7 +334,7 @@ v1 в `tools/a4_manifest.py` (одна дельта кода), манифест�
 
 ---
 
-## Источник: /home/roman/axiom/net/README.md
+## Источник: ~/axiom/net/README.md
 
 # net/ — Kimi-Killer L3 walking skeleton (network from scratch, JAX)
 

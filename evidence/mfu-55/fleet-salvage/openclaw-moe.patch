@@ -1,0 +1,65 @@
+diff --git a/net/moe.py b/net/moe.py
+index 3b20e4e..f58ecbe 100644
+--- a/net/moe.py
++++ b/net/moe.py
+@@ -44,6 +44,7 @@ integrated into the training loss — recorded as our decision in ``config.json`
+ 
+ from __future__ import annotations
+ 
++import os
+ from typing import NamedTuple
+ 
+ import jax
+@@ -212,6 +213,43 @@ def _ragged_gemm(lhs: jnp.ndarray, rhs: jnp.ndarray, group_sizes: jnp.ndarray) -
+     return jax.lax.ragged_dot(lhs, rhs, group_sizes)
+ 
+ 
++def _routed_experts_dense(params, cfg: ModelConfig, z, topk, sel_p):
++    """Прежняя (до перф-правки) запись: einsum по ВСЕМ экспертам, потом gather top-k.
++
++    Оставлена как **откатный путь** за флагом ``AXIOM_MOE_DISPATCH=dense``: она верна
++    численно, но снова платит ``n_routed`` применений эксперта на токен вместо
++    ``top_k`` (при ``n_routed=12, top_k=2`` — 6× лишней работы). Нужна как эталон и как
++    средство отката без правки сигнатур: код возврата — один и тот же интерфейс.
++    """
++    g = compute_dtype.gemm_einsum("nl,lei->nei", z, params.expert_g)  # (N, n, ei)
++    u_all = compute_dtype.gemm_einsum("nl,lei->nei", z, params.expert_u)
++    a = mlp_mod.siti_glu((g, u_all), cfg.siti_beta_gate, cfg.siti_beta_up)
++    e_all = compute_dtype.gemm_einsum("nei,eil->nel", a, params.expert_d)  # (N, n, latent)
++    e = jnp.take_along_axis(e_all, topk[..., None], axis=1)  # (N, k, latent)
++    return compute_dtype.gemm_einsum("nk,nkl->nl", sel_p, e)
++
++
++def dispatch_mode() -> str:
++    """Режим исполнения маршрутизированных экспертов: ``grouped`` (по умолчанию) | ``dense``.
++
++    Переменная окружения ``AXIOM_MOE_DISPATCH`` читается **на каждом вызове**: флаг
++    существует ровно для отката, поэтому он не кешируется и не требует перезапуска
++    интерпретатора. Неизвестное значение — ошибка, а не тихий откат к умолчанию.
++    """
++    mode = (os.environ.get("AXIOM_MOE_DISPATCH") or "grouped").strip().lower()
++    if mode not in ("grouped", "dense"):
++        raise ValueError(
++            f"AXIOM_MOE_DISPATCH={mode!r}: ожидается 'grouped' или 'dense'")
++    return mode
++
++
++def _routed_experts(params, cfg: ModelConfig, z, topk, sel_p):
++    """Маршрутизированный микшер: групповая диспетчеризация top-k, либо dense по флагу."""
++    if dispatch_mode() == "dense":
++        return _routed_experts_dense(params, cfg, z, topk, sel_p)
++    return _routed_experts_grouped(params, cfg, z, topk, sel_p)
++
++
+ def _routed_experts_grouped(params, cfg: ModelConfig, z, topk, sel_p):
+     """Routed mix ``u`` computing **only the top-k selected experts** per token.
+ 
+@@ -267,7 +305,7 @@ def apply(
+     # (see :func:`_routed_experts_grouped`).  The previous spelling materialised
+     # all n_routed experts and gathered afterwards — the hardware paid 6x the
+     # algorithmic cost at n_routed=12, top_k=2 (the MFU fix this replaces).
+-    u = _routed_experts_grouped(params, cfg, z, topk, sel_p)  # (N, latent)
++    u = _routed_experts(params, cfg, z, topk, sel_p)  # (N, latent)
+ 
+     # shared experts (full-width path)
+     sg = compute_dtype.gemm_einsum("nh,shj->nsj", xf, params.shared_g)  # (N, ns, si)

@@ -5,8 +5,9 @@
 * **дисциплина ADR-041** — маркер ``ensure_mem_fraction()`` в файле и его вызов
   на прогонном пути ДО импорта jax (импорт jax внутри функций, не в модуле);
 * **отчёт по решению ADR-048** на реальной геометрии ``l3-full``: embedding
-  (связанный LM head) в группе AdamW с полным числом параметров
-  ``vocab x hidden``, неклассифицированных листьев нет;
+  (связанный LM head) и ViT-эмбеддинги ``patch_embed``/``pos_embed`` в группе
+  AdamW с полным числом параметров (ADR-048 Amendment, 08.10.2026 п.3),
+  неклассифицированных листьев нет;
 * **режим ``--legacy``** возвращает embedding в Muon — пара «до/после» на одной
   ревизии кода (тем же предикатом, что читают ``init_state``/``make_step``);
 * **запись артефактов** — JSON + markdown, с суффиксом ``-legacy`` в прежнем
@@ -30,6 +31,9 @@ for _path in (str(TOOLS_DIR), str(CASE_DIR)):
 import optimizer_groups as og  # noqa: E402
 
 L3_VOCAB, L3_HIDDEN = 160000, 1536
+#: ViT-эмбеддинги l3-full (та же геометрия в ``net/tests/test_29_optimizer_groups``).
+L3_VIT_PATCH_PARAMS = 588 * 384
+L3_VIT_POS_PARAMS = 256 * 384
 
 
 def test_preflight_marker_present_and_called_before_report_import():
@@ -57,11 +61,14 @@ def test_report_matches_adr048_decision():
 
     groups = report["groups"]
     embed = groups["adamw_embed"]
-    assert embed["leaves"] == 1
-    assert embed["names"] == ["embedding"]
-    assert embed["params"] == L3_VOCAB * L3_HIDDEN
+    assert embed["leaves"] == 3
+    assert embed["names"] == ["embedding", "patch_embed", "pos_embed"]
+    assert embed["params"] == (
+        L3_VOCAB * L3_HIDDEN + L3_VIT_PATCH_PARAMS + L3_VIT_POS_PARAMS
+    )
     assert groups["muon_matrix"]["params"] > embed["params"]
-    assert "embedding" not in groups["muon_matrix"]["names"]
+    for name in ("embedding", "patch_embed", "pos_embed"):
+        assert name not in groups["muon_matrix"]["names"]
 
 
 def test_legacy_report_restores_muon_for_embedding():
@@ -84,7 +91,7 @@ def test_write_artifact_writes_json_and_markdown(tmp_path):
 
     assert json_path.name == "optimizer-param-groups.json"
     assert md_path.name == "optimizer-param-groups.md"
-    assert json.loads(json_path.read_text(encoding="utf-8"))["groups"]["adamw_embed"]["leaves"] == 1
+    assert json.loads(json_path.read_text(encoding="utf-8"))["groups"]["adamw_embed"]["leaves"] == 3
     table = md_path.read_text(encoding="utf-8")
     assert "adamw_embed" in table and "embedding" in table
     assert "legacy_muon_all_2d=False" in table

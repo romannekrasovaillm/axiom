@@ -19,18 +19,20 @@ predicate over leaf *names* (:func:`classify_leaf`), and the tree is walked in
 one place.  After the KDA rewrite (ADR-047) the optimizer step became the
 dominant cost of a step (``sec_backopt`` = 20.4 s of ~31 s), because Muon/NS5
 was applied to every 2-D leaf — including the tied embeddings/LM head
-(``vocab x hidden``), where orthogonalisation has no meaning.  ADR-048 routes
-them to AdamW:
+(``vocab x hidden``) and the ViT ``patch_embed``/``pos_embed``
+(ADR-048 Amendment, 08.10.2026 п.3), where orthogonalisation has no meaning.
+ADR-048 routes them to AdamW:
 
 ============================  ============================================
 group                         leaves
 ============================  ============================================
 ``muon_matrix``               hidden 2-D projections (attention/MLA/MoE
-                              router/MLP/MTP/AttnRes/ViT)
+                              router/MLP/MTP/AttnRes/ViT projections)
 ``muon_per_head``             Q/K/V-family projections (``_PER_HEAD_LEAVES``)
 ``muon_batched``              stacked expert weights (``ndim >= 3``)
 ``adamw_vector``              norms, biases, scalars (``ndim <= 1``)
-``adamw_embed``               input embeddings and the (tied) LM head
+``adamw_embed``               the "embeddings": text embedding / tied LM head
+                              and the ViT ``patch_embed``/``pos_embed``
 ============================  ============================================
 
 An unknown **2-D** name is **fail-closed** (``UnclassifiedMatrixError``, and it
@@ -86,14 +88,19 @@ MUON_MATRIX_LEAVES = frozenset({
     "W_up", "W_down", "W_u", "router_w", "W_f",
     # AttnRes mixing matrix.
     "w",
-    # ViT tower (image tokens only).
-    "patch_embed", "pos_embed", "projector", "qkv", "out", "fc1", "fc2",
+    # ViT tower hidden matrices (image tokens only): the projections stay Muon,
+    # its *embeddings* do not — see ADAMW_MATRIX_LEAVES.
+    "projector", "qkv", "out", "fc1", "fc2",
 })
 
-#: 2-D leaves Muon must not touch: the input embedding matrix.  The LM head is
-#: *tied* to it (``tie_embeddings``), so one named leaf covers both — AdamW
-#: (ADR-048), as in Muon recipes.
-ADAMW_MATRIX_LEAVES = frozenset({"embedding"})
+#: 2-D leaves Muon must not touch — the "embeddings" group.  The LM head is
+#: *tied* to ``embedding`` (``tie_embeddings``), so one named leaf covers both —
+#: AdamW (ADR-048), as in Muon recipes.  The ViT tower's ``patch_embed``
+#: (``patch*patch*3, vit_hidden``) and ``pos_embed`` (``num_patches,
+#: vit_hidden``) are embeddings too: orthogonalising them has no meaning
+#: (ADR-048 Amendment, 08.10.2026 п.3), so they live here, not in
+#: :data:`MUON_MATRIX_LEAVES`.
+ADAMW_MATRIX_LEAVES = frozenset({"embedding", "patch_embed", "pos_embed"})
 
 #: Group ids, in report/table order.
 GROUP_MUON_MATRIX = "muon_matrix"

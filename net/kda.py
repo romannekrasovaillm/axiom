@@ -26,11 +26,24 @@ import jax
 import jax.numpy as jnp
 
 from .config import ModelConfig
+from .remat import DEFAULT_REMAT_POLICY, remat_checkpoint
 from . import attn_sparse, quant
 from .norm import headwise_rms_norm, l2_norm, swish
 from .shortconv import short_conv, short_conv_step
 
 DEFAULT_EPS = 1e-6
+
+
+def _remat_policy(cfg: ModelConfig) -> str:
+    """Объявленная политика рематериализации (ADR-049) — ``none`` по умолчанию.
+
+    ``getattr`` держит совместимость с cfg-подобными объектами, собранными в
+    коде (тесты, приборы) до появления поля.  Молчаливым остаётся только
+    *отсутствие* объявления, которое и означает ``none``; неизвестное значение
+    падает в :func:`net.remat.remat_checkpoint` (fail-closed) — подмены политики
+    не происходит.
+    """
+    return getattr(cfg, "remat_policy", DEFAULT_REMAT_POLICY)
 
 
 def _rand(key, shape, scale: float) -> jnp.ndarray:
@@ -643,8 +656,11 @@ def apply_chunked_cc(
 
     if cfg.kda_chunked_backward:
         # Recompute each chunk from its saved carry during backward instead of
-        # retaining the per-chunk score matrices and tiles.
-        body = jax.checkpoint(body)
+        # retaining the per-chunk score matrices and tiles.  ADR-049: *what*
+        # stays saved inside that boundary is the declared ``remat_policy``
+        # (``none`` — the pre-ADR-049 bar, applied by ``remat_checkpoint``
+        # without a ``policy`` argument).
+        body = remat_checkpoint(body, _remat_policy(cfg))
     _, out = jax.lax.scan(body, carry0, x_chunks)
     out = out.reshape(n_chunks * C, -1)
     return _with_window(out[:T], params, cfg, x)
@@ -698,7 +714,9 @@ def apply_chunked(
     if cfg.kda_chunked_backward:
         # Recompute each chunk's trajectory (M, N, P, Q and projections) from
         # its saved carry in the backward pass rather than retaining them.
-        body = jax.checkpoint(body)
+        # ADR-049: the declared ``remat_policy`` chooses what stays saved
+        # inside this boundary (``none`` reproduces the pre-ADR-049 graph).
+        body = remat_checkpoint(body, _remat_policy(cfg))
     _, out = jax.lax.scan(body, carry0, x_chunks)
     out = out.reshape(n_chunks * C, -1)
     return _with_window(out[:T], params, cfg, x)

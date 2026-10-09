@@ -21,6 +21,13 @@ BLOCK_MERGE_KEY = "mla_block_merge"
 #: the diagnostic dense-standard prefix there as ``{"dense-standard": N}``).
 LAYER_COMPOSITION_KEY = "layer_composition"
 
+#: Допустимые политики рематериализации ``jax.checkpoint`` (ADR-049).  Живут в
+#: схеме (а не рядом с jax), потому что это *контракт значения*: имя объявляется
+#: здесь, callable JAX из него делает ``net/remat.py``.  Модуль схемы остаётся
+#: без численных зависимостей — часть стражей запускается обычным ``python3``
+#: без jax (см. ``declared_block_merge``).
+REMAT_POLICIES = ("none", "dots_saveable", "dots_with_no_batch_dims_saveable")
+
 #: The case's declarative config — the file the reader below reads.  It is the
 #: *switch* (spine AD-9: "конфиг первичен"): turning a declared mechanism on is
 #: an edit of this file, not of the code path that consumes it.
@@ -198,6 +205,29 @@ class ModelConfig:
     # config built in code (tests, smokes) keeps the pre-D-8 graph.
     grad_ckpt_policy: str = "none"
 
+    # --- rematerialisation policy inside ``jax.checkpoint`` (ADR-049) --------
+    # ``grad_ckpt_policy`` says *where* the recompute boundary sits (per layer);
+    # this field says *what stays saved* inside that boundary:
+    # ``none`` — the default and the pre-ADR-049 behaviour: ``jax.checkpoint``
+    # is applied without a policy, so the backward pass recomputes everything
+    # inside the boundary (max memory saving, max recompute cost) and the graph
+    # is bit-for-bit what it was;
+    # ``dots_saveable`` — keep the outputs of matmuls/convolutions, recompute
+    # the elementwise tail (``jax.checkpoint_policies.dots_saveable``);
+    # ``dots_with_no_batch_dims_saveable`` — the same, but only for matmuls
+    # without batch dimensions (usually the safer memory trade).
+    # Read by ``net/remat.py`` (the single place the name becomes a JAX policy
+    # callable), consumed by the checkpoint wrappers of ``net/model.py``
+    # (backbone layer) and ``net/kda.py`` (scan bodies).  Declared in
+    # ``net/config.json`` as ``remat_policy`` (``none`` — the pre-delta bar; the
+    # architect flips it for the GB10 matrix runs via ``--remat-policy``).  An
+    # unknown value is rejected by ``validate_config`` and by the consumers
+    # themselves — a silent fallback to ``none`` would make the measured
+    # "policy → time/memory" matrix describe something other than what was
+    # declared (ADR-049, Consequences).  The schema default stays ``none`` so a
+    # config built in code (tests, smokes) keeps the pre-delta graph.
+    remat_policy: str = "none"
+
     # --- chunked cross-entropy width (D-8 remainder; spine AD-9/C-035 form) --
     # ``compute_loss`` builds ``(B, T, V)`` logits for the NTP and MTP heads; at
     # V=262144 (the ``l3-full`` power-of-2 padded vocabulary), T=8192 that
@@ -339,6 +369,15 @@ def validate_config(cfg: ModelConfig) -> None:
     assert cfg.grad_ckpt_policy in ("none", "per_layer"), (
         "grad_ckpt_policy must be none|per_layer, got "
         f"{cfg.grad_ckpt_policy!r}"
+    )
+
+    # Rematerialisation policy (ADR-049): the name has to be one the consumers
+    # (``net/model.py``, ``net/kda.py`` via ``net/remat.py``) can resolve into a
+    # JAX policy.  An unknown value would otherwise be discovered only when the
+    # mechanism is switched on, or — worse — silently fall back to ``none`` and
+    # make a "policy → time/memory" comparison measure the wrong thing.
+    assert cfg.remat_policy in REMAT_POLICIES, (
+        f"remat_policy must be one of {REMAT_POLICIES}, got {cfg.remat_policy!r}"
     )
 
     # Chunked cross-entropy width (D-8 remainder): ``0`` disables the mechanism

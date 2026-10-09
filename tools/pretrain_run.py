@@ -179,10 +179,17 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     parser.add_argument("--ns-steps", type=int, default=5,
                         help="ADR-048: число Newton-Schulz итераций Muon (дефолт 5 — "
                              "прежнее значение; снижение — решение по замеру)")
-    parser.add_argument("--legacy-muon-all-2d", dest="legacy_muon_all_2d",
+    parser.add_argument("--legacy-muon-all-2d", "--legacy-optimizer-classification",
+                        dest="legacy_muon_all_2d",
                         action="store_true", default=False,
                         help="ADR-048: прежняя классификация («любой ndim==2 -> Muon», "
-                             "embeddings/LM head включительно) — для сравнения «до/после»")
+                             "embeddings/LM head включительно) — ручка честного A/B "
+                             "«до/после» на одной ревизии кода. Синоним "
+                             "--legacy-optimizer-classification: то же поведение под "
+                             "именем, читаемым в протоколе прогона. В журнал уезжает "
+                             "меткой optimizer_classification=legacy; по умолчанию "
+                             "выключено — действует классификация ADR-048 "
+                             "(optimizer_classification=adr-048)")
     parser.add_argument("--phase-profile", dest="phase_profile",
                         action="store_true", default=False,
                         help="ADR-048 Amendment: диагностическая раскладка sec_* "
@@ -1285,6 +1292,11 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
         # сравнение «до/после» по метрикам неотличимо от смены чего-то ещё.
         "ns_steps": args.ns_steps,
         "legacy_muon_all_2d": bool(args.legacy_muon_all_2d),
+        # ... и та же мысль меткой рядом с булевым полем: A/B-ноги сшиваются по
+        # журналам («adr-048» | «legacy») без чтения флага «наоборот».
+        "optimizer_classification": tl.optimizer_classification(
+            bool(train_config.legacy_muon_all_2d)
+        ),
         # ADR-048 Amendment: диагностический профиль фаз — тоже условие прогона
         # (на численный результат не влияет, но объясняет поля sec_*).
         "phase_profile": bool(args.phase_profile),

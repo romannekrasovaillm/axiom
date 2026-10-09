@@ -1886,6 +1886,23 @@ class CheckpointManager:
 #: Схема строки метрик прогона.
 METRICS_SCHEMA = "pretrain-metrics/v1"
 
+#: ADR-048: метки режима классификации параметров оптимизатора.  ``"adr-048"`` —
+#: действующая классификация (embeddings / tied LM head / ViT -> AdamW),
+#: ``"legacy"`` — прежняя «любой ``ndim == 2`` -> Muon».
+CLASSIFICATION_ADR048 = "adr-048"
+CLASSIFICATION_LEGACY = "legacy"
+
+
+def optimizer_classification(legacy_muon_all_2d: bool) -> str:
+    """Метка режима классификации оптимизатора для журнала (ADR-048).
+
+    Один-в-один с флагом ``legacy_muon_all_2d``: ``True`` — прежнее поведение
+    (``"legacy"``), ``False`` — классификация ADR-048 (``"adr-048"``).  Отдельная
+    метка (а не голое булево поле) нужна, чтобы ноги A/B сшивались по журналам
+    без чтения флага «наоборот».
+    """
+    return CLASSIFICATION_LEGACY if legacy_muon_all_2d else CLASSIFICATION_ADR048
+
 
 class MetricsWriter:
     """Построчный jsonl-журнал метрик: одна строка на шаг, дописывается сразу."""
@@ -2450,6 +2467,10 @@ def train(
     params = working_params(master)
     active_params = model.active_param_count(cfg)
     metrics = MetricsWriter(train_config.metrics_path) if train_config.metrics_path else None
+    # ADR-048: режим классификации — условие прогона, а не деталь кода.  Метка
+    # едет в каждую строку ``pretrain-metrics/v1``, чтобы A/B-ноги различались по
+    # журналу без догадок (поле опциональное, схему не ломает).
+    classification = optimizer_classification(train_config.legacy_muon_all_2d)
     # Профильный режим (opt-in, ``phase_profile``): точка ветвления.  С флагом
     # каждый kpi-интервальный шаг исполняет ДОПОЛНИТЕЛЬНО декомпозированный
     # прогон фаз — числа фаз диагностические, тренировка идёт штатным fused-путём
@@ -2597,6 +2618,7 @@ def train(
                 ),
                 "mfu_params_only": True,
                 "gpu_hours": gpu_hours,
+                "optimizer_classification": classification,
             }
             # Поля фаз — только на профильных (kpi-интервальных) шагах: дефолтная
             # запись остаётся ровно прежней.

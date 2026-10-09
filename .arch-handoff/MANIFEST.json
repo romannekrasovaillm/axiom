@@ -13,7 +13,7 @@
   "epic_context_tokens": 1500,
   "route": "Standard",
   "recommended_timeout_secs": 3600,
-  "baseline_commit": "f3ce201",
+  "baseline_commit": "a92f9bd",
   "scope": {
     "write_allow": [
       "net/kda.py",

@@ -9,6 +9,7 @@ is not fatal. No GPU, no network, no ``jax`` import in the module under test.
 
 from __future__ import annotations
 
+import importlib
 import os
 import re
 import sys
@@ -200,6 +201,7 @@ _TOOLS_WITH_PREFLIGHT = (
     "a4_manifest.py",
     "mfu_bf16_protocol.py",
     "loss_parity_bf16.py",
+    "profile_mfu.py",
 )
 
 
@@ -234,6 +236,7 @@ _RUN_TOOLS_GATED = (
     "run_a4_pipeline.py",
     "mfu_bf16_protocol.py",
     "loss_parity_bf16.py",
+    "profile_mfu.py",
 )
 
 
@@ -368,3 +371,83 @@ def test_main_lock_dir_ok_confirmed_fail_stays_fail(tmp_path, monkeypatch, capsy
     rc = gb10.main(["--lock-dir", str(lock_dir)])
     assert rc == gb10.EXIT_FAIL
     assert "FAIL" in capsys.readouterr().out
+
+
+# --- ADR-041 Amendment 2 (08.10): детект стенда шире literal «GB10» -----------
+
+
+def test_stand_markers_cover_gb10_spark_grace():
+    """Дефолтные маркеры стенда: GB10 | Spark | Grace (Amendment 2 п.3).
+
+    Literal «GB10» недостаточен: стенд с именем без этой подстроки получил бы
+    advisory-режим вместо fail-closed — отказ в сторону разрешения.
+    """
+    assert "GB10" in jax_preflight.STAND_MARKERS
+    for device in ("NVIDIA GB10", "NVIDIA DGX Spark", "Grace Blackwell", "nvidia gb10"):
+        assert jax_preflight.is_shared_stand({"device": device}), device
+
+
+def test_stand_markers_do_not_match_dev_gpu():
+    """Дев-ПК (RTX) стендом не считается: чужие процессы там — advisory."""
+    for device in ("NVIDIA GeForce RTX 4080 SUPER", "NVIDIA RTX 4090", "cpu", None, ""):
+        assert not jax_preflight.is_shared_stand({"device": device}), device
+
+
+def test_gate_or_exit_enforces_on_dgx_spark(monkeypatch, tmp_path):
+    """Стенд назван «DGX Spark» (без подстроки GB10) — всё равно fail-closed."""
+    monkeypatch.delenv(jax_preflight.GATE_ENV, raising=False)
+    monkeypatch.delenv(jax_preflight.STAND_RE_ENV, raising=False)
+    _patch_runner(monkeypatch, apps="1714413, llama-server, 7584 MiB", gpu_name="NVIDIA DGX Spark")
+    with pytest.raises(SystemExit):
+        jax_preflight.gate_or_exit(lock_dir=tmp_path)
+
+
+def test_stand_re_env_override_widens_detection(monkeypatch, tmp_path):
+    """Переопределение маркеров переменной окружения расширяет детект стенда."""
+    monkeypatch.delenv(jax_preflight.GATE_ENV, raising=False)
+    monkeypatch.setenv(jax_preflight.STAND_RE_ENV, "Titan")
+    _patch_runner(monkeypatch, apps="1714413, llama-server, 7584 MiB", gpu_name="NVIDIA Titan V")
+    with pytest.raises(SystemExit):
+        jax_preflight.gate_or_exit(lock_dir=tmp_path)
+
+
+def test_stand_re_env_override_is_honoured(monkeypatch, tmp_path, capsys):
+    """Переопределение уважается буквально: «DGX Spark» мимо шаблона -> advisory."""
+    monkeypatch.delenv(jax_preflight.GATE_ENV, raising=False)
+    monkeypatch.setenv(jax_preflight.STAND_RE_ENV, "GB10")
+    _patch_runner(monkeypatch, apps="1714413, llama-server, 7584 MiB", gpu_name="NVIDIA DGX Spark")
+    state = jax_preflight.gate_or_exit(lock_dir=tmp_path)
+    assert state is not None and state["ok"] is True
+    assert "не-GB10" in capsys.readouterr().err
+
+
+def test_stand_re_env_broken_pattern_keeps_default_guard(monkeypatch, capsys):
+    """Битый шаблон не сужает защиту: остаются дефолтные маркеры + предупреждение."""
+    monkeypatch.setenv(jax_preflight.STAND_RE_ENV, "[")
+    assert jax_preflight.is_shared_stand({"device": "NVIDIA GB10"})  # дефолт защищает
+    err = capsys.readouterr().err
+    assert "не компилируется" in err and "сужение защиты запрещено" in err
+
+
+# --- ADR-041 Amendment п.5: приборы стадии 2 несут префлайт на прогонных путях
+
+
+@pytest.mark.parametrize("name", ("mfu_bf16_protocol", "loss_parity_bf16", "profile_mfu"))
+def test_run_module_sets_mem_fraction_on_import(name, monkeypatch):
+    """Прогонный прибор выставляет лимит памяти уже на импорте модуля.
+
+    Регрессия слияния bf16-ветки: правка 4603902 (префлайт в этих приборах)
+    была перетёрта версиями из ветки — C-053 красный, четыре теста падали.
+    Проверка фактического эффекта (лимит в окружении), а не наличия строки:
+    ``reload`` переисполняет шапку модуля.
+    """
+    monkeypatch.delenv(ENV, raising=False)
+    module = importlib.import_module(name)
+    importlib.reload(module)
+    assert os.environ[ENV] == jax_preflight.DEFAULT_MEM_FRACTION
+
+
+def test_nsys_wrapper_exports_mem_fraction():
+    """nsys-обвязка (стендовый прогон) фиксирует лимит памяти и сама."""
+    sh = (TOOLS_DIR / "profile_mfu_nsys.sh").read_text(encoding="utf-8")
+    assert "export XLA_PYTHON_CLIENT_MEM_FRACTION=" in sh

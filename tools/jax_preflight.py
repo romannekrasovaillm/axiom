@@ -18,7 +18,8 @@ GB10 стартовал без ``XLA_PYTHON_CLIENT_MEM_FRACTION``, JAX заре�
   --query-compute-apps`` + ``free -g``) и **fail-closed** отказывает в старте,
   если на устройстве есть ЧУЖИЕ compute-процессы, а явного разрешения владельца
   на совмещение нет. Обёртка :func:`gate_or_exit` для инструментов применяет
-  этот отказ **только на стенде GB10** (ADR-041 п.3) и вызывается **только из
+  этот отказ **только на распознанном стенде** (маркеры :data:`STAND_MARKERS`:
+  ``GB10|Spark|Grace``, ADR-041 п.3 + Amendment 2 п.3) и вызывается **только из
   прогонных путей**; проверяющие инструменты несут лишь
   :func:`ensure_mem_fraction` (ADR-041 п.2) — контрольный контур не должен
   падать из-за чужой нагрузки.
@@ -76,12 +77,24 @@ _SUBPROCESS_TIMEOUT = 15
 #: Каталог разрешений/локов по умолчанию (конвенция C-040).
 DEFAULT_LOCK_DIR = Path.home() / "gb10-shared" / ".locks"
 
-#: Имя общего стенда — DGX Spark (nvidia-smi отдаёт ``NVIDIA GB10``). Не
-#: содержит «GB10» — совмещение считается локальным (advisory), а не
-#: стендовым (fail-closed). Детект сужен до GB10 осознанно (ADR-041 п.3):
-#: блокировать локальную работу из-за чужого процесса на дев-ПК — вредная
-#: строгость.
-SHARED_STAND_RE = re.compile(r"GB10", re.IGNORECASE)
+#: Набор маркеров имени общего стенда (ADR-041 п.3; Amendment 2 п.3). Literal
+#: «GB10» хрупок: стенд, чьё ``nvidia-smi``-имя не содержит этой подстроки,
+#: получил бы advisory-режим вместо fail-closed — то есть отказ **в сторону
+#: разрешения**, худшая сторона ошибки для защиты от OOM (инцидент 08.10).
+#: Набор ``GB10|Spark|Grace`` покрывает DGX Spark / GB10 / Grace Blackwell;
+#: ложное срабатывание на не-стенде практически исключено (таких имён в контуре
+#: нет), а блокировать локальную работу на дев-ПК чужие процессы по-прежнему не
+#: могут (имя не совпадает).
+STAND_MARKERS = r"GB10|Spark|Grace"
+
+#: Переменная окружения, переопределяющая набор маркеров (регулярное
+#: выражение). Пустое значение — дефолтный набор; битый шаблон **не сужает**
+#: защиту (остаётся дефолт с предупреждением), иначе опечатка молча отключила
+#: бы fail-closed на стенде.
+STAND_RE_ENV = "JAX_PREFLIGHT_STAND_RE"
+
+#: Скомпилированный дефолтный шаблон (имя сохранено для совместимости).
+SHARED_STAND_RE = re.compile(STAND_MARKERS, re.IGNORECASE)
 
 #: Признак явного разрешения на совмещение (имя файла или его текст).
 PERMISSION_RE = re.compile(r"(allow|permit|colocat|co-?run|share|совмест)", re.IGNORECASE)
@@ -93,6 +106,8 @@ __all__ = [
     "ENV_VAR",
     "DEFAULT_MEM_FRACTION",
     "DEFAULT_LOCK_DIR",
+    "STAND_MARKERS",
+    "STAND_RE_ENV",
     "ensure_mem_fraction",
     "preflight_gate",
     "gate_or_exit",
@@ -291,10 +306,32 @@ def _permission_grant(lock_dir: Path) -> Optional[str]:
     return None
 
 
+def _stand_re() -> re.Pattern[str]:
+    """Шаблон распознавания стенда: дефолтные маркеры или переопределение.
+
+    Переопределение ``STAND_RE_ENV`` — ради стенда с нестандартным именем;
+    битый шаблон не сужает защиту, а откатывается к дефолту с предупреждением
+    (молчаливое отключение fail-closed на стенде недопустимо).
+    """
+    override = os.environ.get(STAND_RE_ENV, "").strip()
+    if not override:
+        return SHARED_STAND_RE
+    try:
+        return re.compile(override, re.IGNORECASE)
+    except re.error as exc:
+        print(
+            f"[jax-preflight] предупреждение: {STAND_RE_ENV}={override!r} не "
+            f"компилируется ({exc}); используется дефолтный набор маркеров "
+            f"{STAND_MARKERS} — сужение защиты запрещено",
+            file=sys.stderr,
+        )
+        return SHARED_STAND_RE
+
+
 def is_shared_stand(state: dict[str, Any]) -> bool:
-    """True, если распознан общий стенд (GB10/Spark/Grace Blackwell)."""
+    """True, если распознан общий стенд (маркеры ``GB10|Spark|Grace``)."""
     device = state.get("device")
-    return bool(device) and bool(SHARED_STAND_RE.search(str(device)))
+    return bool(device) and bool(_stand_re().search(str(device)))
 
 
 # ---------------------------------------------------------------------------
@@ -379,9 +416,10 @@ def gate_or_exit(
     Режим из ``JAX_PREFLIGHT_GATE``: выключен (``0``/``false``/``off``/``no``) —
     ``None`` (проверка пропущена); любое иное значение (или не задан) — проверка
     штатная. Enforce (``SystemExit``) выполняется **только** на распознанном
-    стенде GB10 (ADR-041 п.3); на любой другой машине — нет ``nvidia-smi`` или
-    GPU не GB10 — чужие процессы дают предупреждение в ``stderr`` и прогон
-    продолжается. Ни одно значение переменной строгость за пределы GB10 не
+    стенде (маркеры :data:`STAND_MARKERS` — ``GB10|Spark|Grace``, ADR-041 п.3 +
+    Amendment 2 п.3); на любой другой машине — нет ``nvidia-smi`` или имя GPU не
+    из набора — чужие процессы дают предупреждение в ``stderr`` и прогон
+    продолжается. Ни одно значение переменной строгость за пределы стенда не
     расширяет: блокировать локальную работу на дев-ПК из-за чужого процесса —
     вредная строгость (ложный FAIL контрольного контура).
 
@@ -417,8 +455,9 @@ def gate_or_exit(
             print(f"[jax-preflight] preflight_gate: {state['reason']}", file=sys.stderr)
         return state
     print(
-        "[jax-preflight] предупреждение: чужие compute-процессы на не-GB10 GPU — "
-        "совмещение разрешено (enforce только на стенде GB10, ADR-041 п.3)",
+        "[jax-preflight] предупреждение: чужие compute-процессы на не-GB10 GPU "
+        "(не распознан стенд Spark/Grace) — совмещение разрешено "
+        "(enforce только на стенде, ADR-041 п.3)",
         file=sys.stderr,
     )
     return state

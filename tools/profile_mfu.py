@@ -33,6 +33,12 @@ allocator/batch: лучшие 2.54 % (dense124m-b4, fp32) / 0.66 % (l3full-b1) M
 выполняет архитектор (AD-7/C-040: перед запуском взять лок на
 ``~/gb10-shared/.locks``).
 
+Префлайт ADR-041 подключён: ``jax_preflight.ensure_mem_fraction()`` на импорте
+модуля (лимит XLA до создания рантайма — этот прибор и есть nsys-путь инцидента
+08.10), ``gate_or_exit()`` — в прогонном пути ``main`` до исполнения клетки.
+Разбор уже собранного трейса (``--parse-trace``) — проверяющий путь без GPU/jax:
+гейта не несёт.
+
 Запуск::
 
     python3 tools/profile_mfu.py --selftest
@@ -67,6 +73,18 @@ CASE_DIR = Path(__file__).resolve().parent.parent
 # the cwd), so make the import explicit here.
 if str(CASE_DIR) not in sys.path:
     sys.path.insert(0, str(CASE_DIR))
+
+# ADR-041: дисциплина памяти JAX — префлайт ДО создания рантайма.  Лимит
+# ``XLA_PYTHON_CLIENT_MEM_FRACTION`` выставляется здесь (до первого ``import
+# jax`` внутри ``run_cell`` и до пробы ``gpu_available``, которая наследует тот
+# же ``os.environ``), а fail-closed гейт стенда — в прогонном пути ``main``.
+_TOOLS_DIR = Path(__file__).resolve().parent
+if str(_TOOLS_DIR) not in sys.path:
+    sys.path.insert(0, str(_TOOLS_DIR))
+
+import jax_preflight  # noqa: E402
+
+jax_preflight.ensure_mem_fraction()
 
 #: Схема отчёта прибора.
 REPORT_SCHEMA = "axiom-mfu-profile/1"
@@ -912,6 +930,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         print(f"[profile-mfu] EMPTY-PENDING (GPU нет) → {out_path}")
         return 0
 
+    jax_preflight.gate_or_exit()  # ADR-041: состояние стенда до реального прогона
     try:
         run_meta = run_cell(
             args.config, args.batch, args.seq, name=args.name, mode=args.mode,

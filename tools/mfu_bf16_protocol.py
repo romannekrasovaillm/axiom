@@ -50,6 +50,11 @@ GPU нет, прибор НЕ исполняет клетки: он пишет �
 поломка. ``--allow-cpu`` снимает этот запрет для отладки самого прибора; такие
 числа помечаются ``device: cpu`` и в вердикт по MFU не годятся.
 
+Префлайт ADR-041 подключён: ``jax_preflight.ensure_mem_fraction()`` на импорте
+модуля (лимит XLA до создания рантайма), ``gate_or_exit()`` — в прогонных путях
+(клетка ``--cell`` и цикл драйвера до спавна клеток), то есть fail-closed отказ
+на занятом стенде происходит до реального прогона.
+
 Каждая клетка исполняется в СВОЁМ процессе (``--cell``): env-гейт фиксируется на
 весь процесс, и компиляция одной клетки не может переиспользовать граф другой.
 
@@ -78,6 +83,18 @@ CASE_DIR = Path(__file__).resolve().parent.parent
 # script's directory, not the cwd), so make the import explicit here.
 if str(CASE_DIR) not in sys.path:
     sys.path.insert(0, str(CASE_DIR))
+
+# ADR-041: дисциплина памяти JAX — префлайт ДО создания рантайма.  Лимит
+# ``XLA_PYTHON_CLIENT_MEM_FRACTION`` выставляется здесь (до первого ``import
+# jax``: и в клетке, и в пробе ``gpu_available`` — она наследует этот же
+# ``os.environ``), а fail-closed гейт стенда — в прогонных путях ``main``.
+_TOOLS_DIR = Path(__file__).resolve().parent
+if str(_TOOLS_DIR) not in sys.path:
+    sys.path.insert(0, str(_TOOLS_DIR))
+
+import jax_preflight  # noqa: E402
+
+jax_preflight.ensure_mem_fraction()
 
 #: Схема отчёта прибора.
 REPORT_SCHEMA = "axiom-mfu-bf16-report/1"
@@ -462,6 +479,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.cell is not None:
         config, batch, seq, mode = args.cell
         out_dir = Path(args.cell_out).parent if args.cell_out else Path(args.out).parent
+        jax_preflight.gate_or_exit()  # ADR-041: состояние стенда до реального прогона
         payload = run_cell(config, int(batch), int(seq), mode, out_dir, steps=args.steps)
         if args.cell_out:
             Path(args.cell_out).write_text(
@@ -486,6 +504,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 0
 
     cells: list[dict[str, Any]] = []
+    jax_preflight.gate_or_exit()  # ADR-041: состояние стенда до реального прогона
     for cell in plan():
         print(f"[mfu-bf16] клетка {cell['name']} · {cell['mode']} …", flush=True)
         try:

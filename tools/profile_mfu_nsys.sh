@@ -35,6 +35,14 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CASE_DIR="$(cd "$HERE/.." && pwd)"
 PY="${PYTHON:-python3}"
 
+# ADR-041: лимит памяти JAX выставляется ДО инициализации рантайма.  Прибор
+# (tools/profile_mfu.py) ставит его и сам через tools/jax_preflight.py, но
+# nsys-обвязка фиксирует значение в окружении прогона явно — инцидент 08.10
+# случился именно на nsys-прогоне l3-full без лимита (JAX взял дефолтные ~75 %
+# устройства, стенд GB10 ушёл в global OOM).  Явное значение окружения
+# неприкосновенно: перекрыть лимит снаружи по-прежнему можно.
+export XLA_PYTHON_CLIENT_MEM_FRACTION="${XLA_PYTHON_CLIENT_MEM_FRACTION:-0.5}"
+
 NAME="dense124m-b1"
 CONFIG="net/config-dense124m.json"
 BATCH=1

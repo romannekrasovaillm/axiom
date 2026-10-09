@@ -1,7 +1,7 @@
 # Дельта: w1-registry-hygiene
 - Route: Standard
 - Created: 2026-10-09
-- Владелец: архитектор. Основание: ADR-049 (Spine Bank как контур управления и контроля дрейфа), аудит `docs/reviews/SPINE-BANK-AUDIT-2026-10-09.ru.md` §3, §6.
+- Владелец: архитектор. Основание: ADR-051 (Spine Bank как контур управления и контроля дрейфа), аудит `docs/reviews/SPINE-BANK-AUDIT-2026-10-09.ru.md` §3, §6.
 
 ## Проблема
 

@@ -18,3 +18,8 @@ evidence/a4-run-wire/_violated-no-budget/
 net/tests/.sft-test-*/
 net/tests/.rl-test-*/
 net/tests/.a4-*-out-*/
+
+# тяжёлые носители прогонов кампании MFU-55 (остаются на стенде)
+evidence/mfu-55/G0/run.log
+evidence/mfu-55/**/*.nsys-rep
+evidence/mfu-55/**/*.sqlite

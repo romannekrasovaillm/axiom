@@ -1,5 +1,5 @@
 ---
-id: ADR-049
+id: ADR-051
 title: "Spine Bank (arch-be 0.3.16) как внешний контур архитектурного управления и контроля дрейфа кейса Axiom"
 status: Proposed
 date: "2026-10-09"
@@ -8,7 +8,7 @@ affects: [arch-harness.toml, CONSTRAINTS.yaml, docs/reviews/SPINE-BANK-AUDIT-202
 spec_files: [ARCHITECTURE-SPINE.md]
 ---
 
-# ADR-049. Spine Bank как внешний контур управления и контроля дрейфа
+# ADR-051. Spine Bank как внешний контур управления и контроля дрейфа
 
 - Date: 2026-10-09
 - Status: Proposed

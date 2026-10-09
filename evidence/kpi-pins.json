@@ -192,6 +192,20 @@
         }
       ],
       "pin_status": "цель, НЕ пин: C-046 и blocks_rental (800 ток/с = 2.46% по базовой конвенции) не меняются; verdict_50pct пересматривается амендментом только по факту G3"
+    },
+    "baseline_campaign_20261009": {
+      "added": "2026-10-09",
+      "line": "arch/mfu-int @ 6b606c7d (kda_impl=chunked_cc, remat_policy=none по умолчанию)",
+      "cells": {
+        "mfu-remat-none": "406.7 tok/s, step 20.14 s, MFU 1.25%",
+        "mfu-remat-dots_with_no_batch_dims_saveable": "468.3 tok/s, step 17.49 s, MFU 1.44%",
+        "mfu-tune-kda256": "528.9 tok/s, step 15.49 s, MFU 1.62%",
+        "mfu-dtype-bf16": "529.5 tok/s, step 15.47 s, MFU 1.63%",
+        "mfu-tune-ce4096 (baseline кампании)": "532.8 tok/s, step 15.38 s, MFU 1.64%"
+      },
+      "convention": "MFU = 6*N_active*tok/s / 98.2e12, N_active=502399236 (базовая конвенция)",
+      "sources": "evidence/kda-rewrite/mfu-*.jsonl",
+      "note": "Первый G0 09.10 шёл на ветке arch/bf16-phase1-wip с kda_impl=chunked (устаревшая форма): 110 tok/s, 0.34% — невалиден для кампании; урок — сверять kda_impl/remat_policy/HEAD с актуальной линией перед прогоном (ADR-050)"
     }
   }
 }

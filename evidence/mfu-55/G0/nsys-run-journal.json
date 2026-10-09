@@ -1,0 +1,634 @@
+{
+ "schema": "pretrain-run-journal/v1",
+ "stage": "pretrain",
+ "status": "executed",
+ "scale": "smoke",
+ "run_ref": "mfu55-g0-l3full",
+ "started_at": "2026-10-09T14:17:34.571856+00:00",
+ "seed": 1337,
+ "paths": {
+  "shard_root": "~/axiom-run/raw-v2",
+  "tokens_root": "~/gb10-shared/datasets/axiom-pretrain-l3/tokens-v2",
+  "out_dir": "~/gb10-shared/runs/pretrain-l3/mfu55-g0-l3full",
+  "checkpoints": "~/gb10-shared/runs/pretrain-l3/mfu55-g0-l3full/checkpoints",
+  "metrics": "~/gb10-shared/runs/pretrain-l3/mfu55-g0-l3full/metrics.jsonl",
+  "journal": "~/gb10-shared/runs/pretrain-l3/mfu55-g0-l3full/journal.json"
+ },
+ "tokenizer": {
+  "hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac",
+  "source": "packed manifest tokens/ (токенизатор, которым собраны .bin)",
+  "vocab_size": 160000,
+  "model_vocab_size": 160000,
+  "canonical_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac",
+  "canonical_source": "net/config.json",
+  "matches_canonical": true,
+  "streams": [
+   "W"
+  ],
+  "note": "model_vocab_size выведен из манифеста tokens/ — покрывает фактические id в .bin, а не диапазон id канонического BPE (иначе embedding по чужим индексам). matches_canonical сверяет данные с каноном (пин net/config.json): расхождение — контракт данных, не гигиена"
+ },
+ "model": {
+  "preset": "l3-full",
+  "vocab_size": 160000,
+  "hidden": 1536,
+  "num_layers": 24,
+  "param_dtype": "bfloat16",
+  "chunk_size": 64
+ },
+ "backend": {
+  "platform": "gpu",
+  "devices": [
+   {
+    "platform": "gpu",
+    "kind": "NVIDIA GB10"
+   }
+  ],
+  "device_kind": "NVIDIA GB10",
+  "jax_version": "0.10.2",
+  "matmul_precision": "highest",
+  "gate_profile": false,
+  "determinism_pinned": false,
+  "python": "3.12.3",
+  "xla_flags": "",
+  "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac",
+  "vocab_size": 160000,
+  "note": "детерминизм XLA включается гейтовым профилем (NET_GATE_PROFILE=1, ADR-013): без него побитовая воспроизводимость между процессами на GPU не гарантируется — расхождение на 1e-4 после нескольких шагов это выбор ядер, а не ошибка resume"
+ },
+ "data": {
+  "kind": "packed",
+  "shard_root": "~/axiom-run/raw-v2",
+  "tokens_root": "~/gb10-shared/datasets/axiom-pretrain-l3/tokens-v2",
+  "streams": [
+   {
+    "name": "W",
+    "kind": "packed",
+    "manifest": "~/gb10-shared/datasets/axiom-pretrain-l3/tokens-v2/W/manifest-w.json",
+    "source": {
+     "file": "tokenizer.model",
+     "path": "~/gb10-shared/datasets/axiom-pretrain-l3/tokenizer-v2/tokenizer.model",
+     "sha256": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac",
+     "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac",
+     "vocab_size": 160000,
+     "code_prefix": "<|code|>",
+     "code_prefix_id": 3,
+     "eos_id": 2,
+     "bos_id": 1,
+     "pad_id": 0
+    },
+    "shards": 52,
+    "records": 1703385,
+    "slots": 13954129920,
+    "stream_tokens": 13952188051,
+    "seq_len": 8192,
+    "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac",
+    "pinned": [
+     {
+      "file": "W-00000.bin",
+      "source": "W-00000.jsonl.zst",
+      "source_sha256": "7aa85a0ed7e012e5f584478a8655075eda02dee246614558096d1ac86dbb2695",
+      "records": 33797,
+      "sha256": "63f91722aa3a3691bbaebe1a7e310cefdab3c71cfe80f36e9e8e137e3c51ac61",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     },
+     {
+      "file": "W-00001.bin",
+      "source": "W-00001.jsonl.zst",
+      "source_sha256": "125fe01b900d32f4ae944ee0cd3909739e9625182376fcf856147e1ec338b2ab",
+      "records": 33735,
+      "sha256": "4784a2c6fb7f7c32fd90850defb12ce4353b60feddd86bd35a88e1c0a9a9465b",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     },
+     {
+      "file": "W-00002.bin",
+      "source": "W-00002.jsonl.zst",
+      "source_sha256": "c4dfad497c38f82faaf62b013579b3fc4a2a311fa5f9d6efcc5566a6122e5440",
+      "records": 33755,
+      "sha256": "33a66cd8ffd19dcccd512574f45bf22a3ed2636a6e70a52a312b09497aaff5ef",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     },
+     {
+      "file": "W-00003.bin",
+      "source": "W-00003.jsonl.zst",
+      "source_sha256": "2f753d643ae7bc2d24114f86a7521130c012f4c061fdbfd8c5ababe8f1fc482a",
+      "records": 33725,
+      "sha256": "202a95e494c294e2dec51bedf52e1a268a75f70ed050ec997ab7a90fc96108f1",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     },
+     {
+      "file": "W-00004.bin",
+      "source": "W-00004.jsonl.zst",
+      "source_sha256": "542c8b0e7c919c9463c668d8a4a5405da3ce21f0e7f97e168a03cb30c53c8055",
+      "records": 33849,
+      "sha256": "bfcf61de9d575fc20609b7f25a785e5bfc177c32e6f9f257f150dde03e52c711",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     },
+     {
+      "file": "W-00005.bin",
+      "source": "W-00005.jsonl.zst",
+      "source_sha256": "8674a61d638d50e27933d90030e2aa8da3474129424f612bf6aaa2ec135851e1",
+      "records": 33777,
+      "sha256": "1660f00cd926680e197edfc48e2cb12b68f1dae96c865d97b49c902930597a61",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     },
+     {
+      "file": "W-00006.bin",
+      "source": "W-00006.jsonl.zst",
+      "source_sha256": "8604fa2d5e20daef8afed7276358ef7f26e91bb7b2545936147553a81deac765",
+      "records": 33759,
+      "sha256": "5eb424c05bc651f4622663b61698f048394211a8ad97ad59ed6e7721d55a20e2",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     },
+     {
+      "file": "W-00007.bin",
+      "source": "W-00007.jsonl.zst",
+      "source_sha256": "c54ffe2712991ac8da79a4eec39f387e1f337d6c82c9f5a4db3fd0ab9a1c9da8",
+      "records": 33793,
+      "sha256": "83299988d5ef470f2770ddc488518133892c4e1757d8b22acaef4fc290f0b2b6",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     },
+     {
+      "file": "W-00008.bin",
+      "source": "W-00008.jsonl.zst",
+      "source_sha256": "bc65b640db32fc7bd9f99467738131d20b175f766dc7375cb97b08e5166f04c5",
+      "records": 33755,
+      "sha256": "884f916de8b905289dd0c09d25cad5def111fdbee648cd6f1d62f4cb980ec559",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     },
+     {
+      "file": "W-00009.bin",
+      "source": "W-00009.jsonl.zst",
+      "source_sha256": "30a720b7bfc5a7474de1f3cc49b4d7453d89f28ba814acbd33617829ab1dc757",
+      "records": 33789,
+      "sha256": "bb1da1cfa489931431b55433480873fd40dc14c2798ebacab02cc6d35a8d655c",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     },
+     {
+      "file": "W-00010.bin",
+      "source": "W-00010.jsonl.zst",
+      "source_sha256": "866a086bb3862cee0b4f882b311cc8d8816cea8c0100e8af9d5851b12adf3c9e",
+      "records": 33817,
+      "sha256": "8ab6dea590ce965b0b417a4318f9018f3a033e00d195d0a5327545378c787841",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     },
+     {
+      "file": "W-00011.bin",
+      "source": "W-00011.jsonl.zst",
+      "source_sha256": "c156513f98dcd63fec084e273d45443f82a92b4a6dcb723497aca28069c66750",
+      "records": 33817,
+      "sha256": "079d5bb6509e16d1c7d556e1d2b4f37829d01045054bc35dc346b210c61b8c09",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     },
+     {
+      "file": "W-00012.bin",
+      "source": "W-00012.jsonl.zst",
+      "source_sha256": "bc469c64fdc2a3501b2a12fa5eaed6522f94a5cc4366b637f4df0ffe6da5a2ea",
+      "records": 33779,
+      "sha256": "a28f2c4529d8d54e565fecce1adeb6ef91149b42b571b8274b90367d979c8a6d",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     },
+     {
+      "file": "W-00013.bin",
+      "source": "W-00013.jsonl.zst",
+      "source_sha256": "17775ccc4fbdf63c353dd3dd9a0f4a85764e38fecbecb73085d1df4ec50441da",
+      "records": 33745,
+      "sha256": "b2ea391a7350e97a4ab5dfd29bbc422d3494044ca41592775d7e2501be228b57",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     },
+     {
+      "file": "W-00014.bin",
+      "source": "W-00014.jsonl.zst",
+      "source_sha256": "0e1409771372a5eb319c60b3d8adac36ff0a9f13caa2c6d1ead7a447b6862e7d",
+      "records": 33788,
+      "sha256": "cf5736f5a95bf2201b37f45525ddeb8aede9185be93bc9eadbadc80b8b2d5c62",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     },
+     {
+      "file": "W-00015.bin",
+      "source": "W-00015.jsonl.zst",
+      "source_sha256": "4a0f9cc9bf9a2cafc2702c25b31fc2fa5821f2b18055cfb8c856ee230f5ea5fc",
+      "records": 12460,
+      "sha256": "ee58e7c9399ad60cea9883ef7b523e4f16b5ee2a21a50594ad2e8ed8a4b99ba2",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     },
+     {
+      "file": "W-00016.bin",
+      "source": "W-00016.jsonl.zst",
+      "source_sha256": "7bcd5fcfe135c04aa24d5bc17b45d55cf4c17813ad3d2ee80f4cf4a9dbb46ff7",
+      "records": 33733,
+      "sha256": "d387ec9d2884e9fee0db9c5ba03c32e5efeb767094dcce2be27dd277fed2c003",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     },
+     {
+      "file": "W-00017.bin",
+      "source": "W-00017.jsonl.zst",
+      "source_sha256": "21704bc9f2ea96a3b5f48e96482083870e83b137ef83210c7f2c489d913ad04a",
+      "records": 33752,
+      "sha256": "adf23108340a079919e79b7868be2253e25c2fcc19da214fade5c5ded3ab480d",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     },
+     {
+      "file": "W-00018.bin",
+      "source": "W-00018.jsonl.zst",
+      "source_sha256": "317f3f69a098b54d2f5157a66d1848063629691c2f3080a6b4b55aede1ff3651",
+      "records": 33750,
+      "sha256": "b17e54d83313a1f7b40bb4892ae9816227ce9b6044e0365584a614aff60707f7",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     },
+     {
+      "file": "W-00019.bin",
+      "source": "W-00019.jsonl.zst",
+      "source_sha256": "e9e41a43df74fc00ef9b5c051697b0623957999b1be78f2e9a99a3d0388eee24",
+      "records": 33870,
+      "sha256": "2cb234c00f8daa8ea5302be1c5f6d5c3bff8d79de7c4063f4e72b6fa62d0e252",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     },
+     {
+      "file": "W-00020.bin",
+      "source": "W-00020.jsonl.zst",
+      "source_sha256": "6fdcc934c69b7bf2f230b97427b918de1e17d2fd0dbe32a34d32b8488b79941d",
+      "records": 33822,
+      "sha256": "ac910644ce5fb2d68c74dba23edbf14c964e305abe085147e1e14b9cb9b67ad0",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     },
+     {
+      "file": "W-00021.bin",
+      "source": "W-00021.jsonl.zst",
+      "source_sha256": "e2dad02ed2b7ba9ece1df1c6199611bf949f9e2512071f3f5e36e67d24afc1a0",
+      "records": 33718,
+      "sha256": "7fa91bbb5105532ae789cdd536f0288ccdf87bcd4acab421ee91aaefd661b4da",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     },
+     {
+      "file": "W-00022.bin",
+      "source": "W-00022.jsonl.zst",
+      "source_sha256": "fe7db065e8943e7dc1dc29e3bb913cd01b1e7dcc952807c58b5dff72df72e7a5",
+      "records": 33789,
+      "sha256": "8aa97b991a81c7d4d61082211e42e3c6cfd1c9145e689d5c0a1fdeafca16123f",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     },
+     {
+      "file": "W-00023.bin",
+      "source": "W-00023.jsonl.zst",
+      "source_sha256": "05298b705f8f55528eee50841dad1191df752d67d46dce6dcad51a5e86e66e45",
+      "records": 33747,
+      "sha256": "12b06263955e18128c5563d4146ba5878bd128aca3347209944dff35ddab79a8",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     },
+     {
+      "file": "W-00024.bin",
+      "source": "W-00024.jsonl.zst",
+      "source_sha256": "ed3bcf637f154d7359edb7cf1655e7de628c692a77f47c745ef34e1221b6b2a4",
+      "records": 33827,
+      "sha256": "343f5e8ce27e07eb4026b0af9d6e12f41b148591441203962b55623a93f80d34",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     },
+     {
+      "file": "W-00025.bin",
+      "source": "W-00025.jsonl.zst",
+      "source_sha256": "f635a1535fd7fba3b9ffd593292c884e7582dbd95231177d341b8d1fd8fd7135",
+      "records": 33845,
+      "sha256": "1b35f80177aa5ae18912981f9775d07f4721efff83bedc2175155ef985834e0c",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     },
+     {
+      "file": "W-00026.bin",
+      "source": "W-00026.jsonl.zst",
+      "source_sha256": "e26d45494489c0f16242c42227b944d6e9dea0d2baee87537b04ee6338029970",
+      "records": 33777,
+      "sha256": "ea10ea5f613e078d6464c369eaad96a05860cb75e8ca2383e9943c0518e13a06",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     },
+     {
+      "file": "W-00027.bin",
+      "source": "W-00027.jsonl.zst",
+      "source_sha256": "8e9a91ffd5be7dd3abfed1dfdd0bcb50240218b77e89e90d021fec2d4419c325",
+      "records": 33759,
+      "sha256": "e00c67bbf6c31e235482ac7c611aeee9a4f11771e98b039b8f586606e9824756",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     },
+     {
+      "file": "W-00028.bin",
+      "source": "W-00028.jsonl.zst",
+      "source_sha256": "0f154e15d96bb651fcda3b8c923c1773fda9a95eaf3ad42b46aa34e78466e91f",
+      "records": 33742,
+      "sha256": "838aefa661b104fae6bbaf6b9a8cec6695a7ff1ddb454872913f4e51c1c3678d",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     },
+     {
+      "file": "W-00029.bin",
+      "source": "W-00029.jsonl.zst",
+      "source_sha256": "d20cca25182c766242d29ff04bfaece0ed3759d57f98df3d6e0be7f284896405",
+      "records": 33772,
+      "sha256": "7bd750b5d80e4f064b279b0263d7488dd8d712a8ae9209d0c708cb94b4ac2a48",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     },
+     {
+      "file": "W-00030.bin",
+      "source": "W-00030.jsonl.zst",
+      "source_sha256": "680319506d5d35ef55d5651478602df00506245c4e05e6579d2d9d83517ad03f",
+      "records": 33800,
+      "sha256": "14a22a00015e39c8c10d78ed28ca7524c6a964cd607159c9007f86671be0dc5f",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     },
+     {
+      "file": "W-00031.bin",
+      "source": "W-00031.jsonl.zst",
+      "source_sha256": "1b9aecaa2ed982ecafe22df81d36a783e4cd7c81644baee06cde30c1c0c0fa3c",
+      "records": 33766,
+      "sha256": "295949ccc06721791e1b50b3adcfa5ff0ec85e8f028b50e1fd86a37f05e766c5",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     },
+     {
+      "file": "W-00032.bin",
+      "source": "W-00032.jsonl.zst",
+      "source_sha256": "76aa1987d85db576b7fbfab05bef993f6ebed13a969fcce4686f108c22d2e821",
+      "records": 33745,
+      "sha256": "bf3f75f5d9784b0eed2399124589e5dd16796d064e1b9e32378e6ceb3bf1bda5",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     },
+     {
+      "file": "W-00033.bin",
+      "source": "W-00033.jsonl.zst",
+      "source_sha256": "0f2b1cbd6be8fb095bdd9ef856347af4f00ba2a9e88152688a0978119292110e",
+      "records": 33726,
+      "sha256": "7bd5754e5fbec16c0253b9da5e7949b6c8a2a741d64254acf1bd0a1f1e447205",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     },
+     {
+      "file": "W-00034.bin",
+      "source": "W-00034.jsonl.zst",
+      "source_sha256": "53e02fba50e4d5d02b3889bbf8b083b8d77be4f6d485ecdc8093331f3f45e1ff",
+      "records": 33815,
+      "sha256": "da096c351acafed9f0fcb2f81f366c5526d314856d44ad226a3cb106031c9378",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     },
+     {
+      "file": "W-00035.bin",
+      "source": "W-00035.jsonl.zst",
+      "source_sha256": "78366a1e0cd04c6b32668ccff23794fe60d440bb87ec08324b26b1f2e266534e",
+      "records": 33799,
+      "sha256": "1c6d471745df82dc9bd4ab98dd38d7a20242970241bb83dc1a1e4da8363a25bb",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     },
+     {
+      "file": "W-00036.bin",
+      "source": "W-00036.jsonl.zst",
+      "source_sha256": "725fa141e2cd69af5b5989063bf442e4776155d4ebc3a8bc2fd1c9ca91168250",
+      "records": 33750,
+      "sha256": "58cd4fd50dc9608af1b7b4e6325481a2402bd09e58751b16f393fdfc20f521fb",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     },
+     {
+      "file": "W-00037.bin",
+      "source": "W-00037.jsonl.zst",
+      "source_sha256": "e366674d49edd5b88634f8a312b56a827d6720e9d001fff21bdd5f6792f73807",
+      "records": 33719,
+      "sha256": "7de1c3f17faa036aec23056a9cb2cb7849b072ac9441e3ac45a120f781283e6d",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     },
+     {
+      "file": "W-00038.bin",
+      "source": "W-00038.jsonl.zst",
+      "source_sha256": "c87fcd8dd783e02784179862349f43785fd2d39a0bc2893d01fb854bc89fd17d",
+      "records": 33749,
+      "sha256": "9565ff36bdd9a36d0afce073da2c9c3a7a564c7494807bc1f492e05652ec3de3",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     },
+     {
+      "file": "W-00039.bin",
+      "source": "W-00039.jsonl.zst",
+      "source_sha256": "37b4dd640158f2dfc83761685b519520b1f5d201844562587e68e26f758339b9",
+      "records": 33898,
+      "sha256": "e747a88c81592d73d5605cf72dd30753234e46cd67411a2e99704852160fe6fb",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     },
+     {
+      "file": "W-00040.bin",
+      "source": "W-00040.jsonl.zst",
+      "source_sha256": "555767ae5fb15f17953d84c3fa0ea9048496e54c4538111612937b501f2eefd5",
+      "records": 33769,
+      "sha256": "9b7992c64d10dd43d87ffe0ed603139bd79cec4205c3771812e368444fc00638",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     },
+     {
+      "file": "W-00041.bin",
+      "source": "W-00041.jsonl.zst",
+      "source_sha256": "9df352defe76246a9e09a36fae96ea62a62e5c9a8422e2af3aed538ef9b057eb",
+      "records": 33729,
+      "sha256": "e003071c0640ba87c55c5004f63ab416b86dd2ab52e49ebf8ea4e2d85a3b124b",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     },
+     {
+      "file": "W-00042.bin",
+      "source": "W-00042.jsonl.zst",
+      "source_sha256": "b313d66cc5ec9016cbf4a0ab57dd766ed91625bc144a4fcdc7ae2d6b2c9907e5",
+      "records": 33772,
+      "sha256": "4a0aa46c7dc065fffbf31fdeb9343c1834003c0280db23f4badc4ccdcad61728",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     },
+     {
+      "file": "W-00043.bin",
+      "source": "W-00043.jsonl.zst",
+      "source_sha256": "73605828367948270c20888da97754ff1776ae2d6f1e7692bde6c57424c27066",
+      "records": 33763,
+      "sha256": "0d50d792857468bcef40f26b72352142c01925fd53baa49080163d2ad8813292",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     },
+     {
+      "file": "W-00044.bin",
+      "source": "W-00044.jsonl.zst",
+      "source_sha256": "dbbfa76b3b69d5a53d7995552995b2424baa78b0d1dcdf0f355dc2fdc0f8842c",
+      "records": 33866,
+      "sha256": "eccb066b1d174a84c1b5913205da812bf6ad0c40132a1e2b3515bd38bf3a0138",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     },
+     {
+      "file": "W-00045.bin",
+      "source": "W-00045.jsonl.zst",
+      "source_sha256": "a8e137cd918afe16a3e78a154d7c42aa8d953196ee5333f8a6f63e2c4db15eff",
+      "records": 33796,
+      "sha256": "dc76c4c57ee4e518d66c2723fed0538a8f4cd14c1a19764d71848d376a29ee3b",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     },
+     {
+      "file": "W-00046.bin",
+      "source": "W-00046.jsonl.zst",
+      "source_sha256": "e1bf170e710d72ce6e41f3579677662696463087aa919061f0b1554f71b8037b",
+      "records": 33743,
+      "sha256": "92546235761f77891cdd56e7c0a161bc0843dcdaa5c4134068f8f0e3825ae7ad",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     },
+     {
+      "file": "W-00047.bin",
+      "source": "W-00047.jsonl.zst",
+      "source_sha256": "fcd4065b1b32416a313bfc533a7402c3e3403749b7bb6889144caa6e5226e8d6",
+      "records": 33754,
+      "sha256": "3e98909866464b903a26c14174352c575d393fc8016ca43df45db92da6732c21",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     },
+     {
+      "file": "W-00048.bin",
+      "source": "W-00048.jsonl.zst",
+      "source_sha256": "685fe95e855d5045b598129f2e3c50248c47f6e47e2c5a4933ef2f412fd9dbfd",
+      "records": 33834,
+      "sha256": "62c134e4bb1dcd640a302be423559c48ff1fdb3c0d8dde592c6641fad3e0d019",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     },
+     {
+      "file": "W-00049.bin",
+      "source": "W-00049.jsonl.zst",
+      "source_sha256": "d104c954d18b8b2fbc734acace2de043262303c4b54bf8e1fcfd15dbd369fb37",
+      "records": 33835,
+      "sha256": "75791f4c97b30ebf89060932272c8add58c0277ebdc5eff1b96b98244158be7d",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     },
+     {
+      "file": "W-00050.bin",
+      "source": "W-00050.jsonl.zst",
+      "source_sha256": "cc76e30ff4fb265303ce14d49a75ddac9264583a6f30f727c1ef220a3f40367a",
+      "records": 33778,
+      "sha256": "c11d9f244fd51c3dd771fbaf680e26bee843f6562db0b4cbedfe3d2084e4c031",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     },
+     {
+      "file": "W-00051.bin",
+      "source": "W-00051.jsonl.zst",
+      "source_sha256": "1b29951345c990883834a1301556c3935ce9125e5f9e999e02358e237811d57b",
+      "records": 1936,
+      "sha256": "be543e97d1d1a3b8acdec2c669d62b926aa2392b61904d1dcd4638c0380d0fac",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     }
+    ]
+   }
+  ],
+  "mix_declared": {
+   "W": 1.0
+  },
+  "shuffle_window": null,
+  "streaming": true,
+  "seq_len": 8192,
+  "batch_size": 1,
+  "loader_batch": 1,
+  "micro_batch": null,
+  "accum_tokens": 0,
+  "planned_batch": 1,
+  "decay": null
+ },
+ "loop": {
+  "steps_requested": 6,
+  "total_steps": 6,
+  "schedule": "wsd",
+  "lr": 0.01,
+  "warmup_ratio": 0.01,
+  "decay_ratio": 0.05,
+  "decay_ratio_requested": null,
+  "decay_ratio_explicit": false,
+  "decay_stream": null,
+  "decay_start": null,
+  "grad_checkpointing": true,
+  "grad_checkpointing_policy": "full",
+  "grad_ckpt_policy": "per_layer",
+  "ce_chunk_tokens": 1024,
+  "loss_impl": "chunked_ce",
+  "param_dtype": "bfloat16",
+  "checkpoint_every": 0,
+  "checkpoint_every_min": null,
+  "stop_file": null,
+  "resume": false,
+  "data_kind": "packed",
+  "micro_batch": 1,
+  "accum_tokens": 0,
+  "planned_batch": 1,
+  "tokens_per_step": 8192,
+  "ns_steps": 5,
+  "legacy_muon_all_2d": false,
+  "optimizer_classification": "adr-048",
+  "phase_profile": true
+ },
+ "gpu": {
+  "peak_tflops": 98.2,
+  "peak_tflops_source": "gemm_peak_0810.log (bf16 cuBLAS measured, commit 42b7408)",
+  "peak_declared_not_measured": true
+ },
+ "steps_done": 6,
+ "start_step": 0,
+ "tokens_seen": 49152,
+ "loss_first": 13.536569595336914,
+ "loss_last": 12.077537536621094,
+ "lr_first": 0.0,
+ "lr_last": 0.01,
+ "tree_hash": "4ac0e2464cc6c6d281a39e7c69dd30bd711161299b493b7122234df0eaec4674",
+ "tree_hash_master": "78f612dd680141a605c9470523bdaf5eac110885a71177f47abda8f82e0cfe38",
+ "tree_hash_note": "tree_hash — обслуживаемые веса (params); tree_hash_master — fp32-мастер, он же лежит в чекпойнте. При param_dtype=float32 веса и мастер совпадают и хеши равны",
+ "timings": {
+  "first_step_seconds": 735.7532,
+  "step_seconds_mean_tail": 74.80695,
+  "wall_seconds": 1118.002
+ },
+ "wall_clock_s": 1133.018,
+ "data_consumed": {
+  "kind": "packed",
+  "token_share": {
+   "W": 1.0
+  },
+  "phase": "stable",
+  "decay_start": null,
+  "peak_rss_mb": 16601.1,
+  "streams": {
+   "W": {
+    "shard_index": 0,
+    "shards": 52,
+    "slots": 49152,
+    "records": 6,
+    "stream_tokens": 13952188051,
+    "exhausted": false,
+    "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+   }
+  },
+  "records_total": 6,
+  "slots_total": 49152,
+  "dropped_tail_records": {
+   "W": 0
+  }
+ },
+ "budget": {
+  "run_ref": "mfu55-g0-l3full",
+  "estimate_present": false,
+  "estimate_path": "evidence/budget/mfu55-g0-l3full.json",
+  "target_tokens": null,
+  "gpu_hours_estimate": null,
+  "limit_usd": 5.0,
+  "gpu_hours_actual": 0.308288,
+  "gpu_hours_leg": 0.310556,
+  "gpu_hours_resumed_base": 0.0,
+  "tokens_seen_total": 49152,
+  "tokens_seen_resumed_base": 0,
+  "usd_spent": 0.0,
+  "usd_rate_declared": false,
+  "stop_reason": null
+ },
+ "checkpoint": null,
+ "stop": {
+  "reason": null,
+  "stopped_by_budget": false
+ },
+ "metrics_summary": {
+  "path": "~/gb10-shared/runs/pretrain-l3/mfu55-g0-l3full/metrics.jsonl",
+  "rows": 6,
+  "first_step_excluded": true,
+  "kpi_rows": 5,
+  "loss_first": 13.536569595336914,
+  "loss_last": 12.077537536621094,
+  "loss_median_tail": 12.077537536621094,
+  "tokens_per_sec_median": 109.45421298064284,
+  "mfu_median": 0.003359860263449465,
+  "mfu_params_only": true,
+  "mfu_note": "MFU считается по параметрической части (6·N_active·tokens); вклад внимания (квадратичный по T) не входит — число неполное по построению"
+ },
+ "notes": [
+  "mfu_params_only: MFU по параметрической части (6·N_active·tokens), вклад внимания не входит; N для MFU — active_param_count, не N_total",
+  "mfu: доля от ОБЪЯВЛЕННОГО пика; на смоуке с крошечной моделью число мало по построению и не является замером эффективности железа (на H800 калибровка ~35% — ожидаемый порядок, не гарантия)",
+  "token_share: фактическая доля потоков в израсходованном окне корпуса; для packed — по слотам записей",
+  "first_step_excluded: KPI-медианы (tokens_per_sec_median, mfu_median) считаются без первого (компилирующего) шага ноги; построчные значения в metrics.jsonl сохранены (ADR-048 Amendment)"
+ ]
+}

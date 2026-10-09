@@ -13,7 +13,7 @@
   "epic_context_tokens": 1500,
   "route": "Standard",
   "recommended_timeout_secs": 3600,
-  "baseline_commit": "f773337",
+  "baseline_commit": "f3ce201",
   "scope": {
     "write_allow": [
       "net/kda.py",
@@ -712,5 +712,6 @@
       "score": 2,
       "skills": []
     }
-  ]
+  ],
+  "baseline_note": "обновлено 09.10 после сведения линий (мерж mfu-int 24e4466) — scope-гейт сравнивал с устаревшей базой и давал ложные нарушения"
 }

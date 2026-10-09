@@ -4,6 +4,7 @@ type: cmp
 title: "RL-среда, верификаторы и сравнительный стенд"
 status: "designed"
 depends_on: []
+code_roots: [env]
 implements: [AD-1, AD-2, AD-3, AD-4, NFR-001, NFR-002]
 ---
 

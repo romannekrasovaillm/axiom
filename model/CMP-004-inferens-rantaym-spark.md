@@ -4,6 +4,7 @@ type: cmp
 title: "Инференс-рантайм на DGX Spark"
 status: "designed"
 depends_on: [CMP-002]
+code_roots: [clients]
 implements: [AD-5, AD-7, NFR-004, NFR-005]
 ---
 

@@ -4,6 +4,7 @@ type: cmp
 title: "Пост-тренировка: SFT → RL по схеме базы → MOPD"
 status: "designed"
 depends_on: [CMP-002, CMP-005]
+code_roots: [net, tools]
 implements: [AD-2, AD-8, NFR-001]
 ---
 

@@ -4,6 +4,7 @@ type: cmp
 title: "Претрейн-конвейер и аренда GPU"
 status: "designed"
 depends_on: [CMP-001, INT-001]
+code_roots: [net]
 implements: [AD-4, AD-8, NFR-003]
 ---
 

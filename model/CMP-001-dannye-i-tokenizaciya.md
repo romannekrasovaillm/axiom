@@ -4,6 +4,7 @@ type: cmp
 title: "Данные и токенизация"
 status: "designed"
 depends_on: []
+code_roots: [data, tools]
 implements: [AD-6, NFR-003]
 ---
 

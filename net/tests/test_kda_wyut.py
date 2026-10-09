@@ -236,7 +236,7 @@ def test_schema_default_is_chunked():
 
 def test_declared_config_is_chunked_for_pretrain():
     cfg = load_config(CONFIG_PATH)
-    assert cfg.kda_impl == "chunked"
+    assert cfg.kda_impl == "chunked_cc"
     validate_config(cfg)
 
 

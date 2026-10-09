@@ -406,16 +406,58 @@ def _ut_solve(a: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
     """``T b`` for ``T = (I + L)^{-1}`` without ever forming ``T``.
 
     ``a = I + L`` is unit lower triangular in the last two axes and batched over
-    heads; ``b`` is ``(H, C, d)``.  The WY/UT form needs the two products
+    heads; ``b`` is ``(H, C, d)``.  The WY/UT form needs the products
     ``T diag(beta) Gamma K`` and ``T diag(beta) V`` (Eq. 7), i.e. the solutions
     of ``(I + L) W = X`` and ``(I + L) U = V`` — the triangular system is solved
-    directly (one batched TRSM for all heads) instead of inverting ``I + L``.
+    directly (one batched TRSM for all heads) instead of inverting ``I + L``;
+    both products go through :func:`_ut_solve_pair` so they share one call.
     ``jnp.linalg.inv`` factorises each head's matrix by LU with pivoting
     (``getrf`` + ``getri``), whose per-head kernels dominated the step profile;
     the unpivoted batched solve removes that family from the graph without
     touching the algebra.
     """
     return jax.lax.linalg.triangular_solve(a, b, left_side=True, lower=True)
+
+
+def _ut_solve_pair(
+    a: jnp.ndarray, xw: jnp.ndarray, vw: jnp.ndarray
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """``(T xw, T vw)`` for ``T = (I + L)^{-1}`` in a **single** batched TRSM.
+
+    Eq. 7 asks for two products against the *same* unit lower triangular
+    ``a = I + L``: ``W = T diag(beta) (Gamma . K)`` and ``U = T diag(beta) V``.
+    Written as two :func:`_ut_solve` calls they became two TRSM invocations per
+    chunk-step, and G1 measured what XLA makes of a batched TRSM at this
+    geometry: it does not fuse it into one large kernel but cuts it into
+    ``batch_trsm_left_kernel<..., 64, 4, ...>`` tiles — ``nrhs`` sliced down to
+    4 — 115 200 TRSM kernels plus 230 400 ``MakeBatchPointers`` in 120 s of the
+    steady phase, GPU occupancy 3.5% (``evidence/mfu-55/G1/REPORT.md`` §2-3).
+
+    The triangular solve is column-wise: the ``nrhs`` columns solved against one
+    matrix share nothing but that matrix.  Concatenating the two right-hand sides
+    along the last axis therefore changes neither the algebra nor which equation
+    each column solves — only the tile blocking inside the kernel, and with it
+    the last-ulp rounding (measured on CPU: bit-identical at the smoke geometry,
+    ``max|delta|`` 4.8e-07 on a synthetic 32x32 system — three orders below the
+    ``1e-5`` the ADR-040 Amendment allows the re-written forms against the
+    pre-port tree).  What it does buy is half the
+    solve calls and twice the ``nrhs`` the kernel is handed — the address G1 left
+    open.  The split is pure indexing — ``[..., :dk]`` and ``[..., dk:]`` of the
+    one solution are the two blocks ``T xw`` and ``T vw``, with no arithmetic in
+    between; the pinning test checks them against the two separate solves.
+
+    No second right-hand side is available here, so ``dk + dv`` is the widest
+    ``nrhs`` one TRSM can be given without changing the algebra: the matrices are
+    per-head, and folding the heads into a single matrix means a block-diagonal
+    ``(H*C, H*C)`` system — ``H`` times the flops of the batched block-triangular
+    one.  Option (2) of the task, a ``(C, H*d)`` right-hand side against one
+    ``(C, C)`` matrix, is that same non-starter: the heads do not share ``I + L``
+    (see the report; the batch axis over heads *is* the block structure, and it
+    is already there).
+    """
+    dw = xw.shape[-1]
+    wu = _ut_solve(a, jnp.concatenate([xw, vw], axis=-1))
+    return wu[..., :dw], wu[..., dw:]
 
 
 def wyut_chunk_step(
@@ -454,12 +496,14 @@ def wyut_chunk_step(
     l_mat = jnp.where(strict, akk, 0.0) * beta_t[:, :, None]  # L_{r,i}=beta_r Akk
     tri = jnp.eye(C, dtype=l_mat.dtype) + l_mat  # (I + L), unit lower triangular
 
-    # W = T Diag(beta) (Gamma . K), U = T Diag(beta) V  (Eq. 7).
+    # W = T Diag(beta) (Gamma . K), U = T Diag(beta) V  (Eq. 7).  One TRSM for
+    # both right-hand sides — same matrix, concatenated columns (see
+    # :func:`_ut_solve_pair`); G1 measured the two-call form as a storm of
+    # 115 200 small TRSM kernels per 120 s of the steady phase.
     gamma = jnp.exp(log_g).transpose(1, 0, 2)  # (H, C, dk)
     xw = (gamma * k) * beta_t[:, :, None]  # (H, C, dk)
     vw = v * beta_t[:, :, None]  # (H, C, dv)
-    w = _ut_solve(tri, xw)
-    u = _ut_solve(tri, vw)
+    w, u = _ut_solve_pair(tri, xw, vw)
 
     s_in = carry.S  # (H, dk, dv)
     v_tilde = u - jnp.einsum("hcd,hde->hce", w, s_in)  # U - W S  (pseudo-value)
@@ -632,12 +676,13 @@ def cc_chunk_step(
     l_mat = akk * beta_t[:, :, None]
     tri = jnp.eye(C, dtype=l_mat.dtype) + l_mat  # (I + L), unit lower triangular
 
-    # W = T diag(beta) (Gamma . K), U = T diag(beta) V  (Eq. 7).
+    # W = T diag(beta) (Gamma . K), U = T diag(beta) V  (Eq. 7).  One TRSM for
+    # both right-hand sides — same matrix, concatenated columns (see
+    # :func:`_ut_solve_pair`).
     gamma = jnp.exp(log_g).transpose(1, 0, 2)  # (H, C, dk) = Gamma_c
     xw = (gamma * k_t) * beta_t[:, :, None]
     vw = v_t * beta_t[:, :, None]
-    w = _ut_solve(tri, xw)
-    u = _ut_solve(tri, vw)
+    w, u = _ut_solve_pair(tri, xw, vw)
 
     s_in = carry.S  # (H, dk, dv)
     v_tilde = u - jnp.einsum("hcd,hde->hce", w, s_in)  # U - W S (pseudo-value)

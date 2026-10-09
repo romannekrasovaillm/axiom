@@ -414,6 +414,7 @@ constraints:
     type: command_succeeds
     command: 'python3 tools/check_gb10_single_load.py'
     timeout_secs: 60
+    requires: [stand]
     severity: high
     scope: case
     kind: behavioural
@@ -442,6 +443,7 @@ constraints:
     type: command_succeeds
     command: 'python3 tools/check_precision_pinning.py --profile gate'
     timeout_secs: 600
+    requires: [cuda]
     severity: high
     scope: case
     kind: behavioural

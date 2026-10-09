@@ -73,9 +73,14 @@
 1. восстановить префлайт в `tools/profile_mfu.py`, `tools/mfu_bf16_protocol.py`,
    `tools/loss_parity_bf16.py` и `export XLA_PYTHON_CLIENT_MEM_FRACTION` в `tools/profile_mfu_nsys.sh`
    (порт из `0d51a9b`; кодовый харнесс);
-2. добавить эти три пути в `C-054` (снова новым id, если правило уже принято) и правило `C-055`
-   (`must_contain` для nsys-обвязки): `.sh` невидима для правил по `*.py`, а именно nsys-прогон
-   без лимита уронил стенд 08.10;
+2. после слияния в каноне вне стража остаются **шесть** вызывателей (проверено на
+   `origin/arch/claude-code-20261009114913`: `C-053` несёт 14 путей, `ensure_mem_fraction()` вызывают
+   17 файлов): `tools/profile_mfu.py`, `tools/remat_policy_smoke.py`, `tools/kda_phase_profile.py`,
+   `tools/mfu_ladder.py`, `tools/optimizer_groups.py`, `tools/optimizer_jit_smoke.py`
+   (`tools/jax_preflight.py` — исключение по смыслу: он определяет функцию). Первые четыре уже
+   закрыты `C-054`; остальные — **новым id** (`C-055`), а не правкой `C-054` (та же причина, что в
+   MODIFIED). Отдельным правилом `C-056` (`must_contain`) закрывается nsys-обвязка, невидимая для
+   правил по `*.py`;
 3. ввести meta-guard покрытия (`tools/check_preflight_coverage.py`, `command_succeeds`) — чтобы
    список больше не отставал от файловой системы молча. Отдельный id, тот же контур регистрации.
 

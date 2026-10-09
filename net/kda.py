@@ -402,6 +402,22 @@ def _decay_ratio_exp(log_g: jnp.ndarray) -> jnp.ndarray:
     return jnp.exp(jnp.minimum(diff, 0.0))
 
 
+def _ut_solve(a: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
+    """``T b`` for ``T = (I + L)^{-1}`` without ever forming ``T``.
+
+    ``a = I + L`` is unit lower triangular in the last two axes and batched over
+    heads; ``b`` is ``(H, C, d)``.  The WY/UT form needs the two products
+    ``T diag(beta) Gamma K`` and ``T diag(beta) V`` (Eq. 7), i.e. the solutions
+    of ``(I + L) W = X`` and ``(I + L) U = V`` — the triangular system is solved
+    directly (one batched TRSM for all heads) instead of inverting ``I + L``.
+    ``jnp.linalg.inv`` factorises each head's matrix by LU with pivoting
+    (``getrf`` + ``getri``), whose per-head kernels dominated the step profile;
+    the unpivoted batched solve removes that family from the graph without
+    touching the algebra.
+    """
+    return jax.lax.linalg.triangular_solve(a, b, left_side=True, lower=True)
+
+
 def wyut_chunk_step(
     params: KDAParams, cfg: ModelConfig, carry: KDAState, x: jnp.ndarray
 ) -> tuple[KDAState, jnp.ndarray]:
@@ -436,15 +452,14 @@ def wyut_chunk_step(
     strict = jnp.tril(jnp.ones((C, C), dtype=bool), k=-1)
     aqk = jnp.where(lower, aqk, 0.0)
     l_mat = jnp.where(strict, akk, 0.0) * beta_t[:, :, None]  # L_{r,i}=beta_r Akk
-    eye = jnp.eye(C, dtype=l_mat.dtype)
-    t_mat = jnp.linalg.inv(eye + l_mat)  # (I + L)^{-1}, unit triangular
+    tri = jnp.eye(C, dtype=l_mat.dtype) + l_mat  # (I + L), unit lower triangular
 
     # W = T Diag(beta) (Gamma . K), U = T Diag(beta) V  (Eq. 7).
     gamma = jnp.exp(log_g).transpose(1, 0, 2)  # (H, C, dk)
     xw = (gamma * k) * beta_t[:, :, None]  # (H, C, dk)
     vw = v * beta_t[:, :, None]  # (H, C, dv)
-    w = jnp.einsum("hcs,hsd->hcd", t_mat, xw)
-    u = jnp.einsum("hcs,hsd->hcd", t_mat, vw)
+    w = _ut_solve(tri, xw)
+    u = _ut_solve(tri, vw)
 
     s_in = carry.S  # (H, dk, dv)
     v_tilde = u - jnp.einsum("hcd,hde->hce", w, s_in)  # U - W S  (pseudo-value)
@@ -583,7 +598,7 @@ def cc_chunk_step(
     every other form uses (:func:`_project`, :func:`_output_gate`), so this form
     inherits the gate — bf16 GEMM operands with an fp32 accumulator — without a
     second implementation.  The intra-chunk algebra of :func:`_cc_scores` and of
-    the WY/UT (``t_mat``/``w``/``u``/``v_tilde``) steps stays fp32 on purpose,
+    the WY/UT (``tri``/``w``/``u``/``v_tilde``) steps stays fp32 on purpose,
     the same decision the committed ``chunk_step`` records for the scan side: it
     is accumulator state algebra, and the recipe keeps accumulators fp32.  The
     ``wyut`` form's analogous score einsums are ungated for the same reason, so
@@ -612,17 +627,17 @@ def cc_chunk_step(
     aqk = _cc_scores(q_t, k_t, log_g_t, tile, strict=False)  # (H, C, C)
     akk = _cc_scores(k_t, k_t, log_g_t, tile, strict=True)  # (H, C, C)
 
-    # L = strict_tril(diag(beta) Akk); T = (I + L)^{-1} (unit triangular).
+    # L = strict_tril(diag(beta) Akk); the UT transform is applied as the solve
+    # (I + L) W = X, never as a materialised T = (I + L)^{-1} (see :func:`_ut_solve`).
     l_mat = akk * beta_t[:, :, None]
-    eye = jnp.eye(C, dtype=l_mat.dtype)
-    t_mat = jnp.linalg.inv(eye + l_mat)
+    tri = jnp.eye(C, dtype=l_mat.dtype) + l_mat  # (I + L), unit lower triangular
 
     # W = T diag(beta) (Gamma . K), U = T diag(beta) V  (Eq. 7).
     gamma = jnp.exp(log_g).transpose(1, 0, 2)  # (H, C, dk) = Gamma_c
     xw = (gamma * k_t) * beta_t[:, :, None]
     vw = v_t * beta_t[:, :, None]
-    w = jnp.einsum("hcs,hsd->hcd", t_mat, xw)
-    u = jnp.einsum("hcs,hsd->hcd", t_mat, vw)
+    w = _ut_solve(tri, xw)
+    u = _ut_solve(tri, vw)
 
     s_in = carry.S  # (H, dk, dv)
     v_tilde = u - jnp.einsum("hcd,hde->hce", w, s_in)  # U - W S (pseudo-value)

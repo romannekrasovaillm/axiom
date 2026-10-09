@@ -584,3 +584,19 @@ constraints:
     evidence: "tools/jax_preflight.py → ensure_mem_fraction() (лимит памяти ДО import jax) + preflight_gate() (fail-closed при чужих compute-процессах). Правило ловит пропажу вызова в любом JAX-инструменте списка. Инцидент 08.10: префлайт не был вызван нигде, JAX взял дефолтный резерв ~75% и стенд GB10 ушёл в global OOM"
     adr: ADR-041
     owner: архитектор
+
+  - id: C-054
+    name: "ADR-041 Am.3: дополнительный перечень JAX-инструментов под префлайт памяти — маркер ensure_mem_fraction() обязателен (инструменты, не попавшие в список C-053)"
+    type: each_file_must_contain
+    glob:
+      - tools/kda_phase_profile.py
+      - tools/mfu_ladder.py
+      - tools/optimizer_groups.py
+      - tools/optimizer_jit_smoke.py
+    pattern: "ensure_mem_fraction\\(\\)"
+    severity: high
+    scope: case
+    kind: structural
+    evidence: "На каноне (origin/main 46eb68a) ensure_mem_fraction() вызывают 17 файлов tools/, а glob C-053 перечислял 12. Четыре инструмента вне стража: kda_phase_profile, mfu_ladder, optimizer_groups, optimizer_jit_smoke — вызов в них есть, но его пропажу (в т.ч. при слиянии) правило не заметило бы. Новый id, а не правка C-053, — по доктрине ADR-011/CONTRIBUTING: правило, потерявшее полноту, заменяется новым с обоснованием; анти-ослабление гейта трактует правку существующего id как ослабление, и это поведение здесь не обходится"
+    adr: ADR-041
+    owner: архитектор

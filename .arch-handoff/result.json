@@ -1,35 +1,22 @@
 {
-  "status": "complete",
+  "status": "partial",
   "assumptions": [
-    "Носитель пиннов — существующий блок run в курсоре чекпойнта (net/train_loop.py:_save_checkpoint); новый носитель не заводился.",
-    "В пинах хранится метка optimizer_classification ('adr-048'|'legacy'), а не голый булев legacy_muon_all_2d: она 1:1 отображает флаг и уже читается сшивателем журналов A/B.",
-    "Курсоры прежних ревизий без поля optimizer_classification не отвергаются задним числом (пин отсутствует -> проверка пропускается)."
+    "A/B-прогон оформлен отдельным инструментом tools/remat_policy_ab.py (plan/compare/run) поверх уже влитых флага --remat-policy и журнала tools/pretrain_run.py: «флаг + журнал + первый шаг вне KPI» уже были в коде после merge mfu-int, не хватало воспроизводимого A/B-входа с равным бюджетом.",
+    "Равный бюджет обеспечен конструкцией: обе ноги собираются из одной базовой команды и отличаются ровно аргументом --remat-policy (plan отказывает базе, где политика уже задана); свод дополнительно сверяет число шагов и суммарные токены обеих ног (неравенство -> verdict budget-mismatch).",
+    "Fail-closed по hasattr реализован в net/remat.py: явная карта имя->атрибут jax.checkpoint_policies + hasattr-проверка + согласованность с net.config.REMAT_POLICIES при импорте; неизвестное и объявленное-но-недоступное имя -> ValueError. Дефолт none не тронут (none -> jax.checkpoint(fn) без policy, побитово прежний граф).",
+    "Инструмент проверяющий, поэтому по доктрине tools/jax_preflight.py несёт только ensure_mem_fraction() (без preflight_gate); в glob правила C-053 он не входит, а CONSTRAINTS.yaml — вне зоны и в deny, поэтому глоб не расширял.",
+    "Паритет математики и fail-closed проверены на CPU: 34->53 теста зелёные (net/tests/test_31_remat_policy.py + tools/tests/test_remat_policy_cli.py + tools/tests/test_remat_policy_ab.py). GPU-прогонов не было.",
+    "Инструмент провалидирован на уже снятых ногах (evidence/kda-rewrite/mfu-remat-*.jsonl): свод воспроизводит матрицу ADR-049 — none 407.24 ток/с, dots_with_no_batch_dims_saveable 468.63 (x1.15), equal_budget=true.",
+    "Работа приходит одним коммитом поверх 24e4466; служебный .arch-handoff/ в коммит не входит."
   ],
   "open_questions": [
-    "Нужно ли задним числом ужесточать сверку для курсоров, сохранённых до этой правки (сейчас они resume-ятся без проверки режима)?"
+    "Архитектору: снять A/B на GB10 по плану mode=plan (две ноги с равным бюджетом; передать --peak-tflops, иначе mfu в журналах ног будет null) и свести mode=compare — первый шаг вне KPI и паритет условий уже учтены инструментом.",
+    "MCP-самопроверка не достигла passed=true по причинам вне дельты. fitness_check: 4 error — 2 предсуществующих нарушения C-053 в tools/loss_parity_bf16.py и tools/mfu_bf16_protocol.py (маркера нет уже на базовой ревизии 24e4466) и 2 правила с requires:[stand] (C-040/C-042), которые MCP-инструмент исполняет вне стенда. scope_check: 33 нарушения из 38 — из-за устаревшего пакета (base f773337).",
+    "Под корректной для этой руки зоной дельта чиста: git diff 24e4466..HEAD — 4 пути, scope check с зоной задачи отвечает «чисто».",
+    "Кому принадлежит регенерация handoff-пакета под эту руку (.arch-handoff/MANIFEST.json несёт чужую задачу, .arch-handoff/mcp.json пуст)? Патчить границы/манifest изнутри прогона не стал."
   ],
-  "conflicts_with_prior_decisions": [],
-  "gate": {
-    "route": "Fast",
-    "verdict": "FAIL",
-    "failures_are_stand_debt_not_delta": true,
-    "findings": [
-      "ADR-010+ADR-013: precision-pinning требует CUDA-устройство (jax.devices()=['CpuDevice(id=0)']) — операторский прогон на gb10",
-      "AD-7/C-040: GB10 single-load — стенд GB10 недоступен (GPU = RTX 4080 SUPER) — операторский прогон на gb10",
-      "arch_drift: bounded-лимит 2000 файлов, известный блокер задачи hr-06"
-    ],
-    "relevant_components_passed": ["delta_guard", "rule_weakened", "spine_lint", "trace_check", "model_validate"]
-  },
-  "commit": "c8c8c96",
-  "branch": "arch/bf16-phase1-wip",
-  "tests": {
-    "tools/tests/test_pretrain_optimizer_classification.py": "7 passed, 4 skipped",
-    "skipped_reason": "ModuleNotFoundError: No module named 'jax' (тесты сохранения чекпойнта/журнала метрик требуют jax; структурные проверки выполнены и зелёные)",
-    "structural_checks_green": [
-      "test_h4_resume_refuses_optimizer_mode_mismatch",
-      "test_h4_resume_accepts_same_optimizer_mode",
-      "test_h4_resume_skips_absent_mode_for_old_cursor",
-      "test_pinned_run_surfaces_optimizer_mode_into_journal"
-    ]
-  }
+  "conflicts_with_prior_decisions": [
+    "Устаревший/чужой handoff-пакет: MANIFEST.scope (write_allow net/kda.py, net/tests/*) и MANIFEST.baseline_commit=f773337 описывают задачу KDA-шторма, а не remat-A/B; worktree создан от 24e4466. Машинный контракт границ противоречит заявленной зоне задачи (net/remat.py, net/model.py, tools/). MANIFEST и границы не менял (границы — не предмет постфактум-обсуждения), поэтому scope_check не мог стать зелёным без подмены контракта.",
+    "Предсуществующие error правила C-053 (ADR-041) в tools/loss_parity_bf16.py и tools/mfu_bf16_protocol.py не исправлял: они вне рычага («один рычаг за раз») и зелёного гейта всё равно не дают (env-правила C-040/C-042 красные вне стенда)."
+  ]
 }

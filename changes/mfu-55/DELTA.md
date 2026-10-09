@@ -39,6 +39,24 @@
 - [ ] Каждый гейт: запись в `evidence/mfu-55/<gate>/` с конфигом, профилем и числами; `arch-be gate --route standard` без новых error.
 - [ ] Пин аренды и `C-046` не ослаблены; пересмотр `verdict_50pct` — только амендментом по факту G3.
 
+## Методические опоры (скиллы библиотеки плагинов, загружены 09.10.2026)
+
+- **`performance-roofline-gate`** (`plugins/arch-distilled/…`) — методика физического класса стражей: пин baseline+порог до запуска, страж `check_performance_roofline.py`, защита пина от правок, правило появляется **вместе** со стражем; roofline проверяет **регрессию от объявленного базиса**, не абсолютный peak; замер performance — на чистой конфигурации, **не тем же агентом, который пишет код**. Применено: C-046 + `kpi-pins.json`; замер G1 — отдельным прогоном, не тем же харнессом, что правит `net/kda.py`.
+- **`pallas-gb10-kernel`** — правила кернелов на GB10 (sm_121): **нет** `wgmma`/`tcgen05`/`TMEM`; `plgpu.mma` требует `m_warps=4`, `bm % 64 == 0`, `bn ≤ 128`, `bk` кратен 16; SMEM ≤ ~99 КБ; TMA-размерности ≤ 256. Рабочий цикл: **эталон → профиль XLA-версии → кернел только при доказанной нужде → `lower_check` (без GPU) → `check_kernel` (детерминизм) → tune → интеграция**. Следствие для G1: сначала jnp-батчевание LU/TRSM (XLA), кастомный кернел — только если XLA не фьюзит и выигрыш виден в сэкономленных байтах.
+- **`gb10-jax-env`** — капы стенда обязательны до кернелов; единая память требует `XLA_PYTHON_CLIENT_PREALLOCATE=false` (или `MEM_FRACTION≈0.5`); `JAX_COMPILATION_CACHE_DIR` — быстрые повторные запуски; ловушка: `Xid 31/ILLEGAL_ADDRESS` после десятков компиляций в одном процессе → перебор конфигураций в подпроцессах, `jax.clear_caches()`.
+
+## Ограничения стенда, снятые 09.10.2026 (`evidence/mfu-55/G0b/gb10_caps.json`, probe_gb10.py --quick)
+
+| Факт | Значение |
+|---|---|
+| Устройство | NVIDIA GB10, CC **12.1**, 48 SM, L2 24 МиБ, SMEM/block optin **101 376 Б** |
+| Стек | jax/jaxlib **0.10.2**, jax-cuda13-plugin 0.10.2, ptxas CUDA **13.0**, драйвер 580.173.02 |
+| PASS | `jax_devices`, `xla_matmul` (rel_err 3.2e-3), `mgpu_tma_copy`, `triton_elementwise` |
+| FAIL | `mgpu_pipeline_elementwise` (smem 196 624 > 101 376), **`mgpu_mma_bf16` — `Layout.MMA_ACC` отсутствует: API Mosaic GPU 0.10.2 старше 0.11** |
+| Вывод | тензорные ядра через Mosaic GPU на текущем стеке **недоступны**; путь кернела — Triton либо обновление JAX до 0.11+ (отдельное решение с риском); XLA-путь рабочий |
+
+**Сделано:** в скрипты прогонов кампании добавлены `XLA_PYTHON_CLIENT_PREALLOCATE=false` и `JAX_COMPILATION_CACHE_DIR=$HOME/.cache/jax_cc` (кэш создан) — экономия ~12 мин компиляции на каждый повторный прогон (в G0/G0b первый шаг 708–736 с).
+
 ## Заметки по исполнению
 
 - **Baseline кампании:** `532.8 ток/с, шаг 15.38 с, MFU 1.64%` (линия `arch/mfu-int`, `chunked_cc` + CE-чанк 4096; `evidence/kda-rewrite/mfu-tune-ce4096.jsonl`). Рядом измерены: remat `none` 406.7, remat `dots_with_no_batch_dims_saveable` 468.3, `--chunk-size 256` 528.9, bf16-гейт 529.5.

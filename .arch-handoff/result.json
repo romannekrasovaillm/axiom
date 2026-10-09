@@ -1,37 +1,15 @@
 {
-  "status": "partial",
+  "status": "complete",
   "assumptions": [
-    "Патч evidence/mfu-55/fleet-salvage/openclaw-moe.patch применён чисто (git apply --check зелёный до применения) в worktree openclaw-20261009183401; baseline прогона — 6ffcc38, финальный HEAD — af222b8.",
-    "Патч НЕ оставлен как есть: в его откатной dense-ветке найден и исправлен реальный дефект — индексы einsum не соответствовали layout параметров (expert_g/expert_u имеют форму (n_routed, latent, ei), а не (latent, n_routed, ei)); ветка падала ValueError на малых формах. Исправлено по образцу эталона паритета net/tests/test_32_moe_grouped_topk.py, добавлена bf16-ветка через gemm_batched.",
-    "Групповая диспетчеризация top-k (_routed_experts_grouped через lax.ragged_dot) в baseline уже была — патч добавляет именно откатный путь и переключатель; поэтому «реализовать dispatch top-2» сводилось к доведению откатной половины и проверкам.",
-    "Математика и публичные сигнатуры не менялись: apply()/init_moe()/routing_indices()/load_fraction()/qb_* без изменений интерфейса; переключение режима — только через переменную окружения AXIOM_MOE_DISPATCH (grouped по умолчанию | dense), читается на каждом вызове.",
-    "net/config.json не тронут (запрещено условием); правки только в net/moe.py и net/tests/test_33_moe_dispatch_flag.py.",
-    "Обязательная проверка выполнена требуемым интерпретатором: /home/roman/venv-axiom/bin/python -m pytest -q net/tests -k \"moe or expert\" → 18 passed, 470 deselected.",
-    "Статическая оценка (латент 768, ei 384, n_routed 12, top_k 2; 3 матмула на эксперта) на токен на слой MoE: было 12×884 736 = 10 616 832 MAC, стало 2×884 736 = 1 769 472 MAC — 6.0×, экономия 83.3% (8 847 360 MAC); применений экспертного MLP на токен: 12 → 2.",
-    "Риск усложнения кода (dispatch-индексация) назван явно: argsort/repeat/gather/scatter и group_sizes должны соответствовать layout групп; ошибка здесь даёт корректные по форме, но неверные по существу результаты. Митигации: бит-идентичность спарса и dense-ragged (test_32), паритет режимов (test_33), флаг отката.",
-    "План отката флагом: AXIOM_MOE_DISPATCH=dense возвращает прежнюю запись (einsum по всем экспертам) без правки кода — горячий откат на каждом вызове; полный откат — git reset --hard 6ffcc38 (baseline прогона).",
-    "MCP-самопроверка выполнена на ФИНАЛЬНОМ HEAD af222b8 (fgit rev-parse HEAD) через arch-ml mcp serve --journal .arch-handoff/mcp-journal.jsonl: записи есть у финального HEAD, но passed=false у обоих инструментов — причины ниже, гейты не подгонялись."
+    "Перевод пина: в net/tests/test_kda_chunked_cc.py::test_declared_config_is_chunked_for_pretrain и net/tests/test_kda_wyut.py::test_declared_config_is_chunked_for_pretrain литерал проверки декларативного конфига заменён с kda_impl == \"chunked\" на kda_impl == \"chunked_cc\". Изменены ровно две строки (по одной на сюиту); иной код, имена тестов и покрытие не трогались (ограничение «ничего, кроме пина, не улучшать»).",
+    "Это не ослабление теста. Тест по-прежнему требует конкретную (а не «любую из двух») форму KDA у декларативного конфига кейса (net/config.json) и по-прежнему ловит молчаливую подмену формы: строка assert требует точного равенства ожидаемой форме, а следующий за ней validate_config(cfg) отвергает неизвестные значения kda_impl (см. соседние test_unknown_impl_is_rejected / test_schema_accepts_chunked_cc — сохранены без изменений). Смысл теста («декларативный конфиг претрейна объявляет актуальную (ADR-047) форму KDA, а не снятую») сохранён — изменён только требуемый канон.",
+    "Канон сменился решением, а не ослаблен произвольно: ADR-047 (Amendment 09.10.2026) + коммит f653b34 «дефолт kda_impl -> chunked_cc» переключили декларативный выбор кейса на chunked_cc; прогоны кампании MFU-55 идут на chunked_cc. net/config.json (пин скелета) НЕ менялся — правился только устаревший тест-пин.",
+    "Схемный дефолт net/config.py остаётся \"chunked\" (регрессионный эталон для конфигов, собираемых в коде). Тест test_schema_default_is_chunked (assert small_config().kda_impl == \"chunked\") намеренно НЕ менялся: он проверяет схемный дефолт, а не декларативный выбор кейса.",
+    "Проверка: /home/roman/venv-axiom/bin/python -m pytest -q net/tests/test_kda_chunked_cc.py net/tests/test_kda_wyut.py -> 83 passed (до правки: 2 failed, 81 passed). Прогон локальный CPU-профиль (ADR-010: без CUDA-устройства, гейтовый профиль не требуется); GPU-прогоны не выполнялись (запрещены условием).",
+    "Зона соблюдена: изменения только в net/tests/*. net/config.json и net/kda.py не тронуты."
   ],
   "open_questions": [
-    "ЧТО ИЗМЕРИТЬ АРХИТЕКТОРУ НА GB10: (1) фактический выигрыш MFU на L2-клетке LatentMoE — исполненные FLOPs упали с 12 к 2 применениям эксперта на токен (6×, −83.3% MAC маршрутизированной части), нужно подтвердить рост ток/с и MFU на живом стенде, а не в CPU-паритете; (2) что групповая раскладка (argsort/gather/scatter, group_sizes) не съедает выигрыш накладными расходами при n_routed=12 и реальной длине последовательности; (3) что паритет потерь на коротком прогоне сохраняется (bf16-ветка на GPU).",
-    "fitness_check passed=false с ДВУМЯ замечаниями, обе — стендовые и не связаны с правкой: (а) C-042 check_precision_pinning.py --profile gate требует CUDA-устройство, на исполнителе CPU-only (jax.devices()=['CpuDevice(id=0)']); (б) check_gb10_single_load.py — стенд GB10 недоступен (хост с GeForce RTX 4080). Это предсуществующие красные, зависящие от стенда; на стенде их должен подтвердить архитектор.",
-    "scope_check passed=false: пакет прогона .arch-handoff/MANIFEST.json — от ПРЕДЫДУЩЕГО рычага (task: «рычаг 2 после G1: устранить мелкоядерность TRSM в KDA», baseline_commit d1f9db3, write_allow: [\"net/kda.py\", \"net/tests/*\"]), тогда как выданная задача — рычаг MoE-dispatch в net/moe.py. Файл net/moe.py в allowlist пакета отсутствует, поэтому требуемая правка механически «вне зоны». Пакетный scope я НЕ расширял сам — это был бы обход гейта; нужна перегенерация пакета харнессом/архитектором под рычаг MoE (write_allow с net/moe.py), после чего scope_check можно прогнать честно."
+    "Имена тест-функций сохранены как *_is_chunked_for_pretrain (хотя канон теперь chunked_cc): chunked_cc — это тоже «chunked»-форма, поэтому имя не ложно, а ограничение задачи «ничего, кроме пина, не улучшать» прямо запрещает переименования/докстроки сверх пина. Ранее эта же задача решалась в ветке arch/claude-code-20261009123641 (коммит a545999) с переименованием в *_chunked_cc_for_pretrain и докстроками; т.к. та работа была откачена и в текущей постановке переименование не запрошено — я его не вносил. Подтвердить у архитектора: оставить ли имя как есть (сообщение о намерении сохранено в этом тексте) или санкционировать переименование отдельным решением."
   ],
-  "conflicts_with_prior_decisions": [
-    "Пакет прогона противоречит постановке: MANIFEST.json scope (write_allow net/kda.py + net/tests/*) относится к предыдущему рычагу (TRSM/KDA), а задача требует правки net/moe.py. Код выполнен по постановке; гейт scope_check остался красным и не подгонялся."
-  ],
-  "sha": "af222b8",
-  "baseline": "6ffcc38",
-  "zone": {"changed": ["net/moe.py", "net/tests/test_33_moe_dispatch_flag.py"], "package_allow": ["net/kda.py", "net/tests/*"]},
-  "probes": {
-    "required_pytest": "/home/roman/venv-axiom/bin/python -m pytest -q net/tests -k \"moe or expert\" → 18 passed",
-    "parity": "dense-режим против grouped: макс. относительное расхождение 8.7e-8 при RTOL=1e-5 (тот же lowering-бюджет, что в test_32); решение роутера (topk, sel_p) совпадает точно",
-    "mcp_fitness_check": "passed=false — C-042 (нужен CUDA), check_gb10_single_load (GB10 недоступен); запись в журнале привязана к af222b8",
-    "mcp_scope_check": "passed=false — 7 из 8 путей вне allow-листа пакета (в т.ч. net/moe.py); пакет относится к другому рычагу; запись привязана к af222b8"
-  },
-  "remaining": [
-    "Перегенерация пакета прогона под рычаг MoE (write_allow с net/moe.py) и честный повтор scope_check.",
-    "Прогон fitness_check на стенде GB10, где C-042 и check_gb10_single_load зелёные.",
-    "Живой замер MFU/ток-с на L2-клетке (делает архитектор)."
-  ]
+  "conflicts_with_prior_decisions": []
 }

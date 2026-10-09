@@ -160,38 +160,38 @@
     "target_55pct": {
       "mfu_pct": 55,
       "effective_tflops": 54.0,
-      "implies_l3full_tok_s": "~7.5k ток/с (6*N*D/token = 7.2 GFLOP/token по замеру 0.56 TFLOPS @ 77.7 tok/s)",
+      "implies_l3full_tok_s": "17 917 ток/с (базовая конвенция числителя: FLOPs = 6·N_active·tokens, N_active = 502 399 236 -> 3.014 GFLOP/токен; mfu_params_only=true)",
       "note": "55% от ИЗМЕРЕННОГО пика — честная формулировка цели (Опция A, BF16-кампания); 55% от маркетингового 1 PFLOP FP4-sparse физически недостижим и не пиннуется",
       "adr": "ADR-050 (кампания MFU-55 на GB10, Proposed 09.10.2026)",
       "denominator_tflops": 98.2,
-      "convention": "основной показатель mfu_pct_active (по активным параметрам; MoE top-2 = только выбранные эксперты); исполненные FLOPs печатаются отдельно и работой не считаются",
+      "convention": "одна конвенция во всех гейтах: FLOPs = 6·N_active·tokens, только параметрическая часть (net/train_loop.py:step_flops; tools/sensors/derived_mfu.py; mfu_params_only=true); N_active = 502 399 236 (evidence/facts/S-002.jsonl) -> 3.014 GFLOP/токен. Для MoE базовой объявляется mfu_pct_active (top-2 = только выбранные эксперты), исполненные FLOPs - отдельным полем. Справочная величина 7.2 GFLOP/токен (attention-вклад/recompute) в критериях гейтов НЕ участвует: она давала расхождение цели в 2.4x (7.5k против 17.9k ток/с).",
       "stages": [
         {
           "gate": "G1",
           "mfu_pct": 3,
-          "tok_s": 409,
+          "tok_s": 977,
           "criterion": "launch-bound снят: ядер/шаг <= ~2000, хост-синхронизаций <= ~5000, занятость >= 40%"
         },
         {
           "gate": "G2",
           "mfu_pct": 10,
-          "tok_s": 1364,
-          "criterion": "тензорные ядра: bf16/fp32 >= 2x, SIMT-GEMM < 5% ядрового времени"
+          "tok_s": 3258,
+          "criterion": "тензорные ядра: bf16/fp32 >= 2x, SIMT-GEMM < 5% ядрового времени; открытый долг ADR-047: L3a KDA 15.7% < 20%"
         },
         {
           "gate": "G3",
           "mfu_pct": 20,
-          "tok_s": 2728,
+          "tok_s": 6515,
           "criterion": "батч токенов (ADR-032) + реальный MoE-dispatch top-2; mfu_pct_active"
         },
         {
           "gate": "G4",
           "mfu_pct": 55,
-          "tok_s": 7501,
+          "tok_s": 17917,
           "criterion": "полный шаг l3-full@8192; все фазы на уровне L1-класса (>=60%)"
         }
       ],
-      "pin_status": "цель, НЕ пин: C-046 и blocks_rental (800 ток/с = 5.9%) не меняются; verdict_50pct пересматривается амендментом только по факту G3"
+      "pin_status": "цель, НЕ пин: C-046 и blocks_rental (800 ток/с = 2.46% по базовой конвенции) не меняются; verdict_50pct пересматривается амендментом только по факту G3"
     }
   }
 }

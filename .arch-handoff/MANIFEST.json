@@ -1,19 +1,21 @@
 {
-  "created_at": "2026-10-09T17:33:21.575621703+00:00",
-  "task": "ЗАДАЧА (реанкор побитового стража ADR-040 после смены реализации KDA — Amendment 09.10.2026).\n\nКОНТЕКСТ. ADR-050/G1 заменил в KDA обращение `(I+L)^{-1}` (`jnp.linalg.inv` → LU `getrf`/`getri` на каждую голову) на батчевое треугольное решение `jax.lax.linalg.triangular_solve` — в обеих формах (`wyut`, `chunked_cc`); математика та же, округление иное по построению. Из-за этого 5 тестов стража `net/tests/test_kda_dtype_gate_parity.py` (якорь `PREPORT_COMMIT = edb83a0` — портовое дерево с `inv`) краснеют: `test_gate_off_is_bitwise_the_preport_tree` для `wyut`/`chunked_cc` в обоих режимах remat + `test_the_window_branch_is_gate_off_transparent`. Утверждение ADR-040 не нарушено — коллизия с ЯКОРЕМ стража. Решение архитектора зафиксировано Amendment'ом к ADR-040 (прочти его целиком в переданном файле ADR-040).\n\nЧТО СДЕЛАТЬ (ровно по Amendment).\n1. Разделить критерии в страже: для НЕИЗМЕНЁННОЙ формы `kda_impl=\"chunked\"` сохранить побитовое сравнение с портовым деревом как было (регрессионный эталон); для переписанных форм `wyut` и `chunked_cc` — сравнивать с портовым деревом в пределах документированного допуска (atol), зафиксированного константой в тесте с комментарием-обоснованием (например, `_REWRITTEN_FORM_ATOL = 1e-5` по прецеденту `_SCAN_FORM_ATOL = 1e-4` в `test_bench_block_merge.py`; выбери значение, при котором тест устойчив, и приведи наблюдённое расхождение числом в комментарии).\n2. Страж обязан ПЕЧАТАТЬ, какой критерий применён к какой форме (побитовый или допуск) и почему — иначе вердикт нечитаем (требование Amendment п.3).\n3. Добавить/сохранить тесты: (а) `chunked` по-прежнему побитово; (б) `wyut`/`chunked_cc` — допуск, и тест падает, если расхождение превышает допуск (проверка зубьев: мутант с заведомо большим расхождением должен краснеть).\n4. Не менять `PREPORT_COMMIT` (портовое дерево остаётся точкой отсчёта), не трогать `net/` вне тестов, не ослаблять остальные тесты.\n\nОГРАНИЧЕНИЯ. Зона: только `net/tests/test_kda_dtype_gate_parity.py` (при необходимости — вспомогательный файл в `net/tests/`). GPU-прогоны запрещены. Никаких изменений математики KDA.\n\nПРОВЕРКА. `/home/roman/venv-axiom/bin/python -m pytest -q net/tests/test_kda_dtype_gate_parity.py` — все зелёные; дополнительно `net/tests/test_kda_chunked_cc.py` и `test_kda_wyut.py` остаются зелёными (85 проверок).\n\nРЕЗУЛЬТАТ. `.arch-handoff/result.json` + ФИНАЛЬНЫЙ git-commit от исполнителя. В assumptions укажи выбранный atol и наблюдённое расхождение (числом); в open_questions — что осталось на усмотрение архитектора.",
+  "created_at": "2026-10-09T18:32:58.203142717+00:00",
+  "task": "ЗАДАЧА (линия MFU-55, рычаг 2 после G1: устранить мелкоядерность TRSM в KDA).\n\nКОНТЕКСТ (измерено на GB10, `evidence/mfu-55/G1/REPORT.md`). Предыдущий рычаг заменил `jnp.linalg.inv(eye + l_mat)` на батчевое `jax.lax.linalg.triangular_solve` (функция `_ut_solve` в `net/kda.py`, обе формы — `wyut` и `chunked_cc`). LU-факторизация ушла (`getrf_panel`/`LuPivotsToPermutation` исчезли), но **мелкоядерность не ушла**: профиль стационарной фазы показывает **115 200 ядер `batch_trsm_left_kernel<…,64,4,…>`** за 120 с (то есть `nrhs` дробится до 4) плюс **230 400 служебных `MakeBatchPointers`**, занятость GPU 3.5%, ток/с 380 против 406.7 у LU-версии. XLA батчевый TRSM в одно крупное ядро НЕ собирает.\n\nЧТО СДЕЛАТЬ (один рычаг).\n1. **Слить две правые части в один вызов**: у `w` и `u` общая матрица `(I+L)` и разные правые части (`xw` и `vw`, каждая `(H, C, d)`) — склеить их по последней оси (`jnp.concatenate([xw, vw], axis=-1)`) и решить **одним** `_ut_solve`, затем разрезать результат. Ожидание: вдвое меньше вызовов TRSM при том же объёме — и, главное, крупнее `nrhs`.\n2. Если после (1) в коде видно, что правая часть всё ещё подаётся срезами — рассмотреть вариант с батчеванием по головам в одну правую часть формы `(C, H*d)` (или `(H*C, d)`) так, чтобы TRSM получал крупный `nrhs`; выбор обосновать в отчёте.\n3. Сохранить математику: результат в пределах существующих допусков тестов паритета (`net/tests/test_kda_chunked_cc.py`, `test_kda_wyut.py`) и стража `net/tests/test_kda_dtype_gate_parity.py` (он уже разделяет критерии по формам — не ослаблять его).\n4. Добавить/дополнить тест, фиксирующий, что оба произведения (`w` и `u`) считаются одним вызовом решения (например, через monkeypatch-счётчик вызовов `_ut_solve` — ровно один на чанк-шаг вместо двух) и что разрез результата даёт прежние значения.\n\nОГРАНИЧЕНИЯ. Зона: `net/kda.py` + `net/tests/*`. GPU-прогоны НЕ запускать (замеры делает архитектор на GB10). Не трогать `net/config.json`, публичные сигнатуры, математику KDA, страж ADR-040 по существу. Один рычаг — один коммит.\n\nПРОВЕРКА (CPU, обязательно с этим интерпретатором — системный python без зависимостей): `/home/roman/venv-axiom/bin/python -m pytest -q net/tests/test_kda_chunked_cc.py net/tests/test_kda_wyut.py net/tests/test_kda_dtype_gate_parity.py`.\n\nРЕЗУЛЬТАТ. `.arch-handoff/result.json` + ФИНАЛЬНЫЙ git-commit от исполнителя. В assumptions — на какой форме остановился (concat по последней оси vs батч по головам) и почему; в open_questions — что должен измерить архитектор на GB10 (ожидаемое падение числа TRSM-ядер с 115 200 и рост занятости).",
   "model": "deepseek",
   "sources": [
     "/home/roman/axiom/ARCHITECTURE-SPINE.md",
-    "/home/roman/axiom/docs/adr/ADR-040-politika-compute-dtype-bf16-geyt-infrastruktura-prinyata-vklyuchenie-otlozheno-do-parity-verdikta-i-stage-2.md",
-    "/home/roman/axiom/docs/adr/ADR-050-kampaniya-mfu-55-na-gb10-predmet-i-konvenciya-chislitelya-geyty-g0-g4-rychagi-po-profil-dokazannym-adresam.md"
+    "/home/roman/axiom/docs/adr/ADR-050-kampaniya-mfu-55-na-gb10-predmet-i-konvenciya-chislitelya-geyty-g0-g4-rychagi-po-profil-dokazannym-adresam.md",
+    "/home/roman/axiom/evidence/mfu-55/G1/REPORT.md",
+    "/home/roman/axiom/evidence/mfu-55/G0b/REPORT.md"
   ],
   "epic_context_chars": 6000,
   "epic_context_tokens": 1500,
   "route": "Standard",
   "recommended_timeout_secs": 3600,
-  "baseline_commit": "0f91353",
+  "baseline_commit": "d1f9db3",
   "scope": {
     "write_allow": [
+      "net/kda.py",
       "net/tests/*"
     ],
     "write_deny": [
@@ -26,8 +28,8 @@
     ],
     "net": "none"
   },
-  "scope_hash": "fb097ba06989264515fda67d95092b9e26d2f77d717982b801d0a40edde4c2bc",
-  "rollback_plan": "Откат: `git reset --hard 0f91353` (baseline — последний коммит до работы исполнителя; вся его работа приходит одним коммитом поверх).\nСигналы отката: провал fitness-гейта (`arch-ml control check`), непустой `conflicts_with_prior_decisions`, статус `blocked`.\nВладелец решения об откате — solution-архитектор; исполнитель откат не выполняет и не маскирует проблему обходным редизайном.\nОбратимость: полная — единая точка изменений, коммит исполнителя.",
+  "scope_hash": "fc712bfcc1399e3a34e4b729bc991ec207040ae7c8f6eecefcc664872b22ad77",
+  "rollback_plan": "Откат: `git reset --hard d1f9db3` (baseline — последний коммит до работы исполнителя; вся его работа приходит одним коммитом поверх).\nСигналы отката: провал fitness-гейта (`arch-ml control check`), непустой `conflicts_with_prior_decisions`, статус `blocked`.\nВладелец решения об откате — solution-архитектор; исполнитель откат не выполняет и не маскирует проблему обходным редизайном.\nОбратимость: полная — единая точка изменений, коммит исполнителя.",
   "skills": [
     "aar-benchmark-architecture",
     "agent-verification-eval",

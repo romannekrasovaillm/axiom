@@ -1,11 +1,12 @@
 # Архитектурный контекст (epic-context)
 
-Собран: 2026-10-09T17:33:11.567225129+00:00
+Собран: 2026-10-09T18:32:48.190571115+00:00
 
 Источники:
 - /home/roman/axiom/ARCHITECTURE-SPINE.md
-- /home/roman/axiom/docs/adr/ADR-040-politika-compute-dtype-bf16-geyt-infrastruktura-prinyata-vklyuchenie-otlozheno-do-parity-verdikta-i-stage-2.md
 - /home/roman/axiom/docs/adr/ADR-050-kampaniya-mfu-55-na-gb10-predmet-i-konvenciya-chislitelya-geyty-g0-g4-rychagi-po-profil-dokazannym-adresam.md
+- /home/roman/axiom/evidence/mfu-55/G1/REPORT.md
+- /home/roman/axiom/evidence/mfu-55/G0b/REPORT.md
 
 <!-- источник: /home/roman/axiom/ARCHITECTURE-SPINE.md -->
 
@@ -55,6 +56,6 @@
 ## AD-5: Архитектурная база — опубликованный дизайн; отклонения только через ADR
 
 - **Binds**: код модели ↔ техотчёт K3 (`k3_tech_report.pdf`, проверен 11.09.2026)
-- **Prevents**: самовольные архитектурные эксперименты
+- **Prevents**: самовольные архитектурные эксперименты на бюджете претрейна (22k H800-ч как цена одной 
 
 > **Контекст усечён** до 6000 символов; полные тексты — в файлах-источниках (см. MANIFEST.json).

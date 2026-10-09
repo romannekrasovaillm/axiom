@@ -176,6 +176,19 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
                              "запрещает авто-уменьшение под объём Q (H1)")
     parser.add_argument("--seed", type=int, default=1337)
     parser.add_argument("--chunk-size", type=int, default=64)
+    parser.add_argument("--ns-steps", type=int, default=5,
+                        help="ADR-048: число Newton-Schulz итераций Muon (дефолт 5 — "
+                             "прежнее значение; снижение — решение по замеру)")
+    parser.add_argument("--legacy-muon-all-2d", dest="legacy_muon_all_2d",
+                        action="store_true", default=False,
+                        help="ADR-048: прежняя классификация («любой ndim==2 -> Muon», "
+                             "embeddings/LM head включительно) — для сравнения «до/после»")
+    parser.add_argument("--phase-profile", dest="phase_profile",
+                        action="store_true", default=False,
+                        help="ADR-048 Amendment: диагностическая раскладка sec_* "
+                             "(дополнительный декомпозированный прогон фаз) без "
+                             "приборов и jax-трейсинга; на численный результат не "
+                             "влияет, по умолчанию выключен")
     parser.add_argument("--param-dtype", choices=("bfloat16", "float32"), default="bfloat16",
                         help="bfloat16 — bf16-параметры при fp32-мастере (прод), float32 — parity")
     parser.add_argument("--grad-checkpointing", dest="grad_checkpointing",
@@ -794,15 +807,26 @@ def resolve_stop_file(args: argparse.Namespace, cursor_run: dict[str, Any]) -> O
 
 
 def metrics_summary(rows: list[dict], path: Path, repo_root: Optional[Path]) -> dict[str, Any]:
-    """Свод метрик прогона: лосс, ток/с, MFU — медианы, а не один удачный шаг."""
+    """Свод метрик прогона: лосс, ток/с, MFU — медианы, а не один удачный шаг.
+
+    ADR-048 Amendment, «первый шаг вне KPI»: первый шаг ноги компилирует jit-граф,
+    поэтому его ток/с и MFU несоизмеримы с установившимся шагом и в медианы
+    (KPI-числа) не входят.  Лоссы и число строк считаются по всем шагам — сырые
+    следы сохраняются, исключение только из агрегата; факт исключения виден полем
+    ``first_step_excluded`` (``False``, когда исключать нечего: одна строка).
+    """
     if not rows:
         return {"path": sft_stage.repo_rel(path, repo_root), "rows": 0}
-    tps = [row["tokens_per_sec"] for row in rows if row.get("tokens_per_sec")]
-    mfu_values = [row["mfu"] for row in rows if row.get("mfu") is not None]
+    first_step_excluded = len(rows) > 1
+    kpi_rows = rows[1:] if first_step_excluded else rows
+    tps = [row["tokens_per_sec"] for row in kpi_rows if row.get("tokens_per_sec")]
+    mfu_values = [row["mfu"] for row in kpi_rows if row.get("mfu") is not None]
     tail = rows[len(rows) // 2 :] or rows
     return {
         "path": sft_stage.repo_rel(path, repo_root),
         "rows": len(rows),
+        "first_step_excluded": first_step_excluded,
+        "kpi_rows": len(kpi_rows),
         "loss_first": rows[0]["loss"],
         "loss_last": rows[-1]["loss"],
         "loss_median_tail": statistics.median(row["loss"] for row in tail),
@@ -1224,6 +1248,9 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
         data_kind=data_kind,
         micro_batch=loader_batch,
         accum_tokens=args.accum_tokens,
+        ns_steps=args.ns_steps,
+        legacy_muon_all_2d=bool(args.legacy_muon_all_2d),
+        phase_profile=bool(args.phase_profile),
     )
     journal["loop"] = {
         "steps_requested": args.steps,
@@ -1254,6 +1281,13 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
             int(args.accum_tokens) if int(args.accum_tokens) > 0
             else loader_batch * int(args.seq_len)
         ),
+        # ADR-048: режим оптимизатора — часть условий прогона: без него
+        # сравнение «до/после» по метрикам неотличимо от смены чего-то ещё.
+        "ns_steps": args.ns_steps,
+        "legacy_muon_all_2d": bool(args.legacy_muon_all_2d),
+        # ADR-048 Amendment: диагностический профиль фаз — тоже условие прогона
+        # (на численный результат не влияет, но объясняет поля sec_*).
+        "phase_profile": bool(args.phase_profile),
     }
     journal["gpu"] = {
         "peak_tflops": args.peak_tflops,
@@ -1334,6 +1368,9 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
         "калибровка ~35% — ожидаемый порядок, не гарантия)",
         "token_share: фактическая доля потоков в израсходованном окне корпуса; "
         "для packed — по слотам записей",
+        "first_step_excluded: KPI-медианы (tokens_per_sec_median, mfu_median) "
+        "считаются без первого (компилирующего) шага ноги; построчные значения "
+        "в metrics.jsonl сохранены (ADR-048 Amendment)",
     ]
     _write_journal(journal, out_dir, journal_path=journal_path)
 

@@ -1985,6 +1985,45 @@ def mfu(flops: float, *, seconds: float, peak_tflops: float | None) -> float | N
 PHASE_PROFILE_FIELDS = ("sec_kda", "sec_mla", "sec_moe", "sec_ce", "sec_backopt")
 
 
+def kpi_window_values(
+    step_tokens_per_sec,
+    *,
+    window: int,
+    exclude_first: bool = True,
+) -> list[float]:
+    """Значения ток/с для KPI-медианы: хвост ``window`` шагов без первого.
+
+    ADR-048 Amendment, «первый шаг вне KPI»: первый шаг ноги компилирует jit-граф
+    (``grad_fn`` и шаг оптимизатора), и его время несоизмеримо со временем
+    установившегося шага — включать его в медиану значило бы мерить компиляцию, а
+    не пропускную способность.  Единственное место, где задано правило окна:
+    им пользуются и медиана, и печатаемый размер окна.  Исключение — только из
+    агрегата: построчные значения в ``metrics.jsonl`` остаются нетронутыми (сырой
+    носитель), а ``exclude_first=False`` возвращает прежнее окно для «до/после».
+    """
+    values = list(step_tokens_per_sec)
+    if exclude_first and len(values) > 1:
+        values = values[1:]
+    return values[-max(1, int(window)):]
+
+
+def kpi_tokens_per_sec(
+    step_tokens_per_sec,
+    *,
+    window: int,
+    exclude_first: bool = True,
+) -> float | None:
+    """Медиана ток/с по окну :func:`kpi_window_values`; ``None`` — измерений нет."""
+    values = kpi_window_values(
+        step_tokens_per_sec, window=window, exclude_first=exclude_first
+    )
+    if not values:
+        return None
+    import numpy as np
+
+    return float(np.median(values))
+
+
 def _phase_kda_stack(params, cfg, input_ids, chunk_size):
     """KDA-фаза: проход по всем KDA-слоям на тех же входах (диагностика)."""
     import jax
@@ -2234,6 +2273,13 @@ class TrainConfig:
     #: при resume (H4) — продолжать packed-прогон raw-курсором значило бы молча
     #: поставить поток на чужую позицию.
     data_kind: str = "raw"
+    #: ADR-048: число Newton-Schulz итераций Muon (дефолт — прежние 5; решение
+    #: о снижении принимает архитектор по замеру, здесь только параметр).
+    ns_steps: int = 5
+    #: ADR-048: вернуть прежнюю классификацию параметров («любой ndim==2 ->
+    #: Muon», embeddings/LM head включительно) — для честного сравнения «до/после»
+    #: на одной ревизии кода.  ``False`` — решение ADR-048 (emb/head -> AdamW).
+    legacy_muon_all_2d: bool = False
 
 
 @dataclass
@@ -2330,7 +2376,12 @@ def train(
     cursor_data: dict[str, Any] = {}
 
     master = model.init_params(jax.random.PRNGKey(train_config.seed), cfg)
-    state = optimizer.init_state(master)
+    # ADR-048: классификация параметров по именам листьев — состояние и шаг
+    # строятся по одному и тому же предикату (иначе форма состояния разошлась бы
+    # с веткой обновления).
+    state = optimizer.init_state(
+        master, legacy_muon_all_2d=train_config.legacy_muon_all_2d
+    )
     if manager is not None:
         latest = manager.latest()
         if latest is None:
@@ -2385,7 +2436,11 @@ def train(
         loss_fn = jax.checkpoint(loss_fn, policy=policy)
 
     grad_fn = jax.jit(jax.value_and_grad(loss_fn))
-    step_fn = optimizer.make_step(cfg)
+    step_fn = optimizer.make_step(
+        cfg,
+        ns_steps=train_config.ns_steps,
+        legacy_muon_all_2d=train_config.legacy_muon_all_2d,
+    )
 
     use_bf16 = train_config.param_dtype == "bfloat16"
 
@@ -2564,11 +2619,16 @@ def train(
         # carrier stays ``metrics.jsonl`` (``tokens_per_sec`` above).
         kpi_every = max(1, int(train_config.kpi_every))
         if (index + 1) % kpi_every == 0:
-            window = step_tokens_per_sec[-max(1, int(train_config.kpi_window)) :]
+            kpi_window = max(1, int(train_config.kpi_window))
+            # Первый шаг ноги компилирует jit — он вне KPI-медианы (ADR-048 Amt.);
+            # построчные значения остаются в metrics.jsonl как сырой носитель.
+            window = kpi_window_values(step_tokens_per_sec, window=kpi_window)
+            median_tps = kpi_tokens_per_sec(step_tokens_per_sec, window=kpi_window)
             print(
                 f"[pretrain] KPI: медиана ток/с за последние {len(window)} шагов "
-                f"= {float(np.median(window)):.1f} (шаг {absolute}, "
-                f"микробатч={micro_batch}, накопление={accum_tokens or 'off'})",
+                f"= {median_tps:.1f} (шаг {absolute}, "
+                f"микробатч={micro_batch}, накопление={accum_tokens or 'off'}; "
+                f"first_step_excluded={len(step_tokens_per_sec) > 1})",
                 flush=True,
             )
             if phase_record is not None:

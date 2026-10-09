@@ -1,0 +1,63 @@
+{
+  "schema": "axiom/optimizer-jit-smoke/1",
+  "adr": "ADR-048 Amendment (08.10.2026)",
+  "passed": true,
+  "backend": [
+    "cpu:0"
+  ],
+  "config_geometry": {
+    "vocab_size": 1024,
+    "hidden": 64,
+    "num_layers": 4,
+    "num_heads": 4,
+    "head_dim": 16
+  },
+  "leaf_count": 138,
+  "lr": 0.001,
+  "timings": {
+    "eager_two_pass": {
+      "compile_or_warmup_ms": 8617.132198996842,
+      "median_ms": 529.3977539986372,
+      "min_ms": 502.1641179919243,
+      "max_ms": 580.4816579911858,
+      "repeats": 20
+    },
+    "eager_one_pass": {
+      "compile_or_warmup_ms": 288.6157699394971,
+      "median_ms": 265.1633215136826,
+      "min_ms": 254.43109206389636,
+      "max_ms": 302.6868699816987,
+      "repeats": 20
+    },
+    "jit_one_pass": {
+      "compile_or_warmup_ms": 2891.137741971761,
+      "median_ms": 0.5804930115118623,
+      "min_ms": 0.5305219674482942,
+      "max_ms": 1.163989887572825,
+      "repeats": 20
+    },
+    "jit_two_pass": {
+      "compile_or_warmup_ms": 3521.7735749902204,
+      "median_ms": 0.9208689443767071,
+      "min_ms": 0.5715190200135112,
+      "max_ms": 1.4363749651238322,
+      "repeats": 20
+    }
+  },
+  "ratios": {
+    "eager_two_pass_over_jit_one_pass": 911.9795475570838,
+    "eager_two_pass_over_eager_one_pass": 1.9964969173586096
+  },
+  "compilations": {
+    "cache_after_first_call": 1,
+    "cache_after_lr_change": 1,
+    "recompiled_on_lr_change": false
+  },
+  "parity": {
+    "one_pass_vs_two_pass_eager_exact": true,
+    "one_pass_vs_two_pass_jit_exact": true,
+    "jit_vs_eager_one_pass": true,
+    "state_structure_preserved": true
+  },
+  "caveat": "CPU-числа демонстрируют устранение хостового overhead (jit + один проход по дереву), а не время шага на GB10 и не loss-динамику: их дают прогоны на GB10 (режимы default vs --legacy-muon-all-2d)."
+}

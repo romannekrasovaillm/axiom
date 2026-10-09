@@ -1,0 +1,133 @@
+{
+  "legacy_muon_all_2d": true,
+  "groups": {
+    "muon_matrix": {
+      "leaves": 323,
+      "params": 525838848,
+      "names": [
+        "W_a_down",
+        "W_a_up",
+        "W_beta",
+        "W_c",
+        "W_down",
+        "W_f",
+        "W_g",
+        "W_idx_k",
+        "W_idx_q",
+        "W_o",
+        "W_swa_k",
+        "W_swa_v",
+        "W_u",
+        "W_up",
+        "conv_k",
+        "conv_q",
+        "conv_v",
+        "embedding",
+        "fc1",
+        "fc2",
+        "out",
+        "patch_embed",
+        "pos_embed",
+        "projector",
+        "qkv",
+        "router_w",
+        "w"
+      ],
+      "examples": [
+        ".embedding",
+        ".layers[0].attn.W_o",
+        ".layers[0].attn.W_g"
+      ]
+    },
+    "muon_per_head": {
+      "leaves": 75,
+      "params": 158072832,
+      "names": [
+        "W_k",
+        "W_k_up",
+        "W_q",
+        "W_v",
+        "W_v_up"
+      ],
+      "examples": [
+        ".layers[0].attn.W_q",
+        ".layers[0].attn.W_k",
+        ".layers[0].attn.W_v"
+      ]
+    },
+    "muon_batched": {
+      "leaves": 138,
+      "params": 325582848,
+      "names": [
+        "expert_d",
+        "expert_g",
+        "expert_u",
+        "shared_d",
+        "shared_g",
+        "shared_u"
+      ],
+      "examples": [
+        ".layers[1].mlp.expert_g",
+        ".layers[1].mlp.expert_u",
+        ".layers[1].mlp.expert_d"
+      ]
+    },
+    "adamw_vector": {
+      "leaves": 187,
+      "params": 138385,
+      "names": [
+        "A",
+        "b_alpha",
+        "norm",
+        "norm1",
+        "norm2",
+        "norm_attn",
+        "norm_final",
+        "norm_in",
+        "norm_mlp",
+        "norm_out",
+        "router_b",
+        "swa_logit"
+      ],
+      "examples": [
+        ".layers[0].norm_attn",
+        ".layers[0].attn.b_alpha",
+        ".layers[0].attn.A"
+      ]
+    },
+    "adamw_embed": {
+      "leaves": 0,
+      "params": 0,
+      "names": [],
+      "examples": []
+    },
+    "unclassified": {
+      "leaves": 0,
+      "params": 0,
+      "names": [],
+      "examples": []
+    }
+  },
+  "group_order": [
+    "muon_matrix",
+    "muon_per_head",
+    "muon_batched",
+    "adamw_vector",
+    "adamw_embed",
+    "unclassified"
+  ],
+  "unclassified": [],
+  "total_leaves": 723,
+  "total_params": 1009632913,
+  "schema": "axiom/optimizer-param-groups/1",
+  "adr": "ADR-048",
+  "source": "net.optimizer.classify_leaf",
+  "config": "net/config.json",
+  "config_geometry": {
+    "vocab_size": 160000,
+    "hidden": 1536,
+    "num_layers": 24,
+    "num_heads": 12,
+    "preset_note": "l3-full (net/config.json)"
+  }
+}

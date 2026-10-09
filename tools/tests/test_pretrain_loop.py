@@ -1225,6 +1225,136 @@ def test_l12_resume_in_decay_requires_decay_stream(corpus_with_q: Path):
 
 
 # ---------------------------------------------------------------------------
+# L-13 — KPI ток/с: первый (компилирующий) шаг ноги вне медианы (ADR-048 Amt.)
+# ---------------------------------------------------------------------------
+
+
+def test_kpi_median_excludes_the_first_compiling_step():
+    """Первый шаг ноги компилирует jit и потому занижает ток/с — он вне медианы.
+
+    Иначе KPI-число прогона говорит о компиляции графа, а не о пропускной
+    способности шага (ADR-048 Amendment, «первый шаг вне KPI»).
+    """
+    values = [1.0, 10.0, 12.0]
+    assert tl.kpi_tokens_per_sec(values, window=3) == 11.0
+    # Прежнее поведение доступно явно: без исключения медиана включает первый шаг.
+    assert tl.kpi_tokens_per_sec(values, window=3, exclude_first=False) == 10.0
+    # Окно короче ряда — берётся хвост уже без первого шага.
+    assert tl.kpi_tokens_per_sec([1.0, 4.0, 10.0, 12.0], window=2) == 11.0
+
+
+def test_kpi_median_of_a_single_step_leg_is_that_step():
+    """Исключать нечего — медиана по одному шагу, а не пустота/NaN."""
+    assert tl.kpi_tokens_per_sec([5.0], window=20) == 5.0
+    assert tl.kpi_tokens_per_sec([], window=20) is None
+
+
+def test_metrics_summary_kpi_excludes_first_step():
+    """Сводка журнала считает KPI по шагам без первого и фиксирует это полем."""
+    cli = pretrain_cli()
+    rows = [
+        {"step": 1, "loss": 9.0, "tokens_per_sec": 1.0, "mfu": 0.01},
+        {"step": 2, "loss": 8.0, "tokens_per_sec": 10.0, "mfu": 0.5},
+        {"step": 3, "loss": 7.0, "tokens_per_sec": 12.0, "mfu": 0.6},
+    ]
+    summary = cli.metrics_summary(rows, Path("/tmp/metrics.jsonl"), None)
+
+    assert summary["first_step_excluded"] is True
+    assert summary["tokens_per_sec_median"] == 11.0
+    assert summary["mfu_median"] == pytest.approx(0.55)
+    # Сырые следы не потеряны: loss_first и число строк — по всем шагам.
+    assert summary["loss_first"] == 9.0
+    assert summary["rows"] == 3
+
+
+def test_metrics_summary_single_step_is_not_excluded():
+    """Одна строка — исключать нечего: медиана по ней, поле честно False."""
+    cli = pretrain_cli()
+    summary = cli.metrics_summary(
+        [{"step": 1, "loss": 9.0, "tokens_per_sec": 4.0, "mfu": None}],
+        Path("/tmp/metrics.jsonl"),
+        None,
+    )
+    assert summary["first_step_excluded"] is False
+    assert summary["tokens_per_sec_median"] == 4.0
+
+
+def test_train_kpi_line_drops_the_first_step(tmp_path: Path, capsys):
+    """KPI-строка лупа называет окно без первого шага ноги (интеграция)."""
+    cfg, pool = parity_setup(steps=3)
+    tl.train(
+        cfg,
+        batched(pool),
+        train_config=tl.TrainConfig(
+            steps=3, lr=1e-2, seed=7, kpi_every=1, kpi_window=3
+        ),
+        budget=free_budget(),
+    )
+    out = capsys.readouterr().out
+    kpi_lines = [line for line in out.splitlines() if "KPI" in line]
+    assert kpi_lines, "KPI-строка не напечатана"
+    # Смотрим именно ПОСЛЕДНЮЮ строку (шаг 3): на шаге 2 окно и так равно двум,
+    # поэтому проверка по всему выводу пропустила бы включённый первый шаг.
+    last = kpi_lines[-1]
+    assert "шаг 3" in last, last
+    # Шагов три, но окно KPI — два: первый (компилирующий) исключён.
+    assert "за последние 2 шагов" in last, last
+
+
+# ---------------------------------------------------------------------------
+# L-14 — флаг --phase-profile раннера (ADR-048 Amendment)
+# ---------------------------------------------------------------------------
+
+
+def test_phase_profile_flag_is_off_by_default_and_switchable():
+    """Диагностическая раскладка ``sec_*`` включается явно, не молча."""
+    cli = pretrain_cli()
+    assert cli.parse_args([]).phase_profile is False
+    assert cli.parse_args(["--phase-profile"]).phase_profile is True
+
+
+def test_phase_profile_cli_flag_plumbs_and_does_not_change_loss(tmp_path: Path, corpus: Path):
+    """Флаг доезжает до ``TrainConfig`` и НЕ меняет численный результат.
+
+    Профиль диагностический: числа фаз выбрасываются, шаг оптимизатора идёт
+    штатным fused-путём.  Проверка сквозная (CLI, один seed, 2 шага): лоссы и
+    ``tree_hash`` профильного прогона побитово равны дефолтному (контракт
+    ``net/tests/test_phase_profile.py::test_pp3``, здесь — от флага CLI).
+    """
+    cli = pretrain_cli()
+
+    def run(tag: str, extra: list[str]) -> dict:
+        out = tmp_path / tag
+        code = cli.main(
+            [
+                "--run-ref", tag,
+                "--shard-root", str(corpus),
+                "--out", str(out),
+                "--steps", "2",
+                "--batch-size", "1",
+                "--seq-len", "16",
+                "--seed", "1337",
+                "--budget-limit-usd", "5",
+                *extra,
+            ]
+        )
+        assert code == 0, f"прогон {tag} не прошёл"
+        return json.loads((out / "journal.json").read_text(encoding="utf-8"))
+
+    plain = run("plain", [])
+    profiled = run("profiled", ["--phase-profile"])
+
+    assert plain["loop"]["phase_profile"] is False
+    assert profiled["loop"]["phase_profile"] is True, "флаг не доехал до TrainConfig"
+
+    assert profiled["loss_first"] == plain["loss_first"]
+    assert profiled["loss_last"] == plain["loss_last"]
+    assert profiled["tree_hash"] == plain["tree_hash"], (
+        "профильный прогон изменил веса — флаг обязан быть диагностическим"
+    )
+
+
+# ---------------------------------------------------------------------------
 # К3 — бюджетные счётчики накопительны по прогону (resume не обнуляет)
 # ---------------------------------------------------------------------------
 

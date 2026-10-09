@@ -1,0 +1,8 @@
+[g1-clean] start 2026-10-09T14:59:52-03:00 head=f6fdecf5 arch: accept worktree claude-code-20261009165209
+[jax-preflight] XLA_PYTHON_CLIENT_MEM_FRACTION=0.6 (source: env)
+[jax-preflight] XLA_PYTHON_CLIENT_MEM_FRACTION=0.6 (source: env)
+[pretrain] ВНИМАНИЕ: детерминизм XLA не запиннен (NET_GATE_PROFILE=1) — побитовая воспроизводимость между процессами на GPU не гарантируется (ADR-013); запись в журнале это фиксирует
+[pretrain] l3-full: vocab=160000, T=8192, B=1 (micro=1, accum=off), шагов 6, grad-checkpointing=True, remat=none, токенизатор=16e4a5325f38df9d…
+/home/roman/venv-axiom/lib/python3.12/site-packages/jax/_src/ops/scatter.py:105: FutureWarning: scatter inputs have incompatible types: cannot safely cast value from dtype=float32 to dtype=bfloat16 with jax_numpy_dtype_promotion=standard. In future JAX releases this will result in an error.
+  warnings.warn(
+[pretrain] шагов 6, токенов 49152, loss 13.542289733886719 → 12.07433032989502, tree_hash=213e6e426d827929…, остановка: по плану

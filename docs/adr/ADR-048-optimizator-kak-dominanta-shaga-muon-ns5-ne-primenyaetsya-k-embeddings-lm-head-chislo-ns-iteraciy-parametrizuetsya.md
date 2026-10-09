@@ -96,4 +96,4 @@ return _vector_step(...)                              # AdamW для векто�
 7. **ADR-046 (SKIP-механизм) — отдельная дельта, признаётся необходимой**: сейчас гейт красный у любой дельты, что засоряет диагностику. Реализация (свойство `requires:` + SKIP-семантика в страже/гейте) — в очереди после jit-дельты; приёмку ADR-048 не блокирует.
 8. **Отчёт групп** (`evidence/kda-rewrite/optimizer-param-groups.{json,md}` + legacy-вариант) — принят в предложенном виде; требование ADR-048 п.4 выполнено: `unclassified = 0`, emb/head маршрутизированы в AdamW, скрытые матрицы остались в Muon.
 
-**Итог по классификации (l3-full, 1.01 млрд параметров, 723 листа):** muon_matrix 322 листа / 280.1M; muon_per_head 75 / 158.1M; muon_batched 138 / 325.6M; adamw_vector 187 / 0.14M; adamw_embed 1 / 245.8M; unclassified 0.
+**Итог по классификации (l3-full, 1.01 млрд параметров, 723 листа; после Amendment п.3 — ViT-эмбеддинги перенесены):** muon_matrix **320** листов / **279.75M**; muon_per_head 75 / 158.1M; muon_batched 138 / 325.6M; adamw_vector 187 / 0.14M; adamw_embed **3** / **246.08M** (`embedding` + tied LM head, `patch_embed` 588×384, `pos_embed` 256×384); unclassified 0.

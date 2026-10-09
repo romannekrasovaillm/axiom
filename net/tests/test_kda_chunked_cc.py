@@ -565,3 +565,88 @@ def test_cc_structural_memory_is_the_point_of_the_rewrite(cfg):
     assert (H, C, C, dk) not in cc, "chunked_cc must not materialise it"
     assert (C, H, dk, dk) in chunked, "the chunked transition kit should be visible"
     assert (C, H, dk, dk) not in cc, "chunked_cc must not build per-token dk x dk"
+
+
+# ---------------------------------------------------------------------------
+# G1 lever 2: the two UT right-hand sides are solved by ONE triangular solve
+# ---------------------------------------------------------------------------
+
+
+#: Tolerance for "the merged solve is the two separate solves".  The merge only
+#: re-blocks the same column-wise elimination, so what can move is rounding:
+#: measured ``max|delta| = 0.0`` (bit-identical) on both chunk-steps at the smoke
+#: geometry and 4.8e-07 on the synthetic 32x32 unit test below (~1 ulp of fp32 at
+#: unit-scale inputs).  A mis-sliced split (the halves swapped, or ``dv`` widths
+#: read as ``dk``) moves the result by O(1) and reddens here.
+_UT_PAIR_ATOL = 1e-6
+
+
+def test_ut_solve_pair_splits_into_the_two_separate_solves():
+    """``_ut_solve_pair`` returns exactly the two blocks of the one solution.
+
+    The lever (G1 §4, address 1) merges ``(I + L) w = xw`` and ``(I + L) u = vw``
+    into one batched TRSM: XLA cuts the batched solve into
+    ``batch_trsm_left_kernel<..., 64, 4, ...>`` tiles with ``nrhs`` sliced to 4,
+    115 200 launches per 120 s of the steady phase plus 230 400
+    ``MakeBatchPointers`` (``evidence/mfu-55/G1/REPORT.md`` §2-3).  The merge is
+    only legitimate while the split hands back what the two separate solves
+    return — the same equation per column, since a triangular solve is
+    column-wise.  Asymmetric widths on purpose: ``dk != dv`` (12 vs 8), so a
+    width read off the wrong half cannot pass on a symmetric config.
+    """
+    H, C, dk, dv = 3, 16, 12, 8
+    key = jr.PRNGKey(0)
+    tri = jnp.eye(C) + jnp.tril(jr.normal(key, (H, C, C)) * 0.05, -1)
+    xw = jr.normal(jr.PRNGKey(1), (H, C, dk))
+    vw = jr.normal(jr.PRNGKey(2), (H, C, dv))
+
+    w, u = kda._ut_solve_pair(tri, xw, vw)
+
+    assert w.shape == (H, C, dk) and u.shape == (H, C, dv)
+    assert _max_abs(w, kda._ut_solve(tri, xw)) <= _UT_PAIR_ATOL
+    assert _max_abs(u, kda._ut_solve(tri, vw)) <= _UT_PAIR_ATOL
+
+
+def test_cc_ut_solves_both_right_hand_sides_in_one_call(cfg, monkeypatch):
+    """One solve per chunk-step, not two — and the split keeps the old numbers.
+
+    Two assertions, one lever: (a) ``cc_chunk_step`` calls ``_ut_solve`` exactly
+    once and hands it a right-hand side of width ``dk + dv`` (the concatenated
+    ``xw``/``vw``); (b) the outputs equal the pre-lever form — the same chunk-step
+    with ``_ut_solve_pair`` replaced by its two ``_ut_solve`` calls — within
+    :data:`_UT_PAIR_ATOL`, so the merge re-blocks the elimination without moving
+    the answer.  ``_ut_solve`` is the monkeypatch seam the lever is defined on;
+    the algebraic guarantee of the split itself is pinned separately by
+    :func:`test_ut_solve_pair_splits_into_the_two_separate_solves`.
+    """
+    p = _params(cfg)
+    chunk = 16
+    x = _x(cfg, chunk)
+    carry = kda.init_state(cfg)
+
+    merged_pair = kda._ut_solve_pair
+
+    def two_calls(a, xw, vw):
+        return kda._ut_solve(a, xw), kda._ut_solve(a, vw)
+
+    monkeypatch.setattr(kda, "_ut_solve_pair", two_calls)
+    ref_state, ref_out = kda.cc_chunk_step(p, cfg, carry, x)
+
+    seen: list[tuple] = []
+    real_solve = kda._ut_solve
+
+    def counting(a, b):
+        seen.append(b.shape)
+        return real_solve(a, b)
+
+    monkeypatch.setattr(kda, "_ut_solve_pair", merged_pair)
+    monkeypatch.setattr(kda, "_ut_solve", counting)
+    state, out = kda.cc_chunk_step(p, cfg, carry, x)
+
+    assert len(seen) == 1, (
+        f"cc_chunk_step made {len(seen)} triangular solves; the two Eq. 7 "
+        f"right-hand sides must share one call (G1 lever 2)"
+    )
+    assert seen[0] == (cfg.num_heads, chunk, cfg.kda_dk + cfg.kda_dv)
+    assert _max_abs(state.S, ref_state.S) <= _UT_PAIR_ATOL
+    assert _max_abs(out, ref_out) <= _UT_PAIR_ATOL

@@ -330,3 +330,64 @@ def test_wyut_ut_transform_solves_without_lu_factorisation(cfg):
 
     tri = jnp.eye(64) + jnp.tril(jnp.ones((64, 64)), -1)
     assert "lu" in _primitive_names(jax.make_jaxpr(lambda: jnp.linalg.inv(tri))())
+
+
+# ---------------------------------------------------------------------------
+# G1 lever 2: the two UT right-hand sides are solved by ONE triangular solve
+# ---------------------------------------------------------------------------
+
+
+#: Tolerance for "the merged solve is the two separate solves".  The merge
+#: re-blocks the same column-wise elimination, so what can move is rounding only:
+#: measured ``max|delta| = 0.0`` (bit-identical) on this chunk-step at the smoke
+#: geometry, and 4.8e-07 on a synthetic 32x32 system (~1 ulp of fp32 at
+#: unit-scale inputs).  A mis-sliced split moves the result by O(1) and reddens.
+_UT_PAIR_ATOL = 1e-6
+
+
+def test_wyut_ut_solves_both_right_hand_sides_in_one_call(cfg, monkeypatch):
+    """One solve per chunk-step, not two — and the split keeps the old numbers.
+
+    The WY/UT chunk-step needs both Eq. 7 products against the same ``I + L``,
+    and the two ``_ut_solve`` calls that produced them were the G1 storm: XLA
+    does not fuse the batched solve, it cuts it into
+    ``batch_trsm_left_kernel<..., 64, 4, ...>`` tiles with ``nrhs`` sliced to 4
+    (``evidence/mfu-55/G1/REPORT.md`` §2-3).  The lever concatenates the two
+    right-hand sides along the last axis so the kernel is handed one solve of
+    width ``dk + dv``.  Two assertions: ``wyut_chunk_step`` calls ``_ut_solve``
+    exactly once with that width, and the chunk it produces equals the pre-lever
+    two-call form within :data:`_UT_PAIR_ATOL`.  The algebraic guarantee of the
+    split itself is pinned by ``test_ut_solve_pair_splits_into_the_two_separate_solves``
+    (``test_kda_chunked_cc.py``), which the ``chunked_cc`` form shares.
+    """
+    p = _params(cfg)
+    chunk = 16
+    x = _x(cfg, chunk)
+    carry = kda.init_state(cfg)
+
+    merged_pair = kda._ut_solve_pair
+
+    def two_calls(a, xw, vw):
+        return kda._ut_solve(a, xw), kda._ut_solve(a, vw)
+
+    monkeypatch.setattr(kda, "_ut_solve_pair", two_calls)
+    ref_state, ref_out = kda.wyut_chunk_step(p, cfg, carry, x)
+
+    seen: list[tuple] = []
+    real_solve = kda._ut_solve
+
+    def counting(a, b):
+        seen.append(b.shape)
+        return real_solve(a, b)
+
+    monkeypatch.setattr(kda, "_ut_solve_pair", merged_pair)
+    monkeypatch.setattr(kda, "_ut_solve", counting)
+    state, out = kda.wyut_chunk_step(p, cfg, carry, x)
+
+    assert len(seen) == 1, (
+        f"wyut_chunk_step made {len(seen)} triangular solves; the two Eq. 7 "
+        f"right-hand sides must share one call (G1 lever 2)"
+    )
+    assert seen[0] == (cfg.num_heads, chunk, cfg.kda_dk + cfg.kda_dv)
+    assert _max_abs(state.S, ref_state.S) <= _UT_PAIR_ATOL
+    assert _max_abs(out, ref_out) <= _UT_PAIR_ATOL

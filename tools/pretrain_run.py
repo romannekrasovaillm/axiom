@@ -735,7 +735,15 @@ def resolve_packed(args: argparse.Namespace, tokens_root: Path, streams: tuple[s
 
 def _pinned_run(run: dict[str, Any]) -> dict[str, Any]:
     """Срез запинненных параметров прогона для журнала resume (H4)."""
-    keys = ("seed", "total_steps", "warmup_ratio", "decay_ratio", "param_dtype", "data_kind")
+    keys = (
+        "seed",
+        "total_steps",
+        "warmup_ratio",
+        "decay_ratio",
+        "param_dtype",
+        "data_kind",
+        "optimizer_classification",
+    )
     return {key: run.get(key) for key in keys if key in run}
 
 
@@ -746,15 +754,17 @@ def validate_resume_pins(
     warmup_ratio: float,
     decay_ratio: float,
     data_kind: str,
+    optimizer_classification: str,
     enabled: bool,
 ) -> list[str]:
     """H4: сверить argv с запинненными в курсоре параметрами; список расхождений.
 
     Resume обязан продолжать **ту же** траекторию: другой seed — другой шаффл и
     другая инициализация, другая доля decay — другая граница фаз, другой источник —
-    чужая позиция потока.  Молча продолжить с новыми параметрами значило бы выдать
-    иную траекторию за продолжение прежней, поэтому расхождение — отказ с перечнем
-    (а не warning: предупреждение в логе не защищает от подмены).
+    чужая позиция потока, другой режим классификации оптимизатора — другой
+    оптимизатор для emb/head.  Молча продолжить с новыми параметрами значило бы
+    выдать иную траекторию за продолжение прежней, поэтому расхождение — отказ с
+    перечнем (а не warning: предупреждение в логе не защищает от подмены).
     """
     if not enabled or not run:
         return []
@@ -778,6 +788,16 @@ def validate_resume_pins(
     check("warmup_ratio", float(warmup_ratio))
     check("decay_ratio", float(decay_ratio))
     check("data_kind", data_kind)
+    # ADR-048: режим классификации — то же условие траектории, что seed/ratios.
+    # Сверяем метку (``adr-048`` | ``legacy``), а не булев флаг: метка читается
+    # один-в-один с журналом A/B, отдельного поля не заводим.  Курсоры прежних
+    # ревизий поля не несут — их не отвергаем задним числом (``None`` ниже).
+    pinned_mode = run.get("optimizer_classification")
+    if pinned_mode is not None and pinned_mode != optimizer_classification:
+        mismatches.append(
+            "режим оптимизатора не совпадает: "
+            f"{pinned_mode} != {optimizer_classification}"
+        )
     return mismatches
 
 
@@ -1063,14 +1083,17 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
         warmup_ratio=args.warmup_ratio,
         decay_ratio=decay_ratio,
         data_kind=data_kind,
+        optimizer_classification=tl.optimizer_classification(
+            bool(args.legacy_muon_all_2d)
+        ),
         enabled=bool(args.resume),
     )
     if mismatch:
         reason = (
             "--resume: параметры не совпали с запинненными в курсоре — "
             + "; ".join(mismatch)
-            + ". Продолжать другим сидом/долей/источником значило бы выдать другую "
-            "траекторию за ту же (H4)"
+            + ". Продолжать другим сидом/долей/источником/режимом оптимизатора "
+            "значило бы выдать другую траекторию за ту же (H4)"
         )
         journal["refusal"] = reason
         _write_journal(journal, out_dir, journal_path=journal_path)

@@ -2838,8 +2838,9 @@ def _save_checkpoint(
 
     В блок ``run`` кладутся не только параметры расписания, но и **накопительные**
     бюджетные счётчики (К3) и пути-опоры resume: ``stop_file`` (К5).  Блок ``run``
-    — контракт resume: CLI сверяет по нему seed/ratios/горизонт с argv (H4), а
-    ``train`` дочитывает из него базу счётчиков, чтобы нога не «обнуляла» смету.
+    — контракт resume: CLI сверяет по нему seed/ratios/горизонт/режим классификации
+    оптимизатора с argv (H4), а ``train`` дочитывает из него базу счётчиков, чтобы
+    нога не «обнуляла» смету.
     """
     cursor: dict[str, Any] = {}
     if loader is not None:
@@ -2861,6 +2862,13 @@ def _save_checkpoint(
                 "decay_ratio": train_config.decay_ratio,
                 "param_dtype": train_config.param_dtype,
                 "data_kind": train_config.data_kind,
+                # ADR-048: режим классификации — условие траектории (иной
+                # оптимизатор для emb/head).  Метка, а не голое булево поле:
+                # CLI (H4) сверяет её с argv, и resume ноги с обратным
+                # legacy_muon_all_2d отвергается, а не продолжается молча.
+                "optimizer_classification": optimizer_classification(
+                    train_config.legacy_muon_all_2d
+                ),
                 "tokens_seen_total": int(tokens_seen),
                 "gpu_hours_total": round(float(gpu_hours), 6),
                 "stop_file": str(train_config.stop_file) if train_config.stop_file else None,

@@ -1535,7 +1535,13 @@ def test_h4_validate_resume_pins_matches_and_mismatches():
 def cli_validate(run, *, seed, warmup, decay, kind):
     cli = pretrain_cli()
     return cli.validate_resume_pins(
-        run, seed=seed, warmup_ratio=warmup, decay_ratio=decay, data_kind=kind, enabled=True
+        run,
+        seed=seed,
+        warmup_ratio=warmup,
+        decay_ratio=decay,
+        data_kind=kind,
+        optimizer_classification="adr-048",
+        enabled=True,
     )
 
 

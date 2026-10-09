@@ -120,3 +120,71 @@ def test_metrics_journal_carries_the_classification_label(tmp_path, legacy, expe
     assert all(row.get("optimizer_classification") == expected for row in rows)
     # Поле опциональное: имя схемы строки не сменилось.
     assert all(row.get("schema") == tl.METRICS_SCHEMA for row in rows)
+
+
+# ---------------------------------------------------------------------------
+# H4 — режим классификации в resume-пинах (долг отчёта hr-20261009-064549-07)
+# ---------------------------------------------------------------------------
+
+
+def _resume_pins(run: dict, mode: str):
+    """Обёртка вызова сверки пинов с фиксированными «прочими» параметрами."""
+    return pretrain_run.validate_resume_pins(
+        run,
+        seed=7,
+        warmup_ratio=0.01,
+        decay_ratio=0.05,
+        data_kind="raw",
+        optimizer_classification=mode,
+        enabled=True,
+    )
+
+
+def test_h4_resume_refuses_optimizer_mode_mismatch():
+    """Resume под обратной классификацией — отказ с внятным сообщением (fail-closed).
+
+    Курсор запиннил ``legacy``, argv идёт ``adr-048``: emb/head обслужил бы другой
+    оптимизатор, а нога выдала бы это за продолжение прежней траектории.
+    """
+    bad = _resume_pins({"optimizer_classification": "legacy"}, "adr-048")
+    assert bad, "расхождение режима обязано всплыть"
+    assert "режим оптимизатора не совпадает: legacy != adr-048" in bad[0]
+
+
+def test_h4_resume_accepts_same_optimizer_mode():
+    """Совпадающий режим — сверка молчит, продолжение разрешено."""
+    assert _resume_pins({"optimizer_classification": "adr-048"}, "adr-048") == []
+    assert _resume_pins({"optimizer_classification": "legacy"}, "legacy") == []
+
+
+def test_h4_resume_skips_absent_mode_for_old_cursor():
+    """Курсор прежней ревизии без поля не отвергается задним числом."""
+    assert _resume_pins({"seed": 7}, "legacy") == []
+
+
+def test_pinned_run_surfaces_optimizer_mode_into_journal():
+    """Срез ``run_pinned`` несёт режим — видно, с чем сверялся resume."""
+    pinned = pretrain_run._pinned_run({"data_kind": "raw", "optimizer_classification": "legacy"})
+    assert pinned["optimizer_classification"] == "legacy"
+
+
+def test_checkpoint_pins_optimizer_mode_for_resume(tmp_path):
+    """Сохраняемая сторона (требует jax/orbax): метка попадает в курсор-пины."""
+    tl = _train_loop()
+    import numpy as np
+
+    manager = tl.CheckpointManager(tmp_path / "ckpt", keep_last=1)
+    master = {"w": np.zeros((3, 4), dtype=np.float32)}
+    state = {"w": np.zeros((3, 4), dtype=np.float32)}
+    tl._save_checkpoint(
+        manager,
+        step=1,
+        master=master,
+        state=state,
+        loader=None,
+        train_config=tl.TrainConfig(legacy_muon_all_2d=True),
+        total_steps=1,
+    )
+    latest = manager.latest()
+    assert latest is not None
+    assert latest["cursor"]["run"]["optimizer_classification"] == "legacy"

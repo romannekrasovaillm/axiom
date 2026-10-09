@@ -234,9 +234,17 @@ def test_schema_default_is_chunked():
     assert small_config().kda_impl == "chunked"
 
 
-def test_declared_config_is_chunked_for_pretrain():
+def test_declared_config_is_chunked_cc_for_pretrain():
+    """The declared case config pins the ADR-047 form (amendment of 09.10.2026).
+
+    Not the WY/UT form: ``wyut`` stays the measured-but-rejected arm.  The
+    schema default in code is still ``chunked``; the assertion here named that
+    pre-amendment default until ``f653b34`` flipped the case's declarative
+    choice and the test was not updated — a standing red unrelated to the
+    UT-transform change.
+    """
     cfg = load_config(CONFIG_PATH)
-    assert cfg.kda_impl == "chunked"
+    assert cfg.kda_impl == "chunked_cc"
     validate_config(cfg)
 
 
@@ -301,3 +309,24 @@ def test_model_graph_consumes_the_flag(cfg):
     assert "triangular_solve" not in chunked
     assert "cumsum" in wyut and "cumsum" not in chunked
     assert chunked != wyut
+
+
+def test_wyut_ut_transform_solves_without_lu_factorisation(cfg):
+    """The WY/UT path solves ``(I + L) W = X`` instead of inverting ``I + L``.
+
+    Same lever as in ``chunked_cc`` (ADR-050 / G0 address): ``jnp.linalg.inv``
+    lowers to an LU factorisation with pivoting (``lu``,
+    ``lu_pivots_to_permutation``), whose per-head kernels are the storm the G0
+    profile named.  The batched triangular solve carries none of it.
+    """
+    p = _params(cfg)
+    x = _x(cfg, 64)
+    prims = _primitive_names(
+        jax.make_jaxpr(lambda: kda.apply_wyut(p, cfg, x, chunk_size=64))()
+    )
+    assert "triangular_solve" in prims
+    assert "lu" not in prims, "the UT transform must not factorise (I + L) by LU"
+    assert "lu_pivots_to_permutation" not in prims, "LU pivoting must be gone"
+
+    tri = jnp.eye(64) + jnp.tril(jnp.ones((64, 64)), -1)
+    assert "lu" in _primitive_names(jax.make_jaxpr(lambda: jnp.linalg.inv(tri))())

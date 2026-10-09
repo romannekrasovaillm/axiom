@@ -424,9 +424,17 @@ def test_schema_default_is_chunked():
     assert small_config().kda_impl == "chunked"
 
 
-def test_declared_config_is_chunked_for_pretrain():
+def test_declared_config_is_chunked_cc_for_pretrain():
+    """The declared case config pins the ADR-047 form (amendment of 09.10.2026).
+
+    The schema default built in code stays ``chunked`` (see
+    ``test_schema_default_is_chunked``); only the declarative choice of the case
+    moved to ``chunked_cc`` in ``f653b34``.  This assertion was left naming the
+    pre-amendment default there and is corrected to the pinned config — the pin
+    stays a pin: flipping ``net/config.json`` back turns it red again.
+    """
     cfg = load_config(CONFIG_PATH)
-    assert cfg.kda_impl == "chunked"
+    assert cfg.kda_impl == "chunked_cc"
     validate_config(cfg)
 
 
@@ -506,6 +514,32 @@ def test_model_graph_consumes_the_flag(cfg):
     assert "triangular_solve" not in chunked
     assert "cumsum" in cc and "cumsum" not in chunked
     assert chunked != cc
+
+
+def test_cc_ut_transform_solves_without_lu_factorisation(cfg):
+    """The UT transform is a batched triangular solve, not an LU inversion.
+
+    The G1 lever (ADR-050; G0 address ``evidence/mfu-55/G0b/REPORT.md``): the
+    ``(I + L)^{-1}`` of the WY/UT step was built with ``jnp.linalg.inv`` for
+    every chunk x head x layer, and the LU factorisation it lowers to
+    (``getrf``/``getri`` with pivoting) dominated the step profile.  The same
+    algebra written as ``(I + L) W = X`` traces to the solve primitive and does
+    not carry the factorisation — both are readable in the jaxpr on a CPU, so
+    the lever is pinned without a GPU profile.
+    """
+    p = _params(cfg)
+    x = _x(cfg, 64)
+    prims = _primitive_names(
+        jax.make_jaxpr(lambda: kda.apply_chunked_cc(p, cfg, x, chunk_size=64))()
+    )
+    assert "triangular_solve" in prims
+    assert "lu" not in prims, "the UT transform must not factorise (I + L) by LU"
+    assert "lu_pivots_to_permutation" not in prims, "LU pivoting must be gone"
+
+    # Counterfactual: the inverted form *does* show the factorisation, so the
+    # two assertions above would catch a regression back to ``jnp.linalg.inv``.
+    tri = jnp.eye(64) + jnp.tril(jnp.ones((64, 64)), -1)
+    assert "lu" in _primitive_names(jax.make_jaxpr(lambda: jnp.linalg.inv(tri))())
 
 
 def test_cc_structural_memory_is_the_point_of_the_rewrite(cfg):

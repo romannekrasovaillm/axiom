@@ -26,7 +26,30 @@ LAYER_COMPOSITION_KEY = "layer_composition"
 #: здесь, callable JAX из него делает ``net/remat.py``.  Модуль схемы остаётся
 #: без численных зависимостей — часть стражей запускается обычным ``python3``
 #: без jax (см. ``declared_block_merge``).
-REMAT_POLICIES = ("none", "dots_saveable", "dots_with_no_batch_dims_saveable")
+#:
+#: ``everything_saveable`` — крайняя точка шкалы: внутри remat-границы не
+#: пересчитывается ничего (поведение, как будто ``jax.checkpoint`` не стоит
+#: вовсе).  Нужна для полноты матрицы «политика → время/память»; на целевой
+#: геометрии ожидается OOM, но отсутствие строки мешало бы отличить «политика
+#: дорога» от «политики нет».
+#:
+#: **Чего здесь нет и почему.**  Гипотеза о выгрузке сохранённых matmul в
+#: хост-память (унифицированная память GB10) требовала бы политики
+#: ``offload_dots_saveable`` — в установленной версии JAX (0.10.2) такого
+#: атрибута **нет** (проверено ``hasattr``); ``jax.checkpoint_policies`` также не
+#: является импортируемым подмодулем, это namespace.  Ближайшее по смыслу имя —
+#: ``offload_dot_with_no_batch_dims(offload_src, offload_dst)`` — это **фабрика**
+#: с двумя аргументами (пространства памяти источника/назначения), а не готовый
+#: callable, поэтому в набор имён она не подставляется: подмена похожим именем
+#: выдала бы несуществующую политику за объявленную.  Вопрос вынесен
+#: архитектору (см. ``.arch-handoff/result.json``); fail-closed на неизвестное
+#: значение сохраняется — строка ``offload_dots_saveable`` отвергается.
+REMAT_POLICIES = (
+    "none",
+    "dots_saveable",
+    "dots_with_no_batch_dims_saveable",
+    "everything_saveable",
+)
 
 #: The case's declarative config — the file the reader below reads.  It is the
 #: *switch* (spine AD-9: "конфиг первичен"): turning a declared mechanism on is
@@ -215,7 +238,11 @@ class ModelConfig:
     # ``dots_saveable`` — keep the outputs of matmuls/convolutions, recompute
     # the elementwise tail (``jax.checkpoint_policies.dots_saveable``);
     # ``dots_with_no_batch_dims_saveable`` — the same, but only for matmuls
-    # without batch dimensions (usually the safer memory trade).
+    # without batch dimensions (usually the safer memory trade);
+    # ``everything_saveable`` — save every intermediate (as if the boundary were
+    # not there at all): the far end of the scale, expected to OOM on the target
+    # geometry but needed so the matrix can tell "the policy is expensive" from
+    # "the policy is missing".
     # Read by ``net/remat.py`` (the single place the name becomes a JAX policy
     # callable), consumed by the checkpoint wrappers of ``net/model.py``
     # (backbone layer) and ``net/kda.py`` (scan bodies).  Declared in

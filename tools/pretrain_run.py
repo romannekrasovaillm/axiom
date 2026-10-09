@@ -214,7 +214,9 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
              "побитово прежнее); dots_saveable — сохранять выходы matmul, "
              "пересчитывать elementwise-хвост; "
              "dots_with_no_batch_dims_saveable — то же только для matmul без "
-             "batch-измерений. По умолчанию — значение net/config.json (none)",
+             "batch-измерений; everything_saveable — сохранять всё (как без "
+             "remat-границы; на целевой геометрии ожидается OOM). "
+             "По умолчанию — значение net/config.json (none)",
     )
     parser.add_argument("--checkpoint-every", type=int, default=0,
                         help="шагов между чекпойнтами (0 — выключено)")

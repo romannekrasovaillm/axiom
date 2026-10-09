@@ -42,12 +42,31 @@ def test_flag_is_absent_by_default_so_the_config_stays_primary():
 
 @pytest.mark.parametrize("policy", REMAT_POLICIES)
 def test_every_declared_policy_is_accepted(policy):
+    """Выборка CLI — ровно ``REMAT_POLICIES``: каждая объявленная политика
+    проходит (в т.ч. ``everything_saveable`` из расширения ADR-049)."""
     assert _cli().parse_args(["--remat-policy", policy]).remat_policy == policy
 
 
 def test_unknown_policy_is_rejected_by_argparse():
     with pytest.raises(SystemExit):  # choices → fail-closed, не тихий дефолт
         _cli().parse_args(["--remat-policy", "save_everything_please"])
+
+
+def test_choices_are_closed_to_other_jax_policy_names():
+    """Список не «всё, что есть в JAX»: необъявленные политики отсекаются.
+
+    ``nothing_saveable`` существует в JAX, но дефолт кейса — ``none`` (значит,
+    в списке ему места нет: он бы включил поведение, которого никто не
+    объявлял), а ``offload_dots_saveable``/``offload_dot_with_no_batch_dims`` в
+    этой версии JAX отсутствуют как готовый callable — обе отвергаются.
+    """
+    for undeclared in (
+        "nothing_saveable",
+        "offload_dots_saveable",
+        "offload_dot_with_no_batch_dims",
+    ):
+        with pytest.raises(SystemExit):
+            _cli().parse_args(["--remat-policy", undeclared])
 
 
 def test_apply_keeps_the_declared_value_when_the_flag_is_absent():

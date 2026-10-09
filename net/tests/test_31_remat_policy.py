@@ -14,8 +14,11 @@ grad-checkpointing отключить нельзя (OOM 956 ГиБ по акти
   ``net/kda.py`` (тела scan) — объявление без механизма было бы AD-9-дефектом;
 * политика не добавляет и не убирает remat-границы (их число задаётся
   ``grad_ckpt_policy``) — меняется только ``policy`` внутри границы;
-* **численный паритет**: loss/градиенты совпадают между ``none`` и обеими
-  политиками (политика меняет место активаций, не математику);
+* **численный паритет**: loss/градиенты совпадают между ``none`` и всеми
+  непустыми политиками (политика меняет место активаций, не математику);
+* **отсутствие политики зафиксировано, а не подменено**: у
+  ``offload_dots_saveable`` нет атрибута в этой версии JAX, в
+  ``REMAT_POLICIES`` её нет, и одноимённая строка отвергается fail-closed;
 * ``none`` воспроизводит поведение **до дельты побитово**: граф строится
   вызовом ``jax.checkpoint(fn)`` без аргумента ``policy``, и сравнение с этой
   конструкцией (подменённой в модулях-потребителях) даёт побитово равные loss
@@ -50,7 +53,19 @@ NUM_LAYERS = 4
 CONFIG_PATH = Path(__file__).resolve().parents[1] / "config.json"
 
 #: Все объявленные политики; ``none`` — дефолт (проверяется отдельно).
-POLICIES = ("none", "dots_saveable", "dots_with_no_batch_dims_saveable")
+#: ``everything_saveable`` — крайняя точка шкалы (сохранять всё; на целевой
+#: геометрии ожидается OOM).  Одноимённой политики выгрузки
+#: (``offload_dots_saveable``) в этой версии JAX нет — см. ``net/config.py``.
+POLICIES = (
+    "none",
+    "dots_saveable",
+    "dots_with_no_batch_dims_saveable",
+    "everything_saveable",
+)
+
+#: Политики, отличные от дефолта: у каждой механика обязана отличаться от ``none``
+#: и совпадать с ней численно.
+NON_DEFAULT_POLICIES = tuple(p for p in POLICIES if p != "none")
 
 #: Значение до дельты: ``jax.checkpoint`` БЕЗ аргумента ``policy``.  Тест
 #: подменяет этим модульную ссылку и требует побитового совпадения — то же
@@ -134,6 +149,26 @@ def test_only_none_means_no_policy_argument():
         remat_policy_fn("dots_with_no_batch_dims_saveable")
         is jax.checkpoint_policies.dots_with_no_batch_dims_saveable
     )
+    assert (
+        remat_policy_fn("everything_saveable")
+        is jax.checkpoint_policies.everything_saveable
+    )
+
+
+def test_offload_policy_is_absent_in_this_jax_version():
+    """Гипотеза выгрузки (унифицированная память) не подменена похожим именем.
+
+    В ADR-049-расширении приоритетным вариантом значилась
+    ``offload_dots_saveable``.  В установленной версии JAX такого атрибута нет:
+    есть фабрика ``offload_dot_with_no_batch_dims(src, dst)`` с двумя
+    аргументами пространств памяти.  Тест пиннует, что мы это *зафиксировали*,
+    а не выдали за существующую политику: строка отвергается fail-closed, а в
+    ``REMAT_POLICIES`` её нет.
+    """
+    assert not hasattr(jax.checkpoint_policies, "offload_dots_saveable")
+    assert "offload_dots_saveable" not in REMAT_POLICIES
+    with pytest.raises(ValueError, match="неизвестная политика"):
+        remat_policy_fn("offload_dots_saveable")
 
 
 def test_unknown_policy_name_raises_fail_closed():
@@ -164,6 +199,17 @@ def test_unknown_policy_rejected_by_validate_config():
     cfg = dataclasses.replace(small_config(), remat_policy="sometimes")
     with pytest.raises(AssertionError, match="remat_policy"):
         validate_config(cfg)
+
+
+@pytest.mark.parametrize("policy", POLICIES)
+def test_every_declared_policy_passes_validate_config(policy):
+    """Объявленное значение принимается схемой — включая ``everything_saveable``.
+
+    Без положительной ветки fail-closed-тест доказывал бы лишь то, что
+    валидатор что-то отвергает: расширение набора должно быть видно и «светлой»
+    стороной.
+    """
+    validate_config(dataclasses.replace(small_config(), remat_policy=policy))
 
 
 def test_unknown_policy_raises_even_with_boundaries_off():
@@ -201,13 +247,12 @@ def test_policy_reaches_every_remat_boundary(scan_layers):
     """
     cfg = _remat_config(scan_layers=scan_layers)
     assert _remat_policy_params(cfg, "none") == [None] * NUM_LAYERS
-    assert (
-        _remat_policy_params(cfg, "dots_saveable")
-        == [jax.checkpoint_policies.dots_saveable] * NUM_LAYERS
-    )
-    assert _remat_policy_params(cfg, "dots_with_no_batch_dims_saveable") == [
-        jax.checkpoint_policies.dots_with_no_batch_dims_saveable
-    ] * NUM_LAYERS
+    # Каждая непустая политика обязана дойти до каждой границы — источником
+    # ожидания служит ``remat_policy_fn`` (та же точка, что у потребителей).
+    for policy in NON_DEFAULT_POLICIES:
+        assert _remat_policy_params(cfg, policy) == [
+            remat_policy_fn(policy)
+        ] * NUM_LAYERS
 
 
 def test_policy_does_not_change_the_number_of_boundaries():
@@ -255,10 +300,10 @@ def test_loss_parity_across_policies():
     for policy in POLICIES:
         params, loss = _problem(cfg, policy)
         values[policy] = loss(params)
-    assert _tree_allclose(values["none"], values["dots_saveable"], rtol=1e-5, atol=1e-6)
-    assert _tree_allclose(
-        values["none"], values["dots_with_no_batch_dims_saveable"], rtol=1e-5, atol=1e-6
-    )
+    for policy in NON_DEFAULT_POLICIES:
+        assert _tree_allclose(
+            values["none"], values[policy], rtol=1e-5, atol=1e-6
+        ), policy
 
 
 def test_grad_parity_across_policies():
@@ -267,10 +312,8 @@ def test_grad_parity_across_policies():
     for policy in POLICIES:
         params, loss = _problem(cfg, policy)
         grads[policy] = jax.grad(loss)(params)
-    assert _tree_allclose(grads["none"], grads["dots_saveable"])
-    assert _tree_allclose(
-        grads["none"], grads["dots_with_no_batch_dims_saveable"]
-    )
+    for policy in NON_DEFAULT_POLICIES:
+        assert _tree_allclose(grads["none"], grads[policy]), policy
 
 
 def test_forward_parity_across_policies():
@@ -284,10 +327,10 @@ def test_forward_parity_across_policies():
         )
         for policy in POLICIES
     }
-    assert _tree_allclose(outputs["none"], outputs["dots_saveable"], rtol=1e-5, atol=1e-6)
-    assert _tree_allclose(
-        outputs["none"], outputs["dots_with_no_batch_dims_saveable"], rtol=1e-5, atol=1e-6
-    )
+    for policy in NON_DEFAULT_POLICIES:
+        assert _tree_allclose(
+            outputs["none"], outputs[policy], rtol=1e-5, atol=1e-6
+        ), policy
 
 
 def test_grads_survive_jit_for_every_policy():
@@ -297,7 +340,7 @@ def test_grads_survive_jit_for_every_policy():
     for policy in POLICIES:
         params, loss = _problem(cfg, policy)
         results[policy] = jax.jit(jax.value_and_grad(loss))(params)
-    for policy in ("dots_saveable", "dots_with_no_batch_dims_saveable"):
+    for policy in NON_DEFAULT_POLICIES:
         assert _tree_allclose(results["none"][0], results[policy][0], rtol=1e-5, atol=1e-6)
         assert _tree_allclose(results["none"][1], results[policy][1])
 

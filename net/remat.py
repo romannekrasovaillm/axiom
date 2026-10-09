@@ -10,7 +10,17 @@
   «Reversibility»: дефолт не двигается);
 * ``dots_saveable`` — сохранять выходы matmul/conv, пересчитывать elementwise-хвост;
 * ``dots_with_no_batch_dims_saveable`` — то же, но только для matmul без
-  batch-измерений (обычно безопаснее по памяти).
+  batch-измерений (обычно безопаснее по памяти);
+* ``everything_saveable`` — сохранять всё промежуточное: внутри границы не
+  пересчитывается ничего (как если бы ``jax.checkpoint`` не стоял).  Крайняя
+  точка шкалы для матрицы ADR-049: на целевой геометрии ожидается OOM, но без
+  этой строки матрица не отличала бы «политика дорога» от «политики нет».
+
+Политики выгрузки в хост-память (``offload_dots_saveable``) в установленной
+версии JAX **нет**: у ``jax.checkpoint_policies`` есть фабрика
+``offload_dot_with_no_batch_dims(offload_src, offload_dst)`` с двумя аргументами
+пространств памяти, а не готовый callable с этим именем.  Одноимённая строка
+поэтому отвергается как неизвестная (fail-closed), а не подменяется похожей.
 
 Единственная точка, где имя политики превращается в callable JAX: и
 ``net/model.py`` (backbone-слой), и ``net/kda.py`` (тела scan) ходят сюда, так
@@ -49,6 +59,8 @@ def remat_policy_fn(policy: str):
         return jax.checkpoint_policies.dots_saveable
     if policy == "dots_with_no_batch_dims_saveable":
         return jax.checkpoint_policies.dots_with_no_batch_dims_saveable
+    if policy == "everything_saveable":
+        return jax.checkpoint_policies.everything_saveable
     raise ValueError(
         f"неизвестная политика рематериализации: {policy!r}; "
         f"ожидается одна из {REMAT_POLICIES}"

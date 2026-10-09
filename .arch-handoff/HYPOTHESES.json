@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-09T14:49:06",
+ "generated_at": "2026-10-09T19:18:07",
  "hypotheses_dir": "/home/roman/hypotheses",
  "min_score": 2,
  "hits": [
@@ -368,6 +368,38 @@
    "promote_when": "флот с параллельными ветками показывает расхождение/ранний консенсус на общей части артефактов"
   },
   {
+   "card": "harness-ab-selection",
+   "title": "A/B-выбор харнесса при фиксированной модели",
+   "state": "latent",
+   "score": 20,
+   "hits": {
+    "files": [
+     "TASK.md",
+     "MANIFEST.json",
+     "CONSTRAINTS.yaml",
+     "*.plan.toml"
+    ],
+    "keys": [
+     "epic_context_tokens",
+     "recommended_timeout_secs"
+    ],
+    "deps": [],
+    "words": [
+     "харнесс",
+     "A/B"
+    ]
+   },
+   "skills": [
+    "harness-context-window-control",
+    "harness-tool-calling-trends"
+   ],
+   "plugins": [
+    "agent-harnesses",
+    "tool-calling"
+   ],
+   "promote_when": "есть фиксированная модель и сопоставимые задачи, на которых можно сравнить две конфигурации харнесса по held-out метрике"
+  },
+  {
    "card": "local-agent-baseline-gb10",
    "title": "Локальный агентный baseline 30B на GB10 для сравнения и работы",
    "state": "latent",
@@ -496,37 +528,6 @@
     "gb10"
    ],
    "promote_when": "измеренный на GB10 tok/s при 8K/64K даёт календарный срок, приемлемый владельцу; собран претрейн-корпус 20B с карточкой и хешем; есть смета-эквивалент (AD-8) и решение владельца новым ADR, supersede ADR-004/AD-7"
-  },
-  {
-   "card": "harness-ab-selection",
-   "title": "A/B-выбор харнесса при фиксированной модели",
-   "state": "latent",
-   "score": 19,
-   "hits": {
-    "files": [
-     "TASK.md",
-     "MANIFEST.json",
-     "CONSTRAINTS.yaml",
-     "*.plan.toml"
-    ],
-    "keys": [
-     "epic_context_tokens",
-     "recommended_timeout_secs"
-    ],
-    "deps": [],
-    "words": [
-     "харнесс"
-    ]
-   },
-   "skills": [
-    "harness-context-window-control",
-    "harness-tool-calling-trends"
-   ],
-   "plugins": [
-    "agent-harnesses",
-    "tool-calling"
-   ],
-   "promote_when": "есть фиксированная модель и сопоставимые задачи, на которых можно сравнить две конфигурации харнесса по held-out метрике"
   },
   {
    "card": "router-prior-anchor",
@@ -1056,36 +1057,6 @@
    "promote_when": "готовим распределённый прогон L3 (TP/DDP) или видим дрейф логитов/скачки grad-norm"
   },
   {
-   "card": "moe-routing-effrank-monitor",
-   "title": "Эффективный ранг роутинга как датчик коллапса MoE",
-   "state": "latent",
-   "score": 16,
-   "hits": {
-    "files": [
-     "moe.py",
-     "test_11_routing.py",
-     "config.json"
-    ],
-    "keys": [
-     "qb_weight",
-     "routing_seed"
-    ],
-    "deps": [],
-    "words": [
-     "ранг"
-    ]
-   },
-   "skills": [
-    "moe-router-health",
-    "stable-latent-moe"
-   ],
-   "plugins": [
-    "moe",
-    "kimi-k3-concept-skills"
-   ],
-   "promote_when": "начинается претрейн MoE и нужен ранний датчик деградации распределения экспертов"
-  },
-  {
    "card": "muon-moonlight-lr-rule",
    "title": "Muon с Moonlight-масштабом и WSD: LR-закон и коллапс экспертов без масштаба",
    "state": "latent",
@@ -1224,6 +1195,34 @@
     "stepfun"
    ],
    "promote_when": "считаем tok/s/память инференса L3 на GB10 или выбираем архитектуру attention/разреженность MoE"
+  },
+  {
+   "card": "moe-routing-effrank-monitor",
+   "title": "Эффективный ранг роутинга как датчик коллапса MoE",
+   "state": "latent",
+   "score": 15,
+   "hits": {
+    "files": [
+     "moe.py",
+     "test_11_routing.py",
+     "config.json"
+    ],
+    "keys": [
+     "qb_weight",
+     "routing_seed"
+    ],
+    "deps": [],
+    "words": []
+   },
+   "skills": [
+    "moe-router-health",
+    "stable-latent-moe"
+   ],
+   "plugins": [
+    "moe",
+    "kimi-k3-concept-skills"
+   ],
+   "promote_when": "начинается претрейн MoE и нужен ранний датчик деградации распределения экспертов"
   },
   {
    "card": "mopd-staleness-refresh",
@@ -1449,7 +1448,7 @@
    "card": "consistency-gap",
    "title": "Разрыв консистентности: один прогон не доказательство",
    "state": "active",
-   "score": 9,
+   "score": 10,
    "hits": {
     "files": [],
     "keys": [
@@ -1460,6 +1459,7 @@
     "words": [
      "прогон",
      "вердикт",
+     "сид",
      "разброс"
     ]
    },
@@ -1607,6 +1607,30 @@
    "promote_when": "карточек становится столько, что роутинг начинает поднимать шум, а дубли не выявляются"
   },
   {
+   "card": "skill-closure-authorization",
+   "title": "Замыкание зависимостей скилла и запрет переноса авторизации",
+   "state": "latent",
+   "score": 7,
+   "hits": {
+    "files": [
+     "CONSTRAINTS.yaml",
+     "MANIFEST.json"
+    ],
+    "keys": [],
+    "deps": [],
+    "words": [
+     "зависимость"
+    ]
+   },
+   "skills": [
+    "skill-management"
+   ],
+   "plugins": [
+    "skill-management"
+   ],
+   "promote_when": "скиллы начинают тянуть внешние зависимости (пакеты/сервисы/MCP), и обновление зависимости не должно сохранять прежние полномочия"
+  },
+  {
    "card": "mispo-is-correction-not-masks",
    "title": "MIS-PO: бинарные IS-фильтры вместо масок; truncation-aware bootstrapping",
    "state": "latent",
@@ -1649,28 +1673,6 @@
     "stepfun"
    ],
    "promote_when": "строим test-time compute для L3 (раунды траекторий) или учим синтез через RL"
-  },
-  {
-   "card": "skill-closure-authorization",
-   "title": "Замыкание зависимостей скилла и запрет переноса авторизации",
-   "state": "latent",
-   "score": 6,
-   "hits": {
-    "files": [
-     "CONSTRAINTS.yaml",
-     "MANIFEST.json"
-    ],
-    "keys": [],
-    "deps": [],
-    "words": []
-   },
-   "skills": [
-    "skill-management"
-   ],
-   "plugins": [
-    "skill-management"
-   ],
-   "promote_when": "скиллы начинают тянуть внешние зависимости (пакеты/сервисы/MCP), и обновление зависимости не должно сохранять прежние полномочия"
   },
   {
    "card": "skills-from-traces",
@@ -1746,6 +1748,32 @@
    "promote_when": "оцениваем L3 агентными бенчами или чистим среду задач перед RL"
   },
   {
+   "card": "skill-graph-evolution",
+   "title": "Граф зависимостей скиллов, эволюционирующий из трейсов",
+   "state": "latent",
+   "score": 5,
+   "hits": {
+    "files": [],
+    "keys": [
+     "min_score"
+    ],
+    "deps": [],
+    "words": [
+     "граф",
+     "зависимость"
+    ]
+   },
+   "skills": [
+    "trace-skill-bank-evolution",
+    "gse-globalized-skill-evolution",
+    "skill-library-manager"
+   ],
+   "plugins": [
+    "skill-management"
+   ],
+   "promote_when": "роутинг по плоскому списку перестаёт давать релевантный набор и нужны связи между скиллами"
+  },
+  {
    "card": "dream-rsi-replay-simulator",
    "title": "История прогонов как replay-симулятор: оценка конфигураций без дорогих онлайн-прогонов",
    "state": "latent",
@@ -1764,31 +1792,6 @@
    "skills": [],
    "plugins": [],
    "promote_when": "накопилась история прогонов с сопоставимыми метриками (есть) и нужна оценка следующей конфигурации без запуска дорогого прогона (есть всегда)"
-  },
-  {
-   "card": "skill-graph-evolution",
-   "title": "Граф зависимостей скиллов, эволюционирующий из трейсов",
-   "state": "latent",
-   "score": 4,
-   "hits": {
-    "files": [],
-    "keys": [
-     "min_score"
-    ],
-    "deps": [],
-    "words": [
-     "граф"
-    ]
-   },
-   "skills": [
-    "trace-skill-bank-evolution",
-    "gse-globalized-skill-evolution",
-    "skill-library-manager"
-   ],
-   "plugins": [
-    "skill-management"
-   ],
-   "promote_when": "роутинг по плоскому списку перестаёт давать релевантный набор и нужны связи между скиллами"
   },
   {
    "card": "skill-routing-diversity",

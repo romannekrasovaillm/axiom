@@ -76,8 +76,16 @@ CASE_DIR = Path(__file__).resolve().parent.parent
 # The model package lives at the case root; a cell may be launched from any cwd
 # (the driver pins ``cwd`` for the subprocess, but ``sys.path[0]`` is this
 # script's directory, not the cwd), so make the import explicit here.
-if str(CASE_DIR) not in sys.path:
-    sys.path.insert(0, str(CASE_DIR))
+# ``tools/`` держит префлайт памяти: скриптом этот каталог уже ``sys.path[0]``,
+# а импортирующий тест приносит свой список путей — добавляем явно.
+for _path in (str(CASE_DIR), str(Path(__file__).resolve().parent)):
+    if _path not in sys.path:
+        sys.path.insert(0, _path)
+
+# ADR-041: дисциплина памяти JAX — префлайт ДО import jax (лимит XLA).
+import jax_preflight  # noqa: E402
+
+jax_preflight.ensure_mem_fraction()
 
 #: Схема отчёта прибора.
 REPORT_SCHEMA = "axiom-mfu-bf16-report/1"

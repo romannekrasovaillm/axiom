@@ -1,14 +1,14 @@
 {
   "status": "complete",
   "assumptions": [
-    "Датчик S-042 объявлен со status: pending (прецедент S-020/S-021 для датчиков окна GB10): до прогона кампании probe даёт unverified без подстановки порогов (C-007), файл фактов на CPU не пишется.",
-    "Правка защищённых путей model/ выполнена в рамках активной дельты changes/mfu-55 (кампания MFU-55, ADR-050); декларация добавлена в changes/mfu-55/DELTA.md (ADDED/MODIFIED).",
-    "Пороги гейтов взяты дословно из evidence/kpi-pins.json:target_55pct.stages (G1 3% = 977 ток/с, G2 10% = 3258, G3 20% = 6515, G4 55% = 17917) и признака промаха ADR-050 (занятость ≥40% цель, <10% остановка); конвенция числителя 6·N_active, знаменатель 98.2 TFLOPS.",
-    "Утверждение CL-022 использует предикат на факте mfu_step с нижней гранью G1 (≥3%); лестница G2–G4 (10/20/55%) и порог ядровой занятости (≥40%/<10%) зафиксированы в statement и stake_note, т.к. схема утверждения допускает один предикат на один факт."
+    "Ручка прогона --ce-chunk-tokens реализована по образцу --remat-policy (ADR-049): CLI-дефолт None, поэтому ширина CE-чанка берётся из net/config.json (пин 1024), а флаг лишь замещает объявленное значение явным намерением прогона. Дефолт net/config.json не изменён (write_deny, C-035).",
+    "0 трактуется как явный выключатель (наивный CE, механизм выключен, граф прежний); отрицательное значение argparse пропускает (ширина — мера, не перечисление, choices неуместны), его закрывает net.config.validate_config при сборке модели — fail-closed ниже по стеку.",
+    "Отсутствие квадратичного по памяти поведения проверено СТРУКТУРНО (обход jaxpr — пик промежуточного тензора), а не рантайм-замером компилированной памяти: chunked-пик = B*chunk*V (не зависит от T), наивный = B*T*V (растёт линейно). Метод бэкенд-независим и детерминирован; на CPU compiled memory_analysis вырожден, поэтому выбран jaxpr-обход.",
+    "Корректность при T=8192 проверена на CPU-эталоне сравнением с наивным CE (jnp.allclose) для ширины 1024 (тайлит T) и 1000 (рваный хвост); эквивалентность CE при разных chunk-размерах вынесена отдельными тестами."
   ],
   "open_questions": [
-    "fitness_check на CPU не достигает passed=true по четырём до-существующим правилам, не связанным с этой дельтой: два requires:[stand] (precision-pinning, GB10 single-load — нужен стенд GB10, GPU запрещён) и два ADR-041 (tools/mfu_bf16_protocol.py, tools/loss_parity_bf16.py без ensure_mem_fraction() — вне зоны tools/sensors/*). Требуется ли закрыть долг ADR-041 в этих файлах отдельной дельтой?",
-    "Нужен ли отдельный bound-утверждение на core_occupancy (занятость ≥40%, <10% = промах), помимо CL-022 на mfu_step, или достаточно фиксации порога в statement CL-022?"
+    "fitness_check на CPU не достигает passed=true по четырём до-существующим правилам, не связанным с этой дельтой: два requires:[stand] (tools/check_precision_pinning.py --profile gate требует CUDA; tools/check_gb10_single_load.py требует стенд GB10; GPU-прогоны запрещены) и два ADR-041 (tools/mfu_bf16_protocol.py, tools/loss_parity_bf16.py без ensure_mem_fraction() — вне зоны net/, tools/pretrain_run.py). Требуется ли закрыть долг ADR-041 в этих файлах отдельной дельтой?",
+    "scope_check рантайм-сервера видит 7 нарушений вне write_allow, но все они — bookkeeping прогона (.arch-handoff/*) и evidence/facts/S-036.jsonl, формируемые харнессом, а не исполнителем; закоммиченная дельта 24e4466..HEAD = ровно 3 пути из write_allow (net/tests/test_25_chunked_ce.py, tools/pretrain_run.py, tools/tests/test_ce_chunk_tokens_cli.py). Нужна ли асимметрия scope (сервер включает bookkeeping, периметр — нет) отдельным решением?"
   ],
   "conflicts_with_prior_decisions": []
 }

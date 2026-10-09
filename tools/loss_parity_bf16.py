@@ -85,6 +85,11 @@ if str(CASE_DIR) not in sys.path:
 if str(CASE_DIR / "tools") not in sys.path:
     sys.path.insert(0, str(CASE_DIR / "tools"))
 
+# ADR-041: дисциплина памяти JAX — префлайт ДО import jax (лимит XLA).
+import jax_preflight  # noqa: E402
+
+jax_preflight.ensure_mem_fraction()
+
 REPORT_SCHEMA = "axiom-loss-parity-bf16/1"
 
 #: Допуск приёмки: BPB(bf16) - BPB(fp32) <= +0.05 бит/байт (§5б задания).

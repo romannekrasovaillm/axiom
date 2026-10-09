@@ -1,5 +1,5 @@
 {
-  "clean_case_root": "/home/roman/axiom/env/data-regen/public/real-l0-00",
+  "clean_case_root": "~/axiom/env/data-regen/public/real-l0-00",
   "guard": {
     "assistant_messages": 410,
     "exit_code": 0,

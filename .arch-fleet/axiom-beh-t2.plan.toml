@@ -4,7 +4,7 @@
 id = "axiom-beh-t2"
 package = "axiom-behavioral-layer"
 pattern = "tournament"
-repo = "/home/roman/axiom"
+repo = "~/axiom"
 
 [policy]
 max_parallel = 7
@@ -22,7 +22,7 @@ route = "critical"
 timeout_from_manifest = false
 gates = [
   { contract = { allow = ["complete", "partial"] } },
-  { command = { cmd = "test -f tools/preflight.py && test -f model/opening-gates.yaml && test -f model/rule-lineage.yaml && test -f tools/sensors/protocol.py && timeout 300 /home/roman/venv-axiom/bin/python tools/check_claims.py --verify-layer", timeout_secs = 360 } },
+  { command = { cmd = "test -f tools/preflight.py && test -f model/opening-gates.yaml && test -f model/rule-lineage.yaml && test -f tools/sensors/protocol.py && timeout 300 ~/venv-axiom/bin/python tools/check_claims.py --verify-layer", timeout_secs = 360 } },
 ]
 
 [[nodes]]
@@ -32,17 +32,17 @@ group = "t2"
 timeout_secs = 7200
 spec = '''
 ЗАДАНИЕ: выполни задание для кодового харнесса из файла
-/home/roman/Загрузки/Axiom_Spine_v1/TASK-v2.md — прочти файл целиком первым
+~/Загрузки/Axiom_Spine_v1/TASK-v2.md — прочти файл целиком первым
 действием (394 строки) и следуй ему буквально, включая «Приёмку»,
 «Финализацию» и «Контракт результата».
 
 Контекст площадки:
 - Ты в изолированном git worktree репозитория axiom (основная копия —
-  /home/roman/axiom). Пути в TASK-v2.md относительные — от корня worktree.
+  ~/axiom). Пути в TASK-v2.md относительные — от корня worktree.
 - git push ЗАПРЕЩЁН: работа забирается из локальных коммитов ветки worktree.
 - .arch-handoff/TASK.md в worktree — от другой линии, игнорируй; твоё задание —
   только TASK-v2.md из Загрузки (путь выше).
-- Python проекта: /home/roman/venv-axiom/bin/python (jax, pytest — там).
+- Python проекта: ~/venv-axiom/bin/python (jax, pytest — там).
 - GPU и стенд GB10 не трогать (AD-7); сеть не нужна; заглушки запрещены (C-007).
 - ЗАНЯТЫЕ НОМЕРА (проверь актуальное состояние в worktree): ADR-036 (лесенка
   моделей) и ADR-037 (поведенческий слой, датчики) заняты; правила C-001…C-050
@@ -64,17 +64,17 @@ group = "t2"
 timeout_secs = 7200
 spec = '''
 ЗАДАНИЕ: выполни задание для кодового харнесса из файла
-/home/roman/Загрузки/Axiom_Spine_v1/TASK-v2.md — прочти файл целиком первым
+~/Загрузки/Axiom_Spine_v1/TASK-v2.md — прочти файл целиком первым
 действием (394 строки) и следуй ему буквально, включая «Приёмку»,
 «Финализацию» и «Контракт результата».
 
 Контекст площадки:
 - Ты в изолированном git worktree репозитория axiom (основная копия —
-  /home/roman/axiom). Пути в TASK-v2.md относительные — от корня worktree.
+  ~/axiom). Пути в TASK-v2.md относительные — от корня worktree.
 - git push ЗАПРЕЩЁН: работа забирается из локальных коммитов ветки worktree.
 - .arch-handoff/TASK.md в worktree — от другой линии, игнорируй; твоё задание —
   только TASK-v2.md из Загрузки (путь выше).
-- Python проекта: /home/roman/venv-axiom/bin/python (jax, pytest — там).
+- Python проекта: ~/venv-axiom/bin/python (jax, pytest — там).
 - GPU и стенд GB10 не трогать (AD-7); сеть не нужна; заглушки запрещены (C-007).
 - ЗАНЯТЫЕ НОМЕРА (проверь актуальное состояние в worktree): ADR-036 (лесенка
   моделей) и ADR-037 (поведенческий слой, датчики) заняты; правила C-001…C-050
@@ -96,17 +96,17 @@ group = "t2"
 timeout_secs = 7200
 spec = '''
 ЗАДАНИЕ: выполни задание для кодового харнесса из файла
-/home/roman/Загрузки/Axiom_Spine_v1/TASK-v2.md — прочти файл целиком первым
+~/Загрузки/Axiom_Spine_v1/TASK-v2.md — прочти файл целиком первым
 действием (394 строки) и следуй ему буквально, включая «Приёмку»,
 «Финализацию» и «Контракт результата».
 
 Контекст площадки:
 - Ты в изолированном git worktree репозитория axiom (основная копия —
-  /home/roman/axiom). Пути в TASK-v2.md относительные — от корня worktree.
+  ~/axiom). Пути в TASK-v2.md относительные — от корня worktree.
 - git push ЗАПРЕЩЁН: работа забирается из локальных коммитов ветки worktree.
 - .arch-handoff/TASK.md в worktree — от другой линии, игнорируй; твоё задание —
   только TASK-v2.md из Загрузки (путь выше).
-- Python проекта: /home/roman/venv-axiom/bin/python (jax, pytest — там).
+- Python проекта: ~/venv-axiom/bin/python (jax, pytest — там).
 - GPU и стенд GB10 не трогать (AD-7); сеть не нужна; заглушки запрещены (C-007).
 - ЗАНЯТЫЕ НОМЕРА (проверь актуальное состояние в worktree): ADR-036 (лесенка
   моделей) и ADR-037 (поведенческий слой, датчики) заняты; правила C-001…C-050
@@ -128,17 +128,17 @@ group = "t2"
 timeout_secs = 7200
 spec = '''
 ЗАДАНИЕ: выполни задание для кодового харнесса из файла
-/home/roman/Загрузки/Axiom_Spine_v1/TASK-v2.md — прочти файл целиком первым
+~/Загрузки/Axiom_Spine_v1/TASK-v2.md — прочти файл целиком первым
 действием (394 строки) и следуй ему буквально, включая «Приёмку»,
 «Финализацию» и «Контракт результата».
 
 Контекст площадки:
 - Ты в изолированном git worktree репозитория axiom (основная копия —
-  /home/roman/axiom). Пути в TASK-v2.md относительные — от корня worktree.
+  ~/axiom). Пути в TASK-v2.md относительные — от корня worktree.
 - git push ЗАПРЕЩЁН: работа забирается из локальных коммитов ветки worktree.
 - .arch-handoff/TASK.md в worktree — от другой линии, игнорируй; твоё задание —
   только TASK-v2.md из Загрузки (путь выше).
-- Python проекта: /home/roman/venv-axiom/bin/python (jax, pytest — там).
+- Python проекта: ~/venv-axiom/bin/python (jax, pytest — там).
 - GPU и стенд GB10 не трогать (AD-7); сеть не нужна; заглушки запрещены (C-007).
 - ЗАНЯТЫЕ НОМЕРА (проверь актуальное состояние в worktree): ADR-036 (лесенка
   моделей) и ADR-037 (поведенческий слой, датчики) заняты; правила C-001…C-050
@@ -160,17 +160,17 @@ group = "t2"
 timeout_secs = 7200
 spec = '''
 ЗАДАНИЕ: выполни задание для кодового харнесса из файла
-/home/roman/Загрузки/Axiom_Spine_v1/TASK-v2.md — прочти файл целиком первым
+~/Загрузки/Axiom_Spine_v1/TASK-v2.md — прочти файл целиком первым
 действием (394 строки) и следуй ему буквально, включая «Приёмку»,
 «Финализацию» и «Контракт результата».
 
 Контекст площадки:
 - Ты в изолированном git worktree репозитория axiom (основная копия —
-  /home/roman/axiom). Пути в TASK-v2.md относительные — от корня worktree.
+  ~/axiom). Пути в TASK-v2.md относительные — от корня worktree.
 - git push ЗАПРЕЩЁН: работа забирается из локальных коммитов ветки worktree.
 - .arch-handoff/TASK.md в worktree — от другой линии, игнорируй; твоё задание —
   только TASK-v2.md из Загрузки (путь выше).
-- Python проекта: /home/roman/venv-axiom/bin/python (jax, pytest — там).
+- Python проекта: ~/venv-axiom/bin/python (jax, pytest — там).
 - GPU и стенд GB10 не трогать (AD-7); сеть не нужна; заглушки запрещены (C-007).
 - ЗАНЯТЫЕ НОМЕРА (проверь актуальное состояние в worktree): ADR-036 (лесенка
   моделей) и ADR-037 (поведенческий слой, датчики) заняты; правила C-001…C-050
@@ -192,17 +192,17 @@ group = "t2"
 timeout_secs = 7200
 spec = '''
 ЗАДАНИЕ: выполни задание для кодового харнесса из файла
-/home/roman/Загрузки/Axiom_Spine_v1/TASK-v2.md — прочти файл целиком первым
+~/Загрузки/Axiom_Spine_v1/TASK-v2.md — прочти файл целиком первым
 действием (394 строки) и следуй ему буквально, включая «Приёмку»,
 «Финализацию» и «Контракт результата».
 
 Контекст площадки:
 - Ты в изолированном git worktree репозитория axiom (основная копия —
-  /home/roman/axiom). Пути в TASK-v2.md относительные — от корня worktree.
+  ~/axiom). Пути в TASK-v2.md относительные — от корня worktree.
 - git push ЗАПРЕЩЁН: работа забирается из локальных коммитов ветки worktree.
 - .arch-handoff/TASK.md в worktree — от другой линии, игнорируй; твоё задание —
   только TASK-v2.md из Загрузки (путь выше).
-- Python проекта: /home/roman/venv-axiom/bin/python (jax, pytest — там).
+- Python проекта: ~/venv-axiom/bin/python (jax, pytest — там).
 - GPU и стенд GB10 не трогать (AD-7); сеть не нужна; заглушки запрещены (C-007).
 - ЗАНЯТЫЕ НОМЕРА (проверь актуальное состояние в worktree): ADR-036 (лесенка
   моделей) и ADR-037 (поведенческий слой, датчики) заняты; правила C-001…C-050
@@ -224,17 +224,17 @@ group = "t2"
 timeout_secs = 7200
 spec = '''
 ЗАДАНИЕ: выполни задание для кодового харнесса из файла
-/home/roman/Загрузки/Axiom_Spine_v1/TASK-v2.md — прочти файл целиком первым
+~/Загрузки/Axiom_Spine_v1/TASK-v2.md — прочти файл целиком первым
 действием (394 строки) и следуй ему буквально, включая «Приёмку»,
 «Финализацию» и «Контракт результата».
 
 Контекст площадки:
 - Ты в изолированном git worktree репозитория axiom (основная копия —
-  /home/roman/axiom). Пути в TASK-v2.md относительные — от корня worktree.
+  ~/axiom). Пути в TASK-v2.md относительные — от корня worktree.
 - git push ЗАПРЕЩЁН: работа забирается из локальных коммитов ветки worktree.
 - .arch-handoff/TASK.md в worktree — от другой линии, игнорируй; твоё задание —
   только TASK-v2.md из Загрузки (путь выше).
-- Python проекта: /home/roman/venv-axiom/bin/python (jax, pytest — там).
+- Python проекта: ~/venv-axiom/bin/python (jax, pytest — там).
 - GPU и стенд GB10 не трогать (AD-7); сеть не нужна; заглушки запрещены (C-007).
 - ЗАНЯТЫЕ НОМЕРА (проверь актуальное состояние в worktree): ADR-036 (лесенка
   моделей) и ADR-037 (поведенческий слой, датчики) заняты; правила C-001…C-050

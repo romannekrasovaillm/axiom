@@ -732,3 +732,20 @@ constraints:
     owner: архитектор
     expiry: "2027-01-31"
     effort_hours: 0.5
+
+  - id: C-054
+    name: "Гигиена приватности: в артефактах кейса нет абсолютных домашних путей (утечка локальной фактуры в UI, отчёты и внешние сервисы)"
+    type: must_not_contain
+    glob: "**/*.{md,json,yaml,yml,toml}"
+    exclude_glob:
+      - "evidence/**"
+      - "env/**"
+      - "net/tests/**"
+    pattern: "/home/(roman|nekrasov)[a-z0-9_-]*/"
+    severity: high
+    scope: case
+    kind: documentary
+    evidence: "артефакты кейса (docs/, model/, changes/, README, handoff-пакет, планы флота): абсолютные домашние пути заменяются на ~/ или $HOME/. Правило ловит утечку имени пользователя и структуры домашнего каталога в документы, отчёты и UI; машинные журналы прогонов (evidence/) и код — вне набора: код чинится отдельной дельтой через кодовый харнесс"
+    owner: "архитектор"
+    expiry: "2027-01-31"
+    effort_hours: 0.5

@@ -29,6 +29,7 @@ What these tests pin:
 from __future__ import annotations
 
 import dataclasses
+import math
 from pathlib import Path
 
 import jax
@@ -46,6 +47,9 @@ CONFIG_PATH = Path(__file__).resolve().parents[1] / "config.json"
 
 #: Sequence length used by the small-config tests (NTP sees T-1 rows, MTP T-2).
 SEQ = 40
+
+#: The target sequence length the chunked CE exists for (``l3-full@8192``).
+T_LONG = 8192
 
 
 def _params_ids(cfg, *, seed=0):
@@ -249,3 +253,95 @@ def test_chunked_equals_naive_for_short_and_ragged_T(cfg):
     for width in (SEQ + 100, 3, 6):  # single chunk; ragged tails
         got = model.compute_loss(params, _with_chunk(cfg, width), ids, chunk_size=16)
         assert jnp.allclose(naive, got, rtol=1e-4, atol=1e-5)
+
+
+# ---------------------------------------------------------------------------
+# target geometry: correctness and non-quadratic memory at T=8192 (D-8)
+# ---------------------------------------------------------------------------
+
+
+def _peak_elements(obj) -> int:
+    """Largest array, in elements, materialised anywhere in a jaxpr tree.
+
+    The quantity that OOMed is a *tensor*, so the walk reads each equation's
+    output avals and descends into nested sub-jaxprs: a ``jax.checkpoint``
+    boundary carries its body under ``eqn.params`` (and ``scan`` likewise),
+    which a top-level ``make_jaxpr`` walk never enters.  Backend-independent
+    and deterministic — unlike the compiled ``memory_analysis``, which is
+    degenerate on CPU (remat is a no-op without a backward pass there).
+    """
+    inner = getattr(obj, "jaxpr", None)
+    if inner is not None and not isinstance(obj, (dict, list, tuple)):
+        return _peak_elements(inner)
+    eqns = getattr(obj, "eqns", None)
+    if eqns is not None:
+        peak = 0
+        for eqn in eqns:
+            for var in eqn.outvars:
+                shape = getattr(getattr(var, "aval", None), "shape", None)
+                if shape is not None:
+                    peak = max(peak, math.prod(shape))
+            for value in eqn.params.values():
+                peak = max(peak, _peak_elements(value))
+        return peak
+    if isinstance(obj, dict):
+        return max((_peak_elements(v) for v in obj.values()), default=0)
+    if isinstance(obj, (list, tuple)):
+        return max((_peak_elements(v) for v in obj), default=0)
+    return 0
+
+
+def test_correctness_at_T_8192(cfg):
+    """The loss at the target ``l3-full`` sequence length stays chunk-invariant.
+
+    Runs the end-to-end NTP CE at ``T_LONG`` for a width that tiles T exactly
+    (``1024``) and one that leaves a ragged tail (``1000``): both must match the
+    naive whole-vocabulary reduction.  This is the geometry that OOMed before
+    the delta (D-8), so it must be numerically the same, not merely runnable.
+    """
+    params = model.init_params(jr.PRNGKey(0), cfg)
+    ids = jr.randint(jr.PRNGKey(11), (2, T_LONG), 1, cfg.vocab_size)
+    naive = model.compute_loss(params, cfg, ids, chunk_size=16)
+    for width in (1024, 1000):  # tiles T; ragged tail
+        got = model.compute_loss(params, _with_chunk(cfg, width), ids, chunk_size=16)
+        assert jnp.allclose(naive, got, rtol=1e-4, atol=1e-5)
+
+
+def test_peak_intermediate_is_T_independent(cfg):
+    """Chunked CE's largest tensor is O(chunk x vocab), flat as T grows.
+
+    Traced structure (the tensors the graph materialises): the chunked
+    reduction's peak is one chunk's ``(B, chunk, vocab)`` logits — constant
+    across ``T = 256, 1024, 4096`` — while the naive whole-vocabulary reduction
+    materialises ``(B, T, vocab)`` and its peak grows with T.  That is the
+    non-quadratic property the chunking buys (D-8): nothing in the chunked path
+    carries a ``T x vocab`` tensor whose size scales with T.
+    """
+    B, V, hidden = 2, cfg.vocab_size, cfg.hidden
+    chunk = 64
+    emb = jr.normal(jr.PRNGKey(0), (V, hidden))
+    peaks_chunked, peaks_naive = [], []
+    for T in (256, 1024, 4096):
+        feats = jr.normal(jr.PRNGKey(T), (B, T, hidden))
+        targets = jr.randint(jr.PRNGKey(T), (B, T), 1, V)
+
+        def chunked(feats=feats, targets=targets):
+            return model._chunked_cross_entropy(feats, targets, emb, chunk)
+
+        def naive(feats=feats, targets=targets):
+            logits = feats @ emb.T
+            logp = jax.nn.log_softmax(logits, axis=-1)
+            nll = -jnp.take_along_axis(logp, targets[..., None], axis=-1)[..., 0]
+            return nll.mean()
+
+        peaks_chunked.append(_peak_elements(jax.make_jaxpr(chunked)()))
+        peaks_naive.append(_peak_elements(jax.make_jaxpr(naive)()))
+
+    # naive: the peak is the full (B, T, V) logits -> strictly grows with T
+    assert peaks_naive[0] < peaks_naive[1] < peaks_naive[2]
+    assert peaks_naive[-1] == B * 4096 * V
+    # chunked: the peak is one chunk's (B, chunk, V) logits -> flat in T
+    assert peaks_chunked[0] == peaks_chunked[1] == peaks_chunked[2]
+    assert peaks_chunked[0] == B * chunk * V
+    # and well below the naive ceiling at the largest T
+    assert peaks_chunked[-1] < peaks_naive[-1]

@@ -25,3 +25,7 @@ KDA (`getrf_panel`, `batch_trsm_left_kernel`, `LuPivotsToPermutation` — по 3
 Baseline кампании: **532.8 ток/с, шаг 15.38 с, MFU 1.64%** (CE-чанк 4096); рядом remat
 `dots_with_no_batch` 468.3, `none` 406.7. Артефакты: `evidence/mfu-55/G0b/REPORT.md`,
 `G0/REPORT.md` (невалидный прогон на снятой форме `chunked` — свидетельство дрейфа линий).
+
+**Пересмотр (expiry):** безусловно 2027-01-31; триггеры — закрытие любого гейта G1–G4 или смена версии XLA/железа.
+**Признак промаха (введён по рубрике `nfr_mechanism_fit`):** G1 не закрыт после трёх изолированных рычагов **или** занятость GPU <10% при цели 40% → кампания останавливается, потолок фиксируется числом, «аренда/FP8» — отдельным ADR.
+**Оценка рубриками (09.10.2026):** `adr_quality` 4.67/5 · `nfr_mechanism_fit` 4.12/5 · `adr_spine_consistency` 4.62/5 (`docs/reviews/RUBRIC-ASSESSMENT-2026-10-09.ru.md`).

@@ -596,3 +596,18 @@
   pack: spine
   level: diagnostic
   raw: {note: "сценарии в копии репо (git worktree); отдельного файла сырья нет"}
+
+- id: S-042
+  name: "признак промаха кампании MFU-55: MFU шага и ядровая занятость"
+  facts: [mfu_step, core_occupancy]
+  context: "gpu-window | live-probe"
+  producer: "python3 -m tools.sensors.mfu_campaign_miss"
+  output: evidence/facts/S-042.jsonl
+  quality: measured
+  freshness_max_h: null
+  zone: line-1
+  status: pending  # окно GB10 (AD-7): до прогона кампании unverified
+  pack: ml
+  level: end_to_end
+  fact_levels: {core_occupancy: diagnostic}
+  raw: {note: "измерение на устройстве в окне GB10 (tok/s прогона + nsys-профиль занятости); отдельного файла сырья нет"}

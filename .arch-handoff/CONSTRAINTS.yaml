@@ -574,6 +574,7 @@ constraints:
       - tools/run_sft_smoke.py
       - tools/topk_exact_probe.py
       - tools/a4_manifest.py
+      - tools/profile_step.py
     pattern: "ensure_mem_fraction\\(\\)"
     severity: high
     scope: case

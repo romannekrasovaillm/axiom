@@ -49,6 +49,7 @@ _log = logging.getLogger(__name__)
 GRAD_CKPT_POLICIES = ("none", "per_layer")
 
 from .config import ModelConfig, validate_config
+from .remat import remat_checkpoint, validate_remat_policy
 from . import attnres as attnres_mod
 from . import attn_sparse as attn_sparse_mod
 from . import compute_dtype
@@ -363,6 +364,7 @@ def forward(
     collect_qb: bool = False,
     grad_ckpt_policy: str = "none",
     emit_logits: bool = True,
+    remat_policy: str | None = None,
 ) -> jnp.ndarray | tuple:
     """Next-token logits for ``input_ids`` of shape (B, T).
 
@@ -383,6 +385,15 @@ def forward(
     input ``h``, the candidate-pool carry and the layer's own intermediates,
     so the backward pass recomputes the layer instead of retaining it.  With
     ``none`` the graph is built exactly as before (bit-for-bit).
+
+    ``remat_policy`` (``none`` | ``dots_saveable`` |
+    ``dots_with_no_batch_dims_saveable``, ADR-049) selects *what stays saved*
+    inside those per-layer boundaries; ``None`` reads ``cfg.remat_policy``.
+    ``none`` applies ``jax.checkpoint`` without a policy, exactly as the code
+    did before ADR-049 (bit-for-bit); the other two keep the outputs of the
+    matmuls (all, or only the batch-free ones) instead of recomputing them.
+    An unknown value raises here even when the boundaries are switched off, so
+    a declaration can never be silently ignored.
     """
     if grad_ckpt_policy not in GRAD_CKPT_POLICIES:
         raise ValueError(
@@ -390,6 +401,8 @@ def forward(
             f"ожидается одна из {GRAD_CKPT_POLICIES}"
         )
     remat = grad_ckpt_policy == "per_layer"
+    remat_policy = cfg.remat_policy if remat_policy is None else remat_policy
+    validate_remat_policy(remat_policy)  # fail-closed before any tracing
 
     # Group-scan of the repeated `[K,K,K,M]` tail groups (host-compile RAM /6):
     # declared by ``cfg.scan_layers`` and admitted only when the layout lets one
@@ -407,6 +420,7 @@ def forward(
             return_hidden=return_hidden,
             collect_qb=collect_qb,
             remat=remat,
+            remat_policy=remat_policy,
             emit_logits=emit_logits,
             first_unit=plan[0],
             mode=plan[1],
@@ -469,7 +483,7 @@ def forward(
             )
 
         if remat:
-            step = jax.checkpoint(step)
+            step = remat_checkpoint(step, remat_policy)
         attnres_w = params.attnres.w[i] if use_attnres else None
         h, delta, qb, pool = step(
             block, attnres_w, h, pool, tuple(layer_deltas), embed_src
@@ -499,6 +513,7 @@ def _forward_group_scan(
     return_hidden: bool,
     collect_qb: bool,
     remat: bool,
+    remat_policy: str,
     emit_logits: bool,
     first_unit: int,
     mode: str,
@@ -554,7 +569,7 @@ def _forward_group_scan(
             )
 
         if remat:
-            step = jax.checkpoint(step)
+            step = remat_checkpoint(step, remat_policy)
         attnres_w = params.attnres.w[i] if use_attnres else None
         h, delta, qb, pool = step(
             block, attnres_w, h, pool, tuple(prefix_deltas), emb
@@ -611,7 +626,7 @@ def _forward_group_scan(
                 return h + delta + corr, delta, qb, pool_out
 
             if remat:
-                sub = jax.checkpoint(sub)
+                sub = remat_checkpoint(sub, remat_policy)
             attnres_w = (
                 jnp.take(params.attnres.w, index, axis=0) if use_attnres else None
             )
@@ -675,6 +690,14 @@ def _chunked_cross_entropy(
     ``loss_mask`` (B, T') excludes padding from numerator *and* denominator
     (its sum is the global count of non-pad tokens); ``None`` counts every row,
     matching the unmasked naive path.
+
+    This checkpoint is *not* one of the ADR-049 remat boundaries and keeps
+    ``jax.checkpoint`` without a policy on purpose: it is a chunking mechanism
+    whose whole point is to avoid retaining the vocabulary-sized matmul output
+    (``f @ embedding.T`` is exactly what ``dots_saveable`` would keep), so a
+    save-the-dots policy here would spend the memory this path exists to save.
+    ADR-049 names the backbone layer (``net/model.py``) and the KDA scan bodies
+    (``net/kda.py``) as the policy's consumers.
     """
     _, total_rows = targets.shape
     if total_rows == 0 or ce_chunk_tokens <= 0:
@@ -754,6 +777,7 @@ def compute_loss(
     chunk_size: int = 64,
     use_attnres: bool = True,
     grad_ckpt_policy: str | None = None,
+    remat_policy: str | None = None,
 ) -> jnp.ndarray:
     """Combined NTP + MTP auxiliary + QB load-balancing loss.
 
@@ -767,6 +791,11 @@ def compute_loss(
     per-layer checkpoint lives inside the layer loop of :func:`forward`,
     because a coarse wrap of this whole function does not reduce the
     activation request (D-8).
+
+    ``remat_policy`` (ADR-049) selects what those per-layer boundaries keep
+    saved; ``None`` reads ``cfg.remat_policy`` (schema default ``none``, i.e.
+    the pre-ADR-049 graph bit-for-bit).  It changes no arithmetic — only which
+    activations the backward pass recomputes instead of retaining.
 
     The cross-entropy reduction is selected by ``cfg.ce_chunk_tokens`` (also
     declared in ``net/config.json``): ``0`` keeps the naive whole-vocabulary
@@ -782,6 +811,7 @@ def compute_loss(
             params, cfg, input_ids, chunk_size, use_attnres,
             return_hidden=True, collect_qb=True,
             grad_ckpt_policy=policy, emit_logits=False,
+            remat_policy=remat_policy,
         )
         ntp = _chunked_cross_entropy(
             hidden[:, :-1], input_ids[:, 1:], params.embedding, ce_tokens
@@ -791,6 +821,7 @@ def compute_loss(
             params, cfg, input_ids, chunk_size, use_attnres,
             return_hidden=True, collect_qb=True,
             grad_ckpt_policy=policy,
+            remat_policy=remat_policy,
         )
         ntp = _cross_entropy(logits[:, :-1], input_ids[:, 1:])
     aux = mtp_loss(params, cfg, hidden, input_ids, chunk_size, ce_chunk_tokens=ce_tokens)

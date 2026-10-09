@@ -180,6 +180,32 @@ def test_unknown_policy_name_raises_fail_closed():
             remat_policy_fn(bad)
 
 
+def test_declared_but_unavailable_policy_fails_closed(monkeypatch):
+    """Объявленная политика, которой нет в установленном JAX, — ошибка.
+
+    ``offload_dots_saveable`` ловится тем, что её нет в ``REMAT_POLICIES``.  Но
+    если объявленную политику убрать из установленной версии JAX (смена версии,
+    переименование атрибута), потребитель обязан получить fail-closed
+    ``ValueError`` — а не ``AttributeError`` из случайного места трассировки.
+    Проверяем механизм (``hasattr``), а не только конкретное имя в пине.
+    """
+    monkeypatch.delattr(jax.checkpoint_policies, "dots_saveable", raising=False)
+    assert not hasattr(jax.checkpoint_policies, "dots_saveable")
+    with pytest.raises(ValueError, match="отсутствует в установленной версии JAX"):
+        remat_policy_fn("dots_saveable")
+
+
+def test_validate_remat_policy_fails_closed_on_unavailable(monkeypatch):
+    """``validate_remat_policy`` — та же проверка без построения callable."""
+    from net.remat import validate_remat_policy
+
+    monkeypatch.delattr(
+        jax.checkpoint_policies, "everything_saveable", raising=False
+    )
+    with pytest.raises(ValueError, match="отсутствует в установленной версии JAX"):
+        validate_remat_policy("everything_saveable")
+
+
 def test_policy_list_is_closed_and_matches_schema():
     assert POLICIES == REMAT_POLICIES
     assert len(set(REMAT_POLICIES)) == len(REMAT_POLICIES)

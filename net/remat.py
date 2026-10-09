@@ -45,6 +45,24 @@ from .config import REMAT_POLICIES
 #: обёртки: сохраняются только входы/выходы, промежуточное пересчитывается).
 DEFAULT_REMAT_POLICY = "none"
 
+#: Имя объявленной политики → атрибут :mod:`jax.checkpoint_policies`.  Карта
+#: явная (а не «имя равно атрибуту»), чтобы переименование политики в JAX было
+#: видно здесь, а не падало ``AttributeError`` в случайном месте вызова.
+#: Согласованность с :data:`net.config.REMAT_POLICIES` проверяется при импорте:
+#: объявленная политика без карты — ошибка конфигурации, а не «смолчит до
+#: первого прогона» (spine AD-9).
+_POLICY_ATTRS = {
+    "dots_saveable": "dots_saveable",
+    "dots_with_no_batch_dims_saveable": "dots_with_no_batch_dims_saveable",
+    "everything_saveable": "everything_saveable",
+}
+
+_UNMAPPED = set(REMAT_POLICIES) - {"none"} - set(_POLICY_ATTRS)
+assert not _UNMAPPED, (
+    "объявленные политики без карты на jax.checkpoint_policies: "
+    f"{sorted(_UNMAPPED)}"
+)
+
 
 def remat_policy_fn(policy: str):
     """Callable политики JAX по имени; ``None`` для ``none`` (policy не задаётся).
@@ -52,19 +70,29 @@ def remat_policy_fn(policy: str):
     Неизвестное имя — :class:`ValueError` (fail-closed): значение обязано быть
     объявлено в :data:`net.config.REMAT_POLICIES`, иначе потребитель не должен
     «догадываться» о намерении архитектора.
+
+    Объявленное, но **отсутствующее** в установленной версии JAX имя — тоже
+    :class:`ValueError` (проверка ``hasattr``): политику нельзя подменить
+    похожей.  Ровно этот случай зафиксирован в ADR-049 Amendment про
+    ``offload_dots_saveable`` (в JAX 0.10.2 атрибута нет) — здесь он ловится
+    механизмом, а не только пином-тестом конкретного имени.
     """
     if policy == "none":
         return None
-    if policy == "dots_saveable":
-        return jax.checkpoint_policies.dots_saveable
-    if policy == "dots_with_no_batch_dims_saveable":
-        return jax.checkpoint_policies.dots_with_no_batch_dims_saveable
-    if policy == "everything_saveable":
-        return jax.checkpoint_policies.everything_saveable
-    raise ValueError(
-        f"неизвестная политика рематериализации: {policy!r}; "
-        f"ожидается одна из {REMAT_POLICIES}"
-    )
+    if policy not in REMAT_POLICIES:
+        raise ValueError(
+            f"неизвестная политика рематериализации: {policy!r}; "
+            f"ожидается одна из {REMAT_POLICIES}"
+        )
+    attr = _POLICY_ATTRS[policy]
+    if not hasattr(jax.checkpoint_policies, attr):
+        raise ValueError(
+            f"политика рематериализации {policy!r} объявлена, но отсутствует в "
+            f"установленной версии JAX {jax.__version__}: "
+            f"jax.checkpoint_policies.{attr} не найден; подмена похожей "
+            f"политикой запрещена (fail-closed)"
+        )
+    return getattr(jax.checkpoint_policies, attr)
 
 
 def validate_remat_policy(policy: str) -> None:

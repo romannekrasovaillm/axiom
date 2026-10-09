@@ -384,3 +384,16 @@
   binding: null
   stake: internal
   stake_note: "компонентное ускорение — прокси: не открывает гейт без сквозного ток/с (L3)"
+
+- id: CL-022
+  source: {file: docs/adr/ADR-050-kampaniya-mfu-55-na-gb10-predmet-i-konvenciya-chislitelya-geyty-g0-g4-rychagi-po-profil-dokazannym-adresam.md, anchor: "**Признак промаха (введён по замечанию рубрики `nfr_mechanism_fit`, `degradation_defined` 3/5):** если G1 не закрыт после **трёх изолированных рычагов**"}
+  statement: "признак промаха кампании MFU-55 (ADR-050): MFU шага по лестнице G1 ≥3% / G2 ≥10% / G3 ≥20% / G4 ≥55% (конвенция 6·N_active); ядровая занятость ≥40% (цель G1), <10% → остановка кампании"
+  kind: bound
+  sensor: S-042
+  fact: mfu_step
+  predicate: {op: ">=", value: 0.03, unit: fraction, tolerance: null}
+  subject_match: [run_ref]
+  rule: null
+  binding: null
+  stake: money
+  stake_note: "признак промаха: MFU шага <3% (G1 не закрыт) или занятость ядер <10% при цели 40% — кампания останавливается, потолок фиксируется числом (ADR-050)"

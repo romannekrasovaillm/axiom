@@ -225,6 +225,23 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
              "remat-границы; на целевой геометрии ожидается OOM). "
              "По умолчанию — значение net/config.json (none)",
     )
+    # Параметр CE-чанка как штатная ручка прогона (D-8 remainder).  Не задан —
+    # берётся значение конфига (``net/config.json`` пинит 1024, дефолт схемы 0);
+    # задан — заменяет его явным намерением прогона и попадает в журнал отдельным
+    # полем ``ce_chunk_tokens_requested``, чтобы сравнение «чанк 1024 vs 4096»
+    # нельзя было спутать со сменой чего-то ещё.  ``0`` — наивный CE (механизм
+    # выключен, граф прежний); отрицательное значение отсекает схема
+    # (``net.config.validate_config`` при сборке модели), а не молчаливый no-op.
+    parser.add_argument(
+        "--ce-chunk-tokens",
+        type=int,
+        default=None,
+        help="ширина T-чанка chunked cross-entropy (D-8 remainder): 0 — "
+             "наивный CE (механизм выключен, граф прежний); положительное "
+             "число — резать T-ось лосса на чанки по столько строк, каждый "
+             "чанк под jax.checkpoint (пик памяти O(chunk x vocab), не "
+             "O(T x vocab)). По умолчанию — значение net/config.json (1024)",
+    )
     parser.add_argument("--checkpoint-every", type=int, default=0,
                         help="шагов между чекпойнтами (0 — выключено)")
     parser.add_argument("--ckpt-every-min", type=float, default=None,
@@ -909,6 +926,22 @@ def apply_remat_policy(cfg, remat_policy: Optional[str]):
     return dataclasses.replace(cfg, remat_policy=remat_policy)
 
 
+def apply_ce_chunk_tokens(cfg, ce_chunk_tokens: Optional[int]):
+    """CLI-флаг поверх объявленного значения (D-8 remainder).
+
+    ``None`` (флаг не задан) — конфиг первичен: остаётся ``cfg.ce_chunk_tokens``
+    (``net/config.json`` пинит 1024, дефолт схемы 0).  Заданное значение заменяет
+    объявленное явным намерением прогона — и попадает в журнал
+    (``ce_chunk_tokens_requested`` рядом с фактическим ``ce_chunk_tokens``),
+    чтобы сравнение «чанк 1024 vs 4096» нельзя было спутать со сменой чего-то
+    ещё.  Отрицательное значение сюда доходит только чтобы быть отвергнутым:
+    схема ловит его в ``validate_config`` при сборке модели.
+    """
+    if ce_chunk_tokens is None:
+        return cfg
+    return dataclasses.replace(cfg, ce_chunk_tokens=ce_chunk_tokens)
+
+
 def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
     """Исполнить прогон; вернуть (журнал, успех).  Журнал пишется всегда."""
     from net import train_loop as tl
@@ -986,6 +1019,13 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
     # пересобрать).  Дальше ``cfg`` — единственный носитель политики: модель
     # читает ``cfg.remat_policy``, журнал пишет фактическое значение.
     cfg = apply_remat_policy(cfg, args.remat_policy)
+
+    # D-8 remainder: тот же CLI-паттерн для ширины CE-чанка — здесь и только
+    # здесь, после финальной сборки конфига (packed-путь выше мог его
+    # пересобрать).  Дальше ``cfg`` — единственный носитель ширины: модель
+    # читает ``cfg.ce_chunk_tokens``, журнал пишет фактическое значение рядом с
+    # запрошенным.
+    cfg = apply_ce_chunk_tokens(cfg, args.ce_chunk_tokens)
 
     journal["tokenizer"] = tokenizer_info
     journal["model"] = {
@@ -1345,6 +1385,10 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
         "remat_policy": getattr(cfg, "remat_policy", None),
         "remat_policy_requested": args.remat_policy,
         "ce_chunk_tokens": getattr(cfg, "ce_chunk_tokens", None),
+        # D-8 remainder: запрошенное значение рядом с фактическим — та же мысль,
+        # что у remat_policy: без него смена ширины чанка неотличима в журнале
+        # от смены чего-то ещё.
+        "ce_chunk_tokens_requested": args.ce_chunk_tokens,
         "loss_impl": _loss_impl(cfg),
         "param_dtype": args.param_dtype,
         "checkpoint_every": args.checkpoint_every,

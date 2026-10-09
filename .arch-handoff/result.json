@@ -1,35 +1,14 @@
 {
   "status": "complete",
   "assumptions": [
-    "Носитель пиннов — существующий блок run в курсоре чекпойнта (net/train_loop.py:_save_checkpoint); новый носитель не заводился.",
-    "В пинах хранится метка optimizer_classification ('adr-048'|'legacy'), а не голый булев legacy_muon_all_2d: она 1:1 отображает флаг и уже читается сшивателем журналов A/B.",
-    "Курсоры прежних ревизий без поля optimizer_classification не отвергаются задним числом (пин отсутствует -> проверка пропускается)."
+    "Датчик S-042 объявлен со status: pending (прецедент S-020/S-021 для датчиков окна GB10): до прогона кампании probe даёт unverified без подстановки порогов (C-007), файл фактов на CPU не пишется.",
+    "Правка защищённых путей model/ выполнена в рамках активной дельты changes/mfu-55 (кампания MFU-55, ADR-050); декларация добавлена в changes/mfu-55/DELTA.md (ADDED/MODIFIED).",
+    "Пороги гейтов взяты дословно из evidence/kpi-pins.json:target_55pct.stages (G1 3% = 977 ток/с, G2 10% = 3258, G3 20% = 6515, G4 55% = 17917) и признака промаха ADR-050 (занятость ≥40% цель, <10% остановка); конвенция числителя 6·N_active, знаменатель 98.2 TFLOPS.",
+    "Утверждение CL-022 использует предикат на факте mfu_step с нижней гранью G1 (≥3%); лестница G2–G4 (10/20/55%) и порог ядровой занятости (≥40%/<10%) зафиксированы в statement и stake_note, т.к. схема утверждения допускает один предикат на один факт."
   ],
   "open_questions": [
-    "Нужно ли задним числом ужесточать сверку для курсоров, сохранённых до этой правки (сейчас они resume-ятся без проверки режима)?"
+    "fitness_check на CPU не достигает passed=true по четырём до-существующим правилам, не связанным с этой дельтой: два requires:[stand] (precision-pinning, GB10 single-load — нужен стенд GB10, GPU запрещён) и два ADR-041 (tools/mfu_bf16_protocol.py, tools/loss_parity_bf16.py без ensure_mem_fraction() — вне зоны tools/sensors/*). Требуется ли закрыть долг ADR-041 в этих файлах отдельной дельтой?",
+    "Нужен ли отдельный bound-утверждение на core_occupancy (занятость ≥40%, <10% = промах), помимо CL-022 на mfu_step, или достаточно фиксации порога в statement CL-022?"
   ],
-  "conflicts_with_prior_decisions": [],
-  "gate": {
-    "route": "Fast",
-    "verdict": "FAIL",
-    "failures_are_stand_debt_not_delta": true,
-    "findings": [
-      "ADR-010+ADR-013: precision-pinning требует CUDA-устройство (jax.devices()=['CpuDevice(id=0)']) — операторский прогон на gb10",
-      "AD-7/C-040: GB10 single-load — стенд GB10 недоступен (GPU = RTX 4080 SUPER) — операторский прогон на gb10",
-      "arch_drift: bounded-лимит 2000 файлов, известный блокер задачи hr-06"
-    ],
-    "relevant_components_passed": ["delta_guard", "rule_weakened", "spine_lint", "trace_check", "model_validate"]
-  },
-  "commit": "c8c8c96",
-  "branch": "arch/bf16-phase1-wip",
-  "tests": {
-    "tools/tests/test_pretrain_optimizer_classification.py": "7 passed, 4 skipped",
-    "skipped_reason": "ModuleNotFoundError: No module named 'jax' (тесты сохранения чекпойнта/журнала метрик требуют jax; структурные проверки выполнены и зелёные)",
-    "structural_checks_green": [
-      "test_h4_resume_refuses_optimizer_mode_mismatch",
-      "test_h4_resume_accepts_same_optimizer_mode",
-      "test_h4_resume_skips_absent_mode_for_old_cursor",
-      "test_pinned_run_surfaces_optimizer_mode_into_journal"
-    ]
-  }
+  "conflicts_with_prior_decisions": []
 }

@@ -7,9 +7,14 @@
 
 * (а) **дефолт не изменился**: без переменной окружения идёт XLA-путь
       (``jnp.linalg.inv`` + свёртки) — семантика по умолчанию прежняя;
-* (б) ``AXIOM_KDA_SOLVE=pallas`` действительно уводит решение в кернел
-      ``net.kernels.kda_ut_solve.kernel`` — одним вызовом, с **конкатенированной**
-      правой частью ``[xw | vw]`` (не два вызова: это условие постановки);
+* (б) ``AXIOM_KDA_SOLVE=pallas`` действительно уводит решение в **дифференцируемый**
+      путь ``net.kernels.kda_ut_solve.solve`` (``custom_vjp``: вперёд — кернел, назад —
+      аналитический adjoint через ``kernel_t``) — одним вызовом, с
+      **конкатенированной** правой частью ``[xw | vw]`` (не два вызова);
+      голый ``kernel`` без JVP на этом пути не вызывается (он и валил обучение с
+      «Linearization failed to produce known values for all output primals»);
+* (в) **градиент протекает**: ``jax.grad`` через ``_ut_solve_pair`` конечен и
+      совпадает с дефолтным (``jax``) путём в пределах допуска;
 * (в) неизвестное значение флага — явная ошибка, без тихого отката к умолчанию;
 * (г) математический паритет: результат кернела и XLA-пути совпадает в пределах
       допусков; на CPU хост-путь кернела — ``solve_jax`` с тем же пином точности,
@@ -66,7 +71,7 @@ def test_default_path_uses_the_xla_inverse(monkeypatch):
         return real_jax(a, x, v)
 
     monkeypatch.setattr(kda, "_solve_pair_jax", counting_jax)
-    monkeypatch.setattr(kda_ut_solve, "kernel",
+    monkeypatch.setattr(kda_ut_solve, "solve",
                         lambda *a, **k: calls.__setitem__("kernel", calls["kernel"] + 1))
 
     w, u = kda._ut_solve_pair(l_mat, xw, vw)
@@ -74,21 +79,21 @@ def test_default_path_uses_the_xla_inverse(monkeypatch):
     assert w.shape == xw.shape and u.shape == vw.shape
 
 
-def test_pallas_flag_routes_one_kernel_call_with_concatenated_rhs(monkeypatch):
-    """``pallas``: ровно один вызов кернела, правая часть — конкатенация ``[xw | vw]``."""
+def test_pallas_flag_routes_one_solve_call_with_concatenated_rhs(monkeypatch):
+    """``pallas``: ровно один вызов дифференцируемого ``solve``, справа — ``[xw | vw]``."""
     monkeypatch.setenv("AXIOM_KDA_SOLVE", "pallas")
     l_mat, xw, vw = _small()
 
     seen = {"calls": 0, "rhs_width": None, "a_shape": None}
-    real_kernel = kda_ut_solve.kernel
+    real_solve = kda_ut_solve.solve
 
-    def counting_kernel(a, b, **params):
+    def counting_solve(a, b):
         seen["calls"] += 1
         seen["a_shape"] = a.shape
         seen["rhs_width"] = b.shape[-1]
-        return real_kernel(a, b, **params)
+        return real_solve(a, b)
 
-    monkeypatch.setattr(kda_ut_solve, "kernel", counting_kernel)
+    monkeypatch.setattr(kda_ut_solve, "solve", counting_solve)
     w, u = kda._ut_solve_pair(l_mat, xw, vw)
 
     assert seen["calls"] == 1, "правая часть обязана идти одним вызовом (конкатенация)"
@@ -124,3 +129,46 @@ def test_layer_level_parity_between_modes(monkeypatch, cfg):
         monkeypatch.setenv("AXIOM_KDA_SOLVE", "pallas")
         got = apply_form(p, cfg, x)
         assert jnp.allclose(got, ref, rtol=2e-2, atol=2e-3), apply_form.__name__
+
+
+def _loss(l_mat, xw, vw):
+    w, u = kda._ut_solve_pair(l_mat, xw, vw)
+    return jnp.sum(w**2) + jnp.sum(u**2)
+
+
+def test_gradient_flows_through_both_modes(monkeypatch):
+    """Градиент протекает: конечен и совпадает с дефолтным путём в пределах допуска.
+
+    Это проверка причины правки: голый ``pallas_call`` не даёт JVP, и ``jax.grad``
+    по нему падал («Linearization failed to produce known values for all output
+    primals»). Дифференцируемый ``solve`` (custom_vjp, backward — аналитический
+    adjoint через ``kernel_t``) обязан дать конечный градиент, согласованный с XLA-путём.
+    """
+    l_mat, xw, vw = _small()
+
+    monkeypatch.setenv("AXIOM_KDA_SOLVE", "jax")
+    g_jax = jax.grad(_loss, argnums=(0, 1, 2))(l_mat, xw, vw)
+
+    monkeypatch.setenv("AXIOM_KDA_SOLVE", "pallas")
+    g_pallas = jax.grad(_loss, argnums=(0, 1, 2))(l_mat, xw, vw)
+
+    for got, ref in zip(g_pallas, g_jax):
+        assert bool(jnp.all(jnp.isfinite(got))), "градиент pallas-пути не конечен"
+        assert bool(jnp.all(jnp.isfinite(ref))), "градиент jax-пути не конечен"
+
+    # Правые части (xw, vw) сравниваются целиком.
+    for got, ref in zip(g_pallas[1:], g_jax[1:]):
+        assert jnp.allclose(got, ref, rtol=2e-2, atol=1e-4), float(
+            jnp.max(jnp.abs(got - ref)))
+
+    # Носитель L — строго нижний треугольник (в модели L = where(strict_tril, ...)).
+    # Верхний треугольник: jnp.linalg.inv инвертирует ПОЛНУЮ матрицу, поэтому у XLA-пути
+    # там ненулевой градиент — артефакт dense-инверсии, который модель не использует;
+    # кернел решает треугольную систему и возвращает там строго ноль. Сравнение
+    # градиента по L ведётся на носителе, и разница семантики зафиксирована явно.
+    mask = jnp.tril(jnp.ones_like(l_mat, dtype=bool), -1)
+    assert jnp.allclose(g_pallas[0][mask], g_jax[0][mask], rtol=2e-2, atol=1e-4), float(
+        jnp.max(jnp.abs(g_pallas[0][mask] - g_jax[0][mask])))
+    upper_pallas = jnp.where(mask, jnp.zeros_like(g_pallas[0]), g_pallas[0])
+    assert jnp.allclose(upper_pallas, jnp.zeros_like(upper_pallas), atol=0.0), (
+        "кернел обязан давать строго нулевой градиент вне носителя L")

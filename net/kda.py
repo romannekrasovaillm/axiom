@@ -425,15 +425,18 @@ def _solve_pair_jax(a, xw, vw):
 
 
 def _solve_pair_pallas(a, xw, vw):
-    """Кернел: одна правая часть — конкатенация ``[xw | vw]`` (не два вызова).
+    """Кернел (дифференцируемый путь): одна правая часть — ``[xw | vw]``.
 
-    Кернел решает ``(I + L) X = B`` батчево по головам (Pallas-Triton, Neumann-
-    произведение); на хосте без GPU он сам уходит в ``solve_jax`` — та же арифметика
-    с тем же пином точности, поэтому паритет на CPU — вердикт о программе кернела.
+    Выбирается ``solve`` — обёртка ``jax.custom_vjp``: вперёд идёт кернел, назад —
+    аналитический adjoint через транспонированный кернел (``kernel_t``). Именно
+    этого не хватало прямому ``kernel``: ``pallas_call`` не даёт JVP, и обучение
+    падало с «Linearization failed to produce known values for all output primals».
+    На хосте без GPU обе ветки уходят в ``solve_jax``/``solve_jax_t`` — та же
+    арифметика с тем же пином точности. Правая часть — одним вызовом (конкатенация).
     """
-    from .kernels.kda_ut_solve import kernel  # локальный импорт: нужен только под флагом
+    from .kernels.kda_ut_solve import solve  # локальный импорт: нужен только под флагом
     dk = xw.shape[-1]
-    x = kernel(a, jnp.concatenate([xw, vw], axis=-1))
+    x = solve(a, jnp.concatenate([xw, vw], axis=-1))
     return x[..., :dk], x[..., dk:]
 
 

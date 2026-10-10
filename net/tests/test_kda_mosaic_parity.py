@@ -8,6 +8,11 @@
   подмена (C-007); паритет Mosaic остаётся NOT RUN;
 * структура вызова соответствует проверенному рецепту цепочки (``scratch_types`` —
   список ``plgpu.SMEM``, Lane-семантика, SMEM-переходы между ``mma``);
+* раскладка RHS: ``kernel()`` подаёт правую часть транспонированной в памяти
+  (``b.transpose(0, 2, 1)``), а ``body`` грузит её через ``.T``
+  (``plgpu.load(<ref>.T, MMA_RHS)``) — k-контигуальность, которой требует
+  ``plgpu.mma`` (рецепт ``REPORT-rhs-layout.md``); проверяется spy на ``_build_kernel``
+  и статически по исходнику;
 * ``valid_config`` отсеивает конфигурации, не влезающие в SMEM блока;
 * CPU-эталон ``reference`` сверен с ``solve_jax`` (единственная численная сверка,
   возможная без устройства);
@@ -258,10 +263,12 @@ def _install_0112_shims(monkeypatch, plgpu, journal):
         return jnp.zeros(tuple(ref.shape), ref.dtype)
 
     def mma(acc, a, b, /):
-        # Проверка ровно как ``_mma_abstract_eval`` 0.11.2 (``m2, k = a.shape``):
-        # не-2D операнд падает ``too many values to unpack`` — как на стенде.
+        # Проверка как ``_mma_abstract_eval`` 0.11.2: ``a`` — логический ``(m, k)``,
+        # ``b`` — логический ``(k, n)``, произведение — ``(m, n)``. Не-2D операнд падает
+        # ``too many values to unpack``; несовпадение ``k`` — ``Incompatible shapes``
+        # (ровно дефект №4 на стенде: ``rhs=(n, k)`` вместо ``(k, n)``).
         m2, k = a.shape
-        n2, k2 = b.shape
+        k2, n2 = b.shape
         if k != k2:
             raise ValueError(f"plgpu.mma: k не совпал: {a.shape} vs {b.shape}")
         journal.mma_operands.append((tuple(a.shape), tuple(b.shape)))
@@ -321,8 +328,8 @@ def test_build_and_trace_2d_operands(monkeypatch):
     _install_0112_shims(monkeypatch, plgpu, journal)
     monkeypatch.setattr(mosaic, "gpu_available", lambda: True)  # устройства нет — сборка его не требует
 
-    H, C, N = 2, 64, 64
-    M = mosaic.packed_shape(C)
+    H, C, N = 2, 64, 64          # N — ширина правой части (dk+dv в задаче)
+    M = mosaic.packed_shape(C)   # M = 128: паддинг C=64 до блока MMA
     fn = mosaic._build_kernel(C, N, H, jnp.float32, bn=mosaic.DEFAULT_BN)
 
     # Контракт вызова: непустой grid несёт grid_names; выход — все головы (H, M, N).
@@ -335,18 +342,22 @@ def test_build_and_trace_2d_operands(monkeypatch):
     assert call["compiler_params"].lowering_semantics == plgpu.LoweringSemantics.Lane
 
     # Трассировка на CPU-буферах: здесь падает и форма без `grid_names`, и не-2D операнд.
+    # Правая часть приходит ТРАНСПОНИРОВАННОЙ в памяти — (H, N, M) = (n, k), как её
+    # подаёт kernel(); иначе последний RHS-операнд получится (n, k), а не (k, n), и
+    # шим `mma` (как `_mma_abstract_eval`) упадёт на несовпадении k — дефект №4.
     a = jnp.zeros((H, M, M), jnp.float32)
-    b = jnp.zeros((H, M, N), jnp.float32)
-    closed = jax.make_jaxpr(fn)(a, b)
+    bt = jnp.zeros((H, N, M), jnp.float32)
+    closed = jax.make_jaxpr(fn)(a, bt)
     assert tuple(closed.out_avals[0].shape) == (H, M, N)
 
     # Главное утверждение класса (а): все операнды mma при трассировке — 2D.
     assert journal.mma_operands, "цепочка mma обязана исполниться на трассировке"
     for a_shape, b_shape in journal.mma_operands:
         assert len(a_shape) == 2, f"LHS обязан быть (m, k), получено {a_shape}"
-        assert len(b_shape) == 2, f"RHS обязан быть (n, k), получено {b_shape}"
+        assert len(b_shape) == 2, f"RHS обязан быть (k, n), получено {b_shape}"
     assert all(a_shape == (M, M) for a_shape, _ in journal.mma_operands)
-    assert journal.mma_operands[-1] == ((M, M), (N, M)), "X = T B: (M,M) @ (N,M)ᵀ"
+    # X = T B: RHS — логический (k, n) = (M, N) с k-контигуальной памятью из (n, k)-источника.
+    assert journal.mma_operands[-1] == ((M, M), (M, N)), "X = T B: (M,M) @ (M,N) [RHS (k,n)]"
     # Вся цепочка исполнена: -L → power → T → (steps-1) шагов → X = T B.
     assert len(journal.mma_operands) == 3 + max(mosaic.neumann_steps(M) - 1, 0) + 1
 
@@ -574,3 +585,106 @@ def test_plgpu_call_arguments_match_the_0112_contract():
             problems.append(
                 f"строка {call.lineno}: {call.name}: неизвестные keyword-имена {sorted(extra)}")
     assert not problems, "; ".join(problems)
+
+
+# ---------------------------------------------------------------------------
+# Раскладка RHS (дефект №5, решённый на GB10). ``plgpu.mma`` требует
+# ``k``-контигуальную память RHS, поэтому правая часть ``B: (H, C, D) = (k, n)``
+# подаётся в ядро транспонированной в памяти — ``b.transpose(0, 2, 1)``
+# (``(H, D, C) = (n, k)``), и внутри грузится ``plgpu.load(<ref>.T, MMA_RHS)``.
+# Источник: ``evidence/mfu-55/mosaic/REPORT-rhs-layout.md``.
+# ---------------------------------------------------------------------------
+
+
+def _callee(node):
+    """Точечное имя вызываемого: для ``Call(func=Attribute(...))`` — имя ``func``."""
+    return _dotted(node.func if isinstance(node, ast.Call) else node)
+
+
+def _has_transpose_021(node):
+    """Есть ли в поддереве вызов ``<expr>.transpose(0, 2, 1)`` (паттерн подачи RHS)."""
+    for sub in ast.walk(node):
+        if not isinstance(sub, ast.Call):
+            continue
+        func = sub.func
+        if not (isinstance(func, ast.Attribute) and func.attr == "transpose"):
+            continue
+        if len(sub.args) == 3 and all(
+            isinstance(arg, ast.Constant) and arg.value == value
+            for arg, value in zip(sub.args, (0, 2, 1))
+        ):
+            return True
+    return False
+
+
+def _function_def(source, name):
+    """Узел ``FunctionDef`` с данным именем (или ``None``)."""
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.FunctionDef) and node.name == name:
+            return node
+    return None
+
+
+def test_kernel_transposes_rhs_in_memory(monkeypatch):
+    """(1) ``kernel()`` подаёт правую часть транспонированной: ``(H, C, D) -> (H, D, C)``.
+
+    Различающая сила — spy на ``_build_kernel``: фиксируется форма буфера, реально
+    уходящего в ядро. До дефекта №5 правая часть уходила ``(H, M, N) = (k, n)``; по
+    рецепту она уходит ``(H, D, C->M) = (n, k)`` (транспозиция в памяти), а паддинг C->M
+    применён к оси k. Плюс статика: в теле ``kernel`` обязана быть буквальная
+    ``b.transpose(0, 2, 1)``.
+    """
+    src = Path(mosaic.__file__).read_text(encoding="utf-8")
+    kernel_def = _function_def(src, "kernel")
+    assert kernel_def is not None, "в модуле обязана быть функция kernel()"
+    assert _has_transpose_021(kernel_def), (
+        "kernel() обязан транспонировать правую часть в памяти: b.transpose(0, 2, 1)")
+
+    seen = {}
+
+    def fake_build(C, N, H, dtype, *, bn=mosaic.DEFAULT_BN):
+        M = mosaic.packed_shape(C)
+
+        def fn(a_pad, bt_pad):
+            seen["a"] = tuple(a_pad.shape)
+            seen["bt"] = tuple(bt_pad.shape)
+            return jnp.zeros((H, M, N), a_pad.dtype)
+
+        return fn
+
+    monkeypatch.setattr(mosaic, "_build_kernel", fake_build)
+    monkeypatch.setattr(mosaic, "mosaic_available", lambda: True)
+    monkeypatch.setattr(mosaic, "gpu_available", lambda: True)
+
+    H, C, D = 2, 64, 96
+    M = mosaic.packed_shape(C)
+    out = mosaic.kernel(jnp.zeros((H, C, C), jnp.float32), jnp.zeros((H, C, D), jnp.float32))
+
+    assert seen["a"] == (H, M, M), "LHS (I+L) паддится C->M без транспозиции"
+    assert seen["bt"] == (H, D, M), (
+        "RHS обязана уходить транспонированной: (H, D, C->M) = (n, k), а не (H, C->M, D)")
+    assert tuple(out.shape) == (H, C, D), "наружу форма снимается обратно до (H, C, D)"
+
+
+def test_body_rhs_operand_is_loaded_transposed():
+    """(2) В ``body`` RHS грузится через ``.T``: ``plgpu.load(<ref>.T, MMA_RHS)``.
+
+    ``k``-контигуальность памяти RHS достигается только ``.T`` от row-major источника
+    (рецепт GB10). Статическая проверка исходника — не зависит от достижимости
+    трассировки в этом окружении.
+    """
+    src = Path(mosaic.__file__).read_text(encoding="utf-8")
+    transposed = []
+    for call in _plgpu_calls(src):
+        if call.name != "plgpu.load":
+            continue
+        layout = call.kwargs.get("layout")
+        if layout is None or _callee(layout) != "plgpu.Layout.MMA_RHS":
+            continue
+        source = call.args[0] if call.args else None
+        if isinstance(source, ast.Attribute) and source.attr == "T":
+            transposed.append(call.lineno)
+    assert transposed, (
+        "RHS обязан грузиться через `.T` от источника (n, k): "
+        "`plgpu.load(<ref>.T, layout=plgpu.Layout.MMA_RHS(...))`; иначе память RHS "
+        "не k-контигуальна (UnsupportedTransferError)")

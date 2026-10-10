@@ -8,18 +8,39 @@ Neumann-цепочку ``plgpu.mma`` через SMEM (:func:`_build_kernel`).
 -------------------------------------------------------------------------------------------------
 ``grid=(H,)`` требует ``grid_names`` той же длины (иначе ``plgpu.kernel`` падает
 ``ValueError`` уже при создании ядра — ``Mesh``), а рефы внутри ``body`` — **глобальные**
-массивы с осью головы (``(H, M, M)``/``(H, M, N)``): ``plgpu.mma`` принимает только
-2D-операнды ``(m, k)``/``(n, k)``. Поэтому одна программа на голову, голова выбирается
-осью ``jax.lax.axis_index("head")`` и срезом ``ref.at[h]`` — внутри программы всё 2D.
+массивы с осью головы (``(H, M, M)``/``(H, N, M)``): ``plgpu.mma`` принимает только
+2D-операнды. Поэтому одна программа на голову, голова выбирается осью
+``jax.lax.axis_index("head")`` и срезом ``ref.at[h]`` — внутри программы всё 2D.
+
+Три требования раскладок ``plgpu.mma`` (рецепт: ``evidence/mfu-55/mosaic/REPORT-rhs-layout.md``)
+-----------------------------------------------------------------------------------------------
+``plgpu.mma(acc, a, b)`` считает ``acc + a @ b`` и проверяет ровно эти три раскладки:
+
+* **LHS** — логический ``(m, k)`` с ``k``-контигуальной памятью: row-major источник
+  ``(m, k)`` грузится **без транспозиции** (``plgpu.load(l_ref.at[h], MMA_LHS)``).
+* **RHS** — логический ``(k, n)``, но **память обязана быть ``k``-контигуальной**: исходный
+  массив должен лежать как ``(n, k)`` и грузиться через ``.T``
+  (``plgpu.load(bt_ref.at[h].T, MMA_RHS)``). Именно поэтому правая часть задачи
+  ``B: (H, C, D) = (k, n)`` подаётся в ядро **транспонированной в памяти** —
+  ``b.transpose(0, 2, 1)`` даёт ``(H, D, C) = (n, k)``. Простое ``.T`` от row-major
+  ``(k, n)`` даёт несовместимые strides (``UnsupportedTransferError``); не то ``.T``
+  (лишняя/пропущенная транспозиция) — ``Incompatible shapes`` (дефект №4).
+* **ACC** — логический ``(m, n)`` (``MMA_ACC``), инициализируется ``layout_cast``.
+
+Для квадратных ``(M, M)`` промежуточных матриц цепочки транспозиция в памяти не нужна, но
+операнд RHS всё равно грузится ``.T`` от row-major буфера — тогда ``k``-контигуальность
+выполняется автоматически (проверено на GB10, ``REPORT-mosaic-chain.md``).
 
 Что проверяемо локально (без устройства) и как
 ----------------------------------------------
 ``net/tests/test_kda_mosaic_parity.py`` исполняет сборку и **трассировку** ядра на
 CPU-буферах: реальная машинерия ``plgpu.kernel``/mpmd + примитивы с контрактом 0.11.2
 (``mma``/``load``/``layout_cast``/``Layout.MMA_*`` подменены шимами — их нет или они
-другие в локальном jax 0.10.2). Трассировка ловит оба GPU-путевых класса: пропущенный
-``grid_names`` (создание ядра) и не-2D операнд ``plgpu.mma`` (``too many values to
-unpack`` из ``_mma_abstract_eval``); статически то же ловит AST-проверка вызова.
+другие в локальном jax 0.10.2). Трассировка ловит GPU-путевые классы: пропущенный
+``grid_names`` (создание ядра), не-2D операнд ``plgpu.mma`` (``too many values to
+unpack`` из ``_mma_abstract_eval``) и неверную раскладку RHS (``k`` не совпал — как
+``Incompatible shapes`` на стенде); статически то же ловят AST-проверки вызова и
+транспозиции RHS.
 
 Дальше (стенд, не здесь)
 ------------------------
@@ -177,6 +198,11 @@ def _build_kernel(C: int, N: int, H: int, dtype, *, bn: int = DEFAULT_BN):
     с осью головы, а ``plgpu.mma`` требует 2D-операнды, поэтому голова выбирается осью
     ``jax.lax.axis_index("head")`` и срезом ``ref.at[h]`` — внутри программы всё 2D.
 
+    Раскладка RHS (``evidence/mfu-55/mosaic/REPORT-rhs-layout.md``): правая часть подаётся
+    транспонированной в памяти (``bt_ref: (H, N, M)``, оси ``(n, k)``) и грузится через
+    ``.T`` — иначе память RHS не ``k``-контигуальна и ``plgpu.mma`` падает
+    ``UnsupportedTransferError``. LHS — без транспозиции.
+
     Формула без жонглирования знаками на каждом шаге: ``(I + L)^{-1} =
     (I - L)(I + L^2)(I + L^4)...`` обрывается на ``ceil(log2(M))`` шагах (L нильпотентна).
     Между двумя `mma` ОБЯЗАТЕЛЕН SMEM-переход: `layout_cast(MMA_ACC -> MMA_LHS)` не
@@ -194,15 +220,15 @@ def _build_kernel(C: int, N: int, H: int, dtype, *, bn: int = DEFAULT_BN):
     def _zero(shape):
         return plgpu.layout_cast(jnp.zeros(shape, acc_dtype), plgpu.Layout.MMA_ACC(dtype))
 
-    def body(l_ref, b_ref, o_ref, smem):
-        # l_ref: (H, M, M) = I + L (с паддингом); b_ref: (H, M, N) = B (с паддингом);
-        # o_ref: (H, M, N) — выход всех голов; smem: (M, M) DT — буфер цепочки на программу.
+    def body(l_ref, bt_ref, o_ref, smem):
+        # l_ref: (H, M, M) = I + L (паддинг C->M по оси k); bt_ref: (H, N, M) = правая часть
+        # В ПАМЯТИ (оси (n, k) = (D, C->M)); o_ref: (H, M, N) — выход всех голов;
+        # smem: (M, M) DT — буфер цепочки на программу.
         # Рефы видны целиком (глобальные), программа берёт свою голову осью сетки:
         # срез по `ref.at[h]` — единственный способ сделать операнды mma 2D.
         h = jax.lax.axis_index("head")
-        l_h = l_ref.at[h]  # (M, M)
-        b_h = b_ref.at[h]  # (M, N)
-        o_h = o_ref.at[h]  # (M, N)
+        l_h = l_ref.at[h]   # (M, M): LHS (m, k) — k-контигуальна, транспозиция не нужна
+        o_h = o_ref.at[h]   # (M, N); bt_ref — RHS в памяти (H, N, M) = (n, k), грузится `.T`
         lhs_l = plgpu.load(l_h, layout=plgpu.Layout.MMA_LHS(dtype), optimized=False)
         rhs_l = plgpu.load(l_h.T, layout=plgpu.Layout.MMA_RHS(dtype), optimized=False)
 
@@ -231,8 +257,9 @@ def _build_kernel(C: int, N: int, H: int, dtype, *, bn: int = DEFAULT_BN):
             smem[...] = t_acc.astype(dtype)
             t_lhs = plgpu.load(smem, layout=plgpu.Layout.MMA_LHS(dtype), optimized=False)
 
-        # X = T B — последний mma с правой частью.
-        rhs_b = plgpu.load(b_h.T, layout=plgpu.Layout.MMA_RHS(dtype), optimized=False)
+        # X = T B — последний mma с правой частью. Источник RHS лежит в памяти (n, k),
+        # поэтому `.T` даёт логический (k, n) с k-контигуальной памятью (рецепт GB10).
+        rhs_b = plgpu.load(bt_ref.at[h].T, layout=plgpu.Layout.MMA_RHS(dtype), optimized=False)
         o_h[...] = plgpu.mma(_zero((M, N)), t_lhs, rhs_b).astype(dtype)
 
     return plgpu.kernel(
@@ -268,6 +295,12 @@ def kernel(a, b, **params):
     устройства не является доказательством GPU-компиляции (C-007) и паритет остаётся
     честным NOT RUN. Форма ядра — паддинг C до блока MMA (``packed_shape``); ядро
     возвращает ``(H, M, N)``, наружу отдаётся ``(H, C, N)``.
+
+    Внутри ``b`` подаётся **транспонированной в памяти** — ``b.transpose(0, 2, 1)``
+    (``(H, C, N) -> (H, N, C)``): только так ``bt_ref.at[h].T`` даёт ``k``-контигуальную
+    память RHS, которую требует ``plgpu.mma`` (рецепт GB10,
+    ``evidence/mfu-55/mosaic/REPORT-rhs-layout.md``). Копия на входе — цена раскладки,
+    математику не меняет.
     """
     if not mosaic_available():
         raise RuntimeError(
@@ -282,6 +315,11 @@ def kernel(a, b, **params):
     # Паддинг до формы MMA: нули в новых строках/столбцах нижней треугольной структуры
     # математически нейтральны; верхний левый блок C x C результата — искомое решение.
     a_pad = jnp.zeros((H, M, M), a.dtype).at[:, :C, :C].set(a)
-    b_pad = jnp.zeros((H, M, N), b.dtype).at[:, :C, :].set(b)
-    out = jax.jit(fn)(a_pad, b_pad)[:, :C, :]
+    # Правая часть уходит в ядро транспонированной: память (H, N, C) = (n, k), паддинг
+    # C->M применяется к оси k (последней). Без транспозиции последний RHS-операнд
+    # оказался бы (n, k) вместо (k, n) — `plgpu.mma` падает `Incompatible shapes`
+    # (дефект №4), а `.T` от row-major (k, n) — `UnsupportedTransferError` (дефект №5).
+    bt = b.transpose(0, 2, 1)  # (H, C, N) -> (H, N, C)
+    bt_pad = jnp.zeros((H, N, M), b.dtype).at[:, :, :C].set(bt)
+    out = jax.jit(fn)(a_pad, bt_pad)[:, :C, :]
     return out

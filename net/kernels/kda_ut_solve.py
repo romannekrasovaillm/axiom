@@ -86,12 +86,45 @@ geometry the measured ``max|X_kernel - X_solve|`` is ``<= 5e-6`` for f32
 (see ``tests/test_kernel_kda_ut_solve.py``, where the tolerance is derived).
 A *stable* alternative (blocked forward substitution) would add sequential
 depth and data-dependent indexing for no accuracy that is needed here.
+
+Precision, pinned in the body (not inherited)
+---------------------------------------------
+``check_kernel.py`` runs on the GB10 *without* the suite's
+``net/tests/conftest.py``, so a bare ``a @ b`` in the body traced
+``dot_general`` with ``precision=None``.  The Pallas-Triton lowerer
+(``jax/_src/pallas/triton/lowering.py::_dot_general_lowering``) maps ``None``
+to ``(Precision.DEFAULT, Precision.DEFAULT)`` and that pair to Triton's
+**tf32** for f32 operands, so the GPU verdict came back at ``max_abs ~ 3.6e-3``
+with 61 % of entries outside ``1e-4`` — against the ``<=5e-6`` the CPU path
+measures.  That is tf32's 10-bit mantissa, not the algorithm.
+
+The body therefore pins **every** matmul to
+``lax.DotAlgorithmPreset.F32_F32_F32`` for the f32 case (see
+:func:`_matmul_precision`); the same lowerer turns that preset into
+``tt.dot(input_precision=IEEE)``.  ``F32_F32_F32`` is the explicit
+"f32 x f32 -> f32, full precision" preset — the ``tl.dot(input_precision="ieee")``
+of the Triton API — so the f32 verdict no longer depends on the ambient
+``jax_default_matmul_precision``.  (ADR-010 pins that policy for the *suite*;
+what this module guarantees is that the kernel holds on its own under
+``check_kernel.py`` on the GB10.)
+
+The four matmul sites inside :func:`_solve_head` are the only ``dot`` in the
+body (``eye``/``tril``/the adds are elementwise or select); each one carries the
+pinned precision, and the last ``power @ power`` of the final loop step is dead
+and dropped by DCE.
+
+The bf16 case keeps the backend default (tf32 on tensor cores) on purpose: it
+is already PASS (0 % of entries outside the ``(2e-2, 2e-2)`` pair), its verdict
+is dominated by the bf16 input/output rounding, and the fix is scoped to the
+f32 arithmetic.  ``None`` there is not a silent tf32: it is the pre-existing
+behaviour, left untouched.
 """
 
 from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
+from jax import lax
 from jax.experimental import pallas as pl
 
 # ---------------------------------------------------------------------------
@@ -113,6 +146,21 @@ CASES = [
 #: verdict is dominated by rounding the bf16 *inputs* and the bf16 *output*
 #: (2^-9 = 2e-3 relative; 2e-2 is the skill's default bf16 pair).
 TOLERANCE = {"float32": (1e-4, 1e-4), "bfloat16": (2e-2, 2e-2)}
+
+#: Matmul precision the **f32** case pins inside the kernel body.
+#:
+#: ``check_kernel.py`` runs on the GB10 without ``net/tests/conftest.py``, so
+#: the ambient ``jax_default_matmul_precision`` is unset there.  A bare
+#: ``a @ b`` then traces ``dot_general`` with ``precision=None``, which the
+#: Pallas-Triton lowerer maps to ``(Precision.DEFAULT, Precision.DEFAULT)`` —
+#: Triton's **tf32** for f32 operands (``_dot_general_lowering``).  This preset
+#: is that lowerer's explicit IEEE branch (``tt.dot(input_precision=IEEE)``):
+#: the ``input_precision="ieee"`` of the task, spelled through the jax API the
+#: body actually uses (``lax.dot``).  Chosen over ``Precision.HIGHEST`` because
+#: it states the whole algorithm — f32 in, f32 accumulator, f32 out — and does
+#: not depend on the lowerer's ``_TF32_PRECISIONS`` table.  See the module
+#: docstring ("Precision, pinned in the body").
+_F32_MATMUL_PRECISION = lax.DotAlgorithmPreset.F32_F32_F32
 
 #: Uniform (-0.25, 0.25) strictly-lower entries: |L_ij| is the magnitude of the
 #: KDA score ``beta_r * Akk_{r,i}`` (|Akk| <= 1 for l2-normalised k, beta <= 1),
@@ -174,28 +222,56 @@ def _inverse_steps(c: int) -> int:
     return max(1, (c - 1).bit_length() - 1)
 
 
-def _solve_head(av, bv):
+def _matmul_precision(dtype):
+    """Precision pinned for every matmul of :func:`_solve_head` in a case.
+
+    f32 -> :data:`_F32_MATMUL_PRECISION` (full IEEE): the f32 tolerance is a
+    pure fp32 one and a ``precision=None`` dot is tf32 on the Triton backend —
+    see the module docstring.  bf16 -> ``None``, i.e. the pre-existing behaviour
+    (backend default), left untouched because that case already passes.
+
+    Used by both the Pallas body (``_build_kernel``) and :func:`solve_jax`, so
+    the two paths run the *same* arithmetic and the CPU parity verdict stays a
+    verdict on the kernel's program.
+    """
+    return _F32_MATMUL_PRECISION if jnp.dtype(dtype) == jnp.float32 else None
+
+
+def _solve_head(av, bv, precision):
     """Solve ``av @ x = bv`` for a unit lower-triangular ``av`` (one head).
 
     ``av`` is ``(C, C)`` and ``bv`` is ``(C, n)``; the caller guarantees the
     unit diagonal.  Pure matmul + elementwise: the only ops the Triton backend
     of Pallas is asked to lower.
+
+    ``precision`` is forwarded to **all four** matmul sites below — the ``N**2``
+    seed, the ``(I + N^(2**k))`` accumulate and the ``N -> N**2 -> N**4 ...``
+    squaring inside the loop, and the final ``T @ bv`` — so no ``dot`` in the
+    body can fall back to the ambient default.  Pass
+    :func:`_matmul_precision` of the case dtype.
     """
     c = av.shape[0]
     eye = jnp.eye(c, dtype=jnp.float32)
     n_low = -jnp.tril(av, -1)  # N = -L; strictly lower, so N**c == 0
     t_mat = eye + n_low  # (I + N)
-    power = n_low @ n_low  # N**2
+    power = lax.dot(n_low, n_low, precision=precision)  # N**2
     for _ in range(_inverse_steps(c)):
-        t_mat = t_mat @ (power + eye)  # (I+N)(I+N^2)(I+N^4)...
-        power = power @ power  # N**4, N**8, ...
-    return t_mat @ bv
+        t_mat = lax.dot(t_mat, power + eye, precision=precision)  # (I+N)(I+N^2)(I+N^4)...
+        power = lax.dot(power, power, precision=precision)  # N**4, N**8, ...
+    return lax.dot(t_mat, bv, precision=precision)
 
 
 def solve_jax(a, b):
-    """Host implementation of the kernel's arithmetic (batched over ``H``)."""
-    c = a.shape[1]
-    x = jax.vmap(lambda av, bv: _solve_head(av, bv))(a.astype(jnp.float32), b.astype(jnp.float32))
+    """Host implementation of the kernel's arithmetic (batched over ``H``).
+
+    Same pinned precision as the kernel body (:func:`_matmul_precision`), so the
+    CPU parity verdict is a verdict on the program the kernel actually runs — not
+    on a separately-configured host path.
+    """
+    precision = _matmul_precision(a.dtype)
+    x = jax.vmap(lambda av, bv: _solve_head(av, bv, precision))(
+        a.astype(jnp.float32), b.astype(jnp.float32)
+    )
     return x.astype(a.dtype)
 
 
@@ -281,7 +357,11 @@ def _build_kernel(H, C, N, dtype, bn, num_warps, num_stages, interpret=False):
     def body(a_ref, b_ref, o_ref):
         av = pltriton.load(a_ref).astype(jnp.float32)
         bv = pltriton.load(b_ref).astype(jnp.float32)
-        pltriton.store(o_ref, _solve_head(av, bv).astype(o_ref.dtype))
+        # Precision is picked from the *declared* case dtype, not from the
+        # ambient policy: this is what makes the body self-contained under
+        # check_kernel.py on the GB10 (no conftest there).  See _matmul_precision.
+        precision = _matmul_precision(dtype)
+        pltriton.store(o_ref, _solve_head(av, bv, precision).astype(o_ref.dtype))
 
     grid, in_specs, out_specs = _block_specs(H, C, N, bn)
     call = pl.pallas_call(

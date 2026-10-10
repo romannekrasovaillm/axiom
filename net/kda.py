@@ -20,6 +20,7 @@ and full-rank output gate (Eq. 6) follow the source verbatim.
 
 from __future__ import annotations
 
+import os
 from typing import NamedTuple
 
 import jax
@@ -402,6 +403,56 @@ def _decay_ratio_exp(log_g: jnp.ndarray) -> jnp.ndarray:
     return jnp.exp(jnp.minimum(diff, 0.0))
 
 
+def kda_solve_mode() -> str:
+    """Решатель UT-системы: ``jax`` (по умолчанию — текущее поведение) | ``pallas``.
+
+    Переменная окружения ``AXIOM_KDA_SOLVE`` читается на каждом вызове: флаг — ручка
+    отката, поэтому он не кэшируется и не требует перезапуска интерпретатора.
+    Неизвестное значение — явная ошибка, без тихого отката к умолчанию.
+    """
+    mode = (os.environ.get("AXIOM_KDA_SOLVE") or "jax").strip().lower()
+    if mode not in KDA_SOLVE_MODES:
+        raise ValueError(
+            f"AXIOM_KDA_SOLVE={mode!r}: ожидается одно из {KDA_SOLVE_MODES}")
+    return mode
+
+
+def _solve_pair_jax(a, xw, vw):
+    """XLA-путь (поведение по умолчанию): ``T = (I + L)^{-1}``, затем две свёртки."""
+    t_mat = jnp.linalg.inv(a)  # (I + L)^{-1}, unit triangular
+    return (jnp.einsum("hcs,hsd->hcd", t_mat, xw),
+            jnp.einsum("hcs,hsd->hcd", t_mat, vw))
+
+
+def _solve_pair_pallas(a, xw, vw):
+    """Кернел: одна правая часть — конкатенация ``[xw | vw]`` (не два вызова).
+
+    Кернел решает ``(I + L) X = B`` батчево по головам (Pallas-Triton, Neumann-
+    произведение); на хосте без GPU он сам уходит в ``solve_jax`` — та же арифметика
+    с тем же пином точности, поэтому паритет на CPU — вердикт о программе кернела.
+    """
+    from .kernels.kda_ut_solve import kernel  # локальный импорт: нужен только под флагом
+    dk = xw.shape[-1]
+    x = kernel(a, jnp.concatenate([xw, vw], axis=-1))
+    return x[..., :dk], x[..., dk:]
+
+
+def _ut_solve_pair(l_mat, xw, vw):
+    """``(W, U) = ((I + L)^{-1} xw, (I + L)^{-1} vw)`` — единая точка решения.
+
+    Форма решения выбирается флагом ``AXIOM_KDA_SOLVE`` (по умолчанию ``jax`` —
+    прежнее поведение без изменений). Математика и сигнатуры не меняются.
+    """
+    a = jnp.eye(l_mat.shape[-1], dtype=l_mat.dtype) + l_mat
+    if kda_solve_mode() == "pallas":
+        return _solve_pair_pallas(a, xw, vw)
+    return _solve_pair_jax(a, xw, vw)
+
+
+#: Допустимые значения флага решения UT-системы (``AXIOM_KDA_SOLVE``).
+KDA_SOLVE_MODES = ("jax", "pallas")
+
+
 def wyut_chunk_step(
     params: KDAParams, cfg: ModelConfig, carry: KDAState, x: jnp.ndarray
 ) -> tuple[KDAState, jnp.ndarray]:
@@ -436,15 +487,12 @@ def wyut_chunk_step(
     strict = jnp.tril(jnp.ones((C, C), dtype=bool), k=-1)
     aqk = jnp.where(lower, aqk, 0.0)
     l_mat = jnp.where(strict, akk, 0.0) * beta_t[:, :, None]  # L_{r,i}=beta_r Akk
-    eye = jnp.eye(C, dtype=l_mat.dtype)
-    t_mat = jnp.linalg.inv(eye + l_mat)  # (I + L)^{-1}, unit triangular
 
     # W = T Diag(beta) (Gamma . K), U = T Diag(beta) V  (Eq. 7).
     gamma = jnp.exp(log_g).transpose(1, 0, 2)  # (H, C, dk)
     xw = (gamma * k) * beta_t[:, :, None]  # (H, C, dk)
     vw = v * beta_t[:, :, None]  # (H, C, dv)
-    w = jnp.einsum("hcs,hsd->hcd", t_mat, xw)
-    u = jnp.einsum("hcs,hsd->hcd", t_mat, vw)
+    w, u = _ut_solve_pair(l_mat, xw, vw)  # (I + L)^{-1} — за флагом AXIOM_KDA_SOLVE
 
     s_in = carry.S  # (H, dk, dv)
     v_tilde = u - jnp.einsum("hcd,hde->hce", w, s_in)  # U - W S  (pseudo-value)
@@ -614,15 +662,12 @@ def cc_chunk_step(
 
     # L = strict_tril(diag(beta) Akk); T = (I + L)^{-1} (unit triangular).
     l_mat = akk * beta_t[:, :, None]
-    eye = jnp.eye(C, dtype=l_mat.dtype)
-    t_mat = jnp.linalg.inv(eye + l_mat)
 
     # W = T diag(beta) (Gamma . K), U = T diag(beta) V  (Eq. 7).
     gamma = jnp.exp(log_g).transpose(1, 0, 2)  # (H, C, dk) = Gamma_c
     xw = (gamma * k_t) * beta_t[:, :, None]
     vw = v_t * beta_t[:, :, None]
-    w = jnp.einsum("hcs,hsd->hcd", t_mat, xw)
-    u = jnp.einsum("hcs,hsd->hcd", t_mat, vw)
+    w, u = _ut_solve_pair(l_mat, xw, vw)  # (I + L)^{-1} — за флагом AXIOM_KDA_SOLVE
 
     s_in = carry.S  # (H, dk, dv)
     v_tilde = u - jnp.einsum("hcd,hde->hce", w, s_in)  # U - W S (pseudo-value)

@@ -10,13 +10,23 @@ What can be verified on a machine without a GPU (this suite):
 * the **envelope** of the Neumann product form (it needs ``||L|| < 1``; the
   KDA factor is ``I + beta * tril(Akk)`` with ``beta <= 1``, ``|Akk| <= 1``).
 
-What it cannot: the compiled Triton kernel itself.  That is
-``lower_check.py`` (static lowering, run from the stand) plus
+What it cannot: execution and numerics of the compiled Triton kernel.  That is
 ``check_kernel.py``/``bench.py`` on the GB10 — see the module docstring and
 ``.arch-handoff/result.json``.
+
+One GPU-only failure *is* reproducible here.  ``lower_check.py`` lowers
+``kernel``, and on a host without a GPU ``kernel`` dispatches to ``solve_jax``,
+so the ``pallas_call`` is never traced and a wrong ``block_shape`` rank cannot
+surface there.  Section 3 builds and traces the call itself, which runs jax's
+``BlockSpec.to_block_mapping`` rank check — exactly the check that fired on the
+GB10 as "Block shape for args[0] ... must have the same number of dimensions as
+the array shape" — pins the block tiling, and executes the layout in Pallas'
+interpreter, where a wrong block *offset* shows up numerically.
 """
 
 from __future__ import annotations
+
+import itertools
 
 import jax
 import jax.numpy as jnp
@@ -183,3 +193,137 @@ def test_kernel_dispatches_to_the_host_program_without_gpu():
     case = _case("float32")
     a, b = K.make_inputs(jax.random.key(0), **case)
     assert bool(jnp.array_equal(K.kernel(a, b), K.solve_jax(a, b)))
+
+
+# ---------------------------------------------------------------------------
+# 3. Block layout: rank, coverage and offsets of block_shape/index_map/grid
+#
+# ``lower_check.py`` lowers ``kernel``, which dispatches to the host program
+# when no GPU is present, so on this machine it never sees a block spec.  These
+# tests build and trace the ``pallas_call`` directly instead — the same specs
+# the GB10 compiles — and one of them executes the layout in the interpreter.
+# ---------------------------------------------------------------------------
+
+
+def _tile_defect(block_shape, index_map, grid, array_shape, one_writer=False):
+    """Why the block grid does not tile ``array_shape`` exactly, or ``""``.
+
+    ``None`` is a squeezed dim: block size 1, and the index map's value is the
+    element's start index (not a block index).  Every other dim is ``Blocked``
+    with start ``block * index``.  The grid tiles the array iff every block is
+    tile-aligned (its start is a multiple of its size, per dim) and the distinct
+    blocks are all ``prod(dim // size)`` of them — i.e. exactly the set of
+    tile-aligned blocks, which partitions the array.
+
+    ``one_writer`` additionally forbids two programs sharing a block: that is
+    required of an output spec (double writes), not of an input spec, where
+    several programs legitimately re-read one block (every RHS tile needs the
+    whole head factor).
+    """
+    if len(block_shape) != len(array_shape):
+        return (f"block rank {len(block_shape)} != array rank {len(array_shape)}"
+                f" (array {array_shape})")
+    sizes = [1 if b is None else int(b) for b in block_shape]
+    starts, boxes, n_grid, n_tiles = [[] for _ in array_shape], set(), 1, 1
+    for dim, size in zip(array_shape, sizes):
+        if dim % size:
+            return f"block {size} does not divide array dim {dim}"
+        n_tiles *= dim // size
+    for g in grid:
+        n_grid *= g
+    for idx in itertools.product(*(range(g) for g in grid)):
+        box = tuple(s if b is None else s * size
+                    for b, s, size in zip(block_shape, index_map(*idx), sizes))
+        boxes.add(box)
+        for d, s in enumerate(box):
+            starts[d].append(s)
+    for d, (size, dim) in enumerate(zip(sizes, array_shape)):
+        if sorted(set(starts[d])) != list(range(0, dim, size)):
+            return (f"dim {d}: block starts {sorted(set(starts[d]))} are not"
+                    f" multiples of {size} covering array dim {dim}")
+    if len(boxes) != n_tiles:
+        return (f"{len(boxes)} distinct blocks cover {n_tiles} tiles of"
+                f" {array_shape} — some region is left uncovered")
+    if one_writer and len(boxes) != n_grid:
+        return (f"{n_grid} programs write {len(boxes)} distinct blocks —"
+                " two programs write the same region")
+    return ""
+
+
+@pytest.mark.parametrize("case", K.CASES, ids=lambda c: c["dtype"])
+def test_pallas_block_specs_tile_every_array_dimension(case):
+    """Block specs have one dim per array dim and tile it exactly once.
+
+    Covers the head axis explicitly: ``H`` is the grid's first dimension and a
+    squeezed block dim, so a program with grid index ``h`` reads head ``h`` and
+    no grid index reaches outside ``range(H)``.  Checked for every ``bn`` the
+    sieve admits, since ``bn`` moves the grid's second dimension.
+    """
+    H, C, N = case["H"], case["C"], case["dk"] + case["dv"]
+    array_shapes = [(H, C, C), (H, C, N), (H, C, N)]  # args[0], args[1], out
+
+    for bn in K.TUNE_SPACE["bn"]:
+        if not K.valid_config(case, dict(K.DEFAULT_PARAMS, bn=bn)):
+            continue
+        grid, in_specs, out_specs = K._block_specs(H, C, N, bn)
+        for spec, shape, one_writer in zip(
+            [*in_specs, out_specs], array_shapes, [False, False, True]
+        ):
+            defect = _tile_defect(
+                spec.block_shape, spec.index_map, grid, shape, one_writer=one_writer
+            )
+            assert not defect, (
+                f"{case['dtype']} bn={bn}: block_shape={spec.block_shape} on"
+                f" {shape}: {defect}"
+            )
+
+
+@pytest.mark.parametrize("case", K.CASES, ids=lambda c: c["dtype"])
+def test_pallas_call_traces_on_the_host(case):
+    """The real ``pallas_call`` traces here — the GB10 rank check runs on CPU.
+
+    Tracing calls ``BlockSpec.to_block_mapping`` for every spec, which is where
+    jax rejects a block shape of the wrong rank.  A GPU-less host cannot execute
+    the kernel, but it can build it, and a spec that does not build cannot run.
+    """
+    shapes = jax.eval_shape(lambda: K.make_inputs(jax.random.key(0), **case))
+    fn = K._build_kernel(
+        case["H"], case["C"], case["dk"] + case["dv"],
+        jnp.dtype(case["dtype"]), **K.DEFAULT_PARAMS,
+    )
+    fn.trace(*shapes)  # ValueError: "Block shape for args[0] ..." if ranks differ
+
+
+@pytest.mark.parametrize("case", K.CASES, ids=lambda c: c["dtype"])
+def test_pallas_layout_is_numerically_right_on_the_host(case):
+    """Execute the block/index/grid layout on the host, in Pallas' interpreter.
+
+    The parity test above dispatches to :func:`solve_jax`, so it pins the
+    *arithmetic* and nothing about the layout.  Here the ``pallas_call`` itself
+    runs — same body, same index maps, same grid — with the interpreter rather
+    than the Triton compiler.  An index map that starts a block at the wrong
+    offset, or a grid that leaves a region of the array unowned, then shows up
+    as a mismatch or a NaN here instead of only on the GB10.
+
+    This is stronger than ``lower_check.py`` on a host without a GPU: that
+    lowers ``kernel``, which dispatches to the host program, so the block specs
+    never reach the lowerer at all.
+    """
+    atol, rtol = K.TOLERANCE[case["dtype"]]
+    fn = K._build_kernel(
+        case["H"], case["C"], case["dk"] + case["dv"],
+        jnp.dtype(case["dtype"]), interpret=True, **K.DEFAULT_PARAMS,
+    )
+    for seed in SEEDS[:2]:  # the layout does not depend on the seed
+        a, b = K.make_inputs(jax.random.key(seed), **case)
+        x = fn(a, b)
+        ref = K.reference(a, b)
+        assert x.shape == ref.shape
+        assert bool(jnp.isfinite(x.astype(jnp.float32)).all()), (
+            f"{case['dtype']} seed {seed}: unowned/unwritten region in the output"
+        )
+        bad = _frac_bad(x, ref, atol, rtol)
+        assert bad == 0.0, (
+            f"{case['dtype']} seed {seed}: {bad:.2%} of entries outside "
+            f"atol={atol:g} rtol={rtol:g} (max_abs={_max_abs(x, ref):.3g})"
+        )

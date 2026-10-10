@@ -26,6 +26,18 @@ so ``(I + L)^{-1} = (I - N)^{-1} = (I + N)(I + N^2)(I + N^4) ... (I + N**C/2)``
 dependency chain.  The whole kernel body is matmul + elementwise, which is
 what the Triton backend of Pallas on JAX 0.10.2 lowers.
 
+Block layout
+------------
+Grid ``(H, N / bn)``: program ``(h, j)`` owns head ``h`` over RHS columns
+``[j * bn, (j + 1) * bn)``.  The head axis of every array is a *squeezed* block
+dimension (``None``), not a tiled one: grid program ``h`` takes head ``h``
+whole, so the refs the body receives keep the ``(C, C)`` / ``(C, bn)`` shapes
+the solve is written for, and no block is ever split across programs.  A block
+shape must have one entry per array dimension — ``(C, C)`` for an ``(H, C, C)``
+array is a rank mismatch and is rejected, see :func:`_block_specs`.  An index
+map returns a *block* index, not an element offset (``start = block * index``),
+except on a squeezed dim, where it is the element index itself.
+
 Launch count, statically
 ------------------------
 Grid ``(H, N / bn)``: **one kernel launch** per solve, 12 x 4 = 48 programs at
@@ -50,10 +62,21 @@ Host dispatch (documented, not a silent fallback)
 -------------------------------------------------
 Pallas can only *execute* on a GPU, so :func:`kernel` runs the same jnp
 program (:func:`solve_jax`) on a non-GPU host.  That is what makes the CPU
-parity test possible; the GPU build (the ``pallas_call`` itself) is exercised
-by ``lower_check.py`` statically and by ``check_kernel.py`` on the GB10.  The
-two paths share :func:`_solve_head`, so the CPU verdict is a verdict on the
-algorithm the kernel body runs.
+parity test possible.  The two paths share :func:`_solve_head`, so the CPU
+verdict is a verdict on the algorithm the kernel body runs — **not** on the
+kernel.
+
+That dispatch is also why a host-side static lowering of :func:`kernel` is
+vacuous: with no GPU, ``lower_check.py`` lowers :func:`solve_jax`, and the
+``pallas_call`` is never traced, so a bad ``block_shape``/``index_map``/``grid``
+cannot surface there.  The tests therefore build and trace the call directly:
+``test_pallas_block_specs_tile_every_array_dimension`` pins the layout and
+``test_pallas_call_traces_on_the_host`` runs the same ``BlockSpec.to_block_mapping``
+rank check that fails at compile time on the GB10, while
+``test_pallas_layout_is_numerically_right_on_the_host`` *executes* the layout
+through Pallas' interpreter, on the host.  What remains GPU-only is the
+compiled Triton kernel itself — execution and numerics of the real build:
+``check_kernel.py`` on the GB10.
 
 Accuracy note
 -------------
@@ -206,8 +229,53 @@ def baseline(a, b):
 _KERNEL_CACHE: dict = {}
 
 
-def _build_kernel(H, C, N, dtype, bn, num_warps, num_stages):
-    """Build (and jit) the ``pallas_call`` for one static configuration."""
+def _block_specs(H, C, N, bn):
+    """``(grid, in_specs, out_specs)`` — the block layout, pure and inspectable.
+
+    One program per ``(head, RHS column tile)``.  The head axis is **squeezed**
+    (``None``): a head is picked by the grid, not tiled inside the program.
+    Squeezed dims are dropped from the ref shape (``_get_ref_block_shape``), so
+    the body sees the ``(C, C)`` factor and the ``(C, bn)`` RHS slice the solve
+    is written for, and the index map's ``h`` is that head's *element* index
+    (a squeezed/``Element`` dim takes the loop index as its start index).
+
+    Coverage.  ``grid = (H, N // bn)``; the head dim takes start ``h`` with
+    block size 1, so ``h in range(H)`` covers every head exactly once; the RHS
+    dim takes start ``bn * j`` with block size ``bn``, and
+    :func:`valid_config` guarantees ``bn | N``, so ``j in range(N // bn)``
+    tiles the RHS exactly once.  The ``C`` dims are taken whole (block == dim,
+    index 0).
+
+    Index convention: an index map returns a **block index**, not an element
+    offset — the framework multiplies it by the block size (``start =
+    block_size * index``), except for squeezed/``Element`` dims, where it *is*
+    the element index.  So the RHS dim is ``j`` and not ``j * bn``; the latter
+    would start the tiles at ``bn * j * bn`` and read past the array.
+
+    Every entry of a block shape must correspond to one array dimension:
+    ``BlockSpec.to_block_mapping`` rejects a rank mismatch at trace time, e.g.
+    ``(C, C)`` for an ``(H, C, C)`` array.  That check is *not* a lowering-time
+    (GB10-only) check — see ``tests/test_kernel_kda_ut_solve.py``.
+    """
+    rhs_tile = lambda h, j: (h, 0, j)  # noqa: E731 — index map, not a def
+    return (
+        (H, N // bn),
+        [
+            pl.BlockSpec((None, C, C), lambda h, j: (h, 0, 0)),
+            pl.BlockSpec((None, C, bn), rhs_tile),
+        ],
+        pl.BlockSpec((None, C, bn), rhs_tile),
+    )
+
+
+def _build_kernel(H, C, N, dtype, bn, num_warps, num_stages, interpret=False):
+    """Build (and jit) the ``pallas_call`` for one static configuration.
+
+    ``interpret=True`` runs the same body over the same block layout through
+    Pallas' interpreter instead of the Triton compiler.  That is what lets a
+    host *without* a GPU execute the layout and compare it numerically (see
+    ``tests/test_kernel_kda_ut_solve.py``); :func:`kernel` never uses it.
+    """
     from jax.experimental.pallas import triton as pltriton
 
     def body(a_ref, b_ref, o_ref):
@@ -215,15 +283,14 @@ def _build_kernel(H, C, N, dtype, bn, num_warps, num_stages):
         bv = pltriton.load(b_ref).astype(jnp.float32)
         pltriton.store(o_ref, _solve_head(av, bv).astype(o_ref.dtype))
 
+    grid, in_specs, out_specs = _block_specs(H, C, N, bn)
     call = pl.pallas_call(
         body,
         out_shape=jax.ShapeDtypeStruct((H, C, N), dtype),
-        grid=(H, N // bn),
-        in_specs=[
-            pl.BlockSpec((C, C), lambda h, j: (h, 0, 0)),
-            pl.BlockSpec((C, bn), lambda h, j: (h, 0, j * bn)),
-        ],
-        out_specs=pl.BlockSpec((C, bn), lambda h, j: (h, 0, j * bn)),
+        grid=grid,
+        in_specs=in_specs,
+        out_specs=out_specs,
+        interpret=interpret,
         compiler_params=pltriton.CompilerParams(num_warps=num_warps, num_stages=num_stages),
     )
     return jax.jit(call)

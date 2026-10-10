@@ -1,50 +1,9 @@
 # Архитектурный контекст (epic-context)
 
-Собран: 2026-10-10T09:52:19.486152894+00:00
+Собран: 2026-10-10T10:07:27.076932725+00:00
 
 Источники:
-- /home/roman/axiom/evidence/mfu-55/mosaic/REPORT-mosaic-chain.md
 - /home/roman/axiom/net/kernels/kda_ut_solve_mosaic.py
-- /home/roman/axiom/docs/adr/ADR-052-kandidatnaya-liniya-jax-0-11-2-mosaic-gpu-ryadom-s-legacy-0-10-2-izolirovannoe-okruzhenie-capability-gate-staged-rollout.md
-
-<!-- источник: /home/roman/axiom/evidence/mfu-55/mosaic/REPORT-mosaic-chain.md -->
-
-# Mosaic: рабочий паттерн цепочки MMA-умножений (GB10, jax 0.11.2)
-
-**Цель:** перенести KDA-решение `(I+L)X=B` (Neumann-произведение = **цепочка** умножений) на Mosaic. Одиночный `plgpu.mma` уже работал (`correctness-pass`), но цепочка упиралась в раскладки.
-
-## Три барьера, снятые по очереди (все — на стенде)
-
-| # | Симптом | Причина | Решение |
-|---|---|---|---|
-| 1 | `AttributeError` без сообщения на стадии компиляции | `kernel_fn.lower(...)` — у объекта `plgpu.kernel` нет метода `lower` | `jax.jit(kernel_fn).lower(...)` |
-| 2 | `NotImplementedError: Cannot convert from TiledLayout(…warp_dims=(-7,)) to TiledLayout(…warp_dims=(-7, Replicated(times=1)))` | `layout_cast` **из `MMA_ACC` в `MMA_LHS` не поддерживается** — результат `mma` нельзя напрямую подать операндом | переход **через SMEM**: `smem[...] = p.astype(DT)` → `plgpu.load(smem, layout=MMA_LHS(DT), optimized=False)` |
-| 3 | `AttributeError: 'ShapeDtypeStruct' object has no attribute 'get_ref_aval'` | `scratch_types` ожидает ref-типы, а не `ShapeDtypeStruct`; и это **список** | `scratch_types=[plgpu.SMEM((M, N), DT)]`, тело `body(in_ref, out_ref, smem)` |
-
-## Рабочий рецепт (проверен на GB10)
-
-```python
-def body(L_ref, o_ref, smem):                      # scratch_types=[plgpu.SMEM((M,N),DT)]
-    acc = plgpu.layout_cast(jnp.zeros((M,N), ACC), plgpu.Layout.MMA_ACC(DT))
-    a   = plgpu.load(L_ref,   layout=plgpu.Layout.MMA_LHS(DT), optimized=False)
-    b   = plgpu.load(L_ref.T, layout=plgpu.Layout.MMA_RHS(DT), optimized=False)   # RHS = (n,k)
-    p   = plgpu.mma(acc, a, b)                     # ACC-раскладка, f32
-    smem[...] = p.astype(DT)                       # ВЫГРУЗКА в SMEM — обязательный шаг цепочки
-    p_lhs = plgpu.load(smem, layout=plgpu.Layout.MMA_LHS(DT), optimized=False)
-    acc2  = plgpu.layout_cast(jnp.zeros((M,N), ACC), plgpu.Layout.MMA_ACC(DT))
-    p2    = plgpu.mma(acc2, p_lhs, b)
-    o_ref[...] = p2.astype(DT)
-
-kernel = plgpu.kernel(body, out_type=..., scratch_types=[plgpu.SMEM((M,N), DT)],
-                      compiler_params=plgpu.CompilerParams(
-                          lowering_semantics=plgpu.LoweringSemantics.Lane))   # Lane, не Warpgroup
-```
-
-## Следствие для переноса
-
-1. Для Neumann-произведения нужен **SMEM-буфер на каждый промежуточный результат** (C×C или C×(dk+dv)) — либо один переиспользуемый, но с явной синхронизацией шагов (барьер/commit).
-2. Точность цепочки ограничена bf16 на каждом шаге выгрузки (в прототипе rel ≈ 1e-2 относительно максимума) — для KDA это вопрос численной политики: либо аккумулятор в fp32 и выгрузка только там, где требует раскладка, либо переход на fp32-операнды, если `MMA_LHS/RHS` их поддержат на CC12.1 (не проверено).
-3. Раскладки RHS: правая часть подаётся в памяти `(n, k)` и грузится с `b_ref.T`.
 
 <!-- источник: /home/roman/axiom/net/kernels/kda_ut_solve_mosaic.py -->
 
@@ -54,6 +13,48 @@ kernel = plgpu.kernel(body, out_type=..., scratch_types=[plgpu.SMEM((M,N), DT)],
 исполнителе**: совпадающий контракт с Triton-версией :mod:`net.kernels.kda_ut_solve`
 и явный backend-выбор. Само Mosaic-ядро в этой дельте **не реализовано** — и это
 зафиксировано явно, а не замаскировано заглушкой (C-007).
+
+Почему ядро не написано здесь
+-----------------------------
+Неймановское произведение ``(I+N)(I+N^2)...`` на ``plgpu.mma`` состоит из шагов, где
+**результат одного MMA становится операндом следующего**: значение живёт в
+аккумуляторной раскладке, а ``plgpu.mma`` требует ``MMA_LHS``/``MMA_RHS``. Корректный
+переход между раскладками (`layout_cast` по промежуточным ``C x C``-величинам) проверяется
+только компиляцией на стенде: локально нет ни GPU, ни Mosaic-API, а ``interpret=True``,
+``hasattr`` и импорт доказательством не считаются (C-007). Написать тело вслепую и выдать
+его за готовое — значит подменить проверку; поэтому здесь его нет, а план сборки вынесен
+в :func:`kernel` (текст ошибки) и в отчёт.
+
+Что делается дальше (готовый план для стенда)
+---------------------------------------------
+1. ``grid = (H, N / bn)``: программа ``(h, j)`` берёт голову целиком (``C x C``, ось H —
+   сжатая в block-спеке) и тайл правой части ``[j*bn, (j+1)*bn)``; при ``H=12, N=256,
+   bn=64`` это 48 программ ≈ число SM GB10.
+2. ``compiler_params=dataclasses.replace(plgpu.CompilerParams(),
+   lowering_semantics=plgpu.LoweringSemantics.Lane)`` — **Lane**, как в проверенном
+   ``tools/mosaic/mma_smoke.py`` и апстрим-эталоне ``tools/mosaic/reference/``.
+3. ``N = -L``; ``T = I + N``; далее ``log2(C) = 6`` шагов: ``power = power @ power``,
+   ``T = T @ (I + power)``; в конце ``X = T B``. Каждая ``C x C``-свёртка — ``plgpu.mma``
+   с ``MMA_ACC``-аккумулятором; промежуточные значения между шагами требуют явного
+   ``layout_cast``.
+4. Правая часть грузится из ``(n, k)``-памяти транспонированной (``b_ref.T``,
+   ``MMA_RHS``), как в эталоне.
+5. Транспонированный/дифференцируемый пути (``kernel_t``/``solve``/``solve_t``) — после
+   того, как forward-ядро подтверждено на стенде.
+
+Backend-выбор (эта часть реализована и проверяема)
+--------------------------------------------------
+``AXIOM_KDA_SOLVE_KERNEL=triton`` (дефолт — прежнее поведение) | ``mosaic``; неизвестное
+значение — ``ValueError`` без тихого отката. Mosaic импортируется **лениво**: отсутствующее
+или неполное API не ломает legacy-линию.
+"""
+
+from __future__ import annotations
+
+import os
+
+import jax
+import jax.numpy as jnp
 
 # --- Контракт Triton-версии: переиспользуем импортом (не копипаста) ---
 
@@ -70,7 +71,7 @@ from .kda_ut_solve import (  # noqa: F401 — часть контракта мо
     reference_t,
     solve_jax,
     solve_jax_t,
-    valid_config,
+    valid_config as _triton_valid_config,
 )
 
 #: Допустимые значения ``AXIOM_KDA_SOLVE_KERNEL``.
@@ -81,35 +82,60 @@ BACKENDS = ("triton", "mosaic")
 
 DEFAULT_BN = 64
 
-#: Ядро Mosaic в этой дельте не реализовано — модуль объявляет это, а не притворяется.
+#: Ядро Mosaic реализовано в этой дельте (цепочка mma со SMEM-переходами по проверенному рецепту).
 
-KERNEL_IMPLEMENTED = False
+KERNEL_IMPLEMENTED = True
+
+#: Блок MMA в jax 0.11.2: M и K обязаны быть кратны 128 (эталон — M=K=128, N=8).
+
+MMA_BLOCK = 128
+
+#: Лимит SMEM на блок на GB10 (~99 КБ); один буфер (MMA_BLOCK, MMA_BLOCK) f32 = 64 КБ влезает,
+
+
+
+#: два — уже нет, поэтому в цепочке переиспользуется ОДИН буфер с явной последовательностью шагов.
+
+SMEM_LIMIT_BYTES = 99 * 1024
+
+def smem_bytes(m: int, n: int, dtype) -> int:
+    """Байты одного SMEM-буфера цепочки (для сеива `valid_config` и отчёта)."""
+    return int(m) * int(n) * jnp.dtype(dtype).itemsize
+
+def packed_shape(c: int) -> int:
+    """Форма под MMA: паддинг C до ближайшего кратного MMA_BLOCK нулями.
+
+    Стратегия форм — паддинг (вариант «а» постановки): для C=64 получаем M=128.
+    Математически нейтрально для нижней треугольной структуры: блок остаётся строго
+    нижним (нули в новых строках/столбцах), а верхний левый блок C x C обратной
+    матрицы совпадает с искомым; лишние строки результата — нули.
+    """
+    c = int(c)
+    return ((c + MMA_BLOCK - 1) // MMA_BLOCK) * MMA_BLOCK
 
 def backend() -> str:
     """Выбранный backend: ``triton`` (по умолчанию — прежнее поведение) | ``mosaic``.
 
-<!-- источник: /home/roman/axiom/docs/adr/ADR-052-kandidatnaya-liniya-jax-0-11-2-mosaic-gpu-ryadom-s-legacy-0-10-2-izolirovannoe-okruzhenie-capability-gate-staged-rollout.md -->
+    Читается на каждом вызове (ручка отката не кэшируется); неизвестное значение —
+    ``ValueError`` без тихого отката.
+    """
+    value = (os.environ.get("AXIOM_KDA_SOLVE_KERNEL") or "triton").strip().lower()
+    if value not in BACKENDS:
+        raise ValueError(f"AXIOM_KDA_SOLVE_KERNEL={value!r}: ожидается одно из {BACKENDS}")
+    return value
 
----
-id: ADR-052
-title: "Кандидатная линия JAX 0.11.2 (Mosaic GPU) рядом с legacy 0.10.2: изолированное окружение, capability gate, staged rollout"
-status: Proposed
-date: "2026-10-10"
-depends_on: [ADR-041, ADR-050]
-affects: [CMP-002, NFR-002]
-spec_files: [ARCHITECTURE-SPINE.md]
----
+def mosaic_available() -> bool:
+    """Есть ли Mosaic-API: ленивый импорт, без побочных эффектов и без подмены проверки."""
+    try:
+        from jax.experimental.pallas import mosaic_gpu  # noqa: F401
+    except Exception:  # noqa: BLE001 — отсутствие API = False, а не исключение наружу
+        return False
+    return True
 
-# ADR-052. Кандидатная линия JAX 0.11.2 рядом с legacy 0.10.2
+def gpu_available() -> bool:
+    """Есть ли GPU-платформа у текущего backend'а JAX (для честной границы NOT RUN)."""
+    try:
+        return any(d.platform == "gpu" for d in jax.devices())
+    except Exception:  # noqa: BLE001 — сломанный плагин не читается как «GPU есть»
+        return False
 
-- Date: 2026-10-10
-- Status: Proposed
-- Маршрут значимости: Standard (смена стека исполнения — существенный NFR воспроизводимости; финансовое влияние через потолок MFU)
-
-## Context
-
-**Где мы.** Кампания MFU-55 измеренно упёрлась в потолок текущего стека: **377 ток/с = 1.16% MFU**, узкое место — **~6 000 запусков CUDA-графов на шаг** (33 418 `cuGraphLaunch` за 120 с = 91.86 с, 77% времени, при 1.04 с всей GPU-работы). Флагами это не управляется (`min_graph_size`, `command_buffer` — нулевой эффект), батч `B=2` не компилируется (`INTERNAL: Failed to get configs`). Ядра — не узкое место: собственный Pallas-кернел убрал 115 200 TRSM-ядер (493 173 → 9 333 запусков) и **не дал ни миллисекунды**.
-
-**Что даёт смена линии.** На legacy-стеке (jax/jaxlib 0.10.2) Mosaic-путь тензорных ядер **недоступен**: капы показывают `mgpu_mma_bf16`/`mgpu_mma_fp8e4m3` = FAIL (`Layout.MMA_ACC` отсутствует), рабочий только Triton (`triton_dot`/
-
-> **Контекст усечён** до 6000 символов; полные тексты — в файлах-источниках (см. MANIFEST.json).

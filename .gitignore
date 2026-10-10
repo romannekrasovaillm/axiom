@@ -23,3 +23,6 @@ net/tests/.a4-*-out-*/
 evidence/mfu-55/G0/run.log
 evidence/mfu-55/**/*.nsys-rep
 evidence/mfu-55/**/*.sqlite
+
+# трейсы агента theseus (артефакты прогона, не код)
+.theseus/

@@ -1,43 +1,36 @@
 """Mosaic-перенос KDA-решения ``(I + L) X = B`` — контракт, backend-выбор и границы.
 
-Стадия 5 ADR-052. Этот модуль даёт **ту часть переноса, которая проверяема на
-исполнителе**: совпадающий контракт с Triton-версией :mod:`net.kernels.kda_ut_solve`
-и явный backend-выбор. Само Mosaic-ядро в этой дельте **не реализовано** — и это
-зафиксировано явно, а не замаскировано заглушкой (C-007).
+Стадия 5 ADR-052. Модуль даёт: совпадающий контракт с Triton-версией
+:mod:`net.kernels.kda_ut_solve`, явный backend-выбор и само Mosaic-ядро —
+Neumann-цепочку ``plgpu.mma`` через SMEM (:func:`_build_kernel`).
 
-Почему ядро не написано здесь
------------------------------
-Неймановское произведение ``(I+N)(I+N^2)...`` на ``plgpu.mma`` состоит из шагов, где
-**результат одного MMA становится операндом следующего**: значение живёт в
-аккумуляторной раскладке, а ``plgpu.mma`` требует ``MMA_LHS``/``MMA_RHS``. Корректный
-переход между раскладками (`layout_cast` по промежуточным ``C x C``-величинам) проверяется
-только компиляцией на стенде: локально нет ни GPU, ни Mosaic-API, а ``interpret=True``,
-``hasattr`` и импорт доказательством не считаются (C-007). Написать тело вслепую и выдать
-его за готовое — значит подменить проверку; поэтому здесь его нет, а план сборки вынесен
-в :func:`kernel` (текст ошибки) и в отчёт.
+Контракт сетки 0.11.2 (рецепт проверен на GB10, ``evidence/mfu-55/mosaic/REPORT-mosaic-chain.md``)
+-------------------------------------------------------------------------------------------------
+``grid=(H,)`` требует ``grid_names`` той же длины (иначе ``plgpu.kernel`` падает
+``ValueError`` уже при создании ядра — ``Mesh``), а рефы внутри ``body`` — **глобальные**
+массивы с осью головы (``(H, M, M)``/``(H, M, N)``): ``plgpu.mma`` принимает только
+2D-операнды ``(m, k)``/``(n, k)``. Поэтому одна программа на голову, голова выбирается
+осью ``jax.lax.axis_index("head")`` и срезом ``ref.at[h]`` — внутри программы всё 2D.
 
-Что делается дальше (готовый план для стенда)
----------------------------------------------
-1. ``grid = (H, N / bn)``: программа ``(h, j)`` берёт голову целиком (``C x C``, ось H —
-   сжатая в block-спеке) и тайл правой части ``[j*bn, (j+1)*bn)``; при ``H=12, N=256,
-   bn=64`` это 48 программ ≈ число SM GB10.
-2. ``compiler_params=dataclasses.replace(plgpu.CompilerParams(),
-   lowering_semantics=plgpu.LoweringSemantics.Lane)`` — **Lane**, как в проверенном
-   ``tools/mosaic/mma_smoke.py`` и апстрим-эталоне ``tools/mosaic/reference/``.
-3. ``N = -L``; ``T = I + N``; далее ``log2(C) = 6`` шагов: ``power = power @ power``,
-   ``T = T @ (I + power)``; в конце ``X = T B``. Каждая ``C x C``-свёртка — ``plgpu.mma``
-   с ``MMA_ACC``-аккумулятором; промежуточные значения между шагами требуют явного
-   ``layout_cast``.
-4. Правая часть грузится из ``(n, k)``-памяти транспонированной (``b_ref.T``,
-   ``MMA_RHS``), как в эталоне.
-5. Транспонированный/дифференцируемый пути (``kernel_t``/``solve``/``solve_t``) — после
-   того, как forward-ядро подтверждено на стенде.
+Что проверяемо локально (без устройства) и как
+----------------------------------------------
+``net/tests/test_kda_mosaic_parity.py`` исполняет сборку и **трассировку** ядра на
+CPU-буферах: реальная машинерия ``plgpu.kernel``/mpmd + примитивы с контрактом 0.11.2
+(``mma``/``load``/``layout_cast``/``Layout.MMA_*`` подменены шимами — их нет или они
+другие в локальном jax 0.10.2). Трассировка ловит оба GPU-путевых класса: пропущенный
+``grid_names`` (создание ядра) и не-2D операнд ``plgpu.mma`` (``too many values to
+unpack`` из ``_mma_abstract_eval``); статически то же ловит AST-проверка вызова.
 
-Backend-выбор (эта часть реализована и проверяема)
---------------------------------------------------
+Дальше (стенд, не здесь)
+------------------------
+Прогон ``AXIOM_KDA_SOLVE_KERNEL=mosaic`` на GB10: компиляция sm_121, IR/PTX = MMA,
+численный паритет с Triton-версией, время и детерминизм.
+
+Backend-выбор
+-------------
 ``AXIOM_KDA_SOLVE_KERNEL=triton`` (дефолт — прежнее поведение) | ``mosaic``; неизвестное
-значение — ``ValueError`` без тихого отката. Mosaic импортируется **лениво**: отсутствующее
-или неполное API не ломает legacy-линию.
+значение — ``ValueError`` без тихого отката. Mosaic импортируется **лениво**:
+отсутствующее или неполное API не ломает legacy-линию.
 """
 
 from __future__ import annotations
@@ -177,7 +170,12 @@ def neumann_steps(c: int) -> int:
 
 
 def _build_kernel(C: int, N: int, H: int, dtype, *, bn: int = DEFAULT_BN):
-    """Ядро: программа на голову; Neumann-произведение цепочкой `plgpu.mma` через SMEM.
+    """Ядро: одна программа на голову; Neumann-произведение цепочкой `plgpu.mma` через SMEM.
+
+    Контракт 0.11.2 (проверен на GB10, evidence/mfu-55/mosaic/REPORT-mosaic-chain.md):
+    ``grid=(H,)`` обязан нести ``grid_names``; рефы внутри ``body`` — глобальные массивы
+    с осью головы, а ``plgpu.mma`` требует 2D-операнды, поэтому голова выбирается осью
+    ``jax.lax.axis_index("head")`` и срезом ``ref.at[h]`` — внутри программы всё 2D.
 
     Формула без жонглирования знаками на каждом шаге: ``(I + L)^{-1} =
     (I - L)(I + L^2)(I + L^4)...`` обрывается на ``ceil(log2(M))`` шагах (L нильпотентна).
@@ -197,14 +195,20 @@ def _build_kernel(C: int, N: int, H: int, dtype, *, bn: int = DEFAULT_BN):
         return plgpu.layout_cast(jnp.zeros(shape, acc_dtype), plgpu.Layout.MMA_ACC(dtype))
 
     def body(l_ref, b_ref, o_ref, smem):
-        # l_ref: (M,M) = I + L (с паддингом); b_ref: (M,N) = B (с паддингом);
-        # o_ref: (M,N); smem: (M,M) DT — единственный переиспользуемый буфер цепочки.
-        lhs_l = plgpu.load(l_ref, layout=plgpu.Layout.MMA_LHS(dtype), optimized=False)
-        rhs_l = plgpu.load(l_ref.T, layout=plgpu.Layout.MMA_RHS(dtype), optimized=False)
+        # l_ref: (H, M, M) = I + L (с паддингом); b_ref: (H, M, N) = B (с паддингом);
+        # o_ref: (H, M, N) — выход всех голов; smem: (M, M) DT — буфер цепочки на программу.
+        # Рефы видны целиком (глобальные), программа берёт свою голову осью сетки:
+        # срез по `ref.at[h]` — единственный способ сделать операнды mma 2D.
+        h = jax.lax.axis_index("head")
+        l_h = l_ref.at[h]  # (M, M)
+        b_h = b_ref.at[h]  # (M, N)
+        o_h = o_ref.at[h]  # (M, N)
+        lhs_l = plgpu.load(l_h, layout=plgpu.Layout.MMA_LHS(dtype), optimized=False)
+        rhs_l = plgpu.load(l_h.T, layout=plgpu.Layout.MMA_RHS(dtype), optimized=False)
 
         # N = -L в SMEM (элементwise отрицание АККУМУЛЯТОРА — как .astype в эталоне).
         smem[...] = (-plgpu.mma(_zero((M, M)), lhs_l, plgpu.load(
-            l_ref.T, layout=plgpu.Layout.MMA_RHS(dtype), optimized=False))).astype(dtype)
+            l_h.T, layout=plgpu.Layout.MMA_RHS(dtype), optimized=False))).astype(dtype)
         n_lhs = plgpu.load(smem, layout=plgpu.Layout.MMA_LHS(dtype), optimized=False)
         n_rhs = plgpu.load(smem.T, layout=plgpu.Layout.MMA_RHS(dtype), optimized=False)
 
@@ -215,7 +219,7 @@ def _build_kernel(C: int, N: int, H: int, dtype, *, bn: int = DEFAULT_BN):
 
         # T := I + N (первый фактор (I - L)); далее T := T @ (I + power^2^k).
         t_acc = plgpu.mma(_zero((M, M)), n_lhs, plgpu.load(
-            l_ref.T, layout=plgpu.Layout.MMA_RHS(dtype), optimized=False))
+            l_h.T, layout=plgpu.Layout.MMA_RHS(dtype), optimized=False))
         smem[...] = t_acc.astype(dtype)
         t_lhs = plgpu.load(smem, layout=plgpu.Layout.MMA_LHS(dtype), optimized=False)
         for _ in range(max(steps - 1, 0)):
@@ -228,17 +232,19 @@ def _build_kernel(C: int, N: int, H: int, dtype, *, bn: int = DEFAULT_BN):
             t_lhs = plgpu.load(smem, layout=plgpu.Layout.MMA_LHS(dtype), optimized=False)
 
         # X = T B — последний mma с правой частью.
-        rhs_b = plgpu.load(b_ref.T, layout=plgpu.Layout.MMA_RHS(dtype), optimized=False)
-        o_ref[...] = plgpu.mma(_zero((M, N)), t_lhs, rhs_b).astype(dtype)
+        rhs_b = plgpu.load(b_h.T, layout=plgpu.Layout.MMA_RHS(dtype), optimized=False)
+        o_h[...] = plgpu.mma(_zero((M, N)), t_lhs, rhs_b).astype(dtype)
 
     return plgpu.kernel(
         body,
-        out_type=jax.ShapeDtypeStruct((M, N), dtype),
+        # Выход — все головы сразу (каждая программа пишет свой срез o_ref.at[h]).
+        out_type=jax.ShapeDtypeStruct((H, M, N), dtype),
         scratch_types=[plgpu.SMEM((M, M), dtype)],
         compiler_params=dataclasses.replace(
             plgpu.CompilerParams(), lowering_semantics=plgpu.LoweringSemantics.Lane
         ),
         grid=(H,),
+        grid_names=("head",),
     )
 
 
@@ -260,7 +266,8 @@ def kernel(a, b, **params):
 
     Требует GPU и Mosaic-API; на CPU поднимает ``RuntimeError`` с причиной: запуск без
     устройства не является доказательством GPU-компиляции (C-007) и паритет остаётся
-    честным NOT RUN. Форма ядра — паддинг C до блока MMA (``packed_shape``).
+    честным NOT RUN. Форма ядра — паддинг C до блока MMA (``packed_shape``); ядро
+    возвращает ``(H, M, N)``, наружу отдаётся ``(H, C, N)``.
     """
     if not mosaic_available():
         raise RuntimeError(

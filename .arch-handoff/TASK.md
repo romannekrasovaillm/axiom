@@ -1,38 +1,41 @@
 # Задача для кодового харнесса
 
-ЗАДАЧА (перевести интеграцию кернела на custom_vjp-путь: `K.solve` вместо прямого `K.kernel`).
+ЗАДАЧА (Mosaic MMA smoke для JAX 0.11.2 на GB10 — довести до компиляции и корректности).
 
-ФАКТ. В `net/kda.py` кернел KDA вызывается **напрямую** (`net.kernels.kda_ut_solve.kernel`) при `AXIOM_KDA_SOLVE=pallas`. Прогон обучения на GB10 падает:
+КОНТЕКСТ. Кандидатная линия JAX 0.11.2 поднята (ADR-052), Mosaic ALU подтверждён (`correctness-pass`). Публичный MMA-API есть: `jax.experimental.pallas.mosaic_gpu.mma(acc, a, b)` — «Computes `acc + a @ b` synchronously using **Ampere MMA instructions**»; есть layout'ы `plgpu.Layout.MMA_ACC / MMA_LHS / MMA_RHS` (на legacy 0.10.2 их не было). Мой smoke-кернел (по мотивам апстрим-теста) падает:
 ```
-[pretrain] ОШИБКА цикла: Linearization failed to produce known values for all output primals.
-  This is typically caused by attempting to differentiate a function that uses an operation with no defined JVP
+VerificationError: 'mosaic_gpu.mma' op operand #1 must be vector of A type supported by the `a` and `b` operands
+  of the synchronous `mma` op values of ranks 2, but got 'vector<128x128xf32>'
+  %99 = "mosaic_gpu.mma"(%93, %95, %98) : (vector<128x8xf32>, vector<128x128xf32>, vector<128x8xf32>) -> vector<128x8xf32>
 ```
-Причина: Pallas-ядро JVP не даёт. В модуле кернела теперь есть **`custom_vjp`-обёртка**: `solve(a, b, ...)` (forward — кернел, backward — аналитический adjoint через транспонированный кернел `kernel_t`), а также `solve_t`. То есть дифференцируемый путь уже реализован и проверен на CPU (gradcheck 9.5e-7; 113 KDA-тестов зелёные) — интеграция просто ещё не переключена.
+То есть `plgpu.load(a_ref, layout=plgpu.Layout.MMA_LHS(dtype), optimized=False)` при загрузке **из GMEM** не даёт нужный тип/layout — операнд остаётся f32. Апстрим-тест `tests/pallas/mosaic_gpu_test.py::test_mma` (JAX tag `jax-v0.11.2`) грузит операнды иначе — там операнды попадают в SMEM (путь `copy_gmem_to_smem` + `wait_gmem_to_smem`, либо SMEM-рефы), и `plgpu.mma` получает правильные layout'ы.
 
 ЧТО СДЕЛАТЬ.
-1. В `net/kda.py` в ветке `AXIOM_KDA_SOLVE=pallas` (функция `_ut_solve_pair`) заменить прямой вызов `kernel(...)` на **`solve(...)`** из `net.kernels.kda_ut_solve` (custom_vjp-путь). Сигнатуры: `solve(a, b)` → решение `(I+L)X=B`; правую часть по-прежнему подавать **конкатенированной** (dk+dv) одним вызовом, как сейчас.
-2. Сохранить: дефолт `jax` (прежнее поведение), ошибку при неизвестном значении флага, паритет и допуски.
-3. Обновить/дополнить тест `net/tests/test_kda_pallas_flag.py`: при `AXIOM_KDA_SOLVE=pallas` используется именно дифференцируемый путь (`solve`), и **градиент протекает** — тест должен брать `jax.grad` от функции, использующей `_ut_solve_pair`, и проверять, что градиенты конечны и совпадают с дефолтным (`jax`) путём в пределах допуска (на малых формах, CPU).
-4. В отчёте — что осталось измерить на GB10: проходит ли обучение end-to-end при `AXIOM_KDA_SOLVE=pallas`; число ядер `batch_trsm_left_kernel`/`MakeBatchPointers` (115 200/230 400 → ?); tok/s, занятость, MFU.
+1. Достать эталон: тест `tests/pallas/mosaic_gpu_test.py` из тега `jax-v0.11.2` (сеть разрешена через прокси; файл ~10k строк, нужен тест `test_mma` и его обвязка `self.kernel`/fixtures) — понять точный путь загрузки операндов для `plgpu.mma`.
+2. Написать `tools/mosaic/mma_smoke.py` — самодостаточный скрипт: M → K → N (взять реальные формы из задачи: K=128, N=8..128 как в тесте, dtype bf16), входы готовятся на numpy, эталон — numpy/jnp в fp32. Скрипт обязан: скомпилировать и **исполнить на устройстве** (не `interpret`, не CPU), сверить результат с эталоном с явным допуском (обосновать число), записать JSON-отчёт (status/error/shape/dtype/max_abs/rel/секунды) в указанный путь. Аргументы: `--output PATH`.
+3. Добавить `tools/tests/test_mma_smoke_contract.py` — CPU-проверки контракта скрипта (наличие аргумента `--output`, структура JSON при прогоне на CPU/`interpret` или корректный отказ), чтобы не гонять GPU из CI.
+4. В отчёте — точный путь API (какие функции/аргументы), почему предыдущий вариант не работал (root cause), и что осталось проверить на стенде (компиляция под sm_121, IR/PTX, детерминизм, несколько K-tile).
 
-ОГРАНИЧЕНИЯ. Зона: `net/kda.py`, `net/tests/*`. Не трогать `net/kernels/*` (кернел не менять), `net/config.json`, математику, публичные сигнатуры. GPU-прогоны запрещены. Один рычаг — один коммит.
+ОГРАНИЧЕНИЯ. Зона: `tools/mosaic/*`, `tools/tests/*`. НЕ трогать `net/`, `net/kernels/`, `net/config.json`, `tools/pretrain_run.py`. GPU-прогоны делаются только архитектором на GB10 (в задаче их запускать не нужно; если репозиторий исполняется на CPU-хосте — используй `interpret`/`JAX_PLATFORMS=cpu` только для контрактных тестов, а факт GPU-компиляции не объявляй).
+- Не подменять проверку: `hasattr`, импорт, CPU-прогон и `interpret=True` НЕ являются доказательством GPU-компиляции.
+- Не выдумывать API (`mgpu_mma_` не использовать как dependency, если он внутренний): опираться на публичный `plgpu.mma`.
 
-ПРОВЕРКА (ПК): `/home/roman/venv-axiom/bin/python -m pytest -q net/tests/test_kda_chunked_cc.py net/tests/test_kda_wyut.py net/tests/test_kda_dtype_gate_parity.py net/tests/test_kda_pallas_flag.py` → все зелёные.
+ПРОВЕРКА (ПК): `/home/roman/venv-axiom/bin/python -m pytest -q tools/tests/test_mma_smoke_contract.py`.
 
-РЕЗУЛЬТАТ. `.arch-handoff/result.json` + ФИНАЛЬНЫЙ git-commit. В assumptions — что именно заменено и как проверено протекание градиента; в open_questions — список для GPU-замера.
+РЕЗУЛЬТАТ. `.arch-handoff/result.json` + ФИНАЛЬНЫЙ git-commit. В assumptions — точный путь загрузки операндов и обоснование допуска; в open_questions — что должен проверить архитектор на GB10 (компиляция под sm_121, IR/PTX/SASS, детерминизм, расширение на K-tile и целевые формы кампании).
 
 ## Границы (scope)
 
 Машинный контракт границ — `MANIFEST.json.scope` (хэш `scope_hash`); изменение вне границ ловится гейтом, а не обсуждается постфактум.
 
-- **Можно писать:** `net/kda.py`, `net/tests/*`
+- **Можно писать:** `tools/mosaic/*`, `tools/tests/*`
 - **Нельзя писать (сильнее allow):** `model/`, `ARCHITECTURE-SPINE.md`, `CONSTRAINTS.yaml`
-- **Можно запускать:** `python3 -m pytest*`
-- **Сеть:** сети нет (детерминированный узел)
+- **Можно запускать:** `python3 -m pytest*`, `python3 tools/*`
+- **Сеть:** только локальный прокси-эндпоинт (канон ADR-050)
 
 ## План отката
 
-Откат: `git reset --hard 7f69bd1` (baseline — последний коммит до работы исполнителя; вся его работа приходит одним коммитом поверх).
+Откат: `git reset --hard 9916ac3` (baseline — последний коммит до работы исполнителя; вся его работа приходит одним коммитом поверх).
 Сигналы отката: провал fitness-гейта (`arch-ml control check`), непустой `conflicts_with_prior_decisions`, статус `blocked`.
 Владелец решения об откате — solution-архитектор; исполнитель откат не выполняет и не маскирует проблему обходным редизайном.
 Обратимость: полная — единая точка изменений, коммит исполнителя.
@@ -49,6 +52,15 @@ git status --short   # пусто, кроме .arch-handoff/
 
 - Коммитится код и тесты; служебный каталог `.arch-handoff/` в коммит не входит.
 - Работа без коммита считается невыполненной: оркестратор увидит её только через git log.
+
+### Самопроверка через MCP (маршрут Standard/Critical — обязательна)
+
+Перед финальным коммитом вызови через MCP-сервер `arch-spine` (подключён per-run, `.arch-handoff/mcp.json`) ровно эти проверки и добейся `passed=true`:
+
+- `fitness_check` — `{"repo": "<корень прогона>"}`;
+- `scope_check` — `{"repo": "<корень прогона>"}`.
+
+Их вызовы пишутся в MCP-журнал прогона (`.arch-handoff/mcp-journal.jsonl`) — это evidence «исполнитель проверял себя». Отсутствие записей = непроверенное, а не проверенное: на приёмке такой прогон не засчитывается (INCOMPLETE). `handoff_status` показывает обязательные проверки маршрута, `contract_validate` — пройдёт ли контракт результата.
 
 ## Контракт результата
 

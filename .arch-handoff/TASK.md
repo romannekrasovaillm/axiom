@@ -1,41 +1,49 @@
 # Задача для кодового харнесса
 
-ЗАДАЧА (Mosaic-перенос одного кернела: KDA-решение (I+L)X = B — стадия 5 ADR-052, parity-перенос).
+ЗАДАЧА (довести Mosaic-ядро KDA-решения: реализовать тело `kernel` по проверенному рецепту).
 
-КОНТЕКСТ (доказано на GB10, jax 0.11.2, окружение ~/venv-axiom-0112):
-- Mosaic ALU — `correctness-pass`; **Mosaic MMA — `correctness-pass`** на трёх кейсах bf16 (128x128x8 max_abs 0.0313; 128x64x8 0.0183; 256x128x8 0.0335). См. `evidence/mfu-55/env/REPORT-jax-0112.md`;
-- рабочий путь MMA (найден по апстрим-эталону, референсы лежат в `tools/mosaic/reference/_test_mma_harness.py` и `_test_mma_case.py`):
-  `plgpu.kernel(..., compiler_params=dataclasses.replace(plgpu.CompilerParams(), lowering_semantics=plgpu.LoweringSemantics.Lane))` (**Lane**, не Warpgroup);
-  `plgpu.load(a_ref, layout=plgpu.Layout.MMA_LHS(dtype), optimized=False)`; правая часть — `plgpu.load(b_ref.T, layout=plgpu.Layout.MMA_RHS(dtype), optimized=False)` (RHS в памяти `(n,k)`);
-  аккумулятор `plgpu.layout_cast(jnp.zeros((m,n), acc_f32), plgpu.Layout.MMA_ACC(dtype))`; умножение `plgpu.mma(acc, a, b)` (Ampere MMA).
-- Переносимый кернел — существующий `net/kernels/kda_ut_solve.py` (Triton-путь): решает `(I+L)·X = B` для `(H=12, C=64, dk+dv=256)`, где `I+L` — единичная нижняя треугольная; реализация — неймановское произведение (≈11 `dot_general`), пин точности f32 `DotAlgorithmPreset.F32_F32_F32` для fp32-пути.
+СОСТОЯНИЕ. Каркас `net/kernels/kda_ut_solve_mosaic.py` есть (контракт переиспользует Triton-версию импортом, backend override `AXIOM_KDA_SOLVE_KERNEL`), но тело не реализовано (`KERNEL_IMPLEMENTED=False`). Это было честно: неизвестен был переход раскладок между последовательными `plgpu.mma`. **Теперь он найден и проверен на GB10** — см. `evidence/mfu-55/mosaic/REPORT-mosaic-chain.md`:
 
-ЧАСТЬ 1 (мелкий фикс, обязателен). В `tools/mosaic/mma_smoke.py` стадия компиляции вызывает `kernel_fn.lower(a, b)` — у объекта `plgpu.kernel` метода `lower` нет (отсюда ложный `blocked`/`AttributeError` без сообщения). Исправить на `jax.jit(kernel_fn).lower(a, b)` (для `plgpu.kernel`-объекта jit-обёртка — работающий путь; проверено на GB10 архитектором). Заодно не глотать traceback: в `error` писать `traceback.format_exc()[-2000:]`, а не только `str(exc)`. Добавить кейс с `N=16` (в текущем наборе меняются K и M, но не N).
+```python
+def body(L_ref, o_ref, smem):                       # scratch_types=[plgpu.SMEM((M,N),DT)]
+    acc = plgpu.layout_cast(jnp.zeros((M,N), ACC), plgpu.Layout.MMA_ACC(DT))
+    a   = plgpu.load(L_ref,   layout=plgpu.Layout.MMA_LHS(DT), optimized=False)
+    b   = plgpu.load(L_ref.T, layout=plgpu.Layout.MMA_RHS(DT), optimized=False)   # RHS = (n,k)
+    p   = plgpu.mma(acc, a, b)
+    smem[...] = p.astype(DT)                        # ВЫГРУЗКА в SMEM — обязательный шаг цепочки
+    p_lhs = plgpu.load(smem, layout=plgpu.Layout.MMA_LHS(DT), optimized=False)
+    acc2  = plgpu.layout_cast(jnp.zeros((M,N), ACC), plgpu.Layout.MMA_ACC(DT))
+    p2    = plgpu.mma(acc2, p_lhs, b)               # цепочка продолжается так же
+    o_ref[...] = p2.astype(DT)
+```
+Проверено: `compile_stage ok`, `run-ok`, `max_abs 0.0079` на цепочке `(L@L)@L` (M=K=N=128, bf16). **Ключевые факты:** `layout_cast(MMA_ACC → MMA_LHS)` НЕ поддерживается — переход только через SMEM; `scratch_types` — список `plgpu.SMEM(shape, dtype)`; `lowering_semantics=Lane`; у `plgpu.kernel`-объекта нет `.lower` (нужен `jax.jit(fn).lower`).
 
-ЧАСТЬ 2 (перенос). Создать `net/kernels/kda_ut_solve_mosaic.py` — Mosaic-реализация того же решения, с **тем же контрактом модуля**, что у Triton-версии (`CASES/make_inputs/reference/baseline/kernel/cost/TUNE_SPACE/valid_config`, плюс `kernel_t`/`solve`/`solve_t` если переносишь и транспонированный/дифференцируемый путь):
-1. Neumann-итерации через `plgpu.mma` (Lane-семантика), операнды — через `MMA_LHS`/`MMA_RHS`, аккумулятор — `MMA_ACC`; учти, что `C=64` (малая матрица) и `H=12` — подбери grid/раскладку так, чтобы каждая программа решала свою голову/чанк (не делай один гигантский блок).
-2. Явный backend-выбор НЕ ломает текущий путь: Triton остаётся дефолтом (`AXIOM_KDA_SOLVE_KERNEL=triton`), Mosaic включается `=mosaic`; неизвестное значение → `ValueError` (без тихого отката). Ленивый импорт Mosaic, чтобы отсутствие/сломанный API не ломал legacy-линию.
-3. Паритет: на CPU/`interpret` сравнить Mosaic-реализацию с `reference` (jnp) в пределах обоснованного допуска; если CPU-путь для Mosaic недоступен — зафиксировать это как NOT RUN и оставить архитектору GPU-проверку (не выдавать «прошло» без устройства).
-4. Тест `net/tests/test_kda_mosaic_parity.py`: контракт (константы `CASES`, сигнатуры), поведение при `mosaic` без Mosaic-API (честная ошибка), и что `triton`-путь не изменился.
+ЧТО СДЕЛАТЬ.
+1. Реализовать тело `kernel` (Neumann-произведение для `(I+L)·X = B`): цепочка `plgpu.mma` с SMEM-переходами между шагами, `S = ceil(log2(C))` шагов; результат — `X`.
+2. **Формы.** Задача: H=12, C=64, dk+dv=256. MMA в 0.11.2 требует форм, кратных блокам (эталон использует M=K=128, N=8). Выбери и **обоснуй** в отчёте один из путей: (а) паддинг `C=64 → 128` нулями (математически нейтрально для нижней треугольной структуры, но требует аккуратности с `(I+L)`); (б) батчевание по головам так, чтобы m-размерность набиралась из голов; (в) иной. Укажи, как это влияет на память SMEM (лимит GB10 ~99 КБ на блок).
+3. Сохранить контракт: `CASES` — реальные формы (H=12, C=64, dk=dv=128), `make_inputs/reference/baseline/cost/TUNE_SPACE/valid_config`; `kernel()` вызывается из общего диспетчера, дефолт остаётся Triton.
+4. Тест `net/tests/test_kda_mosaic_parity.py` дополнить: (а) `kernel` не поднимает `KERNEL_IMPLEMENTED`-ошибку, а требует GPU (честный отказ на CPU без подмены); (б) структура вызова (scratch/семантика) соответствует рецепту; (в) `valid_config` отсеивает конфигурации, не влезающие в SMEM.
+5. CPU-паритет: если Mosaic на CPU недоступен — так и написать (NOT RUN), не выдавая проверку за пройденную; но `reference`-путь (jnp) обязан быть сверен с `solve_jax` в пределах допуска.
 
-ОГРАНИЧЕНИЯ. Зона: `net/kernels/*`, `tools/mosaic/*`, `tools/tests/*`. НЕ трогать `net/kda.py`, `net/config.json`, `tools/pretrain_run.py` (интеграция в граф — отдельная дельта после GPU-проверки). GPU-прогоны в задаче НЕ запускать — их делает архитектор в `~/venv-axiom-0112` на GB10. Не подменять проверку (`hasattr`, импорт, CPU-прогон, `interpret` не доказывают GPU-корректность; Mosaic-путь обязан быть GPU-проверяемым).
+ОГРАНИЧЕНИЯ. Зона: `net/kernels/*`, `net/tests/*`. НЕ трогать `net/kda.py`, `net/config.json`, `tools/pretrain_run.py`. GPU-прогоны НЕ запускать (их делает архитектор в `~/venv-axiom-0112`); код обязан быть исполняемым на стенде командой:
+`/home/roman/venv-axiom-0112/bin/python -c "…kernel…"`. Не подменять проверку (`hasattr`/импорт/`interpret` — не доказательство).
 
-ПРОВЕРКА (ПК): `/home/roman/venv-axiom/bin/python -m pytest -q net/tests/test_kda_mosaic_parity.py tools/tests/test_mma_smoke_contract.py`.
+ПРОВЕРКА (ПК): `/home/roman/venv-axiom/bin/python -m pytest -q net/tests/test_kda_mosaic_parity.py`.
 
-РЕЗУЛЬТАТ. `.arch-handoff/result.json` + ФИНАЛЬНЫЙ git-commit. В assumptions — раскладка grid/блоков и допуск паритета с числом; в open_questions — что проверить архитектору на GB10 (компиляция под sm_121, IR/PTX — что это действительно MMA, а не скалярный цикл, время против Triton-версии и против XLA `triangular_solve`, детерминизм).
+РЕЗУЛЬТАТ. `.arch-handoff/result.json` + ФИНАЛЬНЫЙ git-commit. В assumptions — выбранная стратегия форм (с обоснованием) и оценка SMEM; в open_questions — что проверить на GB10 (компиляция под sm_121, IR/PTX: действительно ли MMA, время против Triton и XLA, детерминизм, точность цепочки).
 
 ## Границы (scope)
 
 Машинный контракт границ — `MANIFEST.json.scope` (хэш `scope_hash`); изменение вне границ ловится гейтом, а не обсуждается постфактум.
 
-- **Можно писать:** `net/kernels/*`, `tools/mosaic/*`, `tools/tests/*`
+- **Можно писать:** `net/kernels/*`, `net/tests/*`
 - **Нельзя писать (сильнее allow):** `model/`, `ARCHITECTURE-SPINE.md`, `CONSTRAINTS.yaml`
-- **Можно запускать:** `python3 -m pytest*`, `python3 tools/*`
+- **Можно запускать:** `python3 -m pytest*`
 - **Сеть:** сети нет (детерминированный узел)
 
 ## План отката
 
-Откат: `git reset --hard b4e3d57` (baseline — последний коммит до работы исполнителя; вся его работа приходит одним коммитом поверх).
+Откат: `git reset --hard cb2e45d` (baseline — последний коммит до работы исполнителя; вся его работа приходит одним коммитом поверх).
 Сигналы отката: провал fitness-гейта (`arch-ml control check`), непустой `conflicts_with_prior_decisions`, статус `blocked`.
 Владелец решения об откате — solution-архитектор; исполнитель откат не выполняет и не маскирует проблему обходным редизайном.
 Обратимость: полная — единая точка изменений, коммит исполнителя.

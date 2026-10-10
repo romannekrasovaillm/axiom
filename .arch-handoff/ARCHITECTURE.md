@@ -1,11 +1,92 @@
 # Архитектурный контекст (epic-context)
 
-Собран: 2026-10-10T09:44:48.202193982+00:00
+Собран: 2026-10-10T09:52:19.486152894+00:00
 
 Источники:
+- /home/roman/axiom/evidence/mfu-55/mosaic/REPORT-mosaic-chain.md
+- /home/roman/axiom/net/kernels/kda_ut_solve_mosaic.py
 - /home/roman/axiom/docs/adr/ADR-052-kandidatnaya-liniya-jax-0-11-2-mosaic-gpu-ryadom-s-legacy-0-10-2-izolirovannoe-okruzhenie-capability-gate-staged-rollout.md
-- /home/roman/axiom/evidence/mfu-55/env/REPORT-jax-0112.md
-- /home/roman/axiom/net/kernels/kda_ut_solve.py
+
+<!-- источник: /home/roman/axiom/evidence/mfu-55/mosaic/REPORT-mosaic-chain.md -->
+
+# Mosaic: рабочий паттерн цепочки MMA-умножений (GB10, jax 0.11.2)
+
+**Цель:** перенести KDA-решение `(I+L)X=B` (Neumann-произведение = **цепочка** умножений) на Mosaic. Одиночный `plgpu.mma` уже работал (`correctness-pass`), но цепочка упиралась в раскладки.
+
+## Три барьера, снятые по очереди (все — на стенде)
+
+| # | Симптом | Причина | Решение |
+|---|---|---|---|
+| 1 | `AttributeError` без сообщения на стадии компиляции | `kernel_fn.lower(...)` — у объекта `plgpu.kernel` нет метода `lower` | `jax.jit(kernel_fn).lower(...)` |
+| 2 | `NotImplementedError: Cannot convert from TiledLayout(…warp_dims=(-7,)) to TiledLayout(…warp_dims=(-7, Replicated(times=1)))` | `layout_cast` **из `MMA_ACC` в `MMA_LHS` не поддерживается** — результат `mma` нельзя напрямую подать операндом | переход **через SMEM**: `smem[...] = p.astype(DT)` → `plgpu.load(smem, layout=MMA_LHS(DT), optimized=False)` |
+| 3 | `AttributeError: 'ShapeDtypeStruct' object has no attribute 'get_ref_aval'` | `scratch_types` ожидает ref-типы, а не `ShapeDtypeStruct`; и это **список** | `scratch_types=[plgpu.SMEM((M, N), DT)]`, тело `body(in_ref, out_ref, smem)` |
+
+## Рабочий рецепт (проверен на GB10)
+
+```python
+def body(L_ref, o_ref, smem):                      # scratch_types=[plgpu.SMEM((M,N),DT)]
+    acc = plgpu.layout_cast(jnp.zeros((M,N), ACC), plgpu.Layout.MMA_ACC(DT))
+    a   = plgpu.load(L_ref,   layout=plgpu.Layout.MMA_LHS(DT), optimized=False)
+    b   = plgpu.load(L_ref.T, layout=plgpu.Layout.MMA_RHS(DT), optimized=False)   # RHS = (n,k)
+    p   = plgpu.mma(acc, a, b)                     # ACC-раскладка, f32
+    smem[...] = p.astype(DT)                       # ВЫГРУЗКА в SMEM — обязательный шаг цепочки
+    p_lhs = plgpu.load(smem, layout=plgpu.Layout.MMA_LHS(DT), optimized=False)
+    acc2  = plgpu.layout_cast(jnp.zeros((M,N), ACC), plgpu.Layout.MMA_ACC(DT))
+    p2    = plgpu.mma(acc2, p_lhs, b)
+    o_ref[...] = p2.astype(DT)
+
+kernel = plgpu.kernel(body, out_type=..., scratch_types=[plgpu.SMEM((M,N), DT)],
+                      compiler_params=plgpu.CompilerParams(
+                          lowering_semantics=plgpu.LoweringSemantics.Lane))   # Lane, не Warpgroup
+```
+
+## Следствие для переноса
+
+1. Для Neumann-произведения нужен **SMEM-буфер на каждый промежуточный результат** (C×C или C×(dk+dv)) — либо один переиспользуемый, но с явной синхронизацией шагов (барьер/commit).
+2. Точность цепочки ограничена bf16 на каждом шаге выгрузки (в прототипе rel ≈ 1e-2 относительно максимума) — для KDA это вопрос численной политики: либо аккумулятор в fp32 и выгрузка только там, где требует раскладка, либо переход на fp32-операнды, если `MMA_LHS/RHS` их поддержат на CC12.1 (не проверено).
+3. Раскладки RHS: правая часть подаётся в памяти `(n, k)` и грузится с `b_ref.T`.
+
+<!-- источник: /home/roman/axiom/net/kernels/kda_ut_solve_mosaic.py -->
+
+"""Mosaic-перенос KDA-решения ``(I + L) X = B`` — контракт, backend-выбор и границы.
+
+Стадия 5 ADR-052. Этот модуль даёт **ту часть переноса, которая проверяема на
+исполнителе**: совпадающий контракт с Triton-версией :mod:`net.kernels.kda_ut_solve`
+и явный backend-выбор. Само Mosaic-ядро в этой дельте **не реализовано** — и это
+зафиксировано явно, а не замаскировано заглушкой (C-007).
+
+# --- Контракт Triton-версии: переиспользуем импортом (не копипаста) ---
+
+from .kda_ut_solve import (  # noqa: F401 — часть контракта модуля
+    CASES,
+    DEFAULT_PARAMS,
+    TOLERANCE,
+    TUNE_SPACE,
+    baseline,
+    baseline_t,
+    cost,
+    make_inputs,
+    reference,
+    reference_t,
+    solve_jax,
+    solve_jax_t,
+    valid_config,
+)
+
+#: Допустимые значения ``AXIOM_KDA_SOLVE_KERNEL``.
+
+BACKENDS = ("triton", "mosaic")
+
+#: Тайл правой части по умолчанию (H=12, N=256 → 12 * 4 = 48 программ ≈ SM GB10).
+
+DEFAULT_BN = 64
+
+#: Ядро Mosaic в этой дельте не реализовано — модуль объявляет это, а не притворяется.
+
+KERNEL_IMPLEMENTED = False
+
+def backend() -> str:
+    """Выбранный backend: ``triton`` (по умолчанию — прежнее поведение) | ``mosaic``.
 
 <!-- источник: /home/roman/axiom/docs/adr/ADR-052-kandidatnaya-liniya-jax-0-11-2-mosaic-gpu-ryadom-s-legacy-0-10-2-izolirovannoe-okruzhenie-capability-gate-staged-rollout.md -->
 
@@ -29,49 +110,6 @@ spec_files: [ARCHITECTURE-SPINE.md]
 
 **Где мы.** Кампания MFU-55 измеренно упёрлась в потолок текущего стека: **377 ток/с = 1.16% MFU**, узкое место — **~6 000 запусков CUDA-графов на шаг** (33 418 `cuGraphLaunch` за 120 с = 91.86 с, 77% времени, при 1.04 с всей GPU-работы). Флагами это не управляется (`min_graph_size`, `command_buffer` — нулевой эффект), батч `B=2` не компилируется (`INTERNAL: Failed to get configs`). Ядра — не узкое место: собственный Pallas-кернел убрал 115 200 TRSM-ядер (493 173 → 9 333 запусков) и **не дал ни миллисекунды**.
 
-**Что даёт смена линии.** На legacy-стеке (jax/jaxlib 0.10.2) Mosaic-путь тензорных ядер **недоступен**: капы показывают `mgpu_mma_bf16`/`mgpu_mma_fp8e4m3` = FAIL (`Layout.MMA_ACC` отсутствует), рабочий только Triton (`triton_dot`/`triton_elementwise` PASS). Целевая стабильная линия — **JAX 0.11.2** (выпуск 2026-09-17), требующая Python ≥ 3.12; в 0.11.0 добавлен **публичный `jax.experimental.pallas.mosaic_gpu.mma`** (Ampere MMA), кандидатный для GB10 **CC 12.1**. Существенно: наличие символа ≠ capability — компиляция, layout, dtype и численность под CC12.1 проверяются отдельно (Hopper `wgmma` и SM100 `tcgen05`/TMEM к GB10 не применяются).
-
-## Decision
-
-1. **Кандидатная линия — отдельное изолированное окружение** `/home/roman/venv-axiom-0112` с точным пином `jax==0.11.2`, `jaxlib==0.11.2` и GPU plugin/PJRT/runtime, зафиксированными **фактическими** версиями и wheel-хешами (aarch64). Существующее `venv-axiom` (0.10.2) **не изменяется** — оно остаётся рабочей линией кампании и точкой отката.
-2. **Capability gate, а не `jax_version >= 0.11`.** Статусы ведутся раздельно и только по evidence: (а) JAX GPU работает (`jax.devices()` + JIT-операция с `block_until_ready`), (б) Mosaic ALU/elementwise компилируется и исполняется, (в) Mosaic **MMA** — компиляция под CC12.1 + IR/PTX/SASS + численная сверка. Отсутствие `mgpu_mma_` в исходниках, `hasattr`, CPU-прогон и `interpret=True` — **не** доказательство.
-3. **Staged rollout по `mosaic-gb10-migrate`** (стадии не пропускаются):
-   1. baseline-инвентаризация (Triton-импорты, layouts, precision, grid, reference/correctness/latency каждого кернела);
-   2. adapter с явным backend override; legacy остаётся дефолтом, Mosaic импортируется лениво;
-   3. перенос non-MMA частей (elementwise/reduction/epilogue) — успех отдельной части **не открывает** gate для GEMM/attention;
-   4. MMA — только после доказанной компиляции под CC12.1 (иначе BLOCKED безотносительно номера версии);
-   5. паразит-контроль (parity: reference, tails, dtype, jit, grad);
-   6. performance на целевых формах с согласованным regression budget;
-   7. switch default — только при выполнении (а)–(в) и готовом rollback;
-   8. retire — отдельно, после периода сравнения.
-4. **Паритет чисел кампании перемеряется на новой линии** (правило сопоставимости: условия замера — часть результата). Результаты 0.10.2 не переносятся на 0.11.2 автоматически, и наоборот.
-5. **Rollback:** возврат на `venv-axiom` (0.10.2) — переключением окружения, без правок кода; lock/manifest обеих линий хранятся в `evidence/mfu-55/env/`.
-6. **Nightly/latest не используются**: если понадобится экспериментальный билд — отдельный lock и честное имя, не «0.11.2».
-
-## Alternatives Considered
-
-| Вариант | Плюсы | Минусы |
-|---|---|---|
-| **A. Отдельная кандидатная линия 0.11.2 + capability gate + staged rollout** (принято) | Legacy не ломается; rollout обратим; MMA/Mosaic проверяются доказательно; соответствует скиллам | Два окружения (путаница, дублирование зависимостей); время на верификацию; паритет под вопросом |
-| B. Обновить 0.10.2 на месте | Не нужно второе окружение | Прямо противоречит канону скиллов; риск сломать единственную рабочую линию и потерять точку отката; паритет кампании обнуляется |
-| C. Остаться на 0.10.2 | Ноль риска | Потолок измерен (1.16% MFU), Mosaic MMA недоступен, `cuGraphLaunch` не управляется флагами — движение к G1 невозможно |
-| D. Nightly/`latest` | Возможно, раньше появится нужное | Не воспроизводимо, неверное имя линии, ломает lock-дисциплину |
-
-## Consequences
-
-
-
-### Positive
-
-- Появляется проверяемый путь к Mosaic MMA и к другому XLA (возможно, иная работа с графами) — то есть шанс сдвинуть измеренный барьер.
-- Legacy-стенд остаётся нетронутым: кампания и прогоны владельца не рискуют.
-- Rollback — переключение окружения; lock обеих линий фиксируется.
-- Решение соответствует отработанной методике (скиллы), а не изобретается заново.
-
-### Negative
-
-- **Два окружения** — риск путаницы (`venv-axiom` vs `venv-axiom-0112`), дублирование диска (~несколько ГБ) и необходимость явно объявлять окружение в каждом прогоне и замере.
-- **Паритет не гарантирован**: смена jax/jaxlib/плагина/PJRT может изменить компиляцию, точность и тайминги; все числа кампании придётся перемерять (время стенда).
-- **Mosaic MMA может оказаться неприменим к CC12.1** даже н
+**Что даёт смена линии.** На legacy-стеке (jax/jaxlib 0.10.2) Mosaic-путь тензорных ядер **недоступен**: капы показывают `mgpu_mma_bf16`/`mgpu_mma_fp8e4m3` = FAIL (`Layout.MMA_ACC` отсутствует), рабочий только Triton (`triton_dot`/
 
 > **Контекст усечён** до 6000 символов; полные тексты — в файлах-источниках (см. MANIFEST.json).

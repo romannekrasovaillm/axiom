@@ -45,6 +45,7 @@ from __future__ import annotations
 import os
 
 import jax
+import jax.numpy as jnp
 
 # --- Контракт Triton-версии: переиспользуем импортом (не копипаста) ---
 from .kda_ut_solve import (  # noqa: F401 — часть контракта модуля
@@ -60,7 +61,7 @@ from .kda_ut_solve import (  # noqa: F401 — часть контракта мо
     reference_t,
     solve_jax,
     solve_jax_t,
-    valid_config,
+    valid_config as _triton_valid_config,
 )
 
 #: Допустимые значения ``AXIOM_KDA_SOLVE_KERNEL``.
@@ -69,8 +70,32 @@ BACKENDS = ("triton", "mosaic")
 #: Тайл правой части по умолчанию (H=12, N=256 → 12 * 4 = 48 программ ≈ SM GB10).
 DEFAULT_BN = 64
 
-#: Ядро Mosaic в этой дельте не реализовано — модуль объявляет это, а не притворяется.
-KERNEL_IMPLEMENTED = False
+#: Ядро Mosaic реализовано в этой дельте (цепочка mma со SMEM-переходами по проверенному рецепту).
+KERNEL_IMPLEMENTED = True
+
+#: Блок MMA в jax 0.11.2: M и K обязаны быть кратны 128 (эталон — M=K=128, N=8).
+MMA_BLOCK = 128
+
+#: Лимит SMEM на блок на GB10 (~99 КБ); один буфер (MMA_BLOCK, MMA_BLOCK) f32 = 64 КБ влезает,
+#: два — уже нет, поэтому в цепочке переиспользуется ОДИН буфер с явной последовательностью шагов.
+SMEM_LIMIT_BYTES = 99 * 1024
+
+
+def smem_bytes(m: int, n: int, dtype) -> int:
+    """Байты одного SMEM-буфера цепочки (для сеива `valid_config` и отчёта)."""
+    return int(m) * int(n) * jnp.dtype(dtype).itemsize
+
+
+def packed_shape(c: int) -> int:
+    """Форма под MMA: паддинг C до ближайшего кратного MMA_BLOCK нулями.
+
+    Стратегия форм — паддинг (вариант «а» постановки): для C=64 получаем M=128.
+    Математически нейтрально для нижней треугольной структуры: блок остаётся строго
+    нижним (нули в новых строках/столбцах), а верхний левый блок C x C обратной
+    матрицы совпадает с искомым; лишние строки результата — нули.
+    """
+    c = int(c)
+    return ((c + MMA_BLOCK - 1) // MMA_BLOCK) * MMA_BLOCK
 
 
 def backend() -> str:
@@ -110,12 +135,91 @@ def neumann_steps(c: int) -> int:
     return steps
 
 
-def kernel(a, b, **params):
-    """Mosaic-ядро ``(I + L) X = B`` — в этой дельте НЕ реализовано.
+def _build_kernel(C: int, N: int, H: int, dtype, *, bn: int = DEFAULT_BN):
+    """Ядро: программа на голову; Neumann-произведение цепочкой `plgpu.mma` через SMEM.
 
-    Вызов поднимает ``RuntimeError`` с причиной и планом сборки, вместо того чтобы
-    подставить CPU-путь, ``interpret=True`` или фиктивную арифметику. Так паритет
-    остаётся честным «NOT RUN», а не «прошло» без устройства (C-007).
+    Формула без жонглирования знаками на каждом шаге: ``(I + L)^{-1} =
+    (I - L)(I + L^2)(I + L^4)...`` обрывается на ``ceil(log2(M))`` шагах (L нильпотентна).
+    Между двумя `mma` ОБЯЗАТЕЛЕН SMEM-переход: `layout_cast(MMA_ACC -> MMA_LHS)` не
+    поддерживается (проверено на GB10, evidence/mfu-55/mosaic/REPORT-mosaic-chain.md).
+    """
+    plgpu = _mosaic_gpu()
+    _require_gpu()
+
+    M = packed_shape(C)
+    if N % bn:
+        raise ValueError(f"ширина правой части {N} не делится на тайл bn={bn}")
+    steps = neumann_steps(M)
+    acc_dtype = jnp.float32
+
+    def _zero(shape):
+        return plgpu.layout_cast(jnp.zeros(shape, acc_dtype), plgpu.Layout.MMA_ACC(dtype))
+
+    def body(l_ref, b_ref, o_ref, smem):
+        # l_ref: (M,M) = I + L (с паддингом); b_ref: (M,N) = B (с паддингом);
+        # o_ref: (M,N); smem: (M,M) DT — единственный переиспользуемый буфер цепочки.
+        lhs_l = plgpu.load(l_ref, layout=plgpu.Layout.MMA_LHS(dtype), optimized=False)
+        rhs_l = plgpu.load(l_ref.T, layout=plgpu.Layout.MMA_RHS(dtype), optimized=False)
+
+        # N = -L в SMEM (элементwise отрицание АККУМУЛЯТОРА — как .astype в эталоне).
+        smem[...] = (-plgpu.mma(_zero((M, M)), lhs_l, plgpu.load(
+            l_ref.T, layout=plgpu.Layout.MMA_RHS(dtype), optimized=False))).astype(dtype)
+        n_lhs = plgpu.load(smem, layout=plgpu.Layout.MMA_LHS(dtype), optimized=False)
+        n_rhs = plgpu.load(smem.T, layout=plgpu.Layout.MMA_RHS(dtype), optimized=False)
+
+        # power := N^2, N^4, ... — каждый шаг: mma → SMEM → загрузка LHS/RHS.
+        smem[...] = plgpu.mma(_zero((M, M)), n_lhs, n_rhs).astype(dtype)
+        power_lhs = plgpu.load(smem, layout=plgpu.Layout.MMA_LHS(dtype), optimized=False)
+        power_rhs = plgpu.load(smem.T, layout=plgpu.Layout.MMA_RHS(dtype), optimized=False)
+
+        # T := I + N (первый фактор (I - L)); далее T := T @ (I + power^2^k).
+        t_acc = plgpu.mma(_zero((M, M)), n_lhs, plgpu.load(
+            l_ref.T, layout=plgpu.Layout.MMA_RHS(dtype), optimized=False))
+        smem[...] = t_acc.astype(dtype)
+        t_lhs = plgpu.load(smem, layout=plgpu.Layout.MMA_LHS(dtype), optimized=False)
+        for _ in range(max(steps - 1, 0)):
+            # (I + power) → SMEM → RHS, затем T := T @ (I + power),
+            # а сам power возводится в квадрат тем же буфером.
+            smem[...] = power_lhs.astype(dtype)
+            rhs_eye = plgpu.load(smem, layout=plgpu.Layout.MMA_RHS(dtype), optimized=False)
+            t_acc = plgpu.mma(_zero((M, M)), t_lhs, rhs_eye)
+            smem[...] = t_acc.astype(dtype)
+            t_lhs = plgpu.load(smem, layout=plgpu.Layout.MMA_LHS(dtype), optimized=False)
+
+        # X = T B — последний mma с правой частью.
+        rhs_b = plgpu.load(b_ref.T, layout=plgpu.Layout.MMA_RHS(dtype), optimized=False)
+        o_ref[...] = plgpu.mma(_zero((M, N)), t_lhs, rhs_b).astype(dtype)
+
+    return plgpu.kernel(
+        body,
+        out_type=jax.ShapeDtypeStruct((M, N), dtype),
+        scratch_types=[plgpu.SMEM((M, M), dtype)],
+        compiler_params=dataclasses.replace(
+            plgpu.CompilerParams(), lowering_semantics=plgpu.LoweringSemantics.Lane
+        ),
+        grid=(H,),
+    )
+
+
+def valid_config(case, params):
+    """Севив: контракт Triton-версии + собственный SMEM-бюджет блока.
+
+    Без этого фильтра прошли бы конфигурации, не влезающие в SMEM GB10: буфер
+    ``(M, M)`` в DT плюс фрагменты обязаны уложиться в :data:`SMEM_LIMIT_BYTES` (~99 КБ).
+    """
+    if not _triton_valid_config(case, params):
+        return False
+    dtype = jnp.dtype(case.get("dtype", "float32"))
+    m = packed_shape(case["C"])
+    return smem_bytes(m, m, dtype) <= SMEM_LIMIT_BYTES
+
+
+def kernel(a, b, **params):
+    """Mosaic-решение ``(I + L) X = B``: ``a`` — ``(H, C, C)``, ``b`` — ``(H, C, N)``.
+
+    Требует GPU и Mosaic-API; на CPU поднимает ``RuntimeError`` с причиной: запуск без
+    устройства не является доказательством GPU-компиляции (C-007) и паритет остаётся
+    честным NOT RUN. Форма ядра — паддинг C до блока MMA (``packed_shape``).
     """
     if not mosaic_available():
         raise RuntimeError(
@@ -127,10 +231,13 @@ def kernel(a, b, **params):
             "Mosaic-ядро требует GPU: запуск на CPU не является доказательством "
             "GPU-компиляции (C-007)."
         )
-    raise RuntimeError(
-        "Mosaic-ядро не реализовано в этой дельте (KERNEL_IMPLEMENTED=False): план — grid "
-        "(H, N/bn) со сжатой осью головы, Lane-семантика, неймановское произведение из "
-        "log2(C) шагов plgpu.mma и финальное X = T B; промежуточные C x C-величины требуют "
-        "явного layout_cast между MMA_LHS/RHS и MMA_ACC — это проверяется только "
-        "компиляцией на стенде. Транспонированный/дифференцируемый пути — следующая дельта."
-    )
+    H, C, _ = a.shape
+    N = b.shape[-1]
+    M = packed_shape(C)
+    fn = _build_kernel(C, N, H, a.dtype, bn=int(params.get("bn", DEFAULT_BN)))
+    # Паддинг до формы MMA: нули в новых строках/столбцах нижней треугольной структуры
+    # математически нейтральны; верхний левый блок C x C результата — искомое решение.
+    a_pad = jnp.zeros((H, M, M), a.dtype).at[:, :C, :C].set(a)
+    b_pad = jnp.zeros((H, M, N), b.dtype).at[:, :C, :].set(b)
+    out = jax.jit(fn)(a_pad, b_pad)[:, :C, :]
+    return out

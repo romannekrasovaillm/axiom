@@ -1,41 +1,49 @@
 {
   "status": "partial",
   "assumptions": [
-    "Root cause прошлого падения найден и воспроизведён по эталону: ядро вызывалось без явных compiler_params, а операнды грузились из GMEM без MMA-layout'ов, поэтому A приходил во f32 ('mosaic_gpu.mma op operand #1 must be vector of A type … got vector<128x128xf32>'). Точный требуемый путь: plgpu.kernel(..., compiler_params=dataclasses.replace(plgpu.CompilerParams(), lowering_semantics=plgpu.LoweringSemantics.Lane)); a = plgpu.load(a_ref, layout=plgpu.Layout.MMA_LHS(dtype), optimized=False); b = plgpu.load(b_ref.T, layout=plgpu.Layout.MMA_RHS(dtype), optimized=False); аккумулятор — plgpu.layout_cast(jnp.zeros((m,n), acc_dtype), plgpu.Layout.MMA_ACC(dtype)); o_ref[...] = plgpu.mma(acc, a, b). dimension_semantics для grid не потребовался: при Lane-семантике и одно-программном ядре без grid параметр не задаётся (в эталоне его нет).",
-    "Входы подаются как numpy и приводятся через jnp.asarray(x, dtype=jnp.dtype('bfloat16')) — как требует постановка (не ndarray.astype(jnp.bfloat16)); правая часть в памяти имеет форму (n, k) и грузится транспонированной (b_ref.T), потому что RHS-layout ожидает (k, n).",
-    "tools/mosaic/mma_smoke.py: самодостаточный скрипт с --output; кейсы M=128/K=128/N=8 (базовый) и --cases для (128,64,8) и (256,128,8); эталон — fp32-произведение numpy-входов; JSON с полями status/shape/dtype/max_abs/rel/seconds/error_type/error/stage/cases; стадии compile и run разделены (ошибка компиляции — error_type класса исключения и stage=compile, исполнение — stage=run); допуск 1e-1 для bf16/fp16 (fp32-аккумулятор) и 1e-4 для остальных.",
-    "Без GPU скрипт пишет честный status=blocked с error_type=no-gpu, причиной и перечнем запланированных кейсов (тоже blocked) — 'correctness-pass' без ускорителя не выдаётся; hasattr/импорт/interpret=True доказательством GPU-компиляции не считаются (C-007), подмены проверки нет.",
-    "tools/tests/test_mma_smoke_contract.py: CPU-контракт — наличие скрипта, обязательность --output (argparse exit 2), структура JSON и допустимые status, blocked с причиной на машине без GPU, --cases/--dtype. Проверка: /home/roman/venv-axiom/bin/python -m pytest -q tools/tests/test_mma_smoke_contract.py → 5 passed.",
-    "Фактический запуск на исполнителе (не-GPU, AD-7): python tools/mosaic/mma_smoke.py --output /tmp/mma_smoke_out.json → status=blocked, error_type=no-gpu (CUDA plugin initialize падает: cuInit(0) failed → fallback to cpu), кейсы перечислены как blocked. GPU-прогон остаётся за архитектором.",
-    "Зона соблюдена: изменены только tools/mosaic/mma_smoke.py и tools/tests/test_mma_smoke_contract.py (плюс существующие референс-файлы в tools/mosaic/reference/, которые уже лежали в репозитории и мной не правились). net/, net/kernels/, net/config.json, tools/pretrain_run.py не тронуты.",
-    "Коммит один: 5cc482d поверх baseline da44935 (правка гигиены — снятие абсолютного пути из докстроки — внесена amend'ом в тот же коммит).",
-    "MCP-самопроверка выполнена на финальном HEAD 5cc482d6b5ba73461a29a027bf3ce87578952a4c (журнал .arch-handoff/mcp-journal.jsonl): записи у финального HEAD есть, passed=false у обоих инструментов — причины вне зоны; гейты не подгонялись."
+    "Часть 1 (фикс, обязателен) выполнена и проверена: в tools/mosaic/mma_smoke.py стадия компиляции вызывает jax.jit(kernel_fn).lower(a, b) — у объекта plgpu.kernel метода .lower нет, отсюда был ложный blocked/AttributeError; в error пишется traceback.format_exc()[-2000:] вместо усечённого str(exc); в CASES добавлен кейс N=16 (128x128x16) — раньше менялись только K и M, N оставался 8.",
+    "Часть 2 выполнена в объёме, проверяемом на исполнителе: net/kernels/kda_ut_solve_mosaic.py даёт совпадающий контракт (CASES/TUNE_SPACE/DEFAULT_PARAMS/TOLERANCE/make_inputs/reference/baseline/reference_t/baseline_t/solve_jax/solve_jax_t/cost/valid_config — те же объекты Triton-модуля, переиспользованы импортом, а не копипастой), backend()-выбор через AXIOM_KDA_SOLVE_KERNEL (triton по умолчанию | mosaic; неизвестное значение — ValueError без тихого отката), ленивую проверку Mosaic-API и GPU, neumann_steps(C)=log2(C).",
+    "Тело Mosaic-ядра в этой дельте НЕ реализовано, и это объявлено явно (KERNEL_IMPLEMENTED=False, kernel() поднимает RuntimeError с причиной и планом сборки). Причина: неймановское произведение на plgpu.mma состоит из шагов, где результат одного MMA становится операндом следующего; промежуточные C x C-величины живут в аккумуляторной раскладке, а plgpu.mma требует MMA_LHS/MMA_RHS — корректный переход между раскладками (layout_cast по промежуточным величинам) проверяется только компиляцией на стенде. Локально нет ни GPU, ни Mosaic-API, а hasattr/импорт/interpret=True доказательством не считаются (C-007); написать тело вслепую и выдать за готовое — подмена проверки. Транспонированный и дифференцируемый пути (kernel_t/solve/solve_t) по той же причине не портированы.",
+    "План сборки ядра (готов архитектору): grid=(H, N/bn) со сжатой осью головы (программа берёт голову целиком, C x C не дробится; при H=12, N=256, bn=64 это 48 программ ≈ число SM GB10); compiler_params с lowering_semantics=plgpu.LoweringSemantics.Lane; N=-L, T=I+N, далее log2(C)=6 шагов power=power@power и T=T@(I+power), в конце X=T·B; правая часть грузится из (n,k)-памяти транспонированной (b_ref.T, MMA_RHS); каждая C x C-свёртка — plgpu.mma с MMA_ACC-аккумулятором и явным layout_cast между шагами.",
+    "Паритет Mosaic с reference — NOT RUN на исполнителе: устройство отсутствует, а CPU-прогон паритетом GPU-ядра не является. Тест это фиксирует явно (проверяет отказ и то, что паритет не объявлен пройденным); независимо от этого CPU-эталон reference сверен с solve_jax (совпадение в пределах 1e-4).",
+    "Проверка выполнена требуемым интерпретатором: /home/roman/venv-axiom/bin/python -m pytest -q net/tests/test_kda_mosaic_parity.py tools/tests/test_mma_smoke_contract.py → 13 passed.",
+    "Не тронуты: net/kda.py, net/config.json, tools/pretrain_run.py (интеграция в граф — отдельная дельта после GPU-проверки); GPU-прогоны не запускались (AD-7).",
+    "Коммит один: 0cf0911 поверх baseline b4e3d57. В коммите три файла: net/kernels/kda_ut_solve_mosaic.py (новый), net/tests/test_kda_mosaic_parity.py (новый), tools/mosaic/mma_smoke.py (фикс).",
+    "MCP-самопроверка выполнена на финальном HEAD 0cf0911dbee1ef2899f12a0bf18eb2a2fdb20af6 (журнал .arch-handoff/mcp-journal.jsonl): записи у финального HEAD есть, passed=false у обоих инструментов; причины разобраны ниже, гейты не подгонялись."
   ],
   "open_questions": [
-    "Что проверить на GB10 (делает архитектор): (1) компиляция ядра под sm_121 и корректность bf16/fp16/fp8/int8 при M=K=128, N=8; (2) IR/PTX/SASS — что mma действительно понижен в MMA-инструкции, а не в скалярный цикл; (3) детерминизм повторного запуска; (4) несколько K-tile (K>128 и N>8) и поведение на границах layout'ов; (5) стоимость компиляции отдельно от исполнения (скрипт пишет seconds суммарно, стадии в error_type).",
-    "fitness_check passed=false (7 замечаний): (а) check_reward_isolation.py — exit 2 'НЕ ПРОВЕРЕНО'; (б) check_precision_pinning.py --profile gate требует CUDA (исполнитель CPU-only); (в) check_gb10_single_load.py — стенд GB10 недоступен; (г) четыре must_not_contain по паттерну абсолютных домашних путей — они в служебных документах пакета (.arch-handoff/*), а не в моих файлах: единственный абсолютный путь в моём smoke-скрипте найден и убран этой же правкой. Все четыре стендовых/служебных, не связаны с содержанием дельты.",
-    "scope_check passed=false (8 из 10 путей): служебные .arch-handoff/{ARCHITECTURE.md, MANIFEST.json, TASK.md, mcp-journal.jsonl, result.json}, референс-файлы tools/mosaic/reference/_test_mma_*.py (лежат в репозитории до работы, шаблон allow 'tools/mosaic/*' их не покрывает — одноуровневый) и evidence/facts/S-036.jsonl (журнал датчика, мной не писавшийся). Файлы правки — в зоне; чтобы гейт стал зелёным, нужна правка правил границ, что со стороны исполнителя означало бы запись вне зоны.",
-    "Открытый вопрос к архитектору: нужен ли smoke с несколькими N (например, N=16/32) на GB10 отдельным кейсом — сейчас добавленные комбинации меняют K и M, но не N."
+    "Что проверить архитектору на GB10 (окружение 0112): (1) компиляция Mosaic-ядра под sm_121; (2) IR/PTX — что это действительно MMA-инструкции, а не скалярный цикл; (3) время ядра против Triton-версии и против XLA jnp.linalg.inv/triangular_solve на тех же формах (H=12, C=64, dk+dv=256); (4) детерминизм повторного запуска; (5) стоимость компиляции отдельно от исполнения; (6) нужен ли тайл bn=32/128 для попадания в 48 SM и как это влияет.",
+    "Точки перехода раскладок: какой именно layout_cast нужен между последовательными plgpu.mma в неймановском произведении — это главная неизвестность реализации, её снимает только компиляция на стенде.",
+    "Транспонированный и дифференцируемый пути (kernel_t/solve/solve_t) для Mosaic: аналитический adjoint требует отдельной проверки; портировать после подтверждённого forward-ядра.",
+    "fitness_check passed=false (7 замечаний, не связаны с содержанием дельты): check_reward_isolation.py (exit 2, «НЕ ПРОВЕРЕНО»), check_precision_pinning.py --profile gate (нужен CUDA, исполнитель CPU-only), check_gb10_single_load.py (стенд недоступен), а также четыре must_not_contain по паттерну абсолютных домашних путей — они в служебных документах пакета (.arch-handoff/*), в моих файлах таких путей нет.",
+    "scope_check passed=false (7 из 9 путей): служебные .arch-handoff/{ARCHITECTURE.md, MANIFEST.json, TASK.md, mcp-journal.jsonl, result.json}, evidence/facts/S-036.jsonl (журнал датчика, мной не писавшийся) и — существенно — net/tests/test_kda_mosaic_parity.py: этот файл требуют и постановка («Тест net/tests/test_kda_mosaic_parity.py»), и строка ПРОВЕРКИ, но машинный контракт (write_allow: net/kernels/*, tools/mosaic/*, tools/tests/*) каталог net/tests/ не покрывает."
   ],
   "conflicts_with_prior_decisions": [
-    "Границы прогона (write_allow 'tools/mosaic/*', 'tools/tests/*') не покрывают референс-файлы внутри tools/mosaic/reference/ и служебные .arch-handoff/result.json с mcp-журналом, которые контракт сам требует создавать; поэтому scope_check не может быть зелёным без правки вне зоны — расхождение зафиксировано, гейт не подгонялся."
+    "Постановка и машинный контракт границ противоречат друг другу: задача требует тест net/tests/test_kda_mosaic_parity.py (и ссылается на него в строке проверки), а MANIFEST.scope разрешает запись только в net/kernels/*, tools/mosaic/*, tools/tests/*. Тест создан по постановке; гейт scope_check из-за него красный. Один из двух документов должен быть исправлен владельцем (перенести тест в tools/tests/ или расширить allow-лист), сам я границы не расширял."
   ],
-  "sha": "5cc482d",
-  "baseline": "da44935",
-  "deliverables": {
-    "script": "tools/mosaic/mma_smoke.py",
-    "contract_test": "tools/tests/test_mma_smoke_contract.py",
-    "cases": [[128, 128, 8], [128, 64, 8], [256, 128, 8]],
-    "statuses": ["correctness-pass", "correctness-fail", "blocked"]
+  "sha": "0cf0911",
+  "baseline": "b4e3d57",
+  "part1": {
+    "done": "jax.jit(kernel_fn).lower в стадии компиляции; traceback.format_exc()[-2000:] в error; кейс N=16 (128x128x16) в CASES",
+    "verified": "pytest -q tools/tests/test_mma_smoke_contract.py — зелёный (в составе общего прогона 13 passed)"
+  },
+  "part2": {
+    "module": "net/kernels/kda_ut_solve_mosaic.py",
+    "contract": "полный, переиспользован из Triton-модуля",
+    "backend_switch": "AXIOM_KDA_SOLVE_KERNEL=triton (дефолт) | mosaic; ValueError на неизвестное значение; ленивый импорт",
+    "kernel_body": "NOT IMPLEMENTED (KERNEL_IMPLEMENTED=False; RuntimeError с причиной и планом)",
+    "parity": "NOT RUN (нет GPU/Mosaic-API на исполнителе)",
+    "test": "net/tests/test_kda_mosaic_parity.py (вне write_allow пакета — см. конфликт)"
   },
   "probes": {
-    "required_pytest": "5 passed (tools/tests/test_mma_smoke_contract.py)",
-    "local_run": "status=blocked, error_type=no-gpu (CUDA plugin init падает, fallback to cpu), кейсы перечислены",
-    "mcp_fitness_check": "passed=false — 3 стендовых стража (reward-isolation, precision-pinning --profile gate, gb10-single-load) + 4 must_not_contain по абсолютным путям в служебных документах пакета; мой файл очищен",
-    "mcp_scope_check": "passed=false — 8 из 10 путей вне allow, все служебные/референсные; файлы правки в зоне"
+    "required_pytest": "13 passed (net/tests/test_kda_mosaic_parity.py + tools/tests/test_mma_smoke_contract.py)",
+    "mcp_fitness_check": "passed=false — 3 стендовых стража + 4 must_not_contain по служебным документам пакета",
+    "mcp_scope_check": "passed=false — 7 из 9 путей вне allow, включая требуемый постановкой net/tests/test_kda_mosaic_parity.py"
   },
   "remaining": [
-    "GPU-прогон на GB10: компиляция под sm_121, IR/PTX/SASS, корректность dtype, детерминизм, несколько K-tile/N.",
-    "Решение по границам: включать ли tools/mosaic/reference/** и служебные .arch-handoff в allow-лист."
+    "Стенд GB10: компиляция под sm_121, IR/PTX (это MMA, не скалярный цикл), время против Triton и XLA triangular_solve, детерминизм.",
+    "Реализация тела ядра (переходы раскладок между шагами MMA) — после первого прогона на стенде.",
+    "Транспонированный/дифференцируемый пути Mosaic.",
+    "Разрешение конфликта границ: net/tests/ вне write_allow пакета."
   ]
 }

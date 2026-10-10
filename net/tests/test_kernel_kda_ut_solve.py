@@ -29,6 +29,7 @@ interpreter, where a wrong block *offset* shows up numerically.
 
 from __future__ import annotations
 
+import ast
 import itertools
 
 import jax
@@ -441,3 +442,236 @@ def test_f32_pin_is_independent_of_the_matmul_policy():
             assert bf16 and all(p != _IEEE for p in bf16), (
                 "bf16 must keep the backend default, not the f32 IEEE pin"
             )
+
+
+# ---------------------------------------------------------------------------
+# 5. Backward: the transposed-solve adjoint under ``custom_vjp``
+#
+# The bare ``pallas_call`` has no JVP — that is exactly the "Linearization failed
+# to produce known values for all output primals" error the integrated
+# forward-only kernel hit on the GB10.  ``K.solve``/``K.solve_t`` add the analytic
+# adjoint (module docstring, "Backward"): for ``X = M^{-1} B`` (``M = I + L``) the
+# cotangents are ``dB = T^T dX`` and ``dL = strict_lower(-T^T dX X^T)``, with
+# ``T^T`` taken from the *sibling* kernel (``kernel_t``), not from
+# ``jnp.linalg.inv``.  These tests pin that numerics, the mask, and the routing.
+# ---------------------------------------------------------------------------
+
+#: CPU gradcheck tolerances.  Both sides are f32 but they are *different*
+#: algorithms — the forward here is the Neumann product form (max_abs ~ 2e-7 vs
+#: LU on the task geometry) and the oracle is ``jnp.linalg.solve`` autodiff.  On
+#: the task shape (H=2, C=8, d=4) over seeds 0..5, both orientations, the measured
+#: worst |grad diff| is 9.5e-7 (relative 1.6e-5 over entries with |ref| >= 1e-3);
+#: a (H, C, N) sweep {(2,8,4),(2,16,8),(4,8,4),(2,32,16)} x 6 seeds measures worst
+#: |grad diff| = 4.3e-6.  ``atol=1e-4`` keeps >= 20x over the whole sweep's worst,
+#: ``rtol=1e-3`` is > 60x over the measured relative error — a declared tolerance,
+#: not a fitted one.
+GRADCHECK_ATOL = 1e-4
+GRADCHECK_RTOL = 1e-3
+
+#: The task's gradcheck geometry: ``H`` heads, ``C`` chunk, ``d = dk + dv`` RHS
+#: width.  Small enough to run on CPU and to keep the LU oracle and the product
+#: form within a few f32 ulps.
+GRADCHECK_SHAPE = dict(H=2, C=8, dk=2, dv=2)
+
+
+def _jaxpr_primitives(fn, *args):
+    """Set of primitive names in the (nested) jaxpr of ``fn(*args)``."""
+    found = set()
+
+    def walk(jaxpr):
+        for eqn in jaxpr.eqns:
+            found.add(eqn.primitive.name)
+            for key in ("jaxpr", "compute_jaxpr", "call_jaxpr"):
+                value = eqn.params.get(key)
+                if value is None:
+                    continue
+                sub = getattr(value, "jaxpr", value)
+                if hasattr(sub, "eqns"):
+                    walk(sub)
+                elif isinstance(sub, (list, tuple)):
+                    for item in sub:
+                        item = getattr(item, "jaxpr", item)
+                        if hasattr(item, "eqns"):
+                            walk(item)
+
+    walk(jax.make_jaxpr(fn)(*args).jaxpr)
+    return found
+
+
+def _constrained_oracle(a, b, transpose=False):
+    """``jnp.linalg.solve`` of the *unit-lower* map ``A -> I + tril(A, -1)``.
+
+    Differentiating this, rather than the raw ``jnp.linalg.solve(a, b)``, gives
+    the oracle the same domain as the kernel: ``A`` enters only through
+    ``tril(A, -1)``, so the oracle's gradient is exactly zero on the diagonal and
+    the upper triangle, exactly like a correct constrained ``dA``.  This is the
+    comparison that pins a *correct* gradient; the mask's shape is checked
+    separately against the unconstrained oracle in
+    :func:`test_backward_dA_is_masked_to_strict_lower`.
+    """
+    m = jnp.eye(a.shape[-1], dtype=jnp.float32) + jnp.tril(a.astype(jnp.float32), -1)
+    if transpose:
+        m = jnp.swapaxes(m, -1, -2)
+    return jnp.linalg.solve(m, b.astype(jnp.float32))
+
+
+def _raw_oracle(a, b, transpose=False):
+    """Unconstrained ``jnp.linalg.solve`` — mass on the whole triangle."""
+    m = a.astype(jnp.float32)
+    if transpose:
+        m = jnp.swapaxes(m, -1, -2)
+    return jnp.linalg.solve(m, b.astype(jnp.float32))
+
+
+@pytest.mark.parametrize("dtype", ["float32", "bfloat16"])
+def test_transposed_solve_matches_reference(dtype):
+    """Forward parity is not broken by the new path: ``kernel_t`` == ``solve(a.T)``."""
+    atol, rtol = K.TOLERANCE[dtype]
+    for seed in SEEDS:
+        a, b = K.make_inputs(jax.random.key(seed), **_case(dtype))
+        x = K.kernel_t(a, b)
+        ref = K.reference_t(a, b)
+        assert x.shape == ref.shape and x.dtype == ref.dtype
+        assert _frac_bad(x, ref, atol, rtol) == 0.0, (
+            f"kernel_t {dtype} seed {seed}: max_abs={_max_abs(x, ref):.3g}"
+        )
+
+
+def test_transposed_baseline_is_the_right_target():
+    """The replacement target for the transposed solve agrees with LU."""
+    case = _case("float32")
+    a, b = K.make_inputs(jax.random.key(0), **case)
+    assert _max_abs(K.baseline_t(a, b), K.reference_t(a, b)) == 0.0
+
+
+def test_solve_wrapper_forward_equals_the_bare_kernel():
+    """``custom_vjp`` wrapping must not perturb the forward value."""
+    a, b = K.make_inputs(jax.random.key(1), **GRADCHECK_SHAPE, dtype="float32")
+    assert _max_abs(K.solve(a, b), K.kernel(a, b)) == 0.0
+    assert _max_abs(K.solve_t(a, b), K.kernel_t(a, b)) == 0.0
+
+
+@pytest.mark.parametrize("transpose", [False, True], ids=["forward", "transpose"])
+@pytest.mark.parametrize("seed", SEEDS)
+def test_gradcheck_custom_vjp_matches_linalg_solve(transpose, seed):
+    """``jax.grad`` of the custom_vjp path == ``jnp.linalg.solve`` autodiff (both args)."""
+    a, b = K.make_inputs(jax.random.key(seed), **GRADCHECK_SHAPE, dtype="float32")
+    f = K.solve_t if transpose else K.solve
+    g = jax.random.normal(jax.random.key(1000 + seed), b.shape, jnp.float32)
+    da_c, db_c = jax.grad(lambda a, b: jnp.sum(f(a, b) * g), argnums=(0, 1))(a, b)
+    da_r, db_r = jax.grad(
+        lambda a, b: jnp.sum(_constrained_oracle(a, b, transpose) * g), argnums=(0, 1)
+    )(a, b)
+    assert jnp.allclose(db_c, db_r, atol=GRADCHECK_ATOL, rtol=GRADCHECK_RTOL), (
+        f"dB (transpose={transpose}, seed={seed}) max|d|={float(jnp.abs(db_c - db_r).max()):.3e}"
+    )
+    assert jnp.allclose(da_c, da_r, atol=GRADCHECK_ATOL, rtol=GRADCHECK_RTOL), (
+        f"dA (transpose={transpose}, seed={seed}) max|d|={float(jnp.abs(da_c - da_r).max()):.3e}"
+    )
+
+
+@pytest.mark.parametrize("transpose", [False, True], ids=["forward", "transpose"])
+def test_backward_dA_is_masked_to_strict_lower(transpose):
+    """``dA`` is exactly 0 outside the strictly-lower block; inside it is the true grad.
+
+    ``A`` enters the map only through ``tril(A, -1)``, so the unit diagonal and
+    the zero upper triangle are not parameters.  The strictly-lower block is
+    compared against the *unconstrained* ``jnp.linalg.solve`` gradient, which puts
+    non-zero mass there — agreement on that block plus exact zeros elsewhere is
+    the whole point of the mask.
+    """
+    C = GRADCHECK_SHAPE["C"]
+    a, b = K.make_inputs(jax.random.key(0), **GRADCHECK_SHAPE, dtype="float32")
+    f = K.solve_t if transpose else K.solve
+    g = jax.random.normal(jax.random.key(7), b.shape, jnp.float32)
+    da_c, _ = jax.grad(lambda a, b: jnp.sum(f(a, b) * g), argnums=(0, 1))(a, b)
+    da_u, _ = jax.grad(
+        lambda a, b: jnp.sum(_raw_oracle(a, b, transpose) * g), argnums=(0, 1)
+    )(a, b)
+    mask = jnp.tril(jnp.ones((C, C), jnp.bool_), -1)
+    off = float(jnp.where(~mask, jnp.abs(da_c), 0.0).max())
+    assert off == 0.0, f"dA leaks {off:.3e} outside the strictly-lower block"
+    same = jnp.allclose(da_c[:, mask], da_u[:, mask], atol=GRADCHECK_ATOL, rtol=GRADCHECK_RTOL)
+    assert same, (
+        f"strictly-lower dA (transpose={transpose}) disagrees with raw linalg.solve: "
+        f"max|d|={float(jnp.abs(da_c[:, mask] - da_u[:, mask]).max()):.3e}"
+    )
+
+
+def test_custom_vjp_backward_routes_through_the_sibling_kernel(monkeypatch):
+    """The backward runs the *other* kernel — proof the ``custom_vjp`` path is taken.
+
+    A bare ``pallas_call`` cannot be differentiated, so if the ``custom_vjp`` were
+    bypassed jax would differentiate the host solve directly and ``kernel_t`` would
+    never be called.  Observing ``kernel_t`` on the ``K.solve`` backward (and
+    ``kernel`` on the ``K.solve_t`` backward) therefore proves ``custom_vjp`` is in
+    force *and* that the ``T^T`` multiplier comes from the transposed kernel.
+    """
+    calls = {"n": 0, "t": 0}
+    real_n, real_t = K.kernel, K.kernel_t
+
+    def spy_n(a, b, **params):
+        calls["n"] += 1
+        return real_n(a, b, **params)
+
+    def spy_t(a, b, **params):
+        calls["t"] += 1
+        return real_t(a, b, **params)
+
+    monkeypatch.setattr(K, "kernel", spy_n)
+    monkeypatch.setattr(K, "kernel_t", spy_t)
+    a, b = K.make_inputs(jax.random.key(0), **GRADCHECK_SHAPE, dtype="float32")
+    g = jax.random.normal(jax.random.key(3), b.shape, jnp.float32)
+
+    # forward solve: primal -> kernel; backward -> the transposed kernel
+    calls.update(n=0, t=0)
+    K.solve(a, b)
+    assert calls == {"n": 1, "t": 0}, calls
+    calls.update(n=0, t=0)
+    jax.grad(lambda a, b: jnp.sum(K.solve(a, b) * g), argnums=(0, 1))(a, b)
+    assert calls["n"] >= 1 and calls["t"] >= 1, calls
+
+    # transposed solve: primal -> kernel_t; backward -> the forward kernel
+    calls.update(n=0, t=0)
+    K.solve_t(a, b)
+    assert calls == {"n": 0, "t": 1}, calls
+    calls.update(n=0, t=0)
+    jax.grad(lambda a, b: jnp.sum(K.solve_t(a, b) * g), argnums=(0, 1))(a, b)
+    assert calls["n"] >= 1 and calls["t"] >= 1, calls
+
+
+def test_backward_is_matmul_only_no_dense_solve_primitive():
+    """The backward jaxpr is the product-form adjoint, not a dense ``lu``/``inv``.
+
+    ``jnp.linalg.inv``/``solve`` lower to ``lu`` + ``custom_linear_solve``; a
+    backward that used either would show those primitives *and* lack the
+    transposed product-form matmuls.  Requiring ``dot_general`` present and none
+    of the dense-solve primitives present pins the mechanism, not just the numbers.
+    """
+    a, b = K.make_inputs(jax.random.key(0), **GRADCHECK_SHAPE, dtype="float32")
+    x = K.solve(a, b)
+    banned = {"lu", "custom_linear_solve", "triangular_solve", "solve"}
+    for transpose in (False, True):
+        names = _jaxpr_primitives(
+            lambda a, x, g, t=transpose: K._backward(a, x, g, t, {}), a, x, b
+        )
+        assert "dot_general" in names, f"no matmul in the backward (transpose={transpose})"
+        assert not (names & banned), (
+            f"backward (transpose={transpose}) uses a dense solve: {names & banned}"
+        )
+
+
+def test_module_has_no_matrix_inverse():
+    """The module calls no ``.inv`` — the multiplier is the kernel, by construction."""
+    inv = [
+        node.attr
+        for node in ast.walk(ast.parse(open(K.__file__).read()))
+        if isinstance(node, ast.Attribute) and node.attr == "inv"
+    ]
+    assert not inv, f"module calls .inv: {inv}"
+
+
+def test_module_exposes_differentiable_entry_points():
+    """``solve``/``solve_t`` are custom_vjp wrappers, distinct from the bare kernels."""
+    assert K.solve is not K.kernel and K.solve_t is not K.kernel_t
+    assert hasattr(K.solve, "defvjp") and hasattr(K.solve_t, "defvjp")

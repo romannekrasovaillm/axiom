@@ -1,28 +1,39 @@
 # Задача для кодового харнесса
 
-ЗАДАЧА (Mosaic-ядро KDA: исправить два оставшихся GPU-путевых дефекта И добавить локальную проверку, которая их ловит без GPU).
+ЗАДАЧА (Mosaic-ядро KDA: применить найденный рецепт раскладки RHS — последний блокирующий дефект закрыт).
 
-СОСТОЯНИЕ. Ты уже починил три NameError-класса (`_mosaic_gpu`, `_require_gpu`, `dataclasses`) и добавил тесты. Но GPU-прогон архитектора на GB10 (jax 0.11.2, `AXIOM_KDA_SOLVE_KERNEL=mosaic`) выявил ещё два дефекта, которые CPU-тесты не ловят:
+СОСТОЯНИЕ. Четыре дефекта закрыты (NameError ×3, `grid_names`, 2D-операнды). Пятый — транспорт раскладок — **решён экспериментом на GB10**, рецепт в `evidence/mfu-55/mosaic/REPORT-rhs-layout.md`:
 
-1. **`grid_names` не передан.** `plgpu.kernel(..., grid=(H,))` падает при СОЗДАНИИ ядра (чистый Python, без GPU):
-   `ValueError: grid_names must have the same length as grid, got Mesh(grid=(12,), grid_names=(), ...)`.
-   Лечение (проверено архитектором на стенде): добавить `grid_names=("head",)` (или имена по числу осей сетки).
-2. **`plgpu.mma` требует 2D-операнды.** При трассировке:
-   `File .../mosaic_gpu/primitives.py, line 2286, in _mma_abstract_eval: m2, k = a.shape → ValueError: too many values to unpack (expected 2)`.
-   То есть в тело `body` попадают операнды не 2D (`a` должен быть `(m, k)`, `b` — `(k, n)` при загрузке RHS как `b_ref.T` формы `(n, k)`). Поскольку `grid=(H,)` — одна программа на голову, **внутри программы всё должно быть 2D** (голова выбирается осью `jax.lax.axis_index("head")`, а не размерностью массива).
+**`plgpu.mma(acc, a, b)` требует, чтобы память RHS была `k`-контигуальной**: массив правой части надо подавать в порядке `(n, k)` и грузить через `.T`. Проверено для `N=8/64/256` — все `ok`, `max_abs 6.1e-05` (`mma_rhs_layout_proto.py`).
+
+Рабочий паттерн (проверен на GB10 целиком):
+```python
+def body(l_ref, bt_ref, o_ref, smem):     # l_ref (H,M,K); bt_ref (H,N,K) — B ТРАНСПОНИРОВАНА в памяти
+    h = jax.lax.axis_index("head")
+    acc = plgpu.layout_cast(jnp.zeros((M, N), ACC), plgpu.Layout.MMA_ACC(DT))
+    a   = plgpu.load(l_ref.at[h],    layout=plgpu.Layout.MMA_LHS(DT), optimized=False)
+    b   = plgpu.load(bt_ref.at[h].T, layout=plgpu.Layout.MMA_RHS(DT), optimized=False)
+    o_ref.at[h][...] = plgpu.mma(acc, a, b).astype(DT)
+
+plgpu.kernel(body, out_type=ShapeDtypeStruct((H,M,N), DT),
+             scratch_types=[plgpu.SMEM((M,M), DT)],
+             compiler_params=plgpu.CompilerParams(lowering_semantics=plgpu.LoweringSemantics.Lane),
+             grid=(H,), grid_names=("head",))
+# вызов: kernel(L, B.transpose(0, 2, 1))
+```
 
 ЧТО СДЕЛАТЬ.
-1. Исправить оба дефекта. Раскладки/математику (SMEM-переход, Lane, `scratch_types=[plgpu.SMEM(...)]`, паддинг C→128) не менять — они проверены на GB10.
-2. **Добавить локальную проверку, ловящую этот класс без GPU** — ключевое требование. Минимум два уровня:
-   (а) **трассировка/создание ядра**: вызов, который проходит этапы «создание `plgpu.kernel` объекта + абстрактная оценка примитивов» (`_mma_abstract_eval` срабатывает именно на трассировке) — то есть тест, исполняющий путь сборки и tracing с подменённым или реальным API на CPU-буферах и проверяющий, что формы операндов 2D (`assert a.ndim == 2` на уровне абстрактных значений либо эквивалентная проверка внутри теста);
-   (б) AST/статическая проверка вызова `plgpu.kernel` на наличие `grid_names` при непустом `grid` (если (а) недостижимо без GPU — обязательно объяснить почему и оставить (б)).
-3. Дополнительно: пройти глазами все `plgpu.*`-вызовы модуля и убедиться, что аргументы соответствуют подписям 0.11.2 (`inspect.signature`), перечислить в отчёте проверенные вызовы.
+1. Применить рецепт в `net/kernels/kda_ut_solve_mosaic.py`: правая часть `(H, C, D)` подаётся в ядро **транспонированной** `(H, D, C)` (в `kernel()` — `b.transpose(0, 2, 1)`), внутри — `plgpu.load(bt_ref.at[h].T, layout=MMA_RHS(...))`; LHS — `l_ref.at[h]` без транспозиции; выход `(H, M, N)` через `o_ref.at[h][...]`.
+2. Сохранить Neumann-цепочку и SMEM-переход между шагами (проверен: результата одного `mma` нельзя подать операндом напрямую, только через SMEM: `smem[...] = p.astype(DT)` → `plgpu.load(smem, layout=MMA_LHS/RHS, optimized=False)`). Для цепочки промежуточные матрицы `(M, M)` квадратные — там транспозиция в памяти не нужна, но **операнд RHS всё равно должен быть `k`-контигуален** (для квадратной `(M,M)` это выполняется при `.T` от row-major, как в прототипе).
+3. Математику, паддинг C→128 и семантику (дефолт backend `triton`) не менять.
+4. Тесты: дополнить `net/tests/test_kda_mosaic_parity.py` проверкой, что ядро вызывается с **транспонированной** правой частью (`b.transpose(0,2,1)`) и что в `body` RHS грузится через `.T` (статическая проверка исходника или spy на `plgpu.load`); сохранить требование «трассировка/создание ядра проходит без GPU» из прошлой дельты.
+5. Обновить docstring модуля: зафиксировать три требования раскладок (LHS `(m,k)` без транспозиции; RHS — память `(n,k)` + `.T`; ACC `(m,n)`), чтобы следующая правка не наступила на те же грабли.
 
-ОГРАНИЧЕНИЯ. Зона: `net/kernels/*`, `net/tests/*`. GPU-прогоны не запускать (их делает архитектор). `net/kda.py`, `net/config.json` не трогать. Дефолт backend'а — `triton`. Не подменять проверку: `hasattr`/импорт/`interpret` не доказывают GPU-корректность, но **трассировка и создание объекта — законная локальная проверка** (они не требуют устройства).
+ОГРАНИЧЕНИЯ. Зона: `net/kernels/*`, `net/tests/*`. GPU-прогоны не запускать (их делает архитектор). `net/kda.py`, `net/config.json` не трогать.
 
 ПРОВЕРКА (ПК): `/home/roman/venv-axiom/bin/python -m pytest -q net/tests/test_kda_mosaic_parity.py` → все зелёные.
 
-РЕЗУЛЬТАТ. `.arch-handoff/result.json` + ФИНАЛЬНЫЙ git-commit. В assumptions — какие вызовы сверены с подписями и как новый тест ловит класс; в open_questions — что осталось проверить на GB10 (компиляция sm_121, IR/PTX = MMA, время, детерминизм).
+РЕЗУЛЬТАТ. `.arch-handoff/result.json` + ФИНАЛЬНЫЙ git-commit. В assumptions — как реализована транспозиция входа и почему; в open_questions — что осталось измерить на GB10 (паритет bf16/fp32, IR/PTX = MMA, время против Triton и XLA, детерминизм, SMEM-бюджет).
 
 ## Границы (scope)
 
@@ -30,12 +41,12 @@
 
 - **Можно писать:** `net/kernels/*`, `net/tests/*`
 - **Нельзя писать (сильнее allow):** `model/`, `ARCHITECTURE-SPINE.md`, `CONSTRAINTS.yaml`
-- **Можно запускать:** `python3 -m pytest*`, `python3 net/kernels/*`
+- **Можно запускать:** `python3 -m pytest*`
 - **Сеть:** сети нет (детерминированный узел)
 
 ## План отката
 
-Откат: `git reset --hard 12dab35` (baseline — последний коммит до работы исполнителя; вся его работа приходит одним коммитом поверх).
+Откат: `git reset --hard 893c0e8` (baseline — последний коммит до работы исполнителя; вся его работа приходит одним коммитом поверх).
 Сигналы отката: провал fitness-гейта (`arch-ml control check`), непустой `conflicts_with_prior_decisions`, статус `blocked`.
 Владелец решения об откате — solution-архитектор; исполнитель откат не выполняет и не маскирует проблему обходным редизайном.
 Обратимость: полная — единая точка изменений, коммит исполнителя.

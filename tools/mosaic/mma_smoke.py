@@ -42,12 +42,13 @@ import dataclasses
 import json
 import sys
 import time
+import traceback
 from pathlib import Path
 
 import numpy as np
 
 #: Комбинации (M, K, N), которые гоняет smoke: базовая из апстрим-теста + две добавки.
-CASES: tuple[tuple[int, int, int], ...] = ((128, 128, 8), (128, 64, 8), (256, 128, 8))
+CASES: tuple[tuple[int, int, int], ...] = ((128, 128, 8), (128, 128, 16), (128, 64, 8), (256, 128, 8))
 
 #: Дата-типы, которые проверяет апстрим-тест (в smoke по умолчанию — bf16).
 DEFAULT_DTYPES: tuple[str, ...] = ("bfloat16",)
@@ -129,18 +130,21 @@ def _run_case(jax, jnp, plgpu, m: int, k: int, n: int, dtype_str: str) -> dict:
     # --- стадия 1: компиляция (сборка + нижний IR) -------------------------------
     t0 = time.perf_counter()
     try:
-        lowered = kernel_fn.lower(a, b)
+        # У объекта plgpu.kernel НЕТ метода .lower — оборачиваем в jax.jit: это рабочий
+        # путь (проверено архитектором на GB10). Иначе — ложный blocked/AttributeError.
+        lowered = jax.jit(kernel_fn).lower(a, b)
         compiled = lowered.compile()
     except Exception as exc:  # noqa: BLE001 — любая ошибка компиляции идёт классом compile
-        out.update(stage="compile", error_type=type(exc).__name__, error=str(exc)[:2000])
+        out.update(stage="compile", error_type=type(exc).__name__,
+                   error=traceback.format_exc()[-2000:])
         return out
 
     # --- стадия 2: исполнение ---------------------------------------------------
     try:
         got = jax.block_until_ready(compiled(a, b))
     except Exception as exc:  # noqa: BLE001 — исполнение отделено от компиляции
-        out.update(stage="run", error_type=type(exc).__name__, error=str(exc)[:2000],
-                   seconds=time.perf_counter() - t0)
+        out.update(stage="run", error_type=type(exc).__name__,
+                   error=traceback.format_exc()[-2000:], seconds=time.perf_counter() - t0)
         return out
 
     seconds = time.perf_counter() - t0

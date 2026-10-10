@@ -1,0 +1,112 @@
+{
+  "timestamp": "2026-10-10T00:21:54",
+  "host": {
+    "machine": "aarch64",
+    "python": "3.12.3",
+    "kernel": "6.17.0-1029-nvidia"
+  },
+  "env": {},
+  "packages": {
+    "jax": "0.10.2",
+    "jaxlib": "0.10.2",
+    "jax-cuda13-plugin": "0.10.2",
+    "jax-cuda13-pjrt": "0.10.2",
+    "nvidia-cudnn-cu13": "9.26.0.51",
+    "nvidia-cublas": "13.8.0.4",
+    "numpy": "2.5.3",
+    "ml_dtypes": "0.6.0"
+  },
+  "ptxas": {
+    "/usr/local/cuda/bin/ptxas": "Build cuda_13.0.r13.0/compiler.36424714_0"
+  },
+  "nvidia_smi": "NVIDIA GB10, 580.173.02, 12.1",
+  "driver": {
+    "driver_cuda_version": "13.0",
+    "name": "NVIDIA GB10",
+    "total_mem_gib": 121.69,
+    "multiprocessor_count": 48,
+    "max_threads_per_block": 1024,
+    "max_threads_per_sm": 1536,
+    "max_blocks_per_sm": 24,
+    "max_regs_per_sm": 65536,
+    "max_smem_per_block_default": 49152,
+    "max_smem_per_block_optin": 101376,
+    "max_smem_per_sm": 102400,
+    "reserved_smem_per_block": 1024,
+    "l2_cache_bytes": 25165824,
+    "integrated": 1,
+    "managed_memory": 1,
+    "pageable_memory_access": 1,
+    "concurrent_managed_access": 1,
+    "cluster_launch": 1,
+    "cc_major": 12,
+    "cc_minor": 1,
+    "clock_khz": 2418000,
+    "memory_clock_khz": 8533000,
+    "memory_bus_width_bits": 256,
+    "compute_capability": "12.1"
+  },
+  "tests": {
+    "jax_devices": {
+      "status": "PASS",
+      "platform": "gpu",
+      "device_kind": "NVIDIA GB10",
+      "compute_capability": "12.1",
+      "n_devices": 1,
+      "jax": "0.10.2",
+      "jaxlib": "0.10.2",
+      "seconds": 1.1
+    },
+    "xla_matmul": {
+      "status": "PASS",
+      "rel_err": 0.003214943688362837,
+      "seconds": 9.7
+    },
+    "mgpu_tma_copy": {
+      "status": "PASS",
+      "seconds": 6.9
+    },
+    "mgpu_pipeline_elementwise": {
+      "status": "FAIL",
+      "error": "Mosaic GPU kernel exceeds available shared memory: smem_bytes=196624 > max_smem_bytes=101376",
+      "tb_tail": "pmd_map_fallback_lowering\n    return pallas_call._pallas_call_lowering(\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/roman/venv-axiom/lib/python3.12/site-packages/jax/_src/pallas/pallas_call.py\", line 974, in _pallas_call_lowering\n    return mlir.lower_per_platform(\n           ^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/roman/venv-axiom/lib/python3.12/site-packages/jax/_src/pallas/pallas_call.py\", line 970, in gpu_lowering\n    return backend.pallas_call_lowering(\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/roman/venv-axiom/lib/python3.12/site-packages/jax/_src/pallas/mosaic_gpu/pallas_call_registration.py\", line 85, in pallas_call_lowering\n    lowering_result = lowering.lower_pipelined_jaxpr_to_module(\n                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/roman/venv-axiom/lib/python3.12/site-packages/jax/_src/pallas/mosaic_gpu/lowering.py\", line 883, in lower_pipelined_jaxpr_to_module\n    return lower_jaxpr_to_module(\n           ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/roman/venv-axiom/lib/python3.12/site-packages/jax/_src/pallas/mosaic_gpu/lowering.py\", line 1112, in lower_jaxpr_to_module\n    module, new_out_shapes, _, launch_ctx = mgpu_core._lower_as_gpu_kernel(\n                                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/roman/venv-axiom/lib/python3.12/site-packages/jax/experimental/mosaic/gpu/core.py\", line 864, in _lower_as_gpu_kernel\n    @func.FuncOp.from_py_func(ptr_ty, ptr_ty, name=f\"{kernel_name}_mosaic_gpu\")\n     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/roman/venv-axiom/lib/python3.12/site-packages/jaxlib/mlir/dialects/func.py\", line 197, in decorator\n    return_values = f(*func_args, **func_kwargs)\n                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/roman/venv-axiom/lib/python3.12/site-packages/jax/experimental/mosaic/gpu/core.py\", line 912, in main\n    with _launch(\n  File \"/usr/lib/python3.12/contextlib.py\", line 138, in __enter__\n    except StopIteration:\n  File \"/home/roman/venv-axiom/lib/python3.12/site-packages/jax/experimental/mosaic/gpu/core.py\", line 656, in _launch\n    raise ValueError(\"Mosaic GPU kernel exceeds available shared memory: \"\nValueError: Mosaic GPU kernel exceeds available shared memory: smem_bytes=196624 > max_smem_bytes=101376\n--------------------\nFor simplicity, JAX has removed its internal frames from the traceback of the following exception. Set JAX_TRACEBACK_FILTERING=off to include these.\n",
+      "seconds": 7.6
+    },
+    "mgpu_mma_bf16": {
+      "status": "FAIL",
+      "error": "type object 'Layout' has no attribute 'MMA_ACC'",
+      "tb_tail": "Traceback (most recent call last):\n  File \"<string>\", line 29, in <module>\n  File \"/home/roman/venv-axiom/lib/python3.12/site-packages/jax/_src/pallas/mosaic_gpu/core.py\", line 385, in wrapper\n    outs = pallas_helpers.kernel(\n           ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/roman/venv-axiom/lib/python3.12/site-packages/jax/_src/pallas/mpmd.py\", line 898, in wrapper\n    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(\n                       ^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/roman/venv-axiom/lib/python3.12/site-packages/jax/_src/pallas/mosaic_gpu/core.py\", line 371, in kernel_body\n    pallas_primitives.run_scoped(\n  File \"/home/roman/venv-axiom/lib/python3.12/site-packages/jax/_src/pallas/primitives.py\", line 714, in run_scoped\n    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, avals)\n                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/roman/venv-axiom/lib/python3.12/site-packages/jax/_src/pallas/primitives.py\", line 652, in wrap_with_transforms\n    return f(*new_args)\n           ^^^^^^^^^^^^\n  File \"<string>\", line 18, in k\nAttributeError: type object 'Layout' has no attribute 'MMA_ACC'\n--------------------\nFor simplicity, JAX has removed its internal frames from the traceback of the following exception. Set JAX_TRACEBACK_FILTERING=off to include these.\n",
+      "seconds": 7.3
+    },
+    "mgpu_mma_fp8e4m3": {
+      "status": "FAIL",
+      "error": "type object 'Layout' has no attribute 'MMA_ACC'",
+      "tb_tail": "Traceback (most recent call last):\n  File \"<string>\", line 29, in <module>\n  File \"/home/roman/venv-axiom/lib/python3.12/site-packages/jax/_src/pallas/mosaic_gpu/core.py\", line 385, in wrapper\n    outs = pallas_helpers.kernel(\n           ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/roman/venv-axiom/lib/python3.12/site-packages/jax/_src/pallas/mpmd.py\", line 898, in wrapper\n    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(\n                       ^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/roman/venv-axiom/lib/python3.12/site-packages/jax/_src/pallas/mosaic_gpu/core.py\", line 371, in kernel_body\n    pallas_primitives.run_scoped(\n  File \"/home/roman/venv-axiom/lib/python3.12/site-packages/jax/_src/pallas/primitives.py\", line 714, in run_scoped\n    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, avals)\n                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/roman/venv-axiom/lib/python3.12/site-packages/jax/_src/pallas/primitives.py\", line 652, in wrap_with_transforms\n    return f(*new_args)\n           ^^^^^^^^^^^^\n  File \"<string>\", line 18, in k\nAttributeError: type object 'Layout' has no attribute 'MMA_ACC'\n--------------------\nFor simplicity, JAX has removed its internal frames from the traceback of the following exception. Set JAX_TRACEBACK_FILTERING=off to include these.\n",
+      "seconds": 7.1
+    },
+    "triton_elementwise": {
+      "status": "PASS",
+      "seconds": 7.3
+    },
+    "triton_dot": {
+      "status": "PASS",
+      "seconds": 7.7
+    }
+  },
+  "ceilings": {
+    "status": "PASS",
+    "copy_gbps": 131.2,
+    "matmul_tflops": {
+      "bf16": 79.6,
+      "fp16": 82.9,
+      "fp32": 43.0,
+      "fp8_e4m3": 122.1
+    },
+    "seconds": 97.6
+  },
+  "hints": [
+    "JAX 0.10.2: API Mosaic GPU старше 0.11 (pallas_call c MGPU, out_shape, нет plgpu.mma). Шаблоны pallas-gb10-kernel рассчитаны на 0.11.x — обнови JAX или адаптируй.",
+    "Единая память: выставь XLA_PYTHON_CLIENT_PREALLOCATE=false (или MEM_FRACTION≈0.5), иначе XLA заберёт ~75% общей RAM.",
+    "plgpu.mma не прошёл, Triton dot работает → матричные кернелы пока на Pallas-Triton (бэкенд deprecated с JAX 0.11, фиксируй версию)."
+  ]
+}

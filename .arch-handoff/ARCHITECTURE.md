@@ -1,11 +1,11 @@
 # Архитектурный контекст (epic-context)
 
-Собран: 2026-10-10T03:35:13.963639894+00:00
+Собран: 2026-10-10T03:52:16.696084564+00:00
 
 Источники:
 - /home/roman/axiom/ARCHITECTURE-SPINE.md
+- /home/roman/axiom/net/kernels/kda_ut_solve.py
 - /home/roman/axiom/docs/adr/ADR-050-kampaniya-mfu-55-na-gb10-predmet-i-konvenciya-chislitelya-geyty-g0-g4-rychagi-po-profil-dokazannym-adresam.md
-- /home/roman/axiom/evidence/mfu-55/G1/REPORT.md
 
 <!-- источник: /home/roman/axiom/ARCHITECTURE-SPINE.md -->
 
@@ -56,6 +56,6 @@
 
 - **Binds**: код модели ↔ техотчёт K3 (`k3_tech_report.pdf`, проверен 11.09.2026)
 - **Prevents**: самовольные архитектурные эксперименты на бюджете претрейна (22k H800-ч как цена одной непроверенной гипотезы)
-- **Rule**: KDA, AttnRes, 
+- **Rule**: KDA, AttnRes, L
 
 > **Контекст усечён** до 6000 символов; полные тексты — в файлах-источниках (см. MANIFEST.json).

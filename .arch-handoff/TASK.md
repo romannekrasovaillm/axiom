@@ -1,37 +1,27 @@
 # Задача для кодового харнесса
 
-ЗАДАЧА (первый собственный Pallas-кернел кампании MFU-55: батчевое треугольное решение для KDA).
+ЗАДАЧА (Pallas-кернел KDA: исправление дефекта, найденного GPU-проверкой).
 
-КОНТЕКСТ. Профиль стационарной фазы (nsys, GB10) показал: батчевое `jax.lax.linalg.triangular_solve` XLA исполняет как **115 200 отдельных ядер** `batch_trsm_left_kernel<...,64,4,...>` + **230 400 служебных `MakeBatchPointers`** за 120 с, занятость GPU 3.5%. Алгебра: внутри чанка KDA решается `(I+L)·X = B`, где `I+L` — единичная нижняя треугольная `(H, C, C)`, правая часть `B` — `(H, C, dk+dv)`; H=12, C=64, dk=dv=128, hidden=1536 (`net/config.json`, `net/kda.py:_ut_solve_pair`). Кернел оправдан по канону скилла `pallas-gb10-kernel`: нестандартная операция, которую XLA не собирает в крупное ядро.
+ФАКТ (проверено архитектором на GB10, jax 0.10.2, NVIDIA GB10 CC 12.1 — `check_kernel.py --seeds 3`):
+```
+[check] jax 0.10.2 on NVIDIA GB10 (CC 12.1)
+  FAIL case0 seed0 {'H': 12, 'C': 64, 'dk': 128, 'dv': 128, 'dtype': 'float32'}:
+    ValueError: Block shape for args[0] (= (Blocked(block_size=64), Blocked(block_size=64)))
+    must have the same number of dimensions as the array shape (12, 64, 64).
+```
+Дефект в `net/kernels/kda_ut_solve.py`: `block_shape` для первого аргумента `a` формы `(H, C, C)` задан **двумя** размерностями вместо трёх. Найден только на устройстве: на ПК `lower_check.py` для Triton-пути на jax 0.10.2 **пропускает** arch-специфичные проверки (`cannot import name 'gpu_info' from 'jax._src.pallas.triton'`) — поэтому CPU-зелёный ничего не гарантирует, и дефект доехал до стенда.
 
-ВАЖНО ПРО ОКРУЖЕНИЕ (снято probe_gb10.py, файл `~/axiom-run/gb10_caps_full.json` на стенде): jax/jaxlib **0.10.2**, CUDA 13.0, GB10 sm_121. Путь **Mosaic GPU MMA недоступен** (`mgpu_mma_bf16`/`fp8` FAIL: `Layout.MMA_ACC` отсутствует в этой версии JAX), зато **`triton_dot` и `triton_elementwise` — PASS**. Поэтому первый кернел пишется на **Pallas-Triton** (`pl.pallas_call` с `pltpu`/`pl` Triton-путём), НЕ на Mosaic GPU. Потолки машины (для roofline): copy 131.2 ГБ/с, fp32 43.0 TFLOPS, bf16 79.6 TFLOPS.
+ЧТО СДЕЛАТЬ.
+1. Исправить `block_shape` так, чтобы он соответствовал числу измерений входов: для `a` `(H, C, C)` — три размерности (например, `(1, C, C)` при параллелизме по головам в сетке, если так задумано реализацией), для `b` `(H, C, dk+dv)` — три. Согласовать с `grid`/`index_map`: размерность, по которой идёт батч (H), должна быть разбита между программами так, чтобы покрытие было полным.
+2. Проверить, что после правки `lower_check.py` по-прежнему OK на всех CASES (на ПК), и что CPU-тест `net/tests/test_kernel_kda_ut_solve.py` зелёный.
+3. Просмотреть остальные `block_shape`/`index_map`/`grid` в модуле на ту же болезнь (число размерностей против формы): это единственный класс дефекта, который CPU не поймает — перечислить в отчёте, что проверено глазами.
+4. В отчёте зафиксировать: почему CPU-путь не поймал дефект (ограничение jax 0.10.2) и что GPU-проверка обязательна перед интеграцией.
 
-ЧТО СДЕЛАТЬ (контракт модуля — обязателен, см. скилл `pallas-gb10-kernel`):
-1. Создать `net/kernels/kda_ut_solve.py` — модуль кернела со строго этим контрактом:
-   ```python
-   CASES = [dict(H=12, C=64, dk=128, dv=128, dtype="float32"), dict(... bf16 ...)]
-   def make_inputs(key, **case) -> tuple            # a=(H,C,C) единичная нижняя треугольная, b=(H,C,dk+dv)
-   def kernel(a, b, **params) -> jax.Array          # решение (I+L) X = B, батчево по H
-   def reference(a, b) -> jax.Array                 # эталон: jnp.linalg.solve в f32 (или явная подстановка)
-   def baseline(a, b) -> jax.Array                  # jax.lax.linalg.triangular_solve — то, что заменяем
-   def cost(**case) -> dict(flops=..., bytes=...)   # минимально необходимые флопы/байты
-   TUNE_SPACE = dict(...)                           # осмысленные десятки конфигураций
-   def valid_config(case, params) -> bool           # отсев по SMEM/делимости до компиляции
-   ```
-   Формы — ТОЛЬКО реальные из задачи (H=12, C=64, dk=dv=128); не подменять квадратными 4096³.
-2. Провести статический lowering: `python3 ~/axiom-run/skills/pallas-gb10-kernel/scripts/lower_check.py net/kernels/kda_ut_solve.py` (на ПК это работает без GPU) — исправлять, пока все CASES не OK.
-3. Добавить тест `net/tests/test_kernel_kda_ut_solve.py`: сверка `kernel` с `reference` на CPU (JAX_PLATFORMS=cpu) в пределах разумного atol (обосновать числом), проверка формы выхода, отсев невалидных конфигураций `valid_config`.
-4. В отчёте — статическая оценка: сколько ядер/запусков порождает XLA-версия против кернела (по форме и числу блоков), как выбиралось `TUNE_SPACE`.
+ОГРАНИЧЕНИЯ. Зона: `net/kernels/*`, `net/tests/*`. GPU-прогоны не запускать (их делает архитектор). Не менять `net/kda.py`, `net/config.json`. Математику и контракт модуля не менять — only block/index/grid.
 
-ОГРАНИЧЕНИЯ.
-- Зона: `net/kernels/*` (новый каталог) и `net/tests/*`. НЕ трогать `net/kda.py`, `net/config.json`, другие файлы: интеграция кернела в KDA — отдельная дельта после GPU-проверки.
-- GPU-прогоны НЕ запускать: `check_kernel.py` и `bench.py`/`autotune.py` требуют GB10 — их выполняет архитектор на стенде (там же лежат капы). На ПК — только `lower_check.py` и CPU-тесты.
-- Никаких «оптимизаций для красоты»: один кернел, одна задача.
-- Если на jax 0.10.2 Triton-путь Pallas имеет иные ограничения, чем описано в скилле (API 0.11) — зафиксируй это в open_questions с конкретной ошибкой, не подменяя решение.
+ПРОВЕРКА (ПК): `/home/roman/venv-axiom/bin/python -m pytest -q net/tests/test_kernel_kda_ut_solve.py` и `lower_check.py` по CASES.
 
-ПРОВЕРКА (на ПК, этим интерпретатором): `/home/roman/venv-axiom/bin/python -m pytest -q net/tests/test_kernel_kda_ut_solve.py` и `lower_check.py` по всем CASES.
-
-РЕЗУЛЬТАТ. `.arch-handoff/result.json` + ФИНАЛЬНЫЙ git-commit. В assumptions — параметры по умолчанию и обоснование atol; в open_questions — что должен измерить архитектор на GB10 (время против XLA-`triangular_solve`, ГБ/с и % от потолка 131.2 ГБ/с, лучшие параметры тюна).
+РЕЗУЛЬТАТ. `.arch-handoff/result.json` + ФИНАЛЬНЫЙ git-commit. В assumptions — итоговая раскладка block_shape/index_map/grid и почему она покрывает все H; в open_questions — что ещё должен проверить архитектор на GB10 (check_kernel --poison, bench против XLA).
 
 ## Границы (scope)
 
@@ -39,12 +29,12 @@
 
 - **Можно писать:** `net/kernels/*`, `net/tests/*`
 - **Нельзя писать (сильнее allow):** `model/`, `ARCHITECTURE-SPINE.md`, `CONSTRAINTS.yaml`
-- **Можно запускать:** `python3 -m pytest*`, `python3 net/kernels/*`
+- **Можно запускать:** `python3 -m pytest*`
 - **Сеть:** сети нет (детерминированный узел)
 
 ## План отката
 
-Откат: `git reset --hard ad7b400` (baseline — последний коммит до работы исполнителя; вся его работа приходит одним коммитом поверх).
+Откат: `git reset --hard 1a6539f` (baseline — последний коммит до работы исполнителя; вся его работа приходит одним коммитом поверх).
 Сигналы отката: провал fitness-гейта (`arch-ml control check`), непустой `conflicts_with_prior_decisions`, статус `blocked`.
 Владелец решения об откате — solution-архитектор; исполнитель откат не выполняет и не маскирует проблему обходным редизайном.
 Обратимость: полная — единая точка изменений, коммит исполнителя.

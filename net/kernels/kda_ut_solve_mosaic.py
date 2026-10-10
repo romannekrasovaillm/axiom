@@ -42,6 +42,7 @@ Backend-выбор (эта часть реализована и проверяе
 
 from __future__ import annotations
 
+import dataclasses
 import os
 
 import jax
@@ -125,6 +126,46 @@ def gpu_available() -> bool:
         return any(d.platform == "gpu" for d in jax.devices())
     except Exception:  # noqa: BLE001 — сломанный плагин не читается как «GPU есть»
         return False
+
+
+#: Кэш ленивого импорта Mosaic-API (``None`` — ещё не импортировали).
+_MOSAIC_GPU = None
+
+
+def _mosaic_gpu():
+    """Ленивый геттер Mosaic-API: импорт ровно один раз, далее — из кэша.
+
+    Возвращает модуль ``jax.experimental.pallas.mosaic_gpu``. Отсутствующее или
+    сломанное API — понятная ошибка с причиной; **тихого отката на Triton нет**
+    (backend выбирается явно через ``AXIOM_KDA_SOLVE_KERNEL`` и под капотом не
+    подменяется — C-007).
+    """
+    global _MOSAIC_GPU
+    if _MOSAIC_GPU is None:
+        try:
+            from jax.experimental.pallas import mosaic_gpu as plgpu
+        except Exception as exc:  # noqa: BLE001 — отсутствие API = ошибка с причиной
+            raise RuntimeError(
+                "Mosaic GPU API недоступен в этом окружении: не удалось импортировать "
+                f"jax.experimental.pallas.mosaic_gpu ({exc!r}). Mosaic-путь исполняется "
+                "только на стенде (jax 0.11.2, окружение 0112); откат на Triton не "
+                "выполняется — backend выбирается явно."
+            ) from exc
+        _MOSAIC_GPU = plgpu
+    return _MOSAIC_GPU
+
+
+def _require_gpu() -> None:
+    """Guard: сборка Mosaic-ядра без устройства бессмысленна (C-007).
+
+    Единый источник ошибки и для :func:`kernel`, и для :func:`_build_kernel`, чтобы
+    причина отказа совпадала на обоих входах.
+    """
+    if not gpu_available():
+        raise RuntimeError(
+            "Mosaic-ядро требует GPU: запуск на CPU не является доказательством "
+            "GPU-компиляции (C-007)."
+        )
 
 
 def neumann_steps(c: int) -> int:
@@ -226,11 +267,7 @@ def kernel(a, b, **params):
             "Mosaic GPU API недоступен в этом окружении: Mosaic-путь исполняется только на "
             "стенде (jax 0.11.2, окружение 0112)."
         )
-    if not gpu_available():
-        raise RuntimeError(
-            "Mosaic-ядро требует GPU: запуск на CPU не является доказательством "
-            "GPU-компиляции (C-007)."
-        )
+    _require_gpu()
     H, C, _ = a.shape
     N = b.shape[-1]
     M = packed_shape(C)

@@ -1,28 +1,37 @@
 # Задача для кодового харнесса
 
-ЗАДАЧА (Mosaic MMA smoke для JAX 0.11.2 на GB10 — довести до компиляции и корректности).
+ЗАДАЧА (Mosaic MMA smoke для JAX 0.11.2 / GB10 — довести до компиляции и корректности).
 
-КОНТЕКСТ. Кандидатная линия JAX 0.11.2 поднята (ADR-052), Mosaic ALU подтверждён (`correctness-pass`). Публичный MMA-API есть: `jax.experimental.pallas.mosaic_gpu.mma(acc, a, b)` — «Computes `acc + a @ b` synchronously using **Ampere MMA instructions**»; есть layout'ы `plgpu.Layout.MMA_ACC / MMA_LHS / MMA_RHS` (на legacy 0.10.2 их не было). Мой smoke-кернел (по мотивам апстрим-теста) падает:
+ВАЖНО ПРО СЕТЬ: сеть в прогоне ОТКЛЮЧЕНА (`net: none`). Эталонный тест JAX 0.11.2 уже вырезан в репозиторий локально — скачивать ничего не нужно:
+- `tools/mosaic/reference/_test_mma_harness.py` — обвязка апстрим-теста (`class PallasTest`: `LOWERING_SEMANTICS`, метод `kernel()`, который вызывает настоящий `plgpu.kernel` с `compiler_params=dataclasses.replace(plgpu.CompilerParams(), lowering_semantics=self.LOWERING_SEMANTICS)`);
+- `tools/mosaic/reference/_test_mma_case.py` — сам `test_mma` (формы M=K=128, N=8; dtype bf16/fp16/fp8/int8; `acc_dtype=float32`), ключевые строки:
+```python
+acc = plgpu.layout_cast(jnp.zeros((m, n), acc_dtype), plgpu.Layout.MMA_ACC(dtype))
+a = plgpu.load(a_ref, layout=plgpu.Layout.MMA_LHS(dtype), optimized=False)
+b = plgpu.load(b_ref.T, layout=plgpu.Layout.MMA_RHS(dtype), optimized=False)
+o_ref[...] = plgpu.mma(acc, a, b)
 ```
-VerificationError: 'mosaic_gpu.mma' op operand #1 must be vector of A type supported by the `a` and `b` operands
-  of the synchronous `mma` op values of ranks 2, but got 'vector<128x128xf32>'
-  %99 = "mosaic_gpu.mma"(%93, %95, %98) : (vector<128x8xf32>, vector<128x128xf32>, vector<128x8xf32>) -> vector<128x8xf32>
-```
-То есть `plgpu.load(a_ref, layout=plgpu.Layout.MMA_LHS(dtype), optimized=False)` при загрузке **из GMEM** не даёт нужный тип/layout — операнд остаётся f32. Апстрим-тест `tests/pallas/mosaic_gpu_test.py::test_mma` (JAX tag `jax-v0.11.2`) грузит операнды иначе — там операнды попадают в SMEM (путь `copy_gmem_to_smem` + `wait_gmem_to_smem`, либо SMEM-рефы), и `plgpu.mma` получает правильные layout'ы.
+
+СОСТОЯНИЕ (мои проверки на GB10, `~/venv-axiom-0112`, jax 0.11.2):
+- `plgpu.mma(acc, a, b)` существует и документирован как «Computes acc + a @ b synchronously using Ampere MMA instructions»;
+- layout'ы `plgpu.Layout.MMA_ACC / MMA_LHS / MMA_RHS` существуют;
+- `plgpu.kernel` имеет сигнатуру: `(body, *, out_type, scratch_types, compiler_params, grid, grid_names, cluster, cluster_names, num_threads, thread_name)`;
+- мой smoke (`~/axiom-run/mosaic-mma-smoke.py`, копия в `evidence/mfu-55/env/mosaic-mma-smoke.py`) падает:
+  `VerificationError: 'mosaic_gpu.mma' op operand #1 must be vector of A type supported by the 'a' and 'b' operands … got 'vector<128x128xf32>'`
+  (то есть A приходит f32, а не bf16 → layout не применён при загрузке **из GMEM** без правильных compiler_params/пути загрузки);
+- `plgpu.DimensionSemantics` в модуле `mosaic_gpu` НЕ экспортируется (ищи в `jax.experimental.pallas` или во внутреннем модуле — но не превращай внутренний путь в публичный контракт без обоснования).
 
 ЧТО СДЕЛАТЬ.
-1. Достать эталон: тест `tests/pallas/mosaic_gpu_test.py` из тега `jax-v0.11.2` (сеть разрешена через прокси; файл ~10k строк, нужен тест `test_mma` и его обвязка `self.kernel`/fixtures) — понять точный путь загрузки операндов для `plgpu.mma`.
-2. Написать `tools/mosaic/mma_smoke.py` — самодостаточный скрипт: M → K → N (взять реальные формы из задачи: K=128, N=8..128 как в тесте, dtype bf16), входы готовятся на numpy, эталон — numpy/jnp в fp32. Скрипт обязан: скомпилировать и **исполнить на устройстве** (не `interpret`, не CPU), сверить результат с эталоном с явным допуском (обосновать число), записать JSON-отчёт (status/error/shape/dtype/max_abs/rel/секунды) в указанный путь. Аргументы: `--output PATH`.
-3. Добавить `tools/tests/test_mma_smoke_contract.py` — CPU-проверки контракта скрипта (наличие аргумента `--output`, структура JSON при прогоне на CPU/`interpret` или корректный отказ), чтобы не гонять GPU из CI.
-4. В отчёте — точный путь API (какие функции/аргументы), почему предыдущий вариант не работал (root cause), и что осталось проверить на стенде (компиляция под sm_121, IR/PTX, детерминизм, несколько K-tile).
+1. Воспроизвести путь из эталона: вызвать `plgpu.kernel` **с явными `compiler_params`** (в первую очередь разобраться с `lowering_semantics` и, если требуется, `dimension_semantics` для `grid`), и загрузить операнды так, как это делает тест (в т.ч. `b_ref.T` для `MMA_RHS`). Входные массивы — numpy, приводить к dtype через `jnp.asarray(x, dtype=jnp.dtype("bfloat16"))` (не `ndarray.astype(jnp.bfloat16)`).
+2. Написать `tools/mosaic/mma_smoke.py`: самодостаточный скрипт с `--output PATH`; M=128, K=128, N=8 (плюс опционально ещё 1–2 N/K-комбинации); эталон — fp32 в numpy/jnp; печатает и пишет JSON: `status` ∈ {`correctness-pass`,`correctness-fail`,`blocked`}, `shape`, `dtype`, `max_abs`, `rel`, `seconds`, `error_type`, `error`. Скрипт обязан различать compile-стадию и run-стадию.
+3. Добавить `tools/tests/test_mma_smoke_contract.py` — CPU-контрактные проверки (CLI `--output`, структура JSON, корректный `blocked` без GPU), чтобы CI не требовал GPU.
+4. В отчёте — точный root cause предыдущего падения (какой параметр/путь загрузки требуется), и что осталось проверить на GB10 (компиляция под sm_121, IR/PTX/SASS, детерминизм, несколько K-tile).
 
-ОГРАНИЧЕНИЯ. Зона: `tools/mosaic/*`, `tools/tests/*`. НЕ трогать `net/`, `net/kernels/`, `net/config.json`, `tools/pretrain_run.py`. GPU-прогоны делаются только архитектором на GB10 (в задаче их запускать не нужно; если репозиторий исполняется на CPU-хосте — используй `interpret`/`JAX_PLATFORMS=cpu` только для контрактных тестов, а факт GPU-компиляции не объявляй).
-- Не подменять проверку: `hasattr`, импорт, CPU-прогон и `interpret=True` НЕ являются доказательством GPU-компиляции.
-- Не выдумывать API (`mgpu_mma_` не использовать как dependency, если он внутренний): опираться на публичный `plgpu.mma`.
+ОГРАНИЧЕНИЯ. Зона: `tools/mosaic/*`, `tools/tests/*`. НЕ трогать `net/`, `net/kernels/`, `net/config.json`, `tools/pretrain_run.py`. GPU-прогоны в задаче НЕ запускать (их выполняет архитектор на GB10) — но скрипт должен быть готов к запуску на стенде в этом окружении: `/home/roman/venv-axiom-0112/bin/python tools/mosaic/mma_smoke.py --output <path>`. **Не подменять проверку**: `hasattr`, импорт, CPU-прогон и `interpret=True` не являются доказательством GPU-компиляции; не выдумывать API (`mgpu_mma_` внутренний — не dependency).
 
 ПРОВЕРКА (ПК): `/home/roman/venv-axiom/bin/python -m pytest -q tools/tests/test_mma_smoke_contract.py`.
 
-РЕЗУЛЬТАТ. `.arch-handoff/result.json` + ФИНАЛЬНЫЙ git-commit. В assumptions — точный путь загрузки операндов и обоснование допуска; в open_questions — что должен проверить архитектор на GB10 (компиляция под sm_121, IR/PTX/SASS, детерминизм, расширение на K-tile и целевые формы кампании).
+РЕЗУЛЬТАТ. `.arch-handoff/result.json` + ФИНАЛЬНЫЙ git-commit. В assumptions — точный путь загрузки и параметры compiler_params; в open_questions — что проверить на стенде.
 
 ## Границы (scope)
 
@@ -31,11 +40,11 @@ VerificationError: 'mosaic_gpu.mma' op operand #1 must be vector of A type suppo
 - **Можно писать:** `tools/mosaic/*`, `tools/tests/*`
 - **Нельзя писать (сильнее allow):** `model/`, `ARCHITECTURE-SPINE.md`, `CONSTRAINTS.yaml`
 - **Можно запускать:** `python3 -m pytest*`, `python3 tools/*`
-- **Сеть:** только локальный прокси-эндпоинт (канон ADR-050)
+- **Сеть:** сети нет (детерминированный узел)
 
 ## План отката
 
-Откат: `git reset --hard 9916ac3` (baseline — последний коммит до работы исполнителя; вся его работа приходит одним коммитом поверх).
+Откат: `git reset --hard da44935` (baseline — последний коммит до работы исполнителя; вся его работа приходит одним коммитом поверх).
 Сигналы отката: провал fitness-гейта (`arch-ml control check`), непустой `conflicts_with_prior_decisions`, статус `blocked`.
 Владелец решения об откате — solution-архитектор; исполнитель откат не выполняет и не маскирует проблему обходным редизайном.
 Обратимость: полная — единая точка изменений, коммит исполнителя.

@@ -1,0 +1,13 @@
+{
+ "jax": "0.11.2",
+ "shape": [
+  128,
+  128,
+  128
+ ],
+ "compile_stage": "ok",
+ "status": "run-ok",
+ "max_abs": 0.007897998206317425,
+ "rel": 1.0,
+ "seconds": 1.168
+}

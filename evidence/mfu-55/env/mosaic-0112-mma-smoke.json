@@ -1,0 +1,14 @@
+{
+ "jax": "0.11.2",
+ "device": "cuda:0",
+ "cc": "12.1",
+ "shape": {
+  "m": 128,
+  "k": 128,
+  "n": 8,
+  "dtype": "bfloat16"
+ },
+ "status": "blocked",
+ "error_type": "VerificationError",
+ "error": "Pallas encountered an internal verification error. Please file a bug at https://github.com/jax-ml/jax/issues/new/choose. Error details: 'mosaic_gpu.mma' op operand #1 must be vector of A type supported by the `a` and `b` operands of the synchronous `mma` op values of ranks 2, but got 'vector<128x128xf32>'\n see current operation: %99 = \"mosaic_gpu.mma\"(%93, %95, %98) : (vector<128x8xf32>, vector<128x128xf32>, vector<128x8xf32>) -> vector<128x8xf32>"
+}

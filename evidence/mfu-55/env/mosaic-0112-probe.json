@@ -1,0 +1,187 @@
+{
+  "schema_version": 1,
+  "timestamp_utc": "2026-10-10T08:47:02.950676+00:00",
+  "python": "3.12.3 (main, Jun 19 2026, 12:46:00) [GCC 13.3.0]",
+  "executable": "/home/roman/venv-axiom-0112/bin/python",
+  "machine": "aarch64",
+  "platform": "Linux-6.17.0-1029-nvidia-aarch64-with-glibc2.39",
+  "packages": {
+    "jax": "0.11.2",
+    "jaxlib": "0.11.2",
+    "jax-cuda12-plugin": null,
+    "jax-cuda12-pjrt": null,
+    "jax-cuda13-plugin": "0.11.2",
+    "jax-cuda13-pjrt": "0.11.2"
+  },
+  "metadata_only": false,
+  "mosaic_non_mma_status": "unverified",
+  "mosaic_mma_status": "unverified",
+  "warning": "Imports, device enumeration and symbol names do not verify GPU lowering or MMA.",
+  "tools": [
+    {
+      "argv": [
+        "nvidia-smi",
+        "--query-gpu=name,compute_cap,driver_version",
+        "--format=csv,noheader"
+      ],
+      "returncode": 0,
+      "stdout": "NVIDIA GB10, 12.1, 580.173.02",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "ptxas",
+        "--version"
+      ],
+      "error": "FileNotFoundError: [Errno 2] No such file or directory: 'ptxas'"
+    }
+  ],
+  "modules": {
+    "jax.experimental.pallas.mosaic_gpu": {
+      "file": "/home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax/experimental/pallas/mosaic_gpu.py",
+      "symbols": {
+        "CompilerParams": {
+          "qualified_name": "jax.experimental.pallas.mosaic_gpu.CompilerParams",
+          "callable": true,
+          "signature": "(*, approx_math: 'bool' = False, dimension_semantics: 'Sequence[DimensionSemantics] | None' = None, max_concurrent_steps: 'int' = 1, unsafe_no_auto_barriers: 'bool' = False, reduction_scratch_bytes: 'int' = 2048, profile_space: 'int' = 0, profile_dir: 'str' = '', profile_trace_scope: 'TraceScope' = <TraceScope.WARPGROUP: 'warpgroup'>, profile_bounds_check: 'bool' = False, lowering_semantics: 'mgpu.core.LoweringSemantics' = <LoweringSemantics.Warpgroup: 2>, skip_device_barrier: 'bool' = False) -> None",
+          "source_file": "/home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax/_src/pallas/mosaic_gpu/core.py"
+        },
+        "WGMMAAccumulatorRef": {
+          "qualified_name": "jax.experimental.pallas.mosaic_gpu.WGMMAAccumulatorRef",
+          "callable": true,
+          "signature": "(shape: 'tuple[int, int]', dtype: 'jax.typing.DTypeLike' = <class 'jax.numpy.float32'>, _init: 'Any' = <jax._src.state.types.Uninitialized object at 0xfcd882bbb350>) -> None",
+          "source_file": "/home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax/_src/pallas/mosaic_gpu/core.py"
+        },
+        "kernel": {
+          "qualified_name": "jax.experimental.pallas.mosaic_gpu.kernel",
+          "callable": true,
+          "signature": "(body: 'Callable[..., None] | api.NotSpecified' = <not-specified>, *, out_type: 'object' = (), scratch_types: 'ScratchShapeTree' = (), compiler_params: 'pallas_core.CompilerParams | None' = None, grid: 'tuple[int, ...]' = (), grid_names: 'tuple[str, ...]' = (), cluster: 'tuple[int, ...]' = (), cluster_names: 'tuple[str, ...]' = (), num_threads: 'int | None' = None, thread_name: 'str | None' = None, interpret: 'Any' = None, debug: 'bool' = False, **mesh_kwargs: 'Any') -> 'Any'",
+          "source_file": "/home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax/_src/pallas/mosaic_gpu/core.py"
+        },
+        "mma": {
+          "qualified_name": "jax.experimental.pallas.mosaic_gpu.mma",
+          "callable": true,
+          "signature": "(acc: 'jax.Array', a: 'jax.Array', b: 'jax.Array', /) -> 'jax.Array'",
+          "source_file": "/home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax/_src/pallas/mosaic_gpu/primitives.py"
+        },
+        "tcgen05_mma": {
+          "qualified_name": "jax.experimental.pallas.mosaic_gpu.tcgen05_mma",
+          "callable": true,
+          "signature": "(acc: '_Ref', a: '_Ref', b: '_Ref', barrier: '_Ref | None' = None, *, a_scale: '_Ref | None' = None, b_scale: '_Ref | None' = None, a_sparse_metadata: '_Ref | None' = None, accumulate: 'bool | jax.Array' = True, collective_axis: 'str | None' = None)",
+          "source_file": "/home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax/_src/pallas/mosaic_gpu/primitives.py"
+        },
+        "wgmma": {
+          "qualified_name": "jax.experimental.pallas.mosaic_gpu.wgmma",
+          "callable": true,
+          "signature": "(acc: 'gpu_core.WGMMAAbstractAccumulatorRef', a, b) -> 'None'",
+          "source_file": "/home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax/_src/pallas/mosaic_gpu/primitives.py"
+        },
+        "wgmma_accumulator_load": {
+          "qualified_name": "jax.experimental.pallas.mosaic_gpu.wgmma_accumulator_load",
+          "callable": true,
+          "signature": "(acc, *, wait_n: 'int | None' = 0)",
+          "source_file": "/home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax/_src/pallas/mosaic_gpu/primitives.py"
+        },
+        "wgmma_wait": {
+          "qualified_name": "jax.experimental.pallas.mosaic_gpu.wgmma_wait",
+          "callable": true,
+          "signature": "(n: 'int')",
+          "source_file": "/home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax/_src/pallas/mosaic_gpu/primitives.py"
+        }
+      }
+    },
+    "jax.experimental.mosaic.gpu": {
+      "file": "/home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax/experimental/mosaic/gpu/__init__.py",
+      "symbols": {
+        "MMALayouts": {
+          "qualified_name": "jax.experimental.mosaic.gpu.MMALayouts",
+          "callable": true,
+          "signature": "(element_type: jaxlib.mlir._mlir_libs._mlir.ir.Type | str | type[typing.Any] | numpy.dtype | jax._src.typing.SupportsDType, *, m_warps: int = 4)",
+          "source_file": "/home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax/experimental/mosaic/gpu/mma.py"
+        },
+        "WGMMAAccumulator": {
+          "qualified_name": "jax.experimental.mosaic.gpu.WGMMAAccumulator",
+          "callable": true,
+          "signature": "(*, _value: jax.experimental.mosaic.gpu.fragmented_array.FragmentedArray, _original_layout: jax.experimental.mosaic.gpu.fragmented_array.WGSplatFragLayout | jax.experimental.mosaic.gpu.fragmented_array.WGStridedFragLayout | jax.experimental.mosaic.gpu.fragmented_array.TiledLayout, _sync: bool = True)",
+          "source_file": "/home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax/experimental/mosaic/gpu/wgmma.py"
+        },
+        "WGMMA_COL_LAYOUT": {
+          "qualified_name": "jax.experimental.mosaic.gpu.WGMMA_COL_LAYOUT",
+          "callable": false,
+          "signature": null,
+          "source_file": null
+        },
+        "WGMMA_LAYOUT": {
+          "qualified_name": "jax.experimental.mosaic.gpu.WGMMA_LAYOUT",
+          "callable": false,
+          "signature": null,
+          "source_file": null
+        },
+        "WGMMA_LAYOUT_8BIT": {
+          "qualified_name": "jax.experimental.mosaic.gpu.WGMMA_LAYOUT_8BIT",
+          "callable": false,
+          "signature": null,
+          "source_file": null
+        },
+        "WGMMA_LAYOUT_UPCAST_2X": {
+          "qualified_name": "jax.experimental.mosaic.gpu.WGMMA_LAYOUT_UPCAST_2X",
+          "callable": false,
+          "signature": null,
+          "source_file": null
+        },
+        "WGMMA_LAYOUT_UPCAST_4X": {
+          "qualified_name": "jax.experimental.mosaic.gpu.WGMMA_LAYOUT_UPCAST_4X",
+          "callable": false,
+          "signature": null,
+          "source_file": null
+        },
+        "WGMMA_ROW_LAYOUT": {
+          "qualified_name": "jax.experimental.mosaic.gpu.WGMMA_ROW_LAYOUT",
+          "callable": false,
+          "signature": null,
+          "source_file": null
+        },
+        "WGMMA_TRANSPOSED_LAYOUT": {
+          "qualified_name": "jax.experimental.mosaic.gpu.WGMMA_TRANSPOSED_LAYOUT",
+          "callable": false,
+          "signature": null,
+          "source_file": null
+        },
+        "_wgmma": {
+          "qualified_name": "jax.experimental.mosaic.gpu._wgmma",
+          "callable": false,
+          "signature": null,
+          "source_file": "/home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax/experimental/mosaic/gpu/wgmma.py"
+        },
+        "mma": {
+          "qualified_name": "jax.experimental.mosaic.gpu.mma",
+          "callable": true,
+          "signature": "(acc: jax.experimental.mosaic.gpu.fragmented_array.FragmentedArray, a: jax.experimental.mosaic.gpu.fragmented_array.FragmentedArray, b: jax.experimental.mosaic.gpu.fragmented_array.FragmentedArray) -> jax.experimental.mosaic.gpu.fragmented_array.FragmentedArray",
+          "source_file": "/home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax/experimental/mosaic/gpu/mma.py"
+        },
+        "mma_utils": {
+          "qualified_name": "jax.experimental.mosaic.gpu.mma_utils",
+          "callable": false,
+          "signature": null,
+          "source_file": "/home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax/experimental/mosaic/gpu/mma_utils.py"
+        },
+        "wgmma": {
+          "qualified_name": "jax.experimental.mosaic.gpu.wgmma",
+          "callable": true,
+          "signature": "(acc: jax.experimental.mosaic.gpu.wgmma.WGMMAAccumulator, a: jax.experimental.mosaic.gpu.fragmented_array.FragmentedArray | jaxlib.mlir._mlir_libs._mlir.ir.Value, b: jaxlib.mlir._mlir_libs._mlir.ir.Value, *, swizzle: int = 128)",
+          "source_file": "/home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax/experimental/mosaic/gpu/wgmma.py"
+        }
+      }
+    }
+  },
+  "devices": [
+    {
+      "id": 0,
+      "platform": "gpu",
+      "device_kind": "NVIDIA GB10",
+      "compute_capability": "12.1",
+      "core_count": "48"
+    }
+  ],
+  "jax_runtime_version": "0.11.2"
+}

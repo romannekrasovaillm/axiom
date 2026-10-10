@@ -1,0 +1,13 @@
+{
+  "status": "correctness-pass",
+  "jax": "0.11.2",
+  "jaxlib": "0.11.2",
+  "device": "cuda:0",
+  "device_kind": "NVIDIA GB10",
+  "tests": [
+    "fill",
+    "iota"
+  ],
+  "mma_status": "unverified",
+  "transforms_status": "unverified"
+}

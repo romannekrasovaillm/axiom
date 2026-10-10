@@ -1,6 +1,6 @@
 # Перемер кампании на JAX 0.11.2 (10.10.2026)
 
-**Условия (сопоставимы с потолком 0.10.2 — правило сопоставимости ADR-050 Am.2):** 6 шагов, l3-full@8192, B=1, `--ce-chunk-tokens 4096`, remat `none`, `XLA_PYTHON_CLIENT_MEM_FRACTION=0.9`, `TF_GPU_ALLOCATOR=cuda_malloc_async`, `PREALLOCATE=false`, `AXIOM_KDA_SOLVE=jax` (базовый путь, без Mosaic). Окружение: `/home/roman/venv-axiom-0112` (jax/jaxlib 0.11.2, jax-cuda13-plugin 0.11.2). Требуемые сверх jax зависимости раннера: `pytest`, `orbax-checkpoint` (доустановлены).
+**Условия (сопоставимы с потолком 0.10.2 — правило сопоставимости ADR-050 Am.2):** 6 шагов, l3-full@8192, B=1, `--ce-chunk-tokens 4096`, remat `none`, `XLA_PYTHON_CLIENT_MEM_FRACTION=0.9`, `TF_GPU_ALLOCATOR=cuda_malloc_async`, `PREALLOCATE=false`, `AXIOM_KDA_SOLVE=jax` (базовый путь, без Mosaic). Окружение: `<HOME>/venv-axiom-0112` (jax/jaxlib 0.11.2, jax-cuda13-plugin 0.11.2). Требуемые сверх jax зависимости раннера: `pytest`, `orbax-checkpoint` (доустановлены).
 
 ## Результат
 

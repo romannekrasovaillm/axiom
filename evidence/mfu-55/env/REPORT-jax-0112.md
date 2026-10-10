@@ -1,6 +1,6 @@
 # Кандидатная линия JAX 0.11.2: статус capability gate (10.10.2026)
 
-Стенд GB10 (spark-44c3), окружение `/home/roman/venv-axiom-0112` (legacy `venv-axiom` 0.10.2 не тронут, ADR-052).
+Стенд GB10 (spark-44c3), окружение `<HOME>/venv-axiom-0112` (legacy `venv-axiom` 0.10.2 не тронут, ADR-052).
 
 ## Статусы (раздельно, только по evidence)
 

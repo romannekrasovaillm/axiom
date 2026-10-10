@@ -1,0 +1,18 @@
+[
+ {
+  "dtype": "bfloat16",
+  "status": "ok",
+  "max_abs": 18924699648.0,
+  "rel": 2194168075.13043,
+  "seconds": 3.7752,
+  "error": null
+ },
+ {
+  "dtype": "float32",
+  "status": "blocked",
+  "max_abs": null,
+  "rel": null,
+  "seconds": null,
+  "error": "owering.py\", line 1153, in lower_jaxpr_to_mosaic_gpu\n    outvals = rule(rule_ctx, *invals, **eqn.params)\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax/_src/pallas/mosaic_gpu/primitives.py\", line 2326, in _mma_lowering\n    return mgpu.mma(acc, a, b)\n           ^^^^^^^^^^^^^^^^^^^\n  File \"/home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax/experimental/mosaic/gpu/mma.py\", line 232, in mma\n    raise NotImplementedError(f\"Unsupported operand type: {element_type}\")\nNotImplementedError: Unsupported operand type: f32\n"
+ }
+]

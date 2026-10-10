@@ -1,37 +1,41 @@
 {
   "status": "partial",
   "assumptions": [
-    "Заменено ровно одно: в net/kda.py функция _solve_pair_pallas теперь вызывает дифференцируемый solve (jax.custom_vjp из net.kernels.kda_ut_solve: forward — кернел, backward — аналитический adjoint через транспонированный kernel_t) вместо прямого kernel; правая часть по-прежнему подаётся конкатенированной [xw | vw] (dk+dv) одним вызовом. Импорт локальный внутри функции — Pallas не тянется без флага.",
-    "Дефолт не изменился: без AXIOM_KDA_SOLVE исполняется прежний XLA-путь (_solve_pair_jax: jnp.linalg.inv(I+L) + две свёртки); неизвестное значение флага по-прежнему даёт ValueError без тихого отката; математика и публичные сигнатуры не менялись; кернел (net/kernels/*) и net/config.json не тронуты.",
-    "Проверка маршрутизации: при AXIOM_KDA_SOLVE=pallas вызывается именно solve — ровно один вызов, ширина правой части dk+dv, форма a=(H,C,C); тест переведён с kernel на solve; в default-режиме solve не вызывается вовсе.",
-    "Проверка протекания градиента: jax.grad через _ut_solve_pair на малых формах (CPU) конечен в обоих режимах; правые части (xw, vw) совпадают с дефолтным путём (rtol 2e-2, atol 1e-4).",
-    "Найдена и зафиксирована семантическая разница, а не подгонка: jnp.linalg.inv инвертирует ПОЛНУЮ матрицу и даёт ненулевой градиент по верхнему треугольнику L (который модель всегда маскирует: L = where(strict_tril, ...)), тогда как кернел решает ТРЕУГОЛЬНУЮ систему и вне носителя даёт строго ноль. Поэтому градиент по L сверяется на носителе (строго нижний треугольник), а нулевость вне носителя у pallas-пути проверяется отдельным утверждением. Первая версия теста падала именно на этом (max abs diff 28.55 в маскируемой части) — тест исправлен по существу, допуск не расширялся.",
-    "Проверка выполнена требуемым интерпретатором: /home/roman/venv-axiom/bin/python -m pytest -q net/tests/test_kda_chunked_cc.py net/tests/test_kda_wyut.py net/tests/test_kda_dtype_gate_parity.py net/tests/test_kda_pallas_flag.py → 101 passed (0 failed). Прогон шёл 658 с при конкуренции за CPU с параллельной линией; промежуточные прогоны срывались по обрыву сессии и перезапускались.",
-    "Коммит один: f2b4adc поверх baseline 7f69bd1 (правка теста внесена amend'ом в тот же коммит рычага); правки только в net/kda.py и net/tests/test_kda_pallas_flag.py — ровно зона.",
-    "MCP-самопроверка выполнена на ФИНАЛЬНОМ HEAD f2b4adcd06c709d0d45af7ef206efaec51800c43 через arch-ml mcp serve с журналом .arch-handoff/mcp-journal.jsonl: записи у финального HEAD есть, но passed=false у обоих инструментов — причины вне зоны и не связаны с правкой; гейты не подгонялись."
+    "Root cause прошлого падения найден и воспроизведён по эталону: ядро вызывалось без явных compiler_params, а операнды грузились из GMEM без MMA-layout'ов, поэтому A приходил во f32 ('mosaic_gpu.mma op operand #1 must be vector of A type … got vector<128x128xf32>'). Точный требуемый путь: plgpu.kernel(..., compiler_params=dataclasses.replace(plgpu.CompilerParams(), lowering_semantics=plgpu.LoweringSemantics.Lane)); a = plgpu.load(a_ref, layout=plgpu.Layout.MMA_LHS(dtype), optimized=False); b = plgpu.load(b_ref.T, layout=plgpu.Layout.MMA_RHS(dtype), optimized=False); аккумулятор — plgpu.layout_cast(jnp.zeros((m,n), acc_dtype), plgpu.Layout.MMA_ACC(dtype)); o_ref[...] = plgpu.mma(acc, a, b). dimension_semantics для grid не потребовался: при Lane-семантике и одно-программном ядре без grid параметр не задаётся (в эталоне его нет).",
+    "Входы подаются как numpy и приводятся через jnp.asarray(x, dtype=jnp.dtype('bfloat16')) — как требует постановка (не ndarray.astype(jnp.bfloat16)); правая часть в памяти имеет форму (n, k) и грузится транспонированной (b_ref.T), потому что RHS-layout ожидает (k, n).",
+    "tools/mosaic/mma_smoke.py: самодостаточный скрипт с --output; кейсы M=128/K=128/N=8 (базовый) и --cases для (128,64,8) и (256,128,8); эталон — fp32-произведение numpy-входов; JSON с полями status/shape/dtype/max_abs/rel/seconds/error_type/error/stage/cases; стадии compile и run разделены (ошибка компиляции — error_type класса исключения и stage=compile, исполнение — stage=run); допуск 1e-1 для bf16/fp16 (fp32-аккумулятор) и 1e-4 для остальных.",
+    "Без GPU скрипт пишет честный status=blocked с error_type=no-gpu, причиной и перечнем запланированных кейсов (тоже blocked) — 'correctness-pass' без ускорителя не выдаётся; hasattr/импорт/interpret=True доказательством GPU-компиляции не считаются (C-007), подмены проверки нет.",
+    "tools/tests/test_mma_smoke_contract.py: CPU-контракт — наличие скрипта, обязательность --output (argparse exit 2), структура JSON и допустимые status, blocked с причиной на машине без GPU, --cases/--dtype. Проверка: /home/roman/venv-axiom/bin/python -m pytest -q tools/tests/test_mma_smoke_contract.py → 5 passed.",
+    "Фактический запуск на исполнителе (не-GPU, AD-7): python tools/mosaic/mma_smoke.py --output /tmp/mma_smoke_out.json → status=blocked, error_type=no-gpu (CUDA plugin initialize падает: cuInit(0) failed → fallback to cpu), кейсы перечислены как blocked. GPU-прогон остаётся за архитектором.",
+    "Зона соблюдена: изменены только tools/mosaic/mma_smoke.py и tools/tests/test_mma_smoke_contract.py (плюс существующие референс-файлы в tools/mosaic/reference/, которые уже лежали в репозитории и мной не правились). net/, net/kernels/, net/config.json, tools/pretrain_run.py не тронуты.",
+    "Коммит один: 5cc482d поверх baseline da44935 (правка гигиены — снятие абсолютного пути из докстроки — внесена amend'ом в тот же коммит).",
+    "MCP-самопроверка выполнена на финальном HEAD 5cc482d6b5ba73461a29a027bf3ce87578952a4c (журнал .arch-handoff/mcp-journal.jsonl): записи у финального HEAD есть, passed=false у обоих инструментов — причины вне зоны; гейты не подгонялись."
   ],
   "open_questions": [
-    "Для GPU-замера (делает архитектор): (1) проходит ли обучение end-to-end при AXIOM_KDA_SOLVE=pallas — именно это падало с «Linearization failed to produce known values for all output primals», теперь путь дифференцируемый; (2) число ядер batch_trsm_left_kernel и MakeBatchPointers в графе (115 200/230 400 → ?) — ожидание: кернел вместо потока мелких ядер; (3) tok/s, занятость GPU, MFU на стационарной фазе: перевесит ли снятие накладных расходов проигрыш кернела на изолированной операции (fp32 ×0.78, bf16 ×1.25 при 16% от copy-потолка); (4) стоит ли замерять отдельно backward-кернел kernel_t (адджойнт) — на GB10 он впервые исполняется под обучением.",
-    "Семантика масок: XLA-путь (inv) и кернел (треугольный solve) дают разные градиенты по маскируемой части L. Для модели это безразлично (L строго нижний по построению), но если архитектор захочет строгой эквивалентности градиента — это отдельное решение (например, маскировать вход перед solve).",
-    "fitness_check passed=false: C-042 check_precision_pinning.py --profile gate требует CUDA (исполнитель CPU-only), check_gb10_single_load.py — стенд GB10 недоступен. Обе причины стендовые, не связаны с правкой.",
-    "scope_check passed=false: 6 из 8 изменённых путей вне allow — служебные артефакты .arch-handoff/{ARCHITECTURE.md, MANIFEST.json, TASK.md, mcp-journal.jsonl, result.json} (пакет прогона; контракт сам требует писать туда result.json и MCP-журнал) и evidence/facts/S-036.jsonl (журнал вердиктов датчика, мной не писавшийся). Файлы правки — в зоне; чтобы гейт стал зелёным, нужна правка правил границ под служебные артефакты, что со стороны исполнителя означало бы запись вне зоны."
+    "Что проверить на GB10 (делает архитектор): (1) компиляция ядра под sm_121 и корректность bf16/fp16/fp8/int8 при M=K=128, N=8; (2) IR/PTX/SASS — что mma действительно понижен в MMA-инструкции, а не в скалярный цикл; (3) детерминизм повторного запуска; (4) несколько K-tile (K>128 и N>8) и поведение на границах layout'ов; (5) стоимость компиляции отдельно от исполнения (скрипт пишет seconds суммарно, стадии в error_type).",
+    "fitness_check passed=false (7 замечаний): (а) check_reward_isolation.py — exit 2 'НЕ ПРОВЕРЕНО'; (б) check_precision_pinning.py --profile gate требует CUDA (исполнитель CPU-only); (в) check_gb10_single_load.py — стенд GB10 недоступен; (г) четыре must_not_contain по паттерну абсолютных домашних путей — они в служебных документах пакета (.arch-handoff/*), а не в моих файлах: единственный абсолютный путь в моём smoke-скрипте найден и убран этой же правкой. Все четыре стендовых/служебных, не связаны с содержанием дельты.",
+    "scope_check passed=false (8 из 10 путей): служебные .arch-handoff/{ARCHITECTURE.md, MANIFEST.json, TASK.md, mcp-journal.jsonl, result.json}, референс-файлы tools/mosaic/reference/_test_mma_*.py (лежат в репозитории до работы, шаблон allow 'tools/mosaic/*' их не покрывает — одноуровневый) и evidence/facts/S-036.jsonl (журнал датчика, мной не писавшийся). Файлы правки — в зоне; чтобы гейт стал зелёным, нужна правка правил границ, что со стороны исполнителя означало бы запись вне зоны.",
+    "Открытый вопрос к архитектору: нужен ли smoke с несколькими N (например, N=16/32) на GB10 отдельным кейсом — сейчас добавленные комбинации меняют K и M, но не N."
   ],
   "conflicts_with_prior_decisions": [
-    "Границы прогона не покрывают служебные артефакты, которые сам контракт прогона требует создавать (.arch-handoff/result.json, .arch-handoff/mcp-journal.jsonl), поэтому scope_check не может быть зелёным без правки вне зоны; расхождение зафиксировано, гейт не подгонялся.",
-    "Семантика градиента по L различается между XLA-путём (инверсия полной матрицы) и кернелом (треугольный solve); в модели L строго нижний, поэтому расхождение лежит вне носителя, но как факт зафиксировано в тесте и здесь."
+    "Границы прогона (write_allow 'tools/mosaic/*', 'tools/tests/*') не покрывают референс-файлы внутри tools/mosaic/reference/ и служебные .arch-handoff/result.json с mcp-журналом, которые контракт сам требует создавать; поэтому scope_check не может быть зелёным без правки вне зоны — расхождение зафиксировано, гейт не подгонялся."
   ],
-  "sha": "f2b4adc",
-  "baseline": "7f69bd1",
-  "flag": {"env": "AXIOM_KDA_SOLVE", "values": ["jax", "pallas"], "default": "jax", "pallas_path": "solve (custom_vjp: forward kernel, backward kernel_t)", "unknown_value": "ValueError"},
+  "sha": "5cc482d",
+  "baseline": "da44935",
+  "deliverables": {
+    "script": "tools/mosaic/mma_smoke.py",
+    "contract_test": "tools/tests/test_mma_smoke_contract.py",
+    "cases": [[128, 128, 8], [128, 64, 8], [256, 128, 8]],
+    "statuses": ["correctness-pass", "correctness-fail", "blocked"]
+  },
   "probes": {
-    "required_pytest": "101 passed (test_kda_chunked_cc, test_kda_wyut, test_kda_dtype_gate_parity, test_kda_pallas_flag), 658 с",
-    "routing": "pallas — ровно 1 вызов solve, ширина правой части dk+dv, a=(H,C,C); default — solve не вызывается",
-    "gradient": "jax.grad конечен в обоих режимах; правые части совпадают (rtol 2e-2, atol 1e-4); градиент по L совпадает на носителе, вне носителя pallas даёт строго ноль (разница семантики зафиксирована)",
-    "mcp_fitness_check": "passed=false — C-042 (нужен CUDA), check_gb10_single_load (GB10 недоступен); запись привязана к f2b4adcd",
-    "mcp_scope_check": "passed=false — 6 из 8 путей вне allow, все служебные; файлы правки в зоне"
+    "required_pytest": "5 passed (tools/tests/test_mma_smoke_contract.py)",
+    "local_run": "status=blocked, error_type=no-gpu (CUDA plugin init падает, fallback to cpu), кейсы перечислены",
+    "mcp_fitness_check": "passed=false — 3 стендовых стража (reward-isolation, precision-pinning --profile gate, gb10-single-load) + 4 must_not_contain по абсолютным путям в служебных документах пакета; мой файл очищен",
+    "mcp_scope_check": "passed=false — 8 из 10 путей вне allow, все служебные/референсные; файлы правки в зоне"
   },
   "remaining": [
-    "GPU-замер: обучение end-to-end при AXIOM_KDA_SOLVE=pallas, число TRSM-ядер (115 200/230 400 → ?), tok/s, занятость, MFU.",
-    "Решение по границам: включать ли служебные .arch-handoff в allow-лист, иначе scope_check неисполним у исполнителя."
+    "GPU-прогон на GB10: компиляция под sm_121, IR/PTX/SASS, корректность dtype, детерминизм, несколько K-tile/N.",
+    "Решение по границам: включать ли tools/mosaic/reference/** и служебные .arch-handoff в allow-лист."
   ]
 }

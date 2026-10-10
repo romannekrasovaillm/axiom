@@ -1,44 +1,38 @@
 # Задача для кодового харнесса
 
-ЗАДАЧА (backward для Pallas-кернела KDA: транспонированное решение + custom_vjp).
+ЗАДАЧА (перевести интеграцию кернела на custom_vjp-путь: `K.solve` вместо прямого `K.kernel`).
 
-ФАКТ (проверено архитектором на GB10, коммит `80fd6da`, флаг `AXIOM_KDA_SOLVE=pallas`):
+ФАКТ. В `net/kda.py` кернел KDA вызывается **напрямую** (`net.kernels.kda_ut_solve.kernel`) при `AXIOM_KDA_SOLVE=pallas`. Прогон обучения на GB10 падает:
 ```
 [pretrain] ОШИБКА цикла: Linearization failed to produce known values for all output primals.
   This is typically caused by attempting to differentiate a function that uses an operation with no defined JVP
 ```
-То есть интегрированный кернел **не дифференцируем**: обучение требует градиентов, а Pallas-ядро JVP не даёт. Forward-only интеграция в граф обучения не работает. Это тот самый открытый вопрос «нужен ли transpose/adjoint вариант» — ответ: **нужен**.
+Причина: Pallas-ядро JVP не даёт. В модуле кернела теперь есть **`custom_vjp`-обёртка**: `solve(a, b, ...)` (forward — кернел, backward — аналитический adjoint через транспонированный кернел `kernel_t`), а также `solve_t`. То есть дифференцируемый путь уже реализован и проверен на CPU (gradcheck 9.5e-7; 113 KDA-тестов зелёные) — интеграция просто ещё не переключена.
 
-ЧТО СДЕЛАТЬ (два кернела + явный backward-контракт).
-1. В `net/kernels/kda_ut_solve.py` добавить **транспонированный вариант** решения: `(I+L)^T X = B` (эквивалентно `solve(T, B, transpose_a=True)`). Реализация: отдельная функция `kernel_t(a, b, **params)` либо параметр `transpose_a` в существующем `kernel` — на твой выбор, но контракт модуля (`CASES/make_inputs/reference/baseline/kernel/cost/TUNE_SPACE/valid_config`) сохрани; `reference` для транспонированного случая — `jnp.linalg.solve(a.T, b)` (или эквивалент).
-2. Обернуть решение в **`custom_vjp`** (или `custom_jvp`) так, чтобы:
-   - forward шёл через кернел;
-   - backward вычислял `dA` и `dB` **математически корректно**: для `X = T B`, где `T = (I+L)^{-1}`, градиенты: `dB = T^T · dX`, `dL` — через `-T^T dX X^T` с маскированием строго нижней части (вывести и записать формулы в комментарии/отчёте);
-   - транспонированный множитель `T^T` брался **транспонированным кернелом** (п.1), а не через `jnp.linalg.inv`.
-3. Проверки:
-   - **Численный gradcheck на CPU**: сверка `jax.grad` от custom_vjp-пути с эталоном (`jnp.linalg.solve` в f32) по `a` и `b` на малых формах (H=2, C=8, d=4) в пределах разумного допуска — обосновать число;
-   - паритет forward не ломается (существующие тесты `net/tests/test_kernel_kda_ut_solve.py` зелёные);
-   - добавить тест, что `custom_vjp` действительно вызывается и что backward-ветка использует транспонированный кернел (не `linalg.inv`).
-4. В отчёте — вывод формул backward, объяснение, почему `dL` маскируется (L строго нижняя треугольная), и что осталось измерить на GB10.
+ЧТО СДЕЛАТЬ.
+1. В `net/kda.py` в ветке `AXIOM_KDA_SOLVE=pallas` (функция `_ut_solve_pair`) заменить прямой вызов `kernel(...)` на **`solve(...)`** из `net.kernels.kda_ut_solve` (custom_vjp-путь). Сигнатуры: `solve(a, b)` → решение `(I+L)X=B`; правую часть по-прежнему подавать **конкатенированной** (dk+dv) одним вызовом, как сейчас.
+2. Сохранить: дефолт `jax` (прежнее поведение), ошибку при неизвестном значении флага, паритет и допуски.
+3. Обновить/дополнить тест `net/tests/test_kda_pallas_flag.py`: при `AXIOM_KDA_SOLVE=pallas` используется именно дифференцируемый путь (`solve`), и **градиент протекает** — тест должен брать `jax.grad` от функции, использующей `_ut_solve_pair`, и проверять, что градиенты конечны и совпадают с дефолтным (`jax`) путём в пределах допуска (на малых формах, CPU).
+4. В отчёте — что осталось измерить на GB10: проходит ли обучение end-to-end при `AXIOM_KDA_SOLVE=pallas`; число ядер `batch_trsm_left_kernel`/`MakeBatchPointers` (115 200/230 400 → ?); tok/s, занятость, MFU.
 
-ОГРАНИЧЕНИЯ. Зона: `net/kernels/*`, `net/tests/*`. **Не менять `net/kda.py`** (интеграция в граф — отдельная дельта после GPU-проверки backward). GPU-прогоны запрещены (их делает архитектор); на ПК — CPU-тесты и gradcheck. Математику forward не менять.
+ОГРАНИЧЕНИЯ. Зона: `net/kda.py`, `net/tests/*`. Не трогать `net/kernels/*` (кернел не менять), `net/config.json`, математику, публичные сигнатуры. GPU-прогоны запрещены. Один рычаг — один коммит.
 
-ПРОВЕРКА (ПК, обязателен этот интерпретатор): `/home/roman/venv-axiom/bin/python -m pytest -q net/tests/test_kernel_kda_ut_solve.py` — все зелёные, включая новые gradcheck-тесты.
+ПРОВЕРКА (ПК): `/home/roman/venv-axiom/bin/python -m pytest -q net/tests/test_kda_chunked_cc.py net/tests/test_kda_wyut.py net/tests/test_kda_dtype_gate_parity.py net/tests/test_kda_pallas_flag.py` → все зелёные.
 
-РЕЗУЛЬТАТ. `.arch-handoff/result.json` + ФИНАЛЬНЫЙ git-commit. В assumptions — формулы backward и допуск gradcheck с наблюдённым числом; в open_questions — что мерить на GB10 (время forward и backward-ветки кернела против XLA; число ядер TRSM в графе при включённом флаге; нужен ли отдельный тюн транспонированного варианта).
+РЕЗУЛЬТАТ. `.arch-handoff/result.json` + ФИНАЛЬНЫЙ git-commit. В assumptions — что именно заменено и как проверено протекание градиента; в open_questions — список для GPU-замера.
 
 ## Границы (scope)
 
 Машинный контракт границ — `MANIFEST.json.scope` (хэш `scope_hash`); изменение вне границ ловится гейтом, а не обсуждается постфактум.
 
-- **Можно писать:** `net/kernels/*`, `net/tests/*`
+- **Можно писать:** `net/kda.py`, `net/tests/*`
 - **Нельзя писать (сильнее allow):** `model/`, `ARCHITECTURE-SPINE.md`, `CONSTRAINTS.yaml`
 - **Можно запускать:** `python3 -m pytest*`
 - **Сеть:** сети нет (детерминированный узел)
 
 ## План отката
 
-Откат: `git reset --hard 80fd6da` (baseline — последний коммит до работы исполнителя; вся его работа приходит одним коммитом поверх).
+Откат: `git reset --hard 7f69bd1` (baseline — последний коммит до работы исполнителя; вся его работа приходит одним коммитом поверх).
 Сигналы отката: провал fitness-гейта (`arch-ml control check`), непустой `conflicts_with_prior_decisions`, статус `blocked`.
 Владелец решения об откате — solution-архитектор; исполнитель откат не выполняет и не маскирует проблему обходным редизайном.
 Обратимость: полная — единая точка изменений, коммит исполнителя.
@@ -55,15 +49,6 @@ git status --short   # пусто, кроме .arch-handoff/
 
 - Коммитится код и тесты; служебный каталог `.arch-handoff/` в коммит не входит.
 - Работа без коммита считается невыполненной: оркестратор увидит её только через git log.
-
-### Самопроверка через MCP (маршрут Standard/Critical — обязательна)
-
-Перед финальным коммитом вызови через MCP-сервер `arch-spine` (подключён per-run, `.arch-handoff/mcp.json`) ровно эти проверки и добейся `passed=true`:
-
-- `fitness_check` — `{"repo": "<корень прогона>"}`;
-- `scope_check` — `{"repo": "<корень прогона>"}`.
-
-Их вызовы пишутся в MCP-журнал прогона (`.arch-handoff/mcp-journal.jsonl`) — это evidence «исполнитель проверял себя». Отсутствие записей = непроверенное, а не проверенное: на приёмке такой прогон не засчитывается (INCOMPLETE). `handoff_status` показывает обязательные проверки маршрута, `contract_validate` — пройдёт ли контракт результата.
 
 ## Контракт результата
 

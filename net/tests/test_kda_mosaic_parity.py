@@ -10,18 +10,23 @@
   список ``plgpu.SMEM``, Lane-семантика, SMEM-переходы между ``mma``);
 * ``valid_config`` отсеивает конфигурации, не влезающие в SMEM блока;
 * CPU-эталон ``reference`` сверен с ``solve_jax`` (единственная численная сверка,
-  возможная без устройства).
+  возможная без устройства);
+* **GPU-путевые дефекты сборки/трассировки** — класс, который CPU-парити не ловил:
+  ``grid`` без ``grid_names`` (падение при создании ядра) и не-2D операнды
+  ``plgpu.mma`` (падение ``_mma_abstract_eval`` при трассировке). Ловятся без GPU:
+  трассировкой реальной машинерии с шимами примитивов 0.11.2 и AST-проверкой вызова.
 """
 
 from __future__ import annotations
 
+import ast
+import collections
 import dataclasses
 import sys
-import types
 from pathlib import Path
 
+import jax
 import jax.numpy as jnp
-import numpy as np
 import pytest
 
 from net.kernels import kda_ut_solve as triton
@@ -133,9 +138,8 @@ def test_triton_line_is_untouched():
 
 # ---------------------------------------------------------------------------
 # Класс `NameError` на GPU-пути: путь `_build_kernel`/`body` исполняется только при
-# наличии устройства, поэтому CPU-парити его не покрывали. Три теста ниже ловят именно
-# этот класс: (1) статически — неразрешённые имена; (2) юнит-тест ленивого геттера;
-# (3) сборка ядра с подменённым Mosaic-модулем, включая исполнение тела `body`.
+# наличии устройства, поэтому CPU-парити его не покрывали. Два теста ниже ловят этот
+# класс: (1) статически — неразрешённые имена; (2) юнит-тест ленивого геттера.
 # ---------------------------------------------------------------------------
 
 
@@ -199,98 +203,374 @@ def test_mosaic_gpu_getter_is_lazy_cached_and_loud(monkeypatch):
     assert mosaic._MOSAIC_GPU is None, "при ошибке импорта кэш не заполняется"
 
 
-class _FakeMosaicGPU:
-    """Минимальная подмена `mosaic_gpu`: гоняет сборку ядра без GPU.
+# ---------------------------------------------------------------------------
+# Класс GPU-путевых дефектов сборки/трассировки, который CPU-парити не ловил:
+# (1) `grid=(H,)` без `grid_names` падает при СОЗДАНИИ ядра (`Mesh`, чистый Python);
+# (2) `plgpu.mma` требует 2D-операнды, а рефы в `body` — глобальные `(H, M, ...)`,
+#     поэтому голова обязана срезаться `lax.axis_index("head")` + `ref.at[h]`.
+# `test_build_and_trace_2d_operands` исполняет сборку и ТРАССИРОВКУ на CPU-буферах на
+# реальной машинерии (`kernel`/mpmd/рефы/scratch) с шимами примитивов 0.11.2;
+# AST-тесты ловят те же классы статически, независимо от трассировки.
+# ---------------------------------------------------------------------------
 
-    ``kernel`` вызывает ``body(...)`` на numpy-буферах, поэтому исполняются и ссылки
-    внутри тела: любой неразрешённый или ошибочный ``plgpu.*``/локальное имя всплывает
-    как `NameError`/`AttributeError` ещё на CPU.
-    """
+
+class _TraceJournal:
+    """Журнал трассировки: что ушло в ``plgpu.kernel`` и какие операнды увидел ``mma``."""
 
     def __init__(self):
-        self.sentinel = object()
-        self.calls = []
-        self.body_ran = False
-
-    class Layout:
-        @staticmethod
-        def MMA_ACC(dtype):
-            return ("mma_acc", dtype)
-
-        @staticmethod
-        def MMA_LHS(dtype):
-            return ("mma_lhs", dtype)
-
-        @staticmethod
-        def MMA_RHS(dtype):
-            return ("mma_rhs", dtype)
-
-    class LoweringSemantics:
-        Lane = "Lane"
-
-    @dataclasses.dataclass
-    class CompilerParams:
-        lowering_semantics: object = None
-
-    class SMEM:
-        def __init__(self, shape, dtype):
-            self.shape = shape
-            self.dtype = dtype
-
-    @staticmethod
-    def layout_cast(value, layout):
-        return value
-
-    @staticmethod
-    def load(ref, layout=None, optimized=True):
-        return jnp.asarray(ref)
-
-    @staticmethod
-    def mma(acc, a, b):
-        # Как у Mosaic: (`MMA_LHS` m×k) @ (`MMA_RHS` n×k)ᵀ → m×n.
-        return acc + a @ b.T
-
-    def kernel(self, body, *, out_type, scratch_types, compiler_params, grid):
-        self.calls.append(dict(out_type=out_type, scratch_types=scratch_types,
-                               compiler_params=compiler_params, grid=grid))
-        m, n = out_type.shape
-        l_ref = np.zeros((m, m), np.float32)
-        b_ref = np.zeros((m, n), np.float32)
-        o_ref = np.zeros((m, n), np.float32)
-        smem = np.zeros((m, m), np.float32)
-        body(l_ref, b_ref, o_ref, smem)
-        self.body_ran = True
-        return self.sentinel
+        self.kernel_calls = []
+        self.mma_operands = []
 
 
-def test_build_kernel_runs_with_fake_mosaic(monkeypatch):
-    """Путь сборки `_build_kernel` исполняется без GPU с подменённым Mosaic-модулем.
+class _Layout0112:
+    """Шим ``plgpu.Layout`` в контракте 0.11.2: фабрики раскладок по dtype.
 
-    Подмена идёт через ``sys.modules``, поэтому исполняется именно ленивый геттер
-    ``_mosaic_gpu`` (а не заглушка вместо него), затем ``dataclasses.replace`` и тело
-    ``body``. Это и есть тест на класс «NameError на GPU-пути».
+    В локальном jax 0.10.2 ``Layout.MMA_LHS/MMA_RHS/MMA_ACC`` нет (другое поколение
+    API); в 0.11.2 они есть и вызываются ровно так — проверенный рецепт GB10
+    (``evidence/mfu-55/mosaic/REPORT-mosaic-chain.md``).
     """
-    fake = _FakeMosaicGPU()
-    fake_mod = types.ModuleType("jax.experimental.pallas.mosaic_gpu")
-    for name in ("Layout", "LoweringSemantics", "CompilerParams", "SMEM",
-                 "layout_cast", "load", "mma", "kernel"):
-        setattr(fake_mod, name, getattr(fake, name))
 
-    import jax.experimental.pallas as pallas
+    @staticmethod
+    def MMA_ACC(dtype):
+        return ("mma_acc", jnp.dtype(dtype))
 
-    monkeypatch.setitem(sys.modules, "jax.experimental.pallas.mosaic_gpu", fake_mod)
-    monkeypatch.setattr(pallas, "mosaic_gpu", fake_mod, raising=False)
-    monkeypatch.setattr(mosaic, "_MOSAIC_GPU", None)          # сброс кэша ленивого геттера
-    monkeypatch.setattr(mosaic, "gpu_available", lambda: True)  # обойти CPU-проверку
+    @staticmethod
+    def MMA_LHS(dtype):
+        return ("mma_lhs", jnp.dtype(dtype))
 
-    fn = mosaic._build_kernel(64, 64, 1, jnp.float32, bn=64)
+    @staticmethod
+    def MMA_RHS(dtype):
+        return ("mma_rhs", jnp.dtype(dtype))
 
-    assert fn is fake.sentinel, "сборка обязана дойти до plgpu.kernel без исключений"
-    assert fake.body_ran, "тело ядра обязано исполниться (иначе NameError в body не пойман)"
-    assert len(fake.calls) == 1
-    call = fake.calls[0]
-    assert tuple(call["out_type"].shape) == (mosaic.packed_shape(64), 64)
-    assert call["grid"] == (1,)
+
+def _install_0112_shims(monkeypatch, plgpu, journal):
+    """Шимы примитивов с контрактом 0.11.2 поверх реального модуля ``mosaic_gpu``.
+
+    Подменяются только те символы, которых нет в локальном venv или чья сигнатура
+    там другая (``mma``/``Layout.MMA_*`` отсутствуют; у ``load`` в 0.10.2 обязателен
+    ``idx``); ``kernel``, ``Mesh``, рефы, ``run_scoped`` и scratch — **реальные**:
+    именно они дают глобальные формы рефов ``(H, M, M)``, на которых в 0.11.2 падает
+    ``_mma_abstract_eval``.
+    """
+
+    def load(ref, idx=None, *, layout=None, optimized=True):
+        # Контракт 0.11.2: источник — уже срез (``ref.at[h]``); форма сохраняется.
+        return jnp.zeros(tuple(ref.shape), ref.dtype)
+
+    def mma(acc, a, b, /):
+        # Проверка ровно как ``_mma_abstract_eval`` 0.11.2 (``m2, k = a.shape``):
+        # не-2D операнд падает ``too many values to unpack`` — как на стенде.
+        m2, k = a.shape
+        n2, k2 = b.shape
+        if k != k2:
+            raise ValueError(f"plgpu.mma: k не совпал: {a.shape} vs {b.shape}")
+        journal.mma_operands.append((tuple(a.shape), tuple(b.shape)))
+        return jnp.zeros((m2, n2), acc.dtype)
+
+    real_kernel = plgpu.kernel
+
+    def kernel(body, **kwargs):
+        journal.kernel_calls.append(kwargs)
+        return real_kernel(body, **kwargs)
+
+    monkeypatch.setattr(mosaic, "_MOSAIC_GPU", None)  # геттер вернёт тот же реальный модуль
+    monkeypatch.setattr(plgpu, "Layout", _Layout0112)
+    monkeypatch.setattr(plgpu, "load", load)
+    monkeypatch.setattr(plgpu, "mma", mma, raising=False)  # в 0.10.2 символа нет — добавляем
+    monkeypatch.setattr(plgpu, "layout_cast", lambda value, layout: value)
+    monkeypatch.setattr(plgpu, "kernel", kernel)
+
+
+def _iter_jaxprs(obj, _seen=None):
+    """Рекурсивно обойти вложенные jaxpr-ы (``custom_vmap_call`` → ``mpmd_map`` → ...)."""
+    _seen = _seen if _seen is not None else set()
+    jaxpr = getattr(obj, "jaxpr", obj)
+    if id(jaxpr) in _seen:
+        return
+    _seen.add(id(jaxpr))
+    yield jaxpr
+    for eqn in jaxpr.eqns:
+        for value in eqn.params.values():
+            for cand in (value if isinstance(value, (list, tuple)) else (value,)):
+                if hasattr(cand, "eqns") or hasattr(cand, "jaxpr"):
+                    yield from _iter_jaxprs(cand, _seen)
+
+
+def _axis_index_names(closed_jaxpr):
+    """Имена осей, читаемых ``lax.axis_index`` во всех вложенных jaxpr-ах трассировки."""
+    names = []
+    for jaxpr in _iter_jaxprs(closed_jaxpr):
+        for eqn in jaxpr.eqns:
+            if getattr(eqn.primitive, "name", "") == "axis_index":
+                names.append(eqn.params.get("axis_name"))
+    return names
+
+
+def test_build_and_trace_2d_operands(monkeypatch):
+    """(а) Сборка + ТРАССИРОВКА ядра на CPU-буферах: обе формы дефекта ловятся без GPU.
+
+    Реальная машинерия ``plgpu.kernel``/mpmd строит рефы ГЛОБАЛЬНЫХ форм ``(H, M, ...)``,
+    поэтому не-2D операнд ``plgpu.mma`` падает здесь так же, как ``_mma_abstract_eval``
+    на стенде (``too many values to unpack``), а ``grid`` без ``grid_names`` падает ещё
+    раньше — на создании ``Mesh`` внутри ``plgpu.kernel``.
+    """
+    if not mosaic.mosaic_available():
+        pytest.skip("нет mosaic_gpu: трассировка Mosaic-ядра недостижима")
+    plgpu = mosaic._mosaic_gpu()
+    journal = _TraceJournal()
+    _install_0112_shims(monkeypatch, plgpu, journal)
+    monkeypatch.setattr(mosaic, "gpu_available", lambda: True)  # устройства нет — сборка его не требует
+
+    H, C, N = 2, 64, 64
+    M = mosaic.packed_shape(C)
+    fn = mosaic._build_kernel(C, N, H, jnp.float32, bn=mosaic.DEFAULT_BN)
+
+    # Контракт вызова: непустой grid несёт grid_names; выход — все головы (H, M, N).
+    assert len(journal.kernel_calls) == 1, "сборка обязана позвать plgpu.kernel ровно раз"
+    call = journal.kernel_calls[0]
+    assert call["grid"] == (H,)
+    assert call["grid_names"] == ("head",)
+    assert tuple(call["out_type"].shape) == (H, M, N)
     assert len(call["scratch_types"]) == 1
-    assert isinstance(call["scratch_types"][0], _FakeMosaicGPU.SMEM)
-    assert call["compiler_params"].lowering_semantics == _FakeMosaicGPU.LoweringSemantics.Lane
+    assert call["compiler_params"].lowering_semantics == plgpu.LoweringSemantics.Lane
+
+    # Трассировка на CPU-буферах: здесь падает и форма без `grid_names`, и не-2D операнд.
+    a = jnp.zeros((H, M, M), jnp.float32)
+    b = jnp.zeros((H, M, N), jnp.float32)
+    closed = jax.make_jaxpr(fn)(a, b)
+    assert tuple(closed.out_avals[0].shape) == (H, M, N)
+
+    # Главное утверждение класса (а): все операнды mma при трассировке — 2D.
+    assert journal.mma_operands, "цепочка mma обязана исполниться на трассировке"
+    for a_shape, b_shape in journal.mma_operands:
+        assert len(a_shape) == 2, f"LHS обязан быть (m, k), получено {a_shape}"
+        assert len(b_shape) == 2, f"RHS обязан быть (n, k), получено {b_shape}"
+    assert all(a_shape == (M, M) for a_shape, _ in journal.mma_operands)
+    assert journal.mma_operands[-1] == ((M, M), (N, M)), "X = T B: (M,M) @ (N,M)ᵀ"
+    # Вся цепочка исполнена: -L → power → T → (steps-1) шагов → X = T B.
+    assert len(journal.mma_operands) == 3 + max(mosaic.neumann_steps(M) - 1, 0) + 1
+
+    # Голова — ось сетки, а не размерность массива: axis_index("head") реально в jaxpr.
+    assert "head" in _axis_index_names(closed)
+
+
+def test_trace_check_catches_missing_head_slicing(monkeypatch):
+    """Различающая сила (а): тело без среза по `head` падает на трассировке — как на стенде."""
+    if not mosaic.mosaic_available():
+        pytest.skip("нет mosaic_gpu: трассировка Mosaic-ядра недостижима")
+    plgpu = mosaic._mosaic_gpu()
+    journal = _TraceJournal()
+    _install_0112_shims(monkeypatch, plgpu, journal)
+
+    H, C, N = 2, 64, 64
+    M = mosaic.packed_shape(C)
+
+    def broken_body(l_ref, b_ref, o_ref, smem):
+        # Карикатура дефекта: операнды — глобальные (H, M, *) вместо 2D-срезов `ref.at[h]`.
+        acc = jnp.zeros((M, M), jnp.float32)
+        lhs = plgpu.load(l_ref, layout=plgpu.Layout.MMA_LHS(jnp.float32), optimized=False)
+        rhs = plgpu.load(l_ref.T, layout=plgpu.Layout.MMA_RHS(jnp.float32), optimized=False)
+        o_ref[...] = plgpu.mma(acc, lhs, rhs).astype(jnp.float32)
+
+    fn = plgpu.kernel(
+        broken_body,
+        out_type=jax.ShapeDtypeStruct((H, M, N), jnp.float32),
+        scratch_types=[plgpu.SMEM((M, M), jnp.float32)],
+        compiler_params=dataclasses.replace(
+            plgpu.CompilerParams(), lowering_semantics=plgpu.LoweringSemantics.Lane
+        ),
+        grid=(H,),
+        grid_names=("head",),
+    )
+    with pytest.raises(ValueError, match=r"too many values to unpack \(expected 2\)"):
+        jax.make_jaxpr(fn)(jnp.zeros((H, M, M), jnp.float32), jnp.zeros((H, M, N), jnp.float32))
+
+
+def test_kernel_without_grid_names_fails_at_creation():
+    """Дефект 1 динамически: `grid` без `grid_names` падает уже при создании ядра (Mesh).
+
+    Тест фиксирует предпосылку AST-стражи (б): в этой линии jax непустой `grid` требует
+    `grid_names` той же длины. Изменится предпосылка — покраснеет и стража, и этот тест.
+    """
+    if not mosaic.mosaic_available():
+        pytest.skip("нет mosaic_gpu: создание Mosaic-ядра недостижимо")
+    plgpu = mosaic._mosaic_gpu()
+    with pytest.raises(ValueError, match="grid_names must have the same length as grid"):
+        plgpu.kernel(
+            lambda *refs: None,
+            out_type=jax.ShapeDtypeStruct((4,), jnp.float32),
+            grid=(2,),
+        )
+
+
+# ---------------------------------------------------------------------------
+# (б) AST/статическая проверка вызова `plgpu.kernel`: непустой `grid` обязан нести
+# `grid_names`; оси `jax.lax.axis_index(...)` обязаны быть объявлены в `grid_names`.
+# Проверка не зависит от достижимости трассировки в данном окружении.
+# ---------------------------------------------------------------------------
+
+
+_PlgpuCall = collections.namedtuple("_PlgpuCall", ["lineno", "name", "args", "kwargs", "star_kwargs"])
+
+
+def _dotted(node):
+    """Точечное имя выражения: ``plgpu.Layout.MMA_LHS`` из цепочки Attribute/Name."""
+    parts = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if isinstance(node, ast.Name):
+        parts.append(node.id)
+    return ".".join(reversed(parts))
+
+
+def _plgpu_calls(source):
+    """Все вызовы ``plgpu.*`` из исходника: (строка, имя, позиционные, keyword-имена)."""
+    calls = []
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Call):
+            continue
+        name = _dotted(node.func)
+        if not name.startswith("plgpu."):
+            continue
+        kwargs = {}
+        star_kwargs = False
+        for kw in node.keywords:
+            if kw.arg is None:
+                star_kwargs = True
+            else:
+                kwargs[kw.arg] = kw.value
+        calls.append(_PlgpuCall(node.lineno, name, list(node.args), kwargs, star_kwargs))
+    return calls
+
+
+def _literal_len(node):
+    """Длина литеральной последовательности в узле AST; ``None`` — не разобрать статически."""
+    try:
+        value = ast.literal_eval(node)
+    except (ValueError, TypeError, SyntaxError):
+        return None
+    return len(value) if isinstance(value, (tuple, list, str)) else None
+
+
+def _grid_names_violations(source):
+    """Нарушения контракта «непустой `grid` ⇒ `grid_names`» в вызовах ``plgpu.kernel``."""
+    problems = []
+    for call in _plgpu_calls(source):
+        if call.name != "plgpu.kernel":
+            continue
+        if call.star_kwargs:
+            problems.append(f"строка {call.lineno}: **kwargs в plgpu.kernel — grid/grid_names не проверяемы статически")
+            continue
+        grid = call.kwargs.get("grid")
+        if grid is None:
+            continue
+        grid_len = _literal_len(grid)
+        if grid_len == 0:
+            continue
+        names = call.kwargs.get("grid_names")
+        if names is None:
+            problems.append(f"строка {call.lineno}: `grid` без `grid_names`")
+            continue
+        names_len = _literal_len(names)
+        if grid_len is not None and names_len is not None and names_len != grid_len:
+            problems.append(
+                f"строка {call.lineno}: len(grid_names)={names_len} != len(grid)={grid_len}")
+    return problems
+
+
+def test_kernel_call_declares_grid_names_for_nonempty_grid():
+    """(б) Статически: непустой `grid` в вызове `plgpu.kernel` обязан нести `grid_names`."""
+    src = Path(mosaic.__file__).read_text(encoding="utf-8")
+    assert _plgpu_calls(src), "в модуле обязан быть хотя бы один вызов `plgpu.*`"
+    assert _grid_names_violations(src) == [], (
+        "вызов `plgpu.kernel` нарушает контракт grid/grid_names: "
+        + "; ".join(_grid_names_violations(src)))
+
+    # Различающая сила: мутанты без `grid_names` и с непарной длиной обязаны ловиться.
+    assert _grid_names_violations("f = plgpu.kernel(body, out_type=t, grid=(12,))")
+    assert _grid_names_violations('f = plgpu.kernel(body, out_type=t, grid=(12,), grid_names=("a", "b"))')
+    assert _grid_names_violations("f = plgpu.kernel(body, out_type=t, grid=(12,), **kw)")
+    # ...и контроль: пустой grid без имён легален; пары равной длины — легальны.
+    assert _grid_names_violations("f = plgpu.kernel(body, out_type=t, grid=())") == []
+    assert _grid_names_violations('f = plgpu.kernel(body, out_type=t, grid=(12,), grid_names=("head",))') == []
+
+
+def test_axis_index_names_are_declared_in_grid_names():
+    """Оси, читаемые `jax.lax.axis_index(name)`, объявлены в `grid_names` ядра.
+
+    Контракт 0.11.2: координата программы берётся из именованной оси сетки
+    (`program_id` в MGPU deprecated); ось без объявления — ошибка конфигурации ядра.
+    """
+    src = Path(mosaic.__file__).read_text(encoding="utf-8")
+    declared = set()
+    for call in _plgpu_calls(src):
+        if call.name != "plgpu.kernel" or "grid_names" not in call.kwargs:
+            continue
+        try:
+            names = ast.literal_eval(call.kwargs["grid_names"])
+        except (ValueError, TypeError, SyntaxError):
+            continue  # не литерал — сверка недостижима статически
+        declared.update(str(name) for name in names)
+
+    used = []
+    for node in ast.walk(ast.parse(src)):
+        if not isinstance(node, ast.Call) or _dotted(node.func) != "jax.lax.axis_index":
+            continue
+        if len(node.args) == 1 and isinstance(node.args[0], ast.Constant):
+            used.append(str(node.args[0].value))
+
+    assert used, "голова обязана выбираться осью `jax.lax.axis_index(...)`"
+    assert set(used) <= declared, (
+        f"оси {sorted(set(used) - declared)} не объявлены в grid_names")
+
+
+# ---------------------------------------------------------------------------
+# Сверка аргументов всех `plgpu.*`-вызовов модуля с контрактом 0.11.2.
+# Источник: разведка стенда `evidence/mfu-55/env/mosaic-0112-probe.json` (подписи
+# `kernel`/`mma`/`CompilerParams` из установленного jax 0.11.2) и рецепт, проверенный
+# на GB10 (`evidence/mfu-55/mosaic/REPORT-mosaic-chain.md`): `load`/`layout_cast`/
+# `SMEM`/`Layout.MMA_*`. Проверяются имена и позиционность; семантика — трассировкой.
+# ---------------------------------------------------------------------------
+
+
+#: name → (число позиционных аргументов, разрешённые keyword-имена) в контракте 0.11.2.
+PLGPU_0112_CONTRACT = {
+    "plgpu.kernel": (1, frozenset({
+        "out_type", "scratch_types", "compiler_params", "grid", "grid_names",
+        "cluster", "cluster_names", "num_threads", "thread_name", "interpret", "debug",
+    })),
+    "plgpu.mma": (3, frozenset()),  # (acc, a, b, /) — только позиционные
+    "plgpu.load": (1, frozenset({"layout", "optimized", "idx"})),
+    "plgpu.layout_cast": (2, frozenset()),
+    "plgpu.SMEM": (2, frozenset({"transforms", "packed", "collective", "layout"})),
+    "plgpu.CompilerParams": (0, frozenset()),
+    "plgpu.Layout.MMA_ACC": (1, frozenset()),
+    "plgpu.Layout.MMA_LHS": (1, frozenset()),
+    "plgpu.Layout.MMA_RHS": (1, frozenset()),
+}
+
+
+def test_plgpu_call_arguments_match_the_0112_contract():
+    """Аргументы всех `plgpu.*`-вызовов модуля соответствуют контракту 0.11.2 (таблица выше)."""
+    src = Path(mosaic.__file__).read_text(encoding="utf-8")
+    calls = _plgpu_calls(src)
+    assert calls, "модуль обязан вызывать Mosaic-API"
+
+    problems = []
+    for call in calls:
+        contract = PLGPU_0112_CONTRACT.get(call.name)
+        if contract is None:
+            problems.append(f"строка {call.lineno}: вызов {call.name} вне сверенной таблицы 0.11.2")
+            continue
+        n_pos, allowed = contract
+        if call.star_kwargs:
+            problems.append(f"строка {call.lineno}: {call.name}: **kwargs не сверить с подписью")
+        if len(call.args) != n_pos:
+            problems.append(
+                f"строка {call.lineno}: {call.name}: позиционных {len(call.args)}, ожидается {n_pos}")
+        extra = set(call.kwargs) - allowed
+        if extra:
+            problems.append(
+                f"строка {call.lineno}: {call.name}: неизвестные keyword-имена {sorted(extra)}")
+    assert not problems, "; ".join(problems)

@@ -1,10 +1,11 @@
 # Архитектурный контекст (epic-context)
 
-Собран: 2026-10-10T09:03:41.540156390+00:00
+Собран: 2026-10-10T09:44:48.202193982+00:00
 
 Источники:
 - /home/roman/axiom/docs/adr/ADR-052-kandidatnaya-liniya-jax-0-11-2-mosaic-gpu-ryadom-s-legacy-0-10-2-izolirovannoe-okruzhenie-capability-gate-staged-rollout.md
 - /home/roman/axiom/evidence/mfu-55/env/REPORT-jax-0112.md
+- /home/roman/axiom/net/kernels/kda_ut_solve.py
 
 <!-- источник: /home/roman/axiom/docs/adr/ADR-052-kandidatnaya-liniya-jax-0-11-2-mosaic-gpu-ryadom-s-legacy-0-10-2-izolirovannoe-okruzhenie-capability-gate-staged-rollout.md -->
 
@@ -71,6 +72,6 @@ spec_files: [ARCHITECTURE-SPINE.md]
 
 - **Два окружения** — риск путаницы (`venv-axiom` vs `venv-axiom-0112`), дублирование диска (~несколько ГБ) и необходимость явно объявлять окружение в каждом прогоне и замере.
 - **Паритет не гарантирован**: смена jax/jaxlib/плагина/PJRT может изменить компиляцию, точность и тайминги; все числа кампании придётся перемерять (время стенда).
-- **Mosaic MMA может оказаться неприменим к CC12.1** даже на 0.11.2 — тогда линия остаётся BLOCKED, а затра
+- **Mosaic MMA может оказаться неприменим к CC12.1** даже н
 
 > **Контекст усечён** до 6000 символов; полные тексты — в файлах-источниках (см. MANIFEST.json).

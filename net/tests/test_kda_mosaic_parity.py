@@ -15,6 +15,13 @@
 
 from __future__ import annotations
 
+import dataclasses
+import sys
+import types
+from pathlib import Path
+
+import jax.numpy as jnp
+import numpy as np
 import pytest
 
 from net.kernels import kda_ut_solve as triton
@@ -122,3 +129,168 @@ def test_triton_line_is_untouched():
     assert callable(triton.solve) and callable(triton.solve_t)
     assert triton.valid_config is not mosaic.valid_config, (
         "Mosaic-версия valid_config — расширенная; Triton-объект не подменяется")
+
+
+# ---------------------------------------------------------------------------
+# Класс `NameError` на GPU-пути: путь `_build_kernel`/`body` исполняется только при
+# наличии устройства, поэтому CPU-парити его не покрывали. Три теста ниже ловят именно
+# этот класс: (1) статически — неразрешённые имена; (2) юнит-тест ленивого геттера;
+# (3) сборка ядра с подменённым Mosaic-модулем, включая исполнение тела `body`.
+# ---------------------------------------------------------------------------
+
+
+def test_no_undefined_names_in_module():
+    """Статическая проверка: в модуле нет неразрешённых имён (будущий `NameError`).
+
+    CPU-тесты раньше были зелёными именно потому, что `_build_kernel` не исполняется без
+    GPU, а `NameError` (`_mosaic_gpu`, `_require_gpu`, `dataclasses`) всплывал только на
+    стенде. pyflakes разбирает и путь сборки, и тело `body` — независимо от устройства.
+    """
+    pyflakes_api = pytest.importorskip("pyflakes.api")
+    from pyflakes import messages as pyflakes_messages
+    from pyflakes import reporter as pyflakes_reporter
+
+    collected = []
+
+    class _Collector(pyflakes_reporter.Reporter):
+        def __init__(self):
+            super().__init__(sys.stdout, sys.stderr)
+
+        def flake(self, message):
+            collected.append(message)
+
+    src = Path(mosaic.__file__).read_text(encoding="utf-8")
+    pyflakes_api.check(src, mosaic.__file__, _Collector())
+    undefined = [
+        m for m in collected
+        if isinstance(m, (pyflakes_messages.UndefinedName, pyflakes_messages.UndefinedLocal))
+    ]
+    assert not undefined, (
+        "неразрешённые имена в модуле (класс NameError на GPU-пути): "
+        + "; ".join(f"строка {m.lineno}: {m.message}" for m in undefined)
+    )
+
+
+def test_mosaic_gpu_getter_is_lazy_cached_and_loud(monkeypatch):
+    """`_mosaic_gpu` существует, импортирует Mosaic-API лениво, кэширует и падает с причиной."""
+    assert callable(getattr(mosaic, "_mosaic_gpu", None)), (
+        "ленивый геттер Mosaic-API `_mosaic_gpu` обязан быть определён")
+
+    monkeypatch.setattr(mosaic, "_MOSAIC_GPU", None)
+    first = mosaic._mosaic_gpu()
+    second = mosaic._mosaic_gpu()
+    assert first is second, "повторный вызов обязан отдать тот же объект (импорт ровно один раз)"
+
+    # Отсутствующее API — RuntimeError с причиной, БЕЗ тихого отката на Triton.
+    monkeypatch.setattr(mosaic, "_MOSAIC_GPU", None)
+    import builtins
+
+    real_import = builtins.__import__
+
+    def _no_mosaic(name, *args, **kwargs):
+        if name.startswith("jax.experimental.pallas"):
+            raise ImportError("fake: mosaic_gpu отсутствует")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _no_mosaic)
+    with pytest.raises(RuntimeError) as exc:
+        mosaic._mosaic_gpu()
+    assert "Mosaic" in str(exc.value), "у отказа обязана быть причина про Mosaic-API"
+    assert mosaic._MOSAIC_GPU is None, "при ошибке импорта кэш не заполняется"
+
+
+class _FakeMosaicGPU:
+    """Минимальная подмена `mosaic_gpu`: гоняет сборку ядра без GPU.
+
+    ``kernel`` вызывает ``body(...)`` на numpy-буферах, поэтому исполняются и ссылки
+    внутри тела: любой неразрешённый или ошибочный ``plgpu.*``/локальное имя всплывает
+    как `NameError`/`AttributeError` ещё на CPU.
+    """
+
+    def __init__(self):
+        self.sentinel = object()
+        self.calls = []
+        self.body_ran = False
+
+    class Layout:
+        @staticmethod
+        def MMA_ACC(dtype):
+            return ("mma_acc", dtype)
+
+        @staticmethod
+        def MMA_LHS(dtype):
+            return ("mma_lhs", dtype)
+
+        @staticmethod
+        def MMA_RHS(dtype):
+            return ("mma_rhs", dtype)
+
+    class LoweringSemantics:
+        Lane = "Lane"
+
+    @dataclasses.dataclass
+    class CompilerParams:
+        lowering_semantics: object = None
+
+    class SMEM:
+        def __init__(self, shape, dtype):
+            self.shape = shape
+            self.dtype = dtype
+
+    @staticmethod
+    def layout_cast(value, layout):
+        return value
+
+    @staticmethod
+    def load(ref, layout=None, optimized=True):
+        return jnp.asarray(ref)
+
+    @staticmethod
+    def mma(acc, a, b):
+        # Как у Mosaic: (`MMA_LHS` m×k) @ (`MMA_RHS` n×k)ᵀ → m×n.
+        return acc + a @ b.T
+
+    def kernel(self, body, *, out_type, scratch_types, compiler_params, grid):
+        self.calls.append(dict(out_type=out_type, scratch_types=scratch_types,
+                               compiler_params=compiler_params, grid=grid))
+        m, n = out_type.shape
+        l_ref = np.zeros((m, m), np.float32)
+        b_ref = np.zeros((m, n), np.float32)
+        o_ref = np.zeros((m, n), np.float32)
+        smem = np.zeros((m, m), np.float32)
+        body(l_ref, b_ref, o_ref, smem)
+        self.body_ran = True
+        return self.sentinel
+
+
+def test_build_kernel_runs_with_fake_mosaic(monkeypatch):
+    """Путь сборки `_build_kernel` исполняется без GPU с подменённым Mosaic-модулем.
+
+    Подмена идёт через ``sys.modules``, поэтому исполняется именно ленивый геттер
+    ``_mosaic_gpu`` (а не заглушка вместо него), затем ``dataclasses.replace`` и тело
+    ``body``. Это и есть тест на класс «NameError на GPU-пути».
+    """
+    fake = _FakeMosaicGPU()
+    fake_mod = types.ModuleType("jax.experimental.pallas.mosaic_gpu")
+    for name in ("Layout", "LoweringSemantics", "CompilerParams", "SMEM",
+                 "layout_cast", "load", "mma", "kernel"):
+        setattr(fake_mod, name, getattr(fake, name))
+
+    import jax.experimental.pallas as pallas
+
+    monkeypatch.setitem(sys.modules, "jax.experimental.pallas.mosaic_gpu", fake_mod)
+    monkeypatch.setattr(pallas, "mosaic_gpu", fake_mod, raising=False)
+    monkeypatch.setattr(mosaic, "_MOSAIC_GPU", None)          # сброс кэша ленивого геттера
+    monkeypatch.setattr(mosaic, "gpu_available", lambda: True)  # обойти CPU-проверку
+
+    fn = mosaic._build_kernel(64, 64, 1, jnp.float32, bn=64)
+
+    assert fn is fake.sentinel, "сборка обязана дойти до plgpu.kernel без исключений"
+    assert fake.body_ran, "тело ядра обязано исполниться (иначе NameError в body не пойман)"
+    assert len(fake.calls) == 1
+    call = fake.calls[0]
+    assert tuple(call["out_type"].shape) == (mosaic.packed_shape(64), 64)
+    assert call["grid"] == (1,)
+    assert len(call["scratch_types"]) == 1
+    assert isinstance(call["scratch_types"][0], _FakeMosaicGPU.SMEM)
+    assert call["compiler_params"].lowering_semantics == _FakeMosaicGPU.LoweringSemantics.Lane

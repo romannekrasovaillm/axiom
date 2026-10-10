@@ -118,6 +118,45 @@ is already PASS (0 % of entries outside the ``(2e-2, 2e-2)`` pair), its verdict
 is dominated by the bf16 input/output rounding, and the fix is scoped to the
 f32 arithmetic.  ``None`` there is not a silent tf32: it is the pre-existing
 behaviour, left untouched.
+
+Backward: a transposed solve wrapped in ``custom_vjp``
+------------------------------------------------------
+A bare ``pallas_call`` has no JVP, so integrating the forward-only kernel into a
+training graph failed with *"Linearization failed to produce known values for all
+output primals ... an operation with no defined JVP"*.  The fix is an explicit
+adjoint, and the adjoint of a triangular solve is again a triangular solve —
+this time **transposed**.
+
+Forward is ``X = M^{-1} B`` with ``M = I + L``.  Differentiating ``M X = B``
+gives ``dM X + M dX = dB``; the standard adjoint of a linear solve is
+
+    dB = M^{-T} dX = T^T dX ,      dM = -M^{-T} dX X^T = -T^T dX X^T ,
+
+with ``T = (I + L)^{-1}`` the very factor the kernel builds.  ``dM = dL``
+(``M = I + L``), and the module's only trainable input is ``L = tril(A, -1)``, so
+
+    dB = kernel_t(A, dX) ,         dA = strict_lower(-(kernel_t(A, dX)) X^T) .
+
+``kernel_t`` solves ``M^T Y = dX``, i.e. it *is* the ``T^T`` multiplier; no
+``jnp.linalg.inv`` is used anywhere in this module.
+
+For the **transposed** forward ``M^T X = B`` the same rule applies with
+``M -> M^T``: ``dB = M^{-1} dX = kernel(A, dX)`` and ``dM^T = -M^{-1} dX X^T``;
+transposing back, ``dA = strict_lower(-X (kernel(A, dX))^T)``.  So each
+orientation's backward reads its multiplier from the *other* kernel.
+
+Why ``dA`` is masked.  ``A`` enters only through ``tril(A, -1)``: the unit
+diagonal and the zero upper triangle are not parameters.  The mask is therefore
+the shape of the map, not an approximation.  An *unconstrained* oracle
+``jnp.linalg.solve(A, B)`` places non-zero mass on the diagonal/upper triangle and
+disagrees with a correct constrained gradient on exactly those entries — the
+gradcheck compares the strictly-lower block against the raw ``jnp.linalg.solve``
+gradient and asserts the rest is exactly zero.
+
+Transposed kernel.  :func:`kernel_t` / :func:`solve_jax_t` / :func:`_solve_head_t`
+solve ``(I + L)^T Y = B`` by the *same* Neumann product form on the strictly
+upper nilpotent ``N = -L^T``:  ``(I + L^T)^{-1} = (I - L^T)(I + L^{2T})(I + L^{4T})...``
+(same ``log2(C)`` matmuls, same precision pin as :func:`_solve_head`).
 """
 
 from __future__ import annotations
@@ -261,6 +300,34 @@ def _solve_head(av, bv, precision):
     return lax.dot(t_mat, bv, precision=precision)
 
 
+def _solve_head_t(av, bv, precision):
+    """Solve ``av.T @ x = bv`` — the transpose of :func:`_solve_head`.
+
+    ``av`` is unit lower triangular ``(C, C)``, so ``av.T = I + L^T`` is unit
+    *upper* triangular.  The adjoint ``T^T`` of the forward solve is exactly the
+    inverse of this matrix, so the backward pass needs this routine rather than
+    ``jnp.linalg.inv``.
+
+    Same Neumann product form as :func:`_solve_head`, on the strictly **upper**
+    nilpotent factor ``N = -L^T`` (``L = tril(av, -1)``): ``N`` is strictly upper,
+    so ``N**C == 0`` and ``(I + L^T)^{-1} = (I - N)^{-1} = (I + N)(I + N^2)...``.
+    Note this is *not* ``_solve_head(av.T, ...)``: ``tril(av.T, -1)`` is zero for
+    a unit-upper matrix, so the factor must be transposed *explicitly*.
+
+    Only ``tril(av, -1).T`` is transposed (a ``C x C`` cheap op); the loop is the
+    identical ``log2(C)``-matmul body, so the two solves cost the same.
+    """
+    c = av.shape[0]
+    eye = jnp.eye(c, dtype=jnp.float32)
+    n_up = -jnp.tril(av, -1).T  # N = -L^T; strictly upper, so N**c == 0
+    t_mat = eye + n_up  # (I + N)
+    power = lax.dot(n_up, n_up, precision=precision)  # N**2
+    for _ in range(_inverse_steps(c)):
+        t_mat = lax.dot(t_mat, power + eye, precision=precision)  # (I+N)(I+N^2)(I+N^4)...
+        power = lax.dot(power, power, precision=precision)  # N**4, N**8, ...
+    return lax.dot(t_mat, bv, precision=precision)
+
+
 def solve_jax(a, b):
     """Host implementation of the kernel's arithmetic (batched over ``H``).
 
@@ -270,6 +337,20 @@ def solve_jax(a, b):
     """
     precision = _matmul_precision(a.dtype)
     x = jax.vmap(lambda av, bv: _solve_head(av, bv, precision))(
+        a.astype(jnp.float32), b.astype(jnp.float32)
+    )
+    return x.astype(a.dtype)
+
+
+def solve_jax_t(a, b):
+    """Host transpose of :func:`solve_jax`: solves ``(I + L)^T X = B``.
+
+    ``a`` is unit lower triangular ``(H, C, C)``.  Same pinned precision as the
+    kernel body, so the CPU verdict on the transposed path is a verdict on the
+    program :func:`kernel_t` runs.
+    """
+    precision = _matmul_precision(a.dtype)
+    x = jax.vmap(lambda av, bv: _solve_head_t(av, bv, precision))(
         a.astype(jnp.float32), b.astype(jnp.float32)
     )
     return x.astype(a.dtype)
@@ -293,6 +374,29 @@ def baseline(a, b):
         b.astype(jnp.float32),
         left_side=True,
         lower=True,
+        unit_diagonal=True,
+    )
+    return x.astype(a.dtype)
+
+
+def reference_t(a, b):
+    """Exact oracle for the transposed solve: ``jnp.linalg.solve(a.T, b)`` in f32."""
+    x = jnp.linalg.solve(
+        jnp.swapaxes(a.astype(jnp.float32), -1, -2), b.astype(jnp.float32)
+    )
+    return x.astype(a.dtype)
+
+
+def baseline_t(a, b):
+    """The XLA path for the transposed solve — ``triangular_solve`` on ``a.T``.
+
+    ``(I + L)^T`` is unit *upper* triangular, hence ``lower=False``.
+    """
+    x = jax.lax.linalg.triangular_solve(
+        jnp.swapaxes(a.astype(jnp.float32), -1, -2),
+        b.astype(jnp.float32),
+        left_side=True,
+        lower=False,
         unit_diagonal=True,
     )
     return x.astype(a.dtype)
@@ -344,15 +448,21 @@ def _block_specs(H, C, N, bn):
     )
 
 
-def _build_kernel(H, C, N, dtype, bn, num_warps, num_stages, interpret=False):
+def _build_kernel(H, C, N, dtype, bn, num_warps, num_stages, interpret=False, transpose=False):
     """Build (and jit) the ``pallas_call`` for one static configuration.
 
     ``interpret=True`` runs the same body over the same block layout through
     Pallas' interpreter instead of the Triton compiler.  That is what lets a
     host *without* a GPU execute the layout and compare it numerically (see
     ``tests/test_kernel_kda_ut_solve.py``); :func:`kernel` never uses it.
+
+    ``transpose=True`` builds the **transposed** solve ``(I + L)^T X = B``: the
+    body is byte-for-byte the forward body with :func:`_solve_head` replaced by
+    :func:`_solve_head_t`.  Same grid, same block specs, same precision pin.
     """
     from jax.experimental.pallas import triton as pltriton
+
+    solve = _solve_head_t if transpose else _solve_head
 
     def body(a_ref, b_ref, o_ref):
         av = pltriton.load(a_ref).astype(jnp.float32)
@@ -361,7 +471,7 @@ def _build_kernel(H, C, N, dtype, bn, num_warps, num_stages, interpret=False):
         # ambient policy: this is what makes the body self-contained under
         # check_kernel.py on the GB10 (no conftest there).  See _matmul_precision.
         precision = _matmul_precision(dtype)
-        pltriton.store(o_ref, _solve_head(av, bv, precision).astype(o_ref.dtype))
+        pltriton.store(o_ref, solve(av, bv, precision).astype(o_ref.dtype))
 
     grid, in_specs, out_specs = _block_specs(H, C, N, bn)
     call = pl.pallas_call(
@@ -383,17 +493,11 @@ def _on_gpu() -> bool:
         return False
 
 
-def kernel(a, b, **params):
-    """``(I + L) X = B``, batched over ``H``; the module's kernel entry point.
-
-    ``params`` are the :data:`TUNE_SPACE` keys (``bn``, ``num_warps``,
-    ``num_stages``); on a non-GPU host they are inert because the host path
-    (:func:`solve_jax`) has no blocks, and the Pallas build/execution is
-    skipped — see the module docstring on host dispatch.
-    """
+def _dispatch_kernel(a, b, params, transpose):
+    """Shared body of :func:`kernel`/:func:`kernel_t` (host vs Pallas dispatch)."""
     cfg = {**DEFAULT_PARAMS, **params}
     if not _on_gpu():
-        return solve_jax(a, b)
+        return solve_jax_t(a, b) if transpose else solve_jax(a, b)
 
     H, C, _ = a.shape
     N = b.shape[-1]
@@ -406,12 +510,125 @@ def kernel(a, b, **params):
             f"invalid kernel configuration {cfg} for (H={H}, C={C}, N={N}); "
             "see valid_config()"
         )
-    key = (H, C, N, str(a.dtype), bn, int(cfg["num_warps"]), int(cfg["num_stages"]))
+    key = (H, C, N, str(a.dtype), bn, int(cfg["num_warps"]), int(cfg["num_stages"]),
+           bool(transpose))
     fn = _KERNEL_CACHE.get(key)
     if fn is None:
-        fn = _build_kernel(H, C, N, a.dtype, bn, int(cfg["num_warps"]), int(cfg["num_stages"]))
+        fn = _build_kernel(
+            H, C, N, a.dtype, bn, int(cfg["num_warps"]), int(cfg["num_stages"]),
+            transpose=transpose,
+        )
         _KERNEL_CACHE[key] = fn
     return fn(a, b)
+
+
+def kernel(a, b, **params):
+    """``(I + L) X = B``, batched over ``H``; the module's kernel entry point.
+
+    ``params`` are the :data:`TUNE_SPACE` keys (``bn``, ``num_warps``,
+    ``num_stages``); on a non-GPU host they are inert because the host path
+    (:func:`solve_jax`) has no blocks, and the Pallas build/execution is
+    skipped — see the module docstring on host dispatch.
+    """
+    return _dispatch_kernel(a, b, params, transpose=False)
+
+
+def kernel_t(a, b, **params):
+    """``(I + L)^T X = B``, batched over ``H``; the transposed kernel entry point.
+
+    Solves the transpose of :func:`kernel`'s system; this is the ``T^T``
+    multiplier the backward rule of :data:`solve` needs.  Same dispatch
+    contract as :func:`kernel` (host path :func:`solve_jax_t` without a GPU).
+    """
+    return _dispatch_kernel(a, b, params, transpose=True)
+
+
+# ---------------------------------------------------------------------------
+# Differentiable wrapper: transposed-solve backward under ``jax.custom_vjp``
+#
+# The bare ``kernel``/``kernel_t`` are forward-only: a Pallas ``pallas_call`` has
+# no JVP, so putting one in a training graph fails with "Linearization failed to
+# produce known values for all output primals".  ``solve``/``solve_t`` wrap the
+# kernel with the analytic adjoint (module docstring, "Backward"); the adjoint is
+# itself a triangular solve, taken **transposed** from the sibling kernel — never
+# from ``jnp.linalg.inv``.
+# ---------------------------------------------------------------------------
+
+
+def _strict_lower_mask(c, dtype=jnp.bool_):
+    """Strictly lower-triangular mask ``(C, C)`` — the trainable part of ``A``."""
+    return jnp.tril(jnp.ones((c, c), dtype), -1)
+
+
+def _backward(a, x, dx, transpose, params):
+    """Analytic adjoint ``(dA, dB)`` of the (transposed) solve — see the docstring.
+
+    ``a`` is ``(H, C, C)`` unit lower triangular, ``x`` the forward solution
+    ``(H, C, N)``, ``dx`` its cotangent.  Both branches get ``T^T`` from a
+    **kernel**, never from ``linalg.inv``:
+
+    * forward ``M X = B``:   ``T^T dX = kernel_t(a, dX)`` and ``dM = -Y X^T``;
+    * forward ``M^T X = B``: ``T dX = kernel(a, dX)`` and ``dM^T = -Z X^T``.
+
+    ``dA`` is masked strictly lower: ``A`` enters the map only through
+    ``tril(A, -1)`` (unit diagonal, zero upper triangle are fixed), so the
+    diagonal/upper entries of the true gradient are exactly zero.
+    """
+    precision = _matmul_precision(a.dtype)
+    mask = _strict_lower_mask(a.shape[-1])
+    if not transpose:
+        y = kernel_t(a, dx, **params)  #  Y = M^{-T} dX  (transposed kernel!)
+        db = y
+        d_full = jax.vmap(lambda yh, xh: lax.dot(yh, xh.T, precision=precision))(y, x)
+    else:
+        z = kernel(a, dx, **params)  #  Z = M^{-1} dX   (non-transposed kernel)
+        db = z
+        d_full = jax.vmap(lambda xh, zh: lax.dot(xh, zh.T, precision=precision))(x, z)
+    da = jnp.where(mask, -d_full, jnp.zeros_like(d_full))
+    return da, db
+
+
+def _solve_forward(a, b, transpose, params):
+    """Forward dispatch shared by the custom_vjp primal and its fwd rule.
+
+    The kernel is looked up on the *module* (not captured), so a test can observe
+    which kernel the forward and the backward actually run.
+    """
+    kernel_fn = kernel_t if transpose else kernel
+    return kernel_fn(a, b, **params)
+
+
+def make_solve(transpose=False, **params):
+    """Wrap the (transposed) solve in ``jax.custom_vjp`` with the analytic adjoint.
+
+    Forward is :func:`kernel`/:func:`kernel_t` with ``params``; the fwd rule
+    stashes ``(a, x)`` and the bwd rule is :func:`_backward`.  This is the entry
+    point a training graph must use — it carries the JVP/transpose the bare
+    ``pallas_call`` lacks, which is what the integrated forward-only kernel was
+    missing.
+    """
+
+    @jax.custom_vjp
+    def solve(a, b):
+        return _solve_forward(a, b, transpose, params)
+
+    def solve_fwd(a, b):
+        x = _solve_forward(a, b, transpose, params)
+        return x, (a, x)
+
+    def solve_bwd(res, dx):
+        a, x = res
+        return _backward(a, x, dx, transpose=transpose, params=params)
+
+    solve.defvjp(solve_fwd, solve_bwd)
+    return solve
+
+
+#: Differentiable forward solve ``(I + L) X = B``; adjoint via :func:`kernel_t`.
+solve = make_solve()
+
+#: Differentiable transposed solve ``(I + L)^T X = B``; adjoint via :func:`kernel`.
+solve_t = make_solve(transpose=True)
 
 
 # ---------------------------------------------------------------------------

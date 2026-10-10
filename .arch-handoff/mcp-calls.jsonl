@@ -83,3 +83,6 @@
 {"ts":"2026-10-09T19:32:02.151495340+03:00","tool":"fitness_check","verdict":"fail","duration_ms":106,"rules":["ADR-041: у каждого JAX-инструмента tools/ префлайт памяти вызывается явно — маркер ensure_mem_fraction() обязателен в каждом файле списка (XLA_PYTHON_CLIENT_MEM_FRACTION до import jax)"],"session_id":"ef86293a67f51a2c","host":"claude-code"}
 {"ts":"2026-10-10T06:42:24.608682288+03:00","tool":"fitness_check","verdict":"pass","duration_ms":91,"session_id":"1aff46813e602c3c","host":"claude-code"}
 {"ts":"2026-10-10T07:03:38.107724746+03:00","tool":"fitness_check","verdict":"pass","duration_ms":89,"session_id":"98333a2a4cef7915","host":"claude-code"}
+{"ts":"2026-10-10T07:32:00.042194790+03:00","tool":"handoff_status","verdict":"invalid","duration_ms":0,"session_id":"e56b616f0dd6fb1f","host":"hermes"}
+{"ts":"2026-10-10T07:32:00.042382525+03:00","tool":"scope_check","verdict":"invalid","duration_ms":0,"session_id":"e56b616f0dd6fb1f","host":"hermes"}
+{"ts":"2026-10-10T07:32:00.129238142+03:00","tool":"fitness_check","verdict":"pass","duration_ms":86,"session_id":"e56b616f0dd6fb1f","host":"hermes"}

@@ -8,7 +8,10 @@ What can be verified on a machine without a GPU (this suite):
 * the **contract** of the module (shapes/dtypes, ``valid_config``,
   ``TUNE_SPACE``/``cost`` well-formedness);
 * the **envelope** of the Neumann product form (it needs ``||L|| < 1``; the
-  KDA factor is ``I + beta * tril(Akk)`` with ``beta <= 1``, ``|Akk| <= 1``).
+  KDA factor is ``I + beta * tril(Akk)`` with ``beta <= 1``, ``|Akk| <= 1``);
+* the **precision** the body pins — f32 matmuls carry the explicit IEEE preset
+  rather than the ambient policy, read back from the traced ``pallas_call``
+  (section 4).  That is the regression behind the tf32 GPU verdict.
 
 What it cannot: execution and numerics of the compiled Triton kernel.  That is
 ``check_kernel.py``/``bench.py`` on the GB10 — see the module docstring and
@@ -327,3 +330,114 @@ def test_pallas_layout_is_numerically_right_on_the_host(case):
             f"{case['dtype']} seed {seed}: {bad:.2%} of entries outside "
             f"atol={atol:g} rtol={rtol:g} (max_abs={_max_abs(x, ref):.3g})"
         )
+
+
+# ---------------------------------------------------------------------------
+# 4. Precision: the f32 body must not fall back to tf32 (ADR-010, C-042)
+#
+# The GPU verdict of case0 (f32) came back at max_abs ~ 3.6e-3 with 61 % of
+# entries outside 1e-4 — tf32, not the algorithm.  check_kernel.py runs on the
+# GB10 *without* this suite's conftest, so the ambient
+# jax_default_matmul_precision is unset there; a bare ``a @ b`` in the body then
+# traced dot_general with precision=None, which the Pallas-Triton lowerer maps
+# to (DEFAULT, DEFAULT) and Triton resolves to tf32 for f32 operands.  These
+# tests read the traced body and assert the explicit pin, so the regression
+# cannot come back silently — the GB10 is the only other place it shows up.
+# ---------------------------------------------------------------------------
+
+#: The preset the f32 case must carry: the lowerer's explicit IEEE branch
+#: (``tt.dot(input_precision=IEEE)``), i.e. the ``input_precision="ieee"`` of
+#: the task.  Written out literally so a change of the module constant cannot
+#: silently relax this test.
+_IEEE = jax.lax.DotAlgorithmPreset.F32_F32_F32
+
+
+def _body_dot_precisions(case):
+    """``precision`` of every ``dot_general`` in the traced ``pallas_call`` body.
+
+    The body jaxpr sits under ``jit -> pallas_call -> jaxpr``.  ``jnp.matmul``
+    and ``lax.dot`` both lower to ``dot_general``, and its ``precision`` is what
+    the Pallas-Triton lowerer turns into Triton's ``input_precision`` — so for
+    f32, ``None``/``(DEFAULT, DEFAULT)``/``(HIGH, HIGH)`` mean tf32 and
+    ``F32_F32_F32`` means IEEE.  Reading it back is reading the kernel's verdict.
+    """
+    shapes = jax.eval_shape(lambda: K.make_inputs(jax.random.key(0), **case))
+    fn = K._build_kernel(
+        case["H"], case["C"], case["dk"] + case["dv"],
+        jnp.dtype(case["dtype"]), **K.DEFAULT_PARAMS,
+    )
+    found = []
+
+    def walk(jaxpr):
+        for eqn in jaxpr.eqns:
+            if eqn.primitive.name == "dot_general":
+                found.append(eqn.params["precision"])
+            for key in ("jaxpr", "compute_jaxpr", "call_jaxpr"):
+                value = eqn.params.get(key)
+                if value is None:
+                    continue
+                # both spellings occur: the outer ``jit`` carries a ClosedJaxpr,
+                # the ``pallas_call`` carries the body as a bare Jaxpr.
+                sub = getattr(value, "jaxpr", value)
+                if hasattr(sub, "eqns"):
+                    walk(sub)
+                elif isinstance(sub, (list, tuple)):
+                    for item in sub:
+                        item = getattr(item, "jaxpr", item)
+                        if hasattr(item, "eqns"):
+                            walk(item)
+
+    walk(jax.make_jaxpr(fn)(*shapes).jaxpr)
+    return found
+
+
+def test_f32_body_pins_every_dot_to_ieee():
+    """No matmul in the f32 body may carry a tf32-class precision.
+
+    The mask is total over all four sites of ``_solve_head`` at once, so a new
+    un-pinned matmul fails *here* instead of only on the GB10.
+    """
+    assert K._F32_MATMUL_PRECISION == _IEEE, (
+        "the module must declare the IEEE preset as its f32 precision"
+    )
+    precisions = _body_dot_precisions(_case("float32"))
+    assert precisions, "the body must contain the product-form matmuls"
+    off = [p for p in precisions if p != _IEEE]
+    assert not off, f"{len(off)}/{len(precisions)} f32 dots are not IEEE: {off}"
+
+
+def test_f32_body_dot_sites_are_enumerated():
+    """The unrolled body carries exactly the product form's dots, no more.
+
+    ``N**2`` (1), the ``(I + N^(2**k))`` accumulate and the squaring per step
+    (``_inverse_steps(C)`` each), and the final ``T @ bv`` (1).  The last
+    ``power @ power`` is dead after the loop and dropped by DCE, so accept
+    either count — this fails if a matmul is added or one stops being traced.
+    """
+    steps = K._inverse_steps(_case("float32")["C"])
+    n = len(_body_dot_precisions(_case("float32")))
+    assert n in (2 * steps + 1, 2 * steps + 2), (
+        f"{n} dots in the f32 body; the product form unrolls to {2 * steps + 1} "
+        f"(last square DCE'd) or {2 * steps + 2}"
+    )
+
+
+def test_f32_pin_is_independent_of_the_matmul_policy():
+    """The f32 pin must survive a hostile ambient policy (ADR-010).
+
+    conftest pins the policy to ``highest`` for the suite; ``check_kernel.py``
+    on the GB10 runs without it (default -> tf32).  Under a tf32-class policy
+    *and* under ``highest`` the f32 body must trace the same explicit preset,
+    while bf16 keeps tracking the policy — the case this fix deliberately
+    leaves alone.
+    """
+    for policy in ("default", "high"):
+        with jax.default_matmul_precision(policy):
+            f32 = _body_dot_precisions(_case("float32"))
+            assert f32 and all(p == _IEEE for p in f32), (
+                f"f32 dots changed with the ambient policy {policy!r}: {set(map(str, f32))}"
+            )
+            bf16 = _body_dot_precisions(_case("bfloat16"))
+            assert bf16 and all(p != _IEEE for p in bf16), (
+                "bf16 must keep the backend default, not the f32 IEEE pin"
+            )

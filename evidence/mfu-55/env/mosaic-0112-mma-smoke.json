@@ -1,14 +1,62 @@
 {
- "jax": "0.11.2",
- "device": "cuda:0",
- "cc": "12.1",
- "shape": {
-  "m": 128,
-  "k": 128,
-  "n": 8,
-  "dtype": "bfloat16"
- },
- "status": "blocked",
- "error_type": "VerificationError",
- "error": "Pallas encountered an internal verification error. Please file a bug at https://github.com/jax-ml/jax/issues/new/choose. Error details: 'mosaic_gpu.mma' op operand #1 must be vector of A type supported by the `a` and `b` operands of the synchronous `mma` op values of ranks 2, but got 'vector<128x128xf32>'\n see current operation: %99 = \"mosaic_gpu.mma\"(%93, %95, %98) : (vector<128x8xf32>, vector<128x128xf32>, vector<128x8xf32>) -> vector<128x8xf32>"
+  "status": "correctness-pass",
+  "shape": [
+    128,
+    128,
+    8
+  ],
+  "dtype": "bfloat16",
+  "max_abs": 0.031310439109802246,
+  "rel": 0.002448747942649339,
+  "seconds": 0.09770070397644304,
+  "error_type": null,
+  "error": null,
+  "stage": "run",
+  "cases": [
+    {
+      "shape": [
+        128,
+        128,
+        8
+      ],
+      "dtype": "bfloat16",
+      "status": "correctness-pass",
+      "stage": "run",
+      "error_type": null,
+      "error": null,
+      "max_abs": 0.031310439109802246,
+      "rel": 0.002448747942649339,
+      "seconds": 0.09770070397644304
+    },
+    {
+      "shape": [
+        128,
+        64,
+        8
+      ],
+      "dtype": "bfloat16",
+      "status": "correctness-pass",
+      "stage": "run",
+      "error_type": null,
+      "error": null,
+      "max_abs": 0.018342405557632446,
+      "rel": 0.0020694965418198295,
+      "seconds": 0.06717112200567499
+    },
+    {
+      "shape": [
+        256,
+        128,
+        8
+      ],
+      "dtype": "bfloat16",
+      "status": "correctness-pass",
+      "stage": "run",
+      "error_type": null,
+      "error": null,
+      "max_abs": 0.033512234687805176,
+      "rel": 0.0026510652959435377,
+      "seconds": 0.10261764898314141
+    }
+  ]
 }

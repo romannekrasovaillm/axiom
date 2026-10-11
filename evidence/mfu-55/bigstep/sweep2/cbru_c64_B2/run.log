@@ -1,0 +1,12 @@
+[jax-preflight] XLA_PYTHON_CLIENT_MEM_FRACTION=0.96 (source: env)
+[jax-preflight] XLA_PYTHON_CLIENT_MEM_FRACTION=0.96 (source: env)
+[pretrain] ВНИМАНИЕ: детерминизм XLA не запиннен (NET_GATE_PROFILE=1) — побитовая воспроизводимость между процессами на GPU не гарантируется (ADR-013); запись в журнале это фиксирует
+[pretrain] l3-full: vocab=160000, T=8192, B=2 (micro=2, accum=off), шагов 4, grad-checkpointing=True, remat=none, токенизатор=16e4a5325f38df9d…
+/home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax/_src/ops/scatter.py:105: FutureWarning: scatter inputs have incompatible types: cannot safely cast value from dtype=float32 to dtype=bfloat16 with jax_numpy_dtype_promotion=standard. In future JAX releases this will result in an error.
+  warnings.warn(
+E1011 04:08:01.685647 2122097 cuda_executor.cc:1365] [0] Failed to allocate device memory of 84.82GiB (91075117056 bytes): RESOURCE_EXHAUSTED: : CUDA_ERROR_OUT_OF_MEMORY: out of memory
+=== Source Location Trace: === 
+external/xla+/xla/stream_executor/cuda/cuda_status.cc:45
+external/xla+/xla/stream_executor/cuda/cuda_device_allocator.cc:230
+external/xla+/xla/stream_executor/cuda/cuda_device_allocator.cc:487
+

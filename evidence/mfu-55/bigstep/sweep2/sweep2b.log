@@ -1,0 +1,19 @@
+[sweep2b 02:23:06] sweep2 завершена (или ожидание прекращено)
+[sweep2b 02:23:07] значение WHILE: принято
+[sweep2b 02:23:07] значение CONDITIONAL: принято
+[sweep2b 02:23:08] значение COMPUTE: отвергнуто
+[sweep2b 02:23:08] значение COLLECTIVE: отвергнуто
+[sweep2b 02:23:09] значение PARAMETER: отвергнуто
+[sweep2b 02:23:09] итоговый набор CB: FUSION,CUBLAS,CUDNN,WHILE,CONDITIONAL
+[sweep2b 02:23:09] === c128_B2: B=2 chunk=128 ce=4096 cb=none
+[sweep2b 02:25:09] --- c128_B2: rc=137 tok/s= mfu=% loss=->
+[sweep2b 02:25:09] === cb_c064_B1: B=1 chunk=64 ce=4096 cb=cb
+[sweep2b 02:27:49] --- cb_c064_B1: rc=0 tok/s=412.0 mfu=1.265% loss=13.542271614074707->12.613919258117676
+[sweep2b 02:27:49] === cbunroll_c064_B1: B=1 chunk=64 ce=4096 cb=cbunroll
+[sweep2b 02:30:27] --- cbunroll_c064_B1: rc=0 tok/s=410.0 mfu=1.258% loss=13.542271614074707->12.614041328430176
+[sweep2b 02:30:27] === cb_c128_B2: B=2 chunk=128 ce=4096 cb=cb
+[sweep2b 02:31:29] --- cb_c128_B2: rc=137 tok/s= mfu=% loss=->
+[sweep2b 02:31:29] === cbunroll_c128_B2: B=2 chunk=128 ce=4096 cb=cbunroll
+[sweep2b 02:32:37] --- cbunroll_c128_B2: rc=137 tok/s= mfu=% loss=->
+[sweep2b 02:32:37] b4_ce2048 не прошёл (rc=1) — лестница батча остаётся на B2
+[sweep2b 02:32:37] СЕРИЯ-2b ЗАВЕРШЕНА; лучший результат: c64_B2	1.469 (mfu %)

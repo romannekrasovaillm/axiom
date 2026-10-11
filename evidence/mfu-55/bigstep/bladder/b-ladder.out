@@ -1,0 +1,11 @@
+[bladder 00:13:48] === B2_real: batch=2, 4 шагов, remat none
+[bladder 00:18:22] --- B2_real: rc=0 oom=1 tok/s=478.8 mfu=0.01470 loss 13.5435→12.3025 (3 шагов) | MDV>=1.55%
+[bladder 00:18:22] === B4_real: batch=4, 4 шагов, remat none
+[bladder 00:55:33] --- B4_real: rc=1 oom=1 tok/s=- mfu=- loss -→- (- шагов) | MDV>=1.80%
+[bladder 00:55:33] === B8_real: batch=8, 4 шагов, remat none
+[bladder 01:35:34] --- B8_real: rc=124 oom=0 tok/s=- mfu=- loss -→- (- шагов) | MDV>=2.00%
+[bladder 01:35:34] лестница завершена
+cell	batch	tok_s	mfu	rc	oom	hypothesis	steps
+B2_real	2	478.8	0.01470	0	1	MDV>=1.55%	3
+B4_real	4	-	-	1	1	MDV>=1.80%	-
+B8_real	8	-	-	124	0	MDV>=2.00%	-

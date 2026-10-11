@@ -1,0 +1,7 @@
+[jax-preflight] XLA_PYTHON_CLIENT_MEM_FRACTION=0.96 (source: env)
+[jax-preflight] XLA_PYTHON_CLIENT_MEM_FRACTION=0.96 (source: env)
+[pretrain] ВНИМАНИЕ: детерминизм XLA не запиннен (NET_GATE_PROFILE=1) — побитовая воспроизводимость между процессами на GPU не гарантируется (ADR-013); запись в журнале это фиксирует
+[pretrain] l3-full: vocab=160000, T=8192, B=1 (micro=1, accum=off), шагов 4, grad-checkpointing=True, remat=none, токенизатор=16e4a5325f38df9d…
+/home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax/_src/ops/scatter.py:105: FutureWarning: scatter inputs have incompatible types: cannot safely cast value from dtype=float32 to dtype=bfloat16 with jax_numpy_dtype_promotion=standard. In future JAX releases this will result in an error.
+  warnings.warn(
+[pretrain] шагов 4, токенов 32768, loss 13.542271614074707 → 12.622623443603516, tree_hash=8345fb9bc182d3a9…, остановка: по плану

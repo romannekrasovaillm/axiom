@@ -1,0 +1,12 @@
+[jax-preflight] XLA_PYTHON_CLIENT_MEM_FRACTION=0.96 (source: env)
+[jax-preflight] XLA_PYTHON_CLIENT_MEM_FRACTION=0.96 (source: env)
+[pretrain] ВНИМАНИЕ: детерминизм XLA не запиннен (NET_GATE_PROFILE=1) — побитовая воспроизводимость между процессами на GPU не гарантируется (ADR-013); запись в журнале это фиксирует
+[pretrain] l3-full: vocab=160000, T=8192, B=4 (micro=4, accum=off), шагов 4, grad-checkpointing=True, remat=none, токенизатор=16e4a5325f38df9d…
+/home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax/_src/ops/scatter.py:105: FutureWarning: scatter inputs have incompatible types: cannot safely cast value from dtype=float32 to dtype=bfloat16 with jax_numpy_dtype_promotion=standard. In future JAX releases this will result in an error.
+  warnings.warn(
+W1011 02:21:48.187846 2062334 hlo_rematerialization.cc:3363] Can't reduce memory use below 109.38GiB (117446523481 bytes) by rematerialization; only reduced to 111.50GiB (119721471626 bytes), down from 129.38GiB (138916085926 bytes) originally
+W1011 02:22:05.006712 2062334 bfc_allocator.cc:598] Allocator (GPU_0_bfc) ran out of memory trying to allocate 130.07GiB (rounded to 139659770112) from the lower end requested by op 
+If this is caused by memory fragmentation, the environment variable 'TF_GPU_ALLOCATOR=cuda_malloc_async' may improve the situation.
+Current allocation summary follows.
+W1011 02:22:05.009249 2062334 bfc_allocator.cc:609] ***************************************_____________________________________________________________
+[pretrain] ОШИБКА цикла: RESOURCE_EXHAUSTED: Out of memory while trying to allocate 130.07GiB with allocator GPU_0_bfc on device 0. [executable_name='jit_loss_fn'] [tf-allocator-allocation-error='']

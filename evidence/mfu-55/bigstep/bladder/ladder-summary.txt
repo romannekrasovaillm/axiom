@@ -1,0 +1,4 @@
+cell	batch	tok_s	mfu	rc	oom	hypothesis	steps
+B2_real	2	478.8	0.01470	0	1	MDV>=1.55%	3
+B4_real	4	-	-	1	1	MDV>=1.80%	-
+B8_real	8	-	-	124	0	MDV>=2.00%	-

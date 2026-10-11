@@ -1,0 +1,10 @@
+[sweep2c 02:53:55] === cbr_c64_B2: B=2 chunk=64 ce=4096 cb=cb cache=/home/roman/.cache/jax_cc_0112_cb
+[sweep2c 03:33:57] --- cbr_c64_B2: rc=124 tok/s=465.8 mfu=1.430% loss=13.543524742126465->12.305974960327148
+[sweep2c 03:33:57] === cbru_c64_B2: B=2 chunk=64 ce=4096 cb=cbunroll cache=/home/roman/.cache/jax_cc_0112_cbun
+[sweep2c 04:14:00] --- cbru_c64_B2: rc=124 tok/s=465.1 mfu=1.428% loss=13.543545722961426->12.30034351348877
+[sweep2c 04:14:00] === cbr_c064_B1: B=1 chunk=64 ce=4096 cb=cb cache=/home/roman/.cache/jax_cc_0112_cb
+[sweep2c 04:35:35] --- cbr_c064_B1: rc=0 tok/s=411.8 mfu=1.264% loss=13.542242050170898->12.617159843444824
+[sweep2c 04:35:35] === c128_B2_retry: B=2 chunk=128 ce=4096 cb=none cache=/home/roman/.cache/jax_cc_0112
+[sweep2c 04:40:41] --- c128_B2_retry: rc=0 tok/s=472.6 mfu=1.451% loss=13.538759231567383->12.314793586730957
+[sweep2c 04:40:41] СЕРИЯ-2c ЗАВЕРШЕНА
+[sweep2c 04:40:41] лучший результат всех серий: c64_B2	1.469 (mfu %)

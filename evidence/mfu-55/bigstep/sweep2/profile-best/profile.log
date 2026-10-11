@@ -1,0 +1,820 @@
+WARNING: CPU context switch tracing not supported, disabling.
+Try the 'nsys status --environment' command to learn more.
+
+[jax-preflight] XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 (source: env)
+[jax-preflight] XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 (source: env)
+[pretrain] ВНИМАНИЕ: детерминизм XLA не запиннен (NET_GATE_PROFILE=1) — побитовая воспроизводимость между процессами на GPU не гарантируется (ADR-013); запись в журнале это фиксирует
+[pretrain] l3-full: vocab=160000, T=8192, B=2 (micro=2, accum=off), шагов 6, grad-checkpointing=True, remat=none, токенизатор=16e4a5325f38df9d…
+/home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax/_src/ops/scatter.py:105: FutureWarning: scatter inputs have incompatible types: cannot safely cast value from dtype=float32 to dtype=bfloat16 with jax_numpy_dtype_promotion=standard. In future JAX releases this will result in an error.
+  warnings.warn(
+[pretrain] шагов 6, токенов 98304, loss 13.543514251708984 → 11.932263374328613, tree_hash=c16d42fed4556742…, остановка: по плану
+Collecting data...
+Generating '/tmp/nsys-report-de5c.qdstrm'
+[1/1] [0%                          ] nsys-best.nsys-rep[1/1] [0%                          ] nsys-best.nsys-rep[1/1] [5%                          ] nsys-best.nsys-rep[1/1] [5%                          ] nsys-best.nsys-rep[1/1] [6%                          ] nsys-best.nsys-rep[1/1] [5%                          ] nsys-best.nsys-rep[1/1] [6%                          ] nsys-best.nsys-rep[1/1] [7%                          ] nsys-best.nsys-rep[1/1] [8%                          ] nsys-best.nsys-rep[1/1] [7%                          ] nsys-best.nsys-rep[1/1] [8%                          ] nsys-best.nsys-rep[1/1] [9%                          ] nsys-best.nsys-rep[1/1] [8%                          ] nsys-best.nsys-rep[1/1] [7%                          ] nsys-best.nsys-rep[1/1] [6%                          ] nsys-best.nsys-rep[1/1] [5%                          ] nsys-best.nsys-rep[1/1] [0%                          ] nsys-best.nsys-rep[1/1] [5%                          ] nsys-best.nsys-rep[1/1] [6%                          ] nsys-best.nsys-rep[1/1] [7%                          ] nsys-best.nsys-rep[1/1] [8%                          ] nsys-best.nsys-rep[1/1] [9%                          ] nsys-best.nsys-rep[1/1] [10%                         ] nsys-best.nsys-rep[1/1] [11%                         ] nsys-best.nsys-rep[1/1] [12%                         ] nsys-best.nsys-rep[1/1] [13%                         ] nsys-best.nsys-rep[1/1] [14%                         ] nsys-best.nsys-rep[1/1] [=15%                        ] nsys-best.nsys-rep[1/1] [=16%                        ] nsys-best.nsys-rep[1/1] [=17%                        ] nsys-best.nsys-rep[1/1] [==18%                       ] nsys-best.nsys-rep[1/1] [==19%                       ] nsys-best.nsys-rep[1/1] [==20%                       ] nsys-best.nsys-rep[1/1] [==21%                       ] nsys-best.nsys-rep[1/1] [===22%                      ] nsys-best.nsys-rep[1/1] [===23%                      ] nsys-best.nsys-rep[1/1] [===24%                      ] nsys-best.nsys-rep[1/1] [====25%                     ] nsys-best.nsys-rep[1/1] [====26%                     ] nsys-best.nsys-rep[1/1] [====27%                     ] nsys-best.nsys-rep[1/1] [====28%                     ] nsys-best.nsys-rep[1/1] [=====29%                    ] nsys-best.nsys-rep[1/1] [=====30%                    ] nsys-best.nsys-rep[1/1] [=====31%                    ] nsys-best.nsys-rep[1/1] [=====32%                    ] nsys-best.nsys-rep[1/1] [======33%                   ] nsys-best.nsys-rep[1/1] [======34%                   ] nsys-best.nsys-rep[1/1] [======35%                   ] nsys-best.nsys-rep[1/1] [=======36%                  ] nsys-best.nsys-rep[1/1] [=======37%                  ] nsys-best.nsys-rep[1/1] [=======38%                  ] nsys-best.nsys-rep[1/1] [=======39%                  ] nsys-best.nsys-rep[1/1] [========40%                 ] nsys-best.nsys-rep[1/1] [========41%                 ] nsys-best.nsys-rep[1/1] [========42%                 ] nsys-best.nsys-rep[1/1] [=========43%                ] nsys-best.nsys-rep[1/1] [=========44%                ] nsys-best.nsys-rep[1/1] [=========45%                ] nsys-best.nsys-rep[1/1] [=========46%                ] nsys-best.nsys-rep[1/1] [==========47%               ] nsys-best.nsys-rep[1/1] [==========48%               ] nsys-best.nsys-rep[1/1] [==========49%               ] nsys-best.nsys-rep[1/1] [===========50%              ] nsys-best.nsys-rep[1/1] [===========51%              ] nsys-best.nsys-rep[1/1] [===========52%              ] nsys-best.nsys-rep[1/1] [===========53%              ] nsys-best.nsys-rep[1/1] [============54%             ] nsys-best.nsys-rep[1/1] [============55%             ] nsys-best.nsys-rep[1/1] [============56%             ] nsys-best.nsys-rep[1/1] [============57%             ] nsys-best.nsys-rep[1/1] [=============58%            ] nsys-best.nsys-rep[1/1] [=============59%            ] nsys-best.nsys-rep[1/1] [=============60%            ] nsys-best.nsys-rep[1/1] [==============61%           ] nsys-best.nsys-rep[1/1] [================69%         ] nsys-best.nsys-rep[1/1] [========================100%] nsys-best.nsys-rep
+Importer error status: Importation succeeded with non-fatal errors.
+**** Analysis failed with:
+Status: TargetProfilingFailed
+Props {
+  Items {
+    Type: DeviceId
+    Value: "Local (CLI)"
+  }
+}
+Error {
+  Type: RuntimeError
+  SubError {
+    Type: ProcessEventsError
+    Props {
+      Items {
+        Type: ErrorText
+        Value: "/dvs/p4/build/sw/devtools/Agora/Rel/CUDA13.0/QuadD/Host/Analysis/Modules/StringStorage.cpp(119): Throw in function QuadDCommon::StringId QuadDAnalysis::StringStorage::GetKeyForExteriorId(QuadDAnalysis::GlobalProcess, ExteriorId) const\nDynamic exception type: boost::wrapexcept<QuadDCommon::LogicException>\nstd::exception::what: LogicException\n[QuadDCommon::tag_message*] = Cannot find string for an exterior index\n"
+      }
+    }
+  }
+}
+Status: TargetProfilingFailed
+Props {
+  Items {
+    Type: DeviceId
+    Value: "Local (CLI)"
+  }
+}
+Error {
+  Type: RuntimeError
+  SubError {
+    Type: ProcessEventsError
+    Props {
+      Items {
+        Type: ErrorText
+        Value: "/dvs/p4/build/sw/devtools/Agora/Rel/CUDA13.0/QuadD/Host/Analysis/Modules/StringStorage.cpp(119): Throw in function QuadDCommon::StringId QuadDAnalysis::StringStorage::GetKeyForExteriorId(QuadDAnalysis::GlobalProcess, ExteriorId) const\nDynamic exception type: boost::wrapexcept<QuadDCommon::LogicException>\nstd::exception::what: LogicException\n[QuadDCommon::tag_message*] = Cannot find string for an exterior index\n"
+      }
+    }
+  }
+}
+Status: TargetProfilingFailed
+Props {
+  Items {
+    Type: DeviceId
+    Value: "Local (CLI)"
+  }
+}
+Error {
+  Type: RuntimeError
+  SubError {
+    Type: ProcessEventsError
+    Props {
+      Items {
+        Type: ErrorText
+        Value: "Throw location unknown (consider using BOOST_THROW_EXCEPTION)\nDynamic exception type: boost::wrapexcept<boost::exception_detail::current_exception_std_exception_wrapper<std::out_of_range> >\nstd::exception::what: unordered_map::at\nstd::out_of_range"
+      }
+    }
+  }
+}
+Status: TargetProfilingFailed
+Props {
+  Items {
+    Type: DeviceId
+    Value: "Local (CLI)"
+  }
+}
+Error {
+  Type: RuntimeError
+  SubError {
+    Type: ProcessEventsError
+    Props {
+      Items {
+        Type: ErrorText
+        Value: "/dvs/p4/build/sw/devtools/Agora/Rel/CUDA13.0/QuadD/Host/Analysis/Modules/StringStorage.cpp(119): Throw in function QuadDCommon::StringId QuadDAnalysis::StringStorage::GetKeyForExteriorId(QuadDAnalysis::GlobalProcess, ExteriorId) const\nDynamic exception type: boost::wrapexcept<QuadDCommon::LogicException>\nstd::exception::what: LogicException\n[QuadDCommon::tag_message*] = Cannot find string for an exterior index\n"
+      }
+    }
+  }
+}
+Status: TargetProfilingFailed
+Props {
+  Items {
+    Type: DeviceId
+    Value: "Local (CLI)"
+  }
+}
+Error {
+  Type: RuntimeError
+  SubError {
+    Type: ProcessEventsError
+    Props {
+      Items {
+        Type: ErrorText
+        Value: "/dvs/p4/build/sw/devtools/Agora/Rel/CUDA13.0/QuadD/Host/Analysis/Modules/StringStorage.cpp(119): Throw in function QuadDCommon::StringId QuadDAnalysis::StringStorage::GetKeyForExteriorId(QuadDAnalysis::GlobalProcess, ExteriorId) const\nDynamic exception type: boost::wrapexcept<QuadDCommon::LogicException>\nstd::exception::what: LogicException\n[QuadDCommon::tag_message*] = Cannot find string for an exterior index\n"
+      }
+    }
+  }
+}
+Status: TargetProfilingFailed
+Props {
+  Items {
+    Type: DeviceId
+    Value: "Local (CLI)"
+  }
+}
+Error {
+  Type: RuntimeError
+  SubError {
+    Type: ProcessEventsError
+    Props {
+      Items {
+        Type: ErrorText
+        Value: "/dvs/p4/build/sw/devtools/Agora/Rel/CUDA13.0/QuadD/Host/Analysis/Modules/StringStorage.cpp(119): Throw in function QuadDCommon::StringId QuadDAnalysis::StringStorage::GetKeyForExteriorId(QuadDAnalysis::GlobalProcess, ExteriorId) const\nDynamic exception type: boost::wrapexcept<QuadDCommon::LogicException>\nstd::exception::what: LogicException\n[QuadDCommon::tag_message*] = Cannot find string for an exterior index\n"
+      }
+    }
+  }
+}
+Status: TargetProfilingFailed
+Props {
+  Items {
+    Type: DeviceId
+    Value: "Local (CLI)"
+  }
+}
+Error {
+  Type: RuntimeError
+  SubError {
+    Type: ProcessEventsError
+    Props {
+      Items {
+        Type: ErrorText
+        Value: "/dvs/p4/build/sw/devtools/Agora/Rel/CUDA13.0/QuadD/Host/Analysis/Modules/StringStorage.cpp(119): Throw in function QuadDCommon::StringId QuadDAnalysis::StringStorage::GetKeyForExteriorId(QuadDAnalysis::GlobalProcess, ExteriorId) const\nDynamic exception type: boost::wrapexcept<QuadDCommon::LogicException>\nstd::exception::what: LogicException\n[QuadDCommon::tag_message*] = Cannot find string for an exterior index\n"
+      }
+    }
+  }
+}
+Status: TargetProfilingFailed
+Props {
+  Items {
+    Type: DeviceId
+    Value: "Local (CLI)"
+  }
+}
+Error {
+  Type: RuntimeError
+  SubError {
+    Type: ProcessEventsError
+    Props {
+      Items {
+        Type: ErrorText
+        Value: "/dvs/p4/build/sw/devtools/Agora/Rel/CUDA13.0/QuadD/Host/Analysis/Modules/StringStorage.cpp(119): Throw in function QuadDCommon::StringId QuadDAnalysis::StringStorage::GetKeyForExteriorId(QuadDAnalysis::GlobalProcess, ExteriorId) const\nDynamic exception type: boost::wrapexcept<QuadDCommon::LogicException>\nstd::exception::what: LogicException\n[QuadDCommon::tag_message*] = Cannot find string for an exterior index\n"
+      }
+    }
+  }
+}
+Status: TargetProfilingFailed
+Props {
+  Items {
+    Type: DeviceId
+    Value: "Local (CLI)"
+  }
+}
+Error {
+  Type: RuntimeError
+  SubError {
+    Type: ProcessEventsError
+    Props {
+      Items {
+        Type: ErrorText
+        Value: "/dvs/p4/build/sw/devtools/Agora/Rel/CUDA13.0/QuadD/Host/Analysis/Modules/StringStorage.cpp(119): Throw in function QuadDCommon::StringId QuadDAnalysis::StringStorage::GetKeyForExteriorId(QuadDAnalysis::GlobalProcess, ExteriorId) const\nDynamic exception type: boost::wrapexcept<QuadDCommon::LogicException>\nstd::exception::what: LogicException\n[QuadDCommon::tag_message*] = Cannot find string for an exterior index\n"
+      }
+    }
+  }
+}
+Status: TargetProfilingFailed
+Props {
+  Items {
+    Type: DeviceId
+    Value: "Local (CLI)"
+  }
+}
+Error {
+  Type: RuntimeError
+  SubError {
+    Type: ProcessEventsError
+    Props {
+      Items {
+        Type: ErrorText
+        Value: "/dvs/p4/build/sw/devtools/Agora/Rel/CUDA13.0/QuadD/Host/Analysis/Modules/StringStorage.cpp(119): Throw in function QuadDCommon::StringId QuadDAnalysis::StringStorage::GetKeyForExteriorId(QuadDAnalysis::GlobalProcess, ExteriorId) const\nDynamic exception type: boost::wrapexcept<QuadDCommon::LogicException>\nstd::exception::what: LogicException\n[QuadDCommon::tag_message*] = Cannot find string for an exterior index\n"
+      }
+    }
+  }
+}
+Status: TargetProfilingFailed
+Props {
+  Items {
+    Type: DeviceId
+    Value: "Local (CLI)"
+  }
+}
+Error {
+  Type: RuntimeError
+  SubError {
+    Type: ProcessEventsError
+    Props {
+      Items {
+        Type: ErrorText
+        Value: "/dvs/p4/build/sw/devtools/Agora/Rel/CUDA13.0/QuadD/Host/Analysis/Modules/StringStorage.cpp(119): Throw in function QuadDCommon::StringId QuadDAnalysis::StringStorage::GetKeyForExteriorId(QuadDAnalysis::GlobalProcess, ExteriorId) const\nDynamic exception type: boost::wrapexcept<QuadDCommon::LogicException>\nstd::exception::what: LogicException\n[QuadDCommon::tag_message*] = Cannot find string for an exterior index\n"
+      }
+    }
+  }
+}
+Status: TargetProfilingFailed
+Props {
+  Items {
+    Type: DeviceId
+    Value: "Local (CLI)"
+  }
+}
+Error {
+  Type: RuntimeError
+  SubError {
+    Type: ProcessEventsError
+    Props {
+      Items {
+        Type: ErrorText
+        Value: "/dvs/p4/build/sw/devtools/Agora/Rel/CUDA13.0/QuadD/Host/Analysis/Modules/StringStorage.cpp(119): Throw in function QuadDCommon::StringId QuadDAnalysis::StringStorage::GetKeyForExteriorId(QuadDAnalysis::GlobalProcess, ExteriorId) const\nDynamic exception type: boost::wrapexcept<QuadDCommon::LogicException>\nstd::exception::what: LogicException\n[QuadDCommon::tag_message*] = Cannot find string for an exterior index\n"
+      }
+    }
+  }
+}
+Status: TargetProfilingFailed
+Props {
+  Items {
+    Type: DeviceId
+    Value: "Local (CLI)"
+  }
+}
+Error {
+  Type: RuntimeError
+  SubError {
+    Type: ProcessEventsError
+    Props {
+      Items {
+        Type: ErrorText
+        Value: "/dvs/p4/build/sw/devtools/Agora/Rel/CUDA13.0/QuadD/Host/Analysis/Modules/StringStorage.cpp(119): Throw in function QuadDCommon::StringId QuadDAnalysis::StringStorage::GetKeyForExteriorId(QuadDAnalysis::GlobalProcess, ExteriorId) const\nDynamic exception type: boost::wrapexcept<QuadDCommon::LogicException>\nstd::exception::what: LogicException\n[QuadDCommon::tag_message*] = Cannot find string for an exterior index\n"
+      }
+    }
+  }
+}
+Status: TargetProfilingFailed
+Props {
+  Items {
+    Type: DeviceId
+    Value: "Local (CLI)"
+  }
+}
+Error {
+  Type: RuntimeError
+  SubError {
+    Type: ProcessEventsError
+    Props {
+      Items {
+        Type: ErrorText
+        Value: "/dvs/p4/build/sw/devtools/Agora/Rel/CUDA13.0/QuadD/Host/Analysis/Modules/StringStorage.cpp(119): Throw in function QuadDCommon::StringId QuadDAnalysis::StringStorage::GetKeyForExteriorId(QuadDAnalysis::GlobalProcess, ExteriorId) const\nDynamic exception type: boost::wrapexcept<QuadDCommon::LogicException>\nstd::exception::what: LogicException\n[QuadDCommon::tag_message*] = Cannot find string for an exterior index\n"
+      }
+    }
+  }
+}
+Status: TargetProfilingFailed
+Props {
+  Items {
+    Type: DeviceId
+    Value: "Local (CLI)"
+  }
+}
+Error {
+  Type: RuntimeError
+  SubError {
+    Type: ProcessEventsError
+    Props {
+      Items {
+        Type: ErrorText
+        Value: "/dvs/p4/build/sw/devtools/Agora/Rel/CUDA13.0/QuadD/Host/Analysis/Modules/StringStorage.cpp(119): Throw in function QuadDCommon::StringId QuadDAnalysis::StringStorage::GetKeyForExteriorId(QuadDAnalysis::GlobalProcess, ExteriorId) const\nDynamic exception type: boost::wrapexcept<QuadDCommon::LogicException>\nstd::exception::what: LogicException\n[QuadDCommon::tag_message*] = Cannot find string for an exterior index\n"
+      }
+    }
+  }
+}
+Status: TargetProfilingFailed
+Props {
+  Items {
+    Type: DeviceId
+    Value: "Local (CLI)"
+  }
+}
+Error {
+  Type: RuntimeError
+  SubError {
+    Type: ProcessEventsError
+    Props {
+      Items {
+        Type: ErrorText
+        Value: "/dvs/p4/build/sw/devtools/Agora/Rel/CUDA13.0/QuadD/Host/Analysis/Modules/StringStorage.cpp(119): Throw in function QuadDCommon::StringId QuadDAnalysis::StringStorage::GetKeyForExteriorId(QuadDAnalysis::GlobalProcess, ExteriorId) const\nDynamic exception type: boost::wrapexcept<QuadDCommon::LogicException>\nstd::exception::what: LogicException\n[QuadDCommon::tag_message*] = Cannot find string for an exterior index\n"
+      }
+    }
+  }
+}
+Status: TargetProfilingFailed
+Props {
+  Items {
+    Type: DeviceId
+    Value: "Local (CLI)"
+  }
+}
+Error {
+  Type: RuntimeError
+  SubError {
+    Type: ProcessEventsError
+    Props {
+      Items {
+        Type: ErrorText
+        Value: "/dvs/p4/build/sw/devtools/Agora/Rel/CUDA13.0/QuadD/Host/Analysis/Modules/StringStorage.cpp(119): Throw in function QuadDCommon::StringId QuadDAnalysis::StringStorage::GetKeyForExteriorId(QuadDAnalysis::GlobalProcess, ExteriorId) const\nDynamic exception type: boost::wrapexcept<QuadDCommon::LogicException>\nstd::exception::what: LogicException\n[QuadDCommon::tag_message*] = Cannot find string for an exterior index\n"
+      }
+    }
+  }
+}
+Status: TargetProfilingFailed
+Props {
+  Items {
+    Type: DeviceId
+    Value: "Local (CLI)"
+  }
+}
+Error {
+  Type: RuntimeError
+  SubError {
+    Type: ProcessEventsError
+    Props {
+      Items {
+        Type: ErrorText
+        Value: "/dvs/p4/build/sw/devtools/Agora/Rel/CUDA13.0/QuadD/Host/Analysis/Modules/StringStorage.cpp(119): Throw in function QuadDCommon::StringId QuadDAnalysis::StringStorage::GetKeyForExteriorId(QuadDAnalysis::GlobalProcess, ExteriorId) const\nDynamic exception type: boost::wrapexcept<QuadDCommon::LogicException>\nstd::exception::what: LogicException\n[QuadDCommon::tag_message*] = Cannot find string for an exterior index\n"
+      }
+    }
+  }
+}
+Status: TargetProfilingFailed
+Props {
+  Items {
+    Type: DeviceId
+    Value: "Local (CLI)"
+  }
+}
+Error {
+  Type: RuntimeError
+  SubError {
+    Type: ProcessEventsError
+    Props {
+      Items {
+        Type: ErrorText
+        Value: "/dvs/p4/build/sw/devtools/Agora/Rel/CUDA13.0/QuadD/Host/Analysis/Modules/StringStorage.cpp(119): Throw in function QuadDCommon::StringId QuadDAnalysis::StringStorage::GetKeyForExteriorId(QuadDAnalysis::GlobalProcess, ExteriorId) const\nDynamic exception type: boost::wrapexcept<QuadDCommon::LogicException>\nstd::exception::what: LogicException\n[QuadDCommon::tag_message*] = Cannot find string for an exterior index\n"
+      }
+    }
+  }
+}
+Status: TargetProfilingFailed
+Props {
+  Items {
+    Type: DeviceId
+    Value: "Local (CLI)"
+  }
+}
+Error {
+  Type: RuntimeError
+  SubError {
+    Type: ProcessEventsError
+    Props {
+      Items {
+        Type: ErrorText
+        Value: "/dvs/p4/build/sw/devtools/Agora/Rel/CUDA13.0/QuadD/Host/Analysis/Modules/StringStorage.cpp(119): Throw in function QuadDCommon::StringId QuadDAnalysis::StringStorage::GetKeyForExteriorId(QuadDAnalysis::GlobalProcess, ExteriorId) const\nDynamic exception type: boost::wrapexcept<QuadDCommon::LogicException>\nstd::exception::what: LogicException\n[QuadDCommon::tag_message*] = Cannot find string for an exterior index\n"
+      }
+    }
+  }
+}
+Status: TargetProfilingFailed
+Props {
+  Items {
+    Type: DeviceId
+    Value: "Local (CLI)"
+  }
+}
+Error {
+  Type: RuntimeError
+  SubError {
+    Type: ProcessEventsError
+    Props {
+      Items {
+        Type: ErrorText
+        Value: "/dvs/p4/build/sw/devtools/Agora/Rel/CUDA13.0/QuadD/Host/Analysis/Modules/StringStorage.cpp(119): Throw in function QuadDCommon::StringId QuadDAnalysis::StringStorage::GetKeyForExteriorId(QuadDAnalysis::GlobalProcess, ExteriorId) const\nDynamic exception type: boost::wrapexcept<QuadDCommon::LogicException>\nstd::exception::what: LogicException\n[QuadDCommon::tag_message*] = Cannot find string for an exterior index\n"
+      }
+    }
+  }
+}
+Status: TargetProfilingFailed
+Props {
+  Items {
+    Type: DeviceId
+    Value: "Local (CLI)"
+  }
+}
+Error {
+  Type: RuntimeError
+  SubError {
+    Type: ProcessEventsError
+    Props {
+      Items {
+        Type: ErrorText
+        Value: "/dvs/p4/build/sw/devtools/Agora/Rel/CUDA13.0/QuadD/Host/Analysis/Modules/StringStorage.cpp(119): Throw in function QuadDCommon::StringId QuadDAnalysis::StringStorage::GetKeyForExteriorId(QuadDAnalysis::GlobalProcess, ExteriorId) const\nDynamic exception type: boost::wrapexcept<QuadDCommon::LogicException>\nstd::exception::what: LogicException\n[QuadDCommon::tag_message*] = Cannot find string for an exterior index\n"
+      }
+    }
+  }
+}
+Status: TargetProfilingFailed
+Props {
+  Items {
+    Type: DeviceId
+    Value: "Local (CLI)"
+  }
+}
+Error {
+  Type: RuntimeError
+  SubError {
+    Type: ProcessEventsError
+    Props {
+      Items {
+        Type: ErrorText
+        Value: "/dvs/p4/build/sw/devtools/Agora/Rel/CUDA13.0/QuadD/Host/Analysis/Modules/StringStorage.cpp(119): Throw in function QuadDCommon::StringId QuadDAnalysis::StringStorage::GetKeyForExteriorId(QuadDAnalysis::GlobalProcess, ExteriorId) const\nDynamic exception type: boost::wrapexcept<QuadDCommon::LogicException>\nstd::exception::what: LogicException\n[QuadDCommon::tag_message*] = Cannot find string for an exterior index\n"
+      }
+    }
+  }
+}
+Status: TargetProfilingFailed
+Props {
+  Items {
+    Type: DeviceId
+    Value: "Local (CLI)"
+  }
+}
+Error {
+  Type: RuntimeError
+  SubError {
+    Type: ProcessEventsError
+    Props {
+      Items {
+        Type: ErrorText
+        Value: "/dvs/p4/build/sw/devtools/Agora/Rel/CUDA13.0/QuadD/Host/Analysis/Modules/StringStorage.cpp(119): Throw in function QuadDCommon::StringId QuadDAnalysis::StringStorage::GetKeyForExteriorId(QuadDAnalysis::GlobalProcess, ExteriorId) const\nDynamic exception type: boost::wrapexcept<QuadDCommon::LogicException>\nstd::exception::what: LogicException\n[QuadDCommon::tag_message*] = Cannot find string for an exterior index\n"
+      }
+    }
+  }
+}
+Status: TargetProfilingFailed
+Props {
+  Items {
+    Type: DeviceId
+    Value: "Local (CLI)"
+  }
+}
+Error {
+  Type: RuntimeError
+  SubError {
+    Type: ProcessEventsError
+    Props {
+      Items {
+        Type: ErrorText
+        Value: "/dvs/p4/build/sw/devtools/Agora/Rel/CUDA13.0/QuadD/Host/Analysis/Modules/StringStorage.cpp(119): Throw in function QuadDCommon::StringId QuadDAnalysis::StringStorage::GetKeyForExteriorId(QuadDAnalysis::GlobalProcess, ExteriorId) const\nDynamic exception type: boost::wrapexcept<QuadDCommon::LogicException>\nstd::exception::what: LogicException\n[QuadDCommon::tag_message*] = Cannot find string for an exterior index\n"
+      }
+    }
+  }
+}
+Status: TargetProfilingFailed
+Props {
+  Items {
+    Type: DeviceId
+    Value: "Local (CLI)"
+  }
+}
+Error {
+  Type: RuntimeError
+  SubError {
+    Type: ProcessEventsError
+    Props {
+      Items {
+        Type: ErrorText
+        Value: "/dvs/p4/build/sw/devtools/Agora/Rel/CUDA13.0/QuadD/Host/Analysis/Modules/StringStorage.cpp(119): Throw in function QuadDCommon::StringId QuadDAnalysis::StringStorage::GetKeyForExteriorId(QuadDAnalysis::GlobalProcess, ExteriorId) const\nDynamic exception type: boost::wrapexcept<QuadDCommon::LogicException>\nstd::exception::what: LogicException\n[QuadDCommon::tag_message*] = Cannot find string for an exterior index\n"
+      }
+    }
+  }
+}
+Status: TargetProfilingFailed
+Props {
+  Items {
+    Type: DeviceId
+    Value: "Local (CLI)"
+  }
+}
+Error {
+  Type: RuntimeError
+  SubError {
+    Type: ProcessEventsError
+    Props {
+      Items {
+        Type: ErrorText
+        Value: "/dvs/p4/build/sw/devtools/Agora/Rel/CUDA13.0/QuadD/Host/Analysis/Modules/StringStorage.cpp(119): Throw in function QuadDCommon::StringId QuadDAnalysis::StringStorage::GetKeyForExteriorId(QuadDAnalysis::GlobalProcess, ExteriorId) const\nDynamic exception type: boost::wrapexcept<QuadDCommon::LogicException>\nstd::exception::what: LogicException\n[QuadDCommon::tag_message*] = Cannot find string for an exterior index\n"
+      }
+    }
+  }
+}
+Status: TargetProfilingFailed
+Props {
+  Items {
+    Type: DeviceId
+    Value: "Local (CLI)"
+  }
+}
+Error {
+  Type: RuntimeError
+  SubError {
+    Type: ProcessEventsError
+    Props {
+      Items {
+        Type: ErrorText
+        Value: "/dvs/p4/build/sw/devtools/Agora/Rel/CUDA13.0/QuadD/Host/Analysis/Modules/StringStorage.cpp(119): Throw in function QuadDCommon::StringId QuadDAnalysis::StringStorage::GetKeyForExteriorId(QuadDAnalysis::GlobalProcess, ExteriorId) const\nDynamic exception type: boost::wrapexcept<QuadDCommon::LogicException>\nstd::exception::what: LogicException\n[QuadDCommon::tag_message*] = Cannot find string for an exterior index\n"
+      }
+    }
+  }
+}
+Status: TargetProfilingFailed
+Props {
+  Items {
+    Type: DeviceId
+    Value: "Local (CLI)"
+  }
+}
+Error {
+  Type: RuntimeError
+  SubError {
+    Type: ProcessEventsError
+    Props {
+      Items {
+        Type: ErrorText
+        Value: "/dvs/p4/build/sw/devtools/Agora/Rel/CUDA13.0/QuadD/Host/Analysis/Modules/StringStorage.cpp(119): Throw in function QuadDCommon::StringId QuadDAnalysis::StringStorage::GetKeyForExteriorId(QuadDAnalysis::GlobalProcess, ExteriorId) const\nDynamic exception type: boost::wrapexcept<QuadDCommon::LogicException>\nstd::exception::what: LogicException\n[QuadDCommon::tag_message*] = Cannot find string for an exterior index\n"
+      }
+    }
+  }
+}
+Status: TargetProfilingFailed
+Props {
+  Items {
+    Type: DeviceId
+    Value: "Local (CLI)"
+  }
+}
+Error {
+  Type: RuntimeError
+  SubError {
+    Type: ProcessEventsError
+    Props {
+      Items {
+        Type: ErrorText
+        Value: "/dvs/p4/build/sw/devtools/Agora/Rel/CUDA13.0/QuadD/Host/Analysis/Modules/StringStorage.cpp(119): Throw in function QuadDCommon::StringId QuadDAnalysis::StringStorage::GetKeyForExteriorId(QuadDAnalysis::GlobalProcess, ExteriorId) const\nDynamic exception type: boost::wrapexcept<QuadDCommon::LogicException>\nstd::exception::what: LogicException\n[QuadDCommon::tag_message*] = Cannot find string for an exterior index\n"
+      }
+    }
+  }
+}
+Status: TargetProfilingFailed
+Props {
+  Items {
+    Type: DeviceId
+    Value: "Local (CLI)"
+  }
+}
+Error {
+  Type: RuntimeError
+  SubError {
+    Type: ProcessEventsError
+    Props {
+      Items {
+        Type: ErrorText
+        Value: "/dvs/p4/build/sw/devtools/Agora/Rel/CUDA13.0/QuadD/Host/Analysis/Modules/StringStorage.cpp(119): Throw in function QuadDCommon::StringId QuadDAnalysis::StringStorage::GetKeyForExteriorId(QuadDAnalysis::GlobalProcess, ExteriorId) const\nDynamic exception type: boost::wrapexcept<QuadDCommon::LogicException>\nstd::exception::what: LogicException\n[QuadDCommon::tag_message*] = Cannot find string for an exterior index\n"
+      }
+    }
+  }
+}
+Status: TargetProfilingFailed
+Props {
+  Items {
+    Type: DeviceId
+    Value: "Local (CLI)"
+  }
+}
+Error {
+  Type: RuntimeError
+  SubError {
+    Type: ProcessEventsError
+    Props {
+      Items {
+        Type: ErrorText
+        Value: "/dvs/p4/build/sw/devtools/Agora/Rel/CUDA13.0/QuadD/Host/Analysis/Modules/StringStorage.cpp(119): Throw in function QuadDCommon::StringId QuadDAnalysis::StringStorage::GetKeyForExteriorId(QuadDAnalysis::GlobalProcess, ExteriorId) const\nDynamic exception type: boost::wrapexcept<QuadDCommon::LogicException>\nstd::exception::what: LogicException\n[QuadDCommon::tag_message*] = Cannot find string for an exterior index\n"
+      }
+    }
+  }
+}
+Status: TargetProfilingFailed
+Props {
+  Items {
+    Type: DeviceId
+    Value: "Local (CLI)"
+  }
+}
+Error {
+  Type: RuntimeError
+  SubError {
+    Type: ProcessEventsError
+    Props {
+      Items {
+        Type: ErrorText
+        Value: "/dvs/p4/build/sw/devtools/Agora/Rel/CUDA13.0/QuadD/Host/Analysis/Modules/StringStorage.cpp(119): Throw in function QuadDCommon::StringId QuadDAnalysis::StringStorage::GetKeyForExteriorId(QuadDAnalysis::GlobalProcess, ExteriorId) const\nDynamic exception type: boost::wrapexcept<QuadDCommon::LogicException>\nstd::exception::what: LogicException\n[QuadDCommon::tag_message*] = Cannot find string for an exterior index\n"
+      }
+    }
+  }
+}
+Status: TargetProfilingFailed
+Props {
+  Items {
+    Type: DeviceId
+    Value: "Local (CLI)"
+  }
+}
+Error {
+  Type: RuntimeError
+  SubError {
+    Type: ProcessEventsError
+    Props {
+      Items {
+        Type: ErrorText
+        Value: "/dvs/p4/build/sw/devtools/Agora/Rel/CUDA13.0/QuadD/Host/Analysis/Modules/StringStorage.cpp(119): Throw in function QuadDCommon::StringId QuadDAnalysis::StringStorage::GetKeyForExteriorId(QuadDAnalysis::GlobalProcess, ExteriorId) const\nDynamic exception type: boost::wrapexcept<QuadDCommon::LogicException>\nstd::exception::what: LogicException\n[QuadDCommon::tag_message*] = Cannot find string for an exterior index\n"
+      }
+    }
+  }
+}
+Status: TargetProfilingFailed
+Props {
+  Items {
+    Type: DeviceId
+    Value: "Local (CLI)"
+  }
+}
+Error {
+  Type: RuntimeError
+  SubError {
+    Type: ProcessEventsError
+    Props {
+      Items {
+        Type: ErrorText
+        Value: "/dvs/p4/build/sw/devtools/Agora/Rel/CUDA13.0/QuadD/Host/Analysis/Modules/StringStorage.cpp(119): Throw in function QuadDCommon::StringId QuadDAnalysis::StringStorage::GetKeyForExteriorId(QuadDAnalysis::GlobalProcess, ExteriorId) const\nDynamic exception type: boost::wrapexcept<QuadDCommon::LogicException>\nstd::exception::what: LogicException\n[QuadDCommon::tag_message*] = Cannot find string for an exterior index\n"
+      }
+    }
+  }
+}
+Status: TargetProfilingFailed
+Props {
+  Items {
+    Type: DeviceId
+    Value: "Local (CLI)"
+  }
+}
+Error {
+  Type: RuntimeError
+  SubError {
+    Type: ProcessEventsError
+    Props {
+      Items {
+        Type: ErrorText
+        Value: "/dvs/p4/build/sw/devtools/Agora/Rel/CUDA13.0/QuadD/Host/Analysis/Modules/StringStorage.cpp(119): Throw in function QuadDCommon::StringId QuadDAnalysis::StringStorage::GetKeyForExteriorId(QuadDAnalysis::GlobalProcess, ExteriorId) const\nDynamic exception type: boost::wrapexcept<QuadDCommon::LogicException>\nstd::exception::what: LogicException\n[QuadDCommon::tag_message*] = Cannot find string for an exterior index\n"
+      }
+    }
+  }
+}
+Status: TargetProfilingFailed
+Props {
+  Items {
+    Type: DeviceId
+    Value: "Local (CLI)"
+  }
+}
+Error {
+  Type: RuntimeError
+  SubError {
+    Type: ProcessEventsError
+    Props {
+      Items {
+        Type: ErrorText
+        Value: "/dvs/p4/build/sw/devtools/Agora/Rel/CUDA13.0/QuadD/Host/Analysis/Modules/StringStorage.cpp(119): Throw in function QuadDCommon::StringId QuadDAnalysis::StringStorage::GetKeyForExteriorId(QuadDAnalysis::GlobalProcess, ExteriorId) const\nDynamic exception type: boost::wrapexcept<QuadDCommon::LogicException>\nstd::exception::what: LogicException\n[QuadDCommon::tag_message*] = Cannot find string for an exterior index\n"
+      }
+    }
+  }
+}
+Status: TargetProfilingFailed
+Props {
+  Items {
+    Type: DeviceId
+    Value: "Local (CLI)"
+  }
+}
+Error {
+  Type: RuntimeError
+  SubError {
+    Type: ProcessEventsError
+    Props {
+      Items {
+        Type: ErrorText
+        Value: "/dvs/p4/build/sw/devtools/Agora/Rel/CUDA13.0/QuadD/Host/Analysis/Modules/StringStorage.cpp(119): Throw in function QuadDCommon::StringId QuadDAnalysis::StringStorage::GetKeyForExteriorId(QuadDAnalysis::GlobalProcess, ExteriorId) const\nDynamic exception type: boost::wrapexcept<QuadDCommon::LogicException>\nstd::exception::what: LogicException\n[QuadDCommon::tag_message*] = Cannot find string for an exterior index\n"
+      }
+    }
+  }
+}
+Status: TargetProfilingFailed
+Props {
+  Items {
+    Type: DeviceId
+    Value: "Local (CLI)"
+  }
+}
+Error {
+  Type: RuntimeError
+  SubError {
+    Type: ProcessEventsError
+    Props {
+      Items {
+        Type: ErrorText
+        Value: "/dvs/p4/build/sw/devtools/Agora/Rel/CUDA13.0/QuadD/Host/Analysis/Modules/StringStorage.cpp(119): Throw in function QuadDCommon::StringId QuadDAnalysis::StringStorage::GetKeyForExteriorId(QuadDAnalysis::GlobalProcess, ExteriorId) const\nDynamic exception type: boost::wrapexcept<QuadDCommon::LogicException>\nstd::exception::what: LogicException\n[QuadDCommon::tag_message*] = Cannot find string for an exterior index\n"
+      }
+    }
+  }
+}
+Status: TargetProfilingFailed
+Props {
+  Items {
+    Type: DeviceId
+    Value: "Local (CLI)"
+  }
+}
+Error {
+  Type: RuntimeError
+  SubError {
+    Type: ProcessEventsError
+    Props {
+      Items {
+        Type: ErrorText
+        Value: "/dvs/p4/build/sw/devtools/Agora/Rel/CUDA13.0/QuadD/Host/Analysis/Modules/StringStorage.cpp(119): Throw in function QuadDCommon::StringId QuadDAnalysis::StringStorage::GetKeyForExteriorId(QuadDAnalysis::GlobalProcess, ExteriorId) const\nDynamic exception type: boost::wrapexcept<QuadDCommon::LogicException>\nstd::exception::what: LogicException\n[QuadDCommon::tag_message*] = Cannot find string for an exterior index\n"
+      }
+    }
+  }
+}
+Status: TargetProfilingFailed
+Props {
+  Items {
+    Type: DeviceId
+    Value: "Local (CLI)"
+  }
+}
+Error {
+  Type: RuntimeError
+  SubError {
+    Type: ProcessEventsError
+    Props {
+      Items {
+        Type: ErrorText
+        Value: "/dvs/p4/build/sw/devtools/Agora/Rel/CUDA13.0/QuadD/Host/Analysis/Modules/StringStorage.cpp(119): Throw in function QuadDCommon::StringId QuadDAnalysis::StringStorage::GetKeyForExteriorId(QuadDAnalysis::GlobalProcess, ExteriorId) const\nDynamic exception type: boost::wrapexcept<QuadDCommon::LogicException>\nstd::exception::what: LogicException\n[QuadDCommon::tag_message*] = Cannot find string for an exterior index\n"
+      }
+    }
+  }
+}
+Status: TargetProfilingFailed
+Props {
+  Items {
+    Type: DeviceId
+    Value: "Local (CLI)"
+  }
+}
+Error {
+  Type: RuntimeError
+  SubError {
+    Type: ProcessEventsError
+    Props {
+      Items {
+        Type: ErrorText
+        Value: "/dvs/p4/build/sw/devtools/Agora/Rel/CUDA13.0/QuadD/Host/Analysis/Modules/StringStorage.cpp(119): Throw in function QuadDCommon::StringId QuadDAnalysis::StringStorage::GetKeyForExteriorId(QuadDAnalysis::GlobalProcess, ExteriorId) const\nDynamic exception type: boost::wrapexcept<QuadDCommon::LogicException>\nstd::exception::what: LogicException\n[QuadDCommon::tag_message*] = Cannot find string for an exterior index\n"
+      }
+    }
+  }
+}
+
+
+**** Errors occurred while processing the raw events. ****
+**** Please see the Diagnostics Summary page after opening the report file in GUI. ****
+Generated:
+	/home/roman/axiom/evidence/mfu-55/bigstep/sweep2/profile-best/nsys-best.qdstrm
+	/home/roman/axiom/evidence/mfu-55/bigstep/sweep2/profile-best/nsys-best.nsys-rep

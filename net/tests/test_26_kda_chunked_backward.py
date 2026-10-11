@@ -82,7 +82,10 @@ def _count_remat(obj) -> int:
     boundary is exactly such a nested one, so this has to recurse.
     """
     inner = getattr(obj, "jaxpr", None)
-    if inner is not None and not isinstance(obj, (dict, list, tuple)):
+    # jax >= 0.11: `Jaxpr.jaxpr` is a self-alias (`Jaxpr.jaxpr is Jaxpr`), so
+    # the bare `.jaxpr` hop below would recurse forever; a ClosedJaxpr's hop
+    # still descends, and an already-known Jaxpr is walked via its eqns.
+    if inner is not None and inner is not obj and not isinstance(obj, (dict, list, tuple)):
         return _count_remat(inner)
     eqns = getattr(obj, "eqns", None)
     if eqns is not None:

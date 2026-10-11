@@ -44,6 +44,20 @@ from net.config import load_config, validate_config
 #: The case's declarative config (``kda_impl`` is declared there).
 CONFIG_PATH = Path(__file__).resolve().parents[1] / "config.json"
 
+#: ADR-054 stage-2b: with ``AXIOM_KDA_CC_IMPL=mosaic`` the scan body is the
+#: fused Mosaic kernel — a GB10 artifact that *by design* refuses a GPU-less
+#: host (fail-closed, ``net.kda._cc_chunk_step_mosaic``).  On this CPU node the
+#: mode is therefore not runnable at all: the honest form is a skip with the
+#: reason, not a red suite.  Without the flag (the default, the committed
+#: path) everything below runs exactly as before.  The mosaic body itself is
+#: pinned by ``test_kda_cc_fused.py`` (sieve, lowering, mux, interval parity).
+if (os.environ.get("AXIOM_KDA_CC_IMPL", "jax").strip().lower() == "mosaic"
+        and not any(d.platform == "gpu" for d in jax.devices())):
+    pytest.skip(
+        "AXIOM_KDA_CC_IMPL=mosaic: the fused Mosaic kernel requires a GPU "
+        "(sm_121) and refuses CPU hosts by design; on CPU the jax path is "
+        "the pinned implementation", allow_module_level=True)
+
 #: Sequence length of the parity runs.
 SEQ = 128
 
@@ -92,7 +106,10 @@ def _primitive_names(obj, acc: set[str] | None = None) -> set[str]:
     if acc is None:
         acc = set()
     inner = getattr(obj, "jaxpr", None)
-    if inner is not None and not isinstance(obj, (dict, list, tuple)):
+    # jax >= 0.11: `Jaxpr.jaxpr` is a self-alias (`Jaxpr.jaxpr is Jaxpr`), so
+    # the bare `.jaxpr` hop below would recurse forever; a ClosedJaxpr's hop
+    # still descends, and an already-known Jaxpr is walked via its eqns.
+    if inner is not None and inner is not obj and not isinstance(obj, (dict, list, tuple)):
         return _primitive_names(inner, acc)
     eqns = getattr(obj, "eqns", None)
     if eqns is not None:
@@ -121,7 +138,10 @@ def _var_shapes(obj, acc: set[tuple] | None = None) -> set[tuple]:
     if acc is None:
         acc = set()
     inner = getattr(obj, "jaxpr", None)
-    if inner is not None and not isinstance(obj, (dict, list, tuple)):
+    # jax >= 0.11: `Jaxpr.jaxpr` is a self-alias (`Jaxpr.jaxpr is Jaxpr`), so
+    # the bare `.jaxpr` hop below would recurse forever; a ClosedJaxpr's hop
+    # still descends, and an already-known Jaxpr is walked via its eqns.
+    if inner is not None and inner is not obj and not isinstance(obj, (dict, list, tuple)):
         return _var_shapes(inner, acc)
     eqns = getattr(obj, "eqns", None)
     if eqns is not None:

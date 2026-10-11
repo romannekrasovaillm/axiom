@@ -691,6 +691,78 @@ def cc_chunk_step(
     return KDAState(s_new, q_buf, k_buf, v_buf), out
 
 
+def kda_cc_impl() -> str:
+    """Implementation of the ``chunked_cc`` chunk body: ``jax`` | ``mosaic``.
+
+    ``AXIOM_KDA_CC_IMPL`` is read on every call (the flag is the rollback
+    handle, so it is not cached — the same contract as ``AXIOM_KDA_SOLVE``).
+    Default ``jax`` (the committed path).  An unknown value is an explicit
+    error, never a silent fallback (fail-closed, the ``AXIOM_MOE_TOPK`` form).
+    """
+    value = (os.environ.get("AXIOM_KDA_CC_IMPL") or "jax").strip().lower()
+    if value not in KDA_CC_IMPLS:
+        raise ValueError(
+            f"AXIOM_KDA_CC_IMPL={value!r}: ожидается одно из {KDA_CC_IMPLS}")
+    return value
+
+
+#: Допустимые значения флага тела ``chunked_cc`` (``AXIOM_KDA_CC_IMPL``).
+KDA_CC_IMPLS = ("jax", "mosaic")
+
+
+def _cc_chunk_step_mosaic(
+    params: KDAParams, cfg: ModelConfig, carry: KDAState, x: jnp.ndarray
+) -> tuple[KDAState, jnp.ndarray]:
+    """One ``chunked_cc`` chunk through the fused Mosaic kernel (forward only).
+
+    The XLA side keeps everything outside the measured launch cluster: the
+    dense projections (:func:`_project`), the short-conv / swish / L2
+    post-processing (:func:`_postprocess`) and the output gate
+    (:func:`_output_gate`).  The kernel consumes the *post-processed* per-head
+    ``q``/``k``/``v`` (bf16 -- the stand-validated mma operand path), the fp32
+    channel decay ``alpha`` and the write gate ``beta`` replicated over 32
+    columns (the loadable shape of a per-row vector), and returns the pre-gate
+    output and the next state -- exactly the interval :func:`cc_chunk_step`
+    computes between ``_postprocess`` and ``_output_gate``.
+
+    Forward only (ADR-054 stage-2b milestone 1): the kernel carries no
+    autodiff, so this body must not be placed under ``jax.grad`` before the
+    milestone-2 delta.  Requires a GPU: on a GPU-less host the call refuses
+    with a typed error instead of falling back silently.
+    """
+    from .kernels import kda_cc_fused  # локальный импорт: нужен только под флагом
+
+    if not kda_cc_fused.device_available():
+        raise RuntimeError(
+            "AXIOM_KDA_CC_IMPL=mosaic: fused-кернел исполняется только на GPU "
+            "(Mosaic sm_121, веха-1 forward); на CPU-узле выберите "
+            "AXIOM_KDA_CC_IMPL=jax. Тихого отката нет — impl выбирается явно.")
+
+    C = x.shape[0]
+    H, dk, dv = cfg.num_heads, cfg.kda_dk, cfg.kda_dv
+    proj = _project(params, cfg, x)
+    qc, q_buf = _short_conv_chunk(proj["qp"], params.conv_q, carry.q_buf)
+    kc, k_buf = _short_conv_chunk(proj["kp"], params.conv_k, carry.k_buf)
+    vc, v_buf = _short_conv_chunk(proj["vp"], params.conv_v, carry.v_buf)
+    q, k, v = _postprocess(qc, kc, vc, cfg)  # (C, H, dk) / (C, H, dv)
+
+    beta = proj["beta"]  # (C, H)
+    alpha = proj["alpha"]  # (C, H, dk)
+    beta32 = jnp.broadcast_to(beta[:, :, None], (C, H, 32)).reshape(C, H * 32)
+    dt = jnp.bfloat16  # the only operand path the GB10 mma lowering validated
+    o, s_new = kda_cc_fused.kernel(
+        q.reshape(C, H * dk).astype(dt),
+        k.reshape(C, H * dk).astype(dt),
+        v.reshape(C, H * dv).astype(dt),
+        alpha.reshape(C, H * dk).astype(jnp.float32),
+        beta32.astype(jnp.float32),
+        carry.S.astype(jnp.float32),
+        tile=_cc_tile(cfg),
+    )
+    out = _output_gate(o.reshape(C, H, dv), proj["gate"], params)
+    return KDAState(s_new, q_buf, k_buf, v_buf), out
+
+
 def apply_chunked_cc(
     params: KDAParams,
     cfg: ModelConfig,
@@ -706,6 +778,12 @@ def apply_chunked_cc(
     (``wyut``).  ``chunk_size=None`` reads ``cfg.kda_wyut_chunk`` — the same
     declarative width the WY/UT form uses.  Semantics are identical to
     :func:`apply_recurrent` (parity pinned by ``test_kda_chunked_cc.py``).
+
+    ``AXIOM_KDA_CC_IMPL`` selects the scan body: ``jax`` (default — the
+    committed :func:`cc_chunk_step`) or ``mosaic`` (the fused forward kernel
+    of :mod:`net.kernels.kda_cc_fused`, ADR-054 stage-2b milestone 1; forward
+    only, GPU-only, not for ``jax.grad``).  The flag changes the *body* only —
+    the padding, the scan structure and the window branch are shared.
     """
     if chunk_size is None:
         chunk_size = cfg.kda_wyut_chunk
@@ -717,8 +795,16 @@ def apply_chunked_cc(
     x_chunks = x_p.reshape(n_chunks, C, -1)
     carry0 = init_state(cfg)
 
-    def body(carry: KDAState, xc: jnp.ndarray):
-        return cc_chunk_step(params, cfg, carry, xc)
+    if kda_cc_impl() == "mosaic":
+        # Fused-kernel body (ADR-054 stage-2b, milestone 1).  The decision is
+        # made at trace time (`kda_cc_impl` reads the env on each call — the
+        # rollback handle is not cached); the kernel itself refuses a GPU-less
+        # host with a typed error, so there is no silent fallback.
+        def body(carry: KDAState, xc: jnp.ndarray):
+            return _cc_chunk_step_mosaic(params, cfg, carry, xc)
+    else:
+        def body(carry: KDAState, xc: jnp.ndarray):
+            return cc_chunk_step(params, cfg, carry, xc)
 
     if cfg.kda_chunked_backward:
         # Recompute each chunk from its saved carry during backward instead of

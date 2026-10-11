@@ -2871,10 +2871,26 @@ def train(
         loss_fn = jax.checkpoint(loss_fn, policy=policy)
 
     grad_fn = jax.jit(jax.value_and_grad(loss_fn))
+    # ADR-054 (стадия-1): donate-вариант для ветки одного микробатча
+    # (``len(group) == 1``, основной путь кампании).  Контракт donate: буфер
+    # допустимо отдать, только когда он мёртв после вызова.  Премисса дельты —
+    # ``params = working_params(master)`` пересоздаётся каждый шаг (:3025), так
+    # что старый буфер ``params`` не нужен.  Дерево читателей сверено: после
+    # донированного вызова на ``params`` (или его буферы) ссылается только
+    # ``step_fn(master, ...)`` (:3024) — и лишь когда ``params is master``, т.е.
+    # в fp32-режиме (``working_params`` без astype отдаёт сам мастер); там
+    # donate запрещён и ветка оставляет старый вызов.  В accum-ветке
+    # (``len(group) > 1``) ``grad_fn`` зовётся на каждом микробатче с теми же
+    # ``params`` — donate там запрещён, ветка его не берёт.
+    grad_fn_donated = jax.jit(jax.value_and_grad(loss_fn), donate_argnums=(0,))
     step_fn = optimizer.make_step(
         cfg,
         ns_steps=train_config.ns_steps,
         legacy_muon_all_2d=train_config.legacy_muon_all_2d,
+        # ADR-054: при живом профайлере grads читается после step_fn
+        # (profiler.measure, :3037) — donate запрещён; без профайлера буферы
+        # master/grads/state мертвы после вызова (возврат шага — их владелец).
+        donate=not train_config.phase_profile,
     )
 
     use_bf16 = train_config.param_dtype == "bfloat16"
@@ -2973,7 +2989,17 @@ def train(
         tick = time.time()
         if len(group) == 1:
             # No accumulation happened: identical to the pre-delta step.
-            loss, grads = grad_fn(params, group[0])
+            # ADR-054: donate-ветка включается только там, где буфер мёртв после
+            # вызова.  В bf16 ``params`` — своё дерево (astype от мастера, :2899):
+            # после вызова его не читает никто до пересоздания (:3025), поэтому
+            # можно отдать буфер.  В fp32 ``working_params`` возвращает сам
+            # мастер (``params is master``), и тот же буфер читает
+            # ``step_fn(master, ...)`` (:3024) — donate запрещён, остаётся
+            # недонированный ``grad_fn``.
+            if use_bf16:
+                loss, grads = grad_fn_donated(params, group[0])
+            else:
+                loss, grads = grad_fn(params, group[0])
             loss_value = float(jax.device_get(loss))
         else:
             # Token-weighted mean of the micro-batches' losses/gradients, so a

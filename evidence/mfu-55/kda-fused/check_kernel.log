@@ -1,0 +1,11 @@
+[check] jax 0.11.2 on NVIDIA GB10 (CC 12.1)
+Traceback (most recent call last):
+  File "/home/roman/axiom-run/skills/pallas-gb10-kernel/scripts/check_kernel.py", line 125, in <module>
+    main()
+  File "/home/roman/axiom-run/skills/pallas-gb10-kernel/scripts/check_kernel.py", line 100, in main
+    r = compare(out, ref, atol, rtol)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/roman/axiom-run/skills/pallas-gb10-kernel/scripts/check_kernel.py", line 38, in compare
+    o = np.asarray(out, dtype=np.float32)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: setting an array element with a sequence. The requested array has an inhomogeneous shape after 1 dimensions. The detected shape was (2,) + inhomogeneous part.

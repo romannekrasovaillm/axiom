@@ -1,0 +1,10 @@
+WARNING: CPU context switch tracing not supported, disabling.
+Try the 'nsys status --environment' command to learn more.
+
+MODE=mosaic: max_rel_err=0.00e+00 (tol 2e-2)
+MODE=mosaic C=32: KDA-layer forward = 0.0860 с/вызов (T=8192)
+Collecting data...
+Generating '/tmp/nsys-report-9be2.qdstrm'
+[1/1] [0%                          ] nsys.nsys-rep[1/1] [0%                          ] nsys.nsys-rep[1/1] [====27%                     ] nsys.nsys-rep[1/1] [===========53%              ] nsys.nsys-rep[1/1] [===================79%      ] nsys.nsys-rep[1/1] [=====================86%    ] nsys.nsys-rep[1/1] [========================100%] nsys.nsys-rep[1/1] [========================100%] nsys.nsys-rep
+Generated:
+	/home/roman/axiom/evidence/mfu-55/kda-fused/nsys-mosaic/nsys.nsys-rep

@@ -1,0 +1,10 @@
+WARNING: CPU context switch tracing not supported, disabling.
+Try the 'nsys status --environment' command to learn more.
+
+MODE=jax: ok (reference path)
+MODE=jax C=32: KDA-layer forward = 0.0986 с/вызов (T=8192)
+Collecting data...
+Generating '/tmp/nsys-report-6cc0.qdstrm'
+[1/1] [0%                          ] nsys.nsys-rep[1/1] [0%                          ] nsys.nsys-rep[1/1] [=====30%                    ] nsys.nsys-rep[1/1] [===23%                      ] nsys.nsys-rep[1/1] [==18%                       ] nsys.nsys-rep[1/1] [======35%                   ] nsys.nsys-rep[1/1] [=====29%                    ] nsys.nsys-rep[1/1] [====25%                     ] nsys.nsys-rep[1/1] [===22%                      ] nsys.nsys-rep[1/1] [==19%                       ] nsys.nsys-rep[1/1] [=17%                        ] nsys.nsys-rep[1/1] [=16%                        ] nsys.nsys-rep[1/1] [===24%                      ] nsys.nsys-rep[1/1] [=====32%                    ] nsys.nsys-rep[1/1] [========40%                 ] nsys.nsys-rep[1/1] [==========47%               ] nsys.nsys-rep[1/1] [============55%             ] nsys.nsys-rep[1/1] [==============62%           ] nsys.nsys-rep[1/1] [================69%         ] nsys.nsys-rep[1/1] [==================76%       ] nsys.nsys-rep[1/1] [===================82%      ] nsys.nsys-rep[1/1] [========================100%] nsys.nsys-rep[1/1] [========================100%] nsys.nsys-rep
+Generated:
+	/home/roman/axiom/evidence/mfu-55/kda-fused/nsys-jax/nsys.nsys-rep

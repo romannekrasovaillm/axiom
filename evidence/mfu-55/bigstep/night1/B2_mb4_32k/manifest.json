@@ -1,0 +1,1 @@
+{"cell":"B2_mb4_32k","command_hint":"pretrain_run --micro-batch 4 --accum-tokens 0 --remat-policy dots_with_no_batch_dims_saveable --ce-chunk-tokens 4096 --grad-checkpointing-policy full","limits":{"cell_timeout_s":3300,"mem_fraction":0.96,"autotune_level":2},"rc":124,"timeout":1,"oom":0,"duration_s":3301,"artifacts":["run.log","metrics.jsonl"]}

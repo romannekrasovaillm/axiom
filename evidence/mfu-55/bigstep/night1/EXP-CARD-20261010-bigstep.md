@@ -51,8 +51,3 @@ D1/D2 — повторы лучшей клетки (контроль диспе�
 ## Результаты
 
 _Заполняются утренним отчётом `NIGHT-REPORT.md` (генерируется автоматически в конце серии)._
-
-## Ночной раннер (операторская зона стенда)
-
-- `~/axiom-run/night-sweep.sh` — серия клеток; `~/axiom-run/night-metrics.py` — сводка клетки; `~/axiom-run/night-report.py` — утренний отчёт
-- Результаты: `evidence/mfu-55/bigstep/night1/{night-summary.tsv, night-results.jsonl, NIGHT-REPORT.md, <клетка>/{run.log, metrics.jsonl, manifest.json}}`

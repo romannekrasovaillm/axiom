@@ -110,6 +110,129 @@ def _scores(params: LatentMoEParams, x: jnp.ndarray) -> jnp.ndarray:
     return jax.nn.sigmoid(compute_dtype.gemm(xf, params.router_w))
 
 
+#: Router top-k selector: ``argmax`` (default) | ``jax`` (A/B reference).
+#:
+#: Read **once, at import** (unlike ``AXIOM_MOE_DISPATCH``, which is a hot
+#: rollback and is read per call): the selector is part of the run's declared
+#: execution recipe, not a switch flipped mid-process.  ``jax`` forces
+#: ``jax.lax.top_k`` as the parity reference; ``argmax`` selects the iterative
+#: selector inside its applicability window (:data:`ARGMAX_MAX_K` /
+#: :data:`ARGMAX_MAX_N`) and falls back to ``jax.lax.top_k`` outside it.
+TOPK_MODE_ENV = "AXIOM_MOE_TOPK"
+
+#: Iterative-``argmax`` selector (the default; see :func:`_topk_argmax`).
+ARGMAX_SELECTOR = "argmax"
+
+#: ``jax.lax.top_k`` reference selector — the parity oracle for tests and A/B.
+JAX_SELECTOR = "jax"
+
+#: Declared selector values.
+TOP_K_SELECTORS = (ARGMAX_SELECTOR, JAX_SELECTOR)
+
+#: Applicability window of :func:`_topk_argmax`: the MoE router runs
+#: ``top_k = moe_top_k`` (campaign: 2) over ``n = moe_num_routed`` (12) experts.
+ARGMAX_MAX_K = 8
+ARGMAX_MAX_N = 64
+
+
+def _read_topk_mode(raw: str | None) -> str:
+    """Parse ``AXIOM_MOE_TOPK`` (fail-closed: an unknown value is an error).
+
+    A typo must not silently pick one of two execution paths whose *lowering*
+    differs (the numerics are pinned equal by parity tests, but the reported
+    execution is not) — so the unknown value refuses to guess, like
+    ``net/compute_dtype.py``.
+    """
+    if raw is None:
+        return ARGMAX_SELECTOR
+    value = raw.strip().lower()
+    if not value:
+        return ARGMAX_SELECTOR
+    if value not in TOP_K_SELECTORS:
+        raise ValueError(
+            f"{TOPK_MODE_ENV}={raw!r}: ожидается один из {list(TOP_K_SELECTORS)}")
+    return value
+
+
+#: The selector this process runs with, pinned at import time
+#: (``AXIOM_MOE_TOPK``; see :data:`TOPK_MODE_ENV`).
+TOPK_MODE = _read_topk_mode(os.environ.get(TOPK_MODE_ENV))
+
+
+def _topk_argmax(scores: jnp.ndarray, k: int) -> jnp.ndarray:
+    """Top-``k`` indices per row via ``k`` masked ``argmax`` steps — no sort.
+
+    Why not ``jax.lax.top_k`` (ADR-054 Amendment 2, stage-2a): on GB10 every
+    call lowers to the CUB ``DeviceRadixSort`` custom call, and its
+    ``CopyOffsets`` step stages the ``(N+1)``-word offsets array host→device
+    with a *pageable* ``cudaMemcpyAsync`` (gdb probe stacks of the stage-2a
+    investigation: ``CubSortPairsExecute`` → ``CopyOffsets`` →
+    ``cudaMemcpyAsync``).  The step profile attributed ~41 such 64 KiB pageable
+    copies per step to the ``top_k`` custom calls; their stalls on the single
+    host thread are the measured binding term of the ~14 s/step of MoE stalls
+    (ADR-054 Am.2: submission contention — the *offsets round-trip* is the
+    cost, not the device sort).  Iterative ``argmax`` + masking keeps the same
+    top-k set with elementwise ops and reductions only, and emits no custom
+    call.
+
+    Semantics — aligned with ``jax.lax.top_k`` on the shapes it covers:
+
+    * indices are returned in descending-score order; ties are broken by the
+      **lowest index first** (``argmax`` returns the first maximum and the mask
+      preserves that rule — the same order the CUB sort gives; pinned by
+      ``net/tests/test_moe_topk_argmax.py``);
+    * ``±inf`` entries are supported: when every still-unselected value is
+      ``-inf``, an excluded position is indistinguishable from a free one *by
+      value*, so that corner is resolved explicitly to the first free index;
+    * ``NaN`` is not covered (the router does not produce it, and
+      ``jax.lax.top_k`` does not define its order either);
+    * requires ``k <= scores.shape[-1]`` (the caller guarantees it).
+
+    Scope: small ``k``/``n`` only — see :func:`_topk_indices`, which selects
+    this path for the router's regime (``k = 2`` over ``n = 12``) and falls back
+    to ``jax.lax.top_k`` elsewhere.
+    """
+    n = scores.shape[-1]
+    selected = jnp.zeros(scores.shape, dtype=bool)  # (N, n) picked positions
+    work = scores
+    picks = []
+    for _ in range(k):
+        chosen = jnp.argmax(work, axis=-1)  # (N,) first maximum (lowest index)
+        # Picked positions are masked to -inf.  If all free entries are -inf as
+        # well, argmax may return a picked position; resolve that explicitly to
+        # the first free index — the order lax.top_k gives on -inf ties.
+        exhausted = jnp.max(work, axis=-1) == -jnp.inf
+        first_free = jnp.argmin(selected.astype(jnp.int32), axis=-1)  # (N,)
+        chosen = jnp.where(exhausted, first_free, chosen)
+        picks.append(chosen)
+        one_hot = jax.nn.one_hot(chosen, n, dtype=bool)  # (N, n)
+        selected = selected | one_hot
+        work = jnp.where(one_hot, -jnp.inf, work)
+    return jnp.stack(picks, axis=-1)  # (N, k), descending-score order
+
+
+def _topk_indices(scores: jnp.ndarray, k: int) -> jnp.ndarray:
+    """Top-``k`` indices per row: adaptive selector for the router.
+
+    The branch is a pure function of ``k``/``n`` and the import-pinned
+    :data:`TOPK_MODE` — never of values — so tracing under ``jit`` is
+    deterministic and a re-run picks the same path:
+
+    * ``TOPK_MODE=argmax`` (default) and ``0 < k <= ARGMAX_MAX_K`` and
+      ``k <= n <= ARGMAX_MAX_N`` → :func:`_topk_argmax` (no custom call);
+    * otherwise → ``jax.lax.top_k`` (kept as the reference and for large
+      ``k``/``n``).
+    """
+    n = scores.shape[-1]
+    if (
+        TOPK_MODE == ARGMAX_SELECTOR
+        and 0 < k <= ARGMAX_MAX_K
+        and k <= n <= ARGMAX_MAX_N
+    ):
+        return _topk_argmax(scores, k)
+    return jax.lax.top_k(scores, k)[1]
+
+
 def _dispatch(params: LatentMoEParams, cfg: ModelConfig, x: jnp.ndarray):
     """Flattened router output: ``(s, topk_idx, sel_p, p_full)``.
 
@@ -121,7 +244,7 @@ def _dispatch(params: LatentMoEParams, cfg: ModelConfig, x: jnp.ndarray):
     """
     s = _scores(params, x)
     n = cfg.moe_num_routed
-    topk = jax.lax.top_k(s + params.router_b, cfg.moe_top_k)[1]  # (N, k)
+    topk = _topk_indices(s + params.router_b, cfg.moe_top_k)  # (N, k)
     sel_s = jnp.take_along_axis(s, topk, axis=-1)  # (N, k)
     sel_p = sel_s / (jnp.sum(sel_s, axis=-1, keepdims=True) + 1e-8)  # (N, k)
     oh = jax.nn.one_hot(topk, n)  # (N, k, n)

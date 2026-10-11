@@ -1,0 +1,4 @@
+xla_cpu_enable_fast_min_max: false
+xla_gpu_autotune_level: 2
+xla_gpu_cuda_data_dir: "/home/roman/venv-axiom-0112/lib/python3.12/site-packages/nvidia/cu13"
+xla_gpu_per_fusion_autotune_cache_dir: "/home/roman/.cache/jax_cc_0112/xla_gpu_per_fusion_autotune_cache_dir"

@@ -1,0 +1,14 @@
+HloLiveRange (max 2):
+  InstructionSequence:
+    0:key.1
+    1:input_concatenate_fusion
+  BufferLiveRange:
+    key.1{}:0-2
+    input_concatenate_fusion{}:1-2
+  Live ranges at 1 (peak):
+    input_concatenate_fusion{}: 96 bytes (cumulative: 96 bytes)
+    key.1{}: 8 bytes (cumulative: 104 bytes)
+  Stack trace breakdown for peak usage: 104 bytes
+    main.2 (100.0%, total: 104 bytes, current: 0 bytes, remaining: 104 bytes)
+      ├── jit(_threefry_split)/stack (92.3%, total: 96 bytes, current: 96 bytes, remaining: 8 bytes)
+      └── key (7.7%, total: 8 bytes, current: 8 bytes, remaining: 0 bytes)

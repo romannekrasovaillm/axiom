@@ -1,0 +1,16 @@
+
+Total bytes used: 248 (248B)
+
+Used values:
+<164 key.1 @0>
+ positions:
+  key.1
+ uses:
+  input_concatenate_fusion, operand 0
+ from instruction: %key.1 = u32[2]{0} parameter(0), metadata={op_name="key"}
+<165 input_concatenate_fusion @0>
+ positions:
+  input_concatenate_fusion
+ uses:
+  (none)
+ from instruction: %input_concatenate_fusion = u32[30,2]{1,0} fusion(%key.1), kind=kInput, calls=%fused_concatenate, metadata={op_name="jit(_threefry_split)/stack" stack_frame_id=5}, backend_config={"operation_queue_id":"0","force_earliest_schedule":false,"reification_cost":[],"device_type":"DEVICE_TYPE_INVALID","native_emitter_backend_config":{"type":"NATIVE_EMITTER_TYPE_INVALID","unroll_factor":0}}

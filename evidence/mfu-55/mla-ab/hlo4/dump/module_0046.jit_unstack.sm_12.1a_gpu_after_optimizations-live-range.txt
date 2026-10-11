@@ -1,0 +1,27 @@
+HloLiveRange (max 8):
+  InstructionSequence:
+    0:args_0_.1
+    1:wrapped_slice.2
+    2:bitcast.2.0
+    3:wrapped_slice.1
+    4:bitcast.1.0
+    5:wrapped_slice
+    6:bitcast.3
+    7:tuple.1.0
+  BufferLiveRange:
+    args_0_.1{}:0-8
+    wrapped_slice{}:5-8
+    wrapped_slice.1{}:3-8
+    wrapped_slice.2{}:1-8
+    tuple.1.0{}:7-8
+  Live ranges at 7 (peak):
+    args_0_.1{}: 24 bytes (cumulative: 24 bytes)
+    tuple.1.0{}: 24 bytes (cumulative: 48 bytes)
+    wrapped_slice{}: 8 bytes (cumulative: 56 bytes)
+    wrapped_slice.1{}: 8 bytes (cumulative: 64 bytes)
+    wrapped_slice.2{}: 8 bytes (cumulative: 72 bytes)
+  Stack trace breakdown for peak usage: 72 bytes
+    main.1 (100.0%, total: 72 bytes, current: 0 bytes, remaining: 72 bytes)
+      ├── args[0] (33.3%, total: 24 bytes, current: 24 bytes, remaining: 48 bytes)
+      ├── jit(unstack)/unstack (33.3%, total: 24 bytes, current: 24 bytes, remaining: 24 bytes)
+      └── tuple.1.0 (33.3%, total: 24 bytes, current: 24 bytes, remaining: 0 bytes)

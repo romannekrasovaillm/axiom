@@ -1,0 +1,14 @@
+HloLiveRange (max 2):
+  InstructionSequence:
+    0:args_0_.1
+    1:wrapped_convert
+  BufferLiveRange:
+    args_0_.1{}:0-2
+    wrapped_convert{}:1-2
+  Live ranges at 1 (peak):
+    args_0_.1{}: 393216 bytes (cumulative: 393216 bytes)
+    wrapped_convert{}: 196608 bytes (cumulative: 589824 bytes)
+  Stack trace breakdown for peak usage: 589 824 bytes
+    main.1 (100.0%, total: 589 824 bytes, current: 0 bytes, remaining: 589 824 bytes)
+      ├── args[0] (66.7%, total: 393 216 bytes, current: 393 216 bytes, remaining: 196 608 bytes)
+      └── jit(convert_element_type)/convert_element_type (33.3%, total: 196 608 bytes, current: 196 608 bytes, remaining: 0 bytes)

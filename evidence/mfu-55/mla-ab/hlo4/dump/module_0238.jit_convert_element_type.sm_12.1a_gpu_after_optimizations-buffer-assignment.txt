@@ -1,0 +1,5 @@
+BufferAssignment:
+allocation 0: size 262144, page 0, parameter 0, shape |f32[512,128]| at ShapeIndex {}:
+ value: <2 args_0_.1 @0> (size=262144,offset=0): f32[512,128]{1,0}
+allocation 1: size 131072, page 0, output shape is |bf16[512,128]|, maybe-live-out:
+ value: <3 wrapped_convert @0> (size=131072,offset=0): bf16[512,128]{1,0}

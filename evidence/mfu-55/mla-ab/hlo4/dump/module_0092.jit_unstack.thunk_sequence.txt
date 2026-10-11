@@ -1,0 +1,11 @@
+001: kCopy [source | sink] kCopy
+002: kCopy [source | sink] kCopy
+003: kCopy [source | sink] kCopy
+004: kCopy [source | sink] kCopy
+005: kCopy [source | sink] kCopy
+006: kCopy [source | sink] kCopy
+007: kCopy [source | sink] kCopy
+008: kCopy [source | sink] kCopy
+009: kCopy [source | sink] kCopy
+010: kCopy [source | sink] kCopy
+011: kCopy [source | sink] kCopy

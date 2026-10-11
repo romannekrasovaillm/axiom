@@ -1,0 +1,43 @@
+HloModule jit_multiply, entry_computation_layout={(f32[1536,4096]{1,0}, f32[])->f32[1536,4096]{1,0}}, allow_spmd_sharding_propagation_to_parameters={true,true}, allow_spmd_sharding_propagation_to_output={true}
+
+FileNames
+1 "/home/roman/axiom/tools/pretrain_run.py"
+2 "/home/roman/axiom/net/train_loop.py"
+3 "/home/roman/axiom/net/model.py"
+4 "/home/roman/axiom/net/mlp.py"
+
+FunctionNames
+1 "<module>"
+2 "main"
+3 "execute"
+4 "train"
+5 "init_params"
+6 "init_mlp"
+7 "_rand"
+
+FileLocations
+1 {file_name_id=1 function_name_id=1 line=1602 end_line=1602 column=21 end_column=27}
+2 {file_name_id=1 function_name_id=2 line=1595 end_line=1595 column=18 end_column=31}
+3 {file_name_id=1 function_name_id=3 line=1435 end_line=1442 column=17 end_column=9}
+4 {file_name_id=2 function_name_id=4 line=2813 end_line=2813 column=13 end_column=74}
+5 {file_name_id=3 function_name_id=5 line=248 end_line=248 column=12 end_column=46}
+6 {file_name_id=4 function_name_id=6 line=34 end_line=34 column=12 end_column=41}
+7 {file_name_id=4 function_name_id=7 line=21 end_line=21 column=11 end_column=48}
+
+StackFrames
+1 {file_location_id=1 parent_frame_id=1}
+2 {file_location_id=2 parent_frame_id=2}
+3 {file_location_id=3 parent_frame_id=3}
+4 {file_location_id=4 parent_frame_id=4}
+5 {file_location_id=5 parent_frame_id=5}
+6 {file_location_id=6 parent_frame_id=6}
+7 {file_location_id=7 parent_frame_id=7}
+
+
+ENTRY main.1 {
+  x.1 = f32[1536,4096]{1,0} parameter(0), metadata={op_name="x"}
+  y.1 = f32[] parameter(1), metadata={op_name="y"}
+  mul.2 = f32[1536,4096]{1,0} broadcast(y.1), dimensions={}, metadata={op_name="jit(multiply)/mul" stack_frame_id=7}
+  ROOT mul.3 = f32[1536,4096]{1,0} multiply(x.1, mul.2), metadata={op_name="jit(multiply)/mul" stack_frame_id=7}
+}
+

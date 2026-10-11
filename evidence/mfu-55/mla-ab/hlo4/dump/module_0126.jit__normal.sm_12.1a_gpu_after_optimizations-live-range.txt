@@ -1,0 +1,14 @@
+HloLiveRange (max 2):
+  InstructionSequence:
+    0:key.1
+    1:loop_multiply_fusion
+  BufferLiveRange:
+    key.1{}:0-2
+    loop_multiply_fusion{}:1-2
+  Live ranges at 1 (peak):
+    loop_multiply_fusion{}: 589824 bytes (cumulative: 589824 bytes)
+    key.1{}: 8 bytes (cumulative: 589832 bytes)
+  Stack trace breakdown for peak usage: 589 832 bytes
+    main.4 (100.0%, total: 589 832 bytes, current: 0 bytes, remaining: 589 832 bytes)
+      ├── jit(_normal)/jit(_normal_real)/mul (100.0%, total: 589 824 bytes, current: 589 824 bytes, remaining: 8 bytes)
+      └── key (0.0%, total: 8 bytes, current: 8 bytes, remaining: 0 bytes)

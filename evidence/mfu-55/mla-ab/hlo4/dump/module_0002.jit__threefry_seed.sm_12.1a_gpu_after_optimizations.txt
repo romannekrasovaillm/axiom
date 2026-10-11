@@ -1,0 +1,41 @@
+HloModule jit__threefry_seed, is_scheduled=true, entry_computation_layout={(s32[])->u32[2]{0}}, allow_spmd_sharding_propagation_to_parameters={true}, allow_spmd_sharding_propagation_to_output={true}, frontend_attributes={fingerprint_before_lhs="2276b124b16fd690b41d58255076818d"}
+
+FileNames
+1 "/home/roman/axiom/tools/pretrain_run.py"
+2 "/home/roman/axiom/net/train_loop.py"
+
+FunctionNames
+1 "<module>"
+2 "main"
+3 "execute"
+4 "train"
+
+FileLocations
+1 {file_name_id=1 function_name_id=1 line=1602 end_line=1602 column=21 end_column=27}
+2 {file_name_id=1 function_name_id=2 line=1595 end_line=1595 column=18 end_column=31}
+3 {file_name_id=1 function_name_id=3 line=1435 end_line=1442 column=17 end_column=9}
+4 {file_name_id=2 function_name_id=4 line=2813 end_line=2813 column=31 end_column=68}
+
+StackFrames
+1 {file_location_id=1 parent_frame_id=1}
+2 {file_location_id=2 parent_frame_id=2}
+3 {file_location_id=3 parent_frame_id=3}
+4 {file_location_id=4 parent_frame_id=4}
+
+
+fused_concatenate {
+  param_0.3 = s32[] parameter(0)
+  constant_1_1 = s32[] constant(32)
+  shift_right_logical.1.1 = s32[] shift-right-logical(param_0.3, constant_1_1), metadata={op_name="jit(_threefry_seed)/shift_right_logical" stack_frame_id=4}
+  convert_element_type.2.1 = u32[] convert(shift_right_logical.1.1), metadata={op_name="jit(_threefry_seed)/convert_element_type" stack_frame_id=4}
+  bitcast.3 = u32[1]{0} bitcast(convert_element_type.2.1), metadata={op_name="jit(_threefry_seed)/convert_element_type" stack_frame_id=4}
+  convert_element_type.3.1 = u32[] convert(param_0.3), metadata={op_name="jit(_threefry_seed)/convert_element_type" stack_frame_id=4}
+  bitcast.1.1 = u32[1]{0} bitcast(convert_element_type.3.1), metadata={op_name="jit(_threefry_seed)/convert_element_type" stack_frame_id=4}
+  ROOT concatenate.1.1 = u32[2]{0} concatenate(bitcast.3, bitcast.1.1), dimensions={0}, metadata={op_name="jit(_threefry_seed)/concatenate" stack_frame_id=4}
+}
+
+ENTRY main.1 {
+  seed.1 = s32[] parameter(0), metadata={op_name="seed"}
+  ROOT input_concatenate_fusion = u32[2]{0} fusion(seed.1), kind=kInput, calls=fused_concatenate, metadata={op_name="jit(_threefry_seed)/concatenate" stack_frame_id=4}, backend_config={"device_type":"DEVICE_TYPE_INVALID","force_earliest_schedule":false,"native_emitter_backend_config":{"type":"NATIVE_EMITTER_TYPE_INVALID","unroll_factor":0},"operation_queue_id":"0","reification_cost":[]}
+}
+

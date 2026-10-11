@@ -1,0 +1,18 @@
+HloLiveRange (max 3):
+  InstructionSequence:
+    0:y.1
+    1:x.1
+    2:loop_multiply_fusion
+  BufferLiveRange:
+    x.1{}:0-3
+    y.1{}:0-3
+    loop_multiply_fusion{}:2-3
+  Live ranges at 2 (peak):
+    loop_multiply_fusion{}: 2359296 bytes (cumulative: 2359296 bytes)
+    x.1{}: 2359296 bytes (cumulative: 4718592 bytes)
+    y.1{}: 4 bytes (cumulative: 4718596 bytes)
+  Stack trace breakdown for peak usage: 4 718 596 bytes
+    main.1 (100.0%, total: 4 718 596 bytes, current: 0 bytes, remaining: 4 718 596 bytes)
+      ├── jit(multiply)/mul (50.0%, total: 2 359 296 bytes, current: 2 359 296 bytes, remaining: 2 359 300 bytes)
+      ├── x (50.0%, total: 2 359 296 bytes, current: 2 359 296 bytes, remaining: 4 bytes)
+      └── y (0.0%, total: 4 bytes, current: 4 bytes, remaining: 0 bytes)

@@ -1,0 +1,55 @@
+HloModule jit_multiply, entry_computation_layout={(f32[384,1536]{1,0}, f32[])->f32[384,1536]{1,0}}, allow_spmd_sharding_propagation_to_parameters={true,true}, allow_spmd_sharding_propagation_to_output={true}
+
+FileNames
+1 "/home/roman/axiom/tools/pretrain_run.py"
+2 "/home/roman/axiom/net/train_loop.py"
+3 "/home/roman/axiom/net/model.py"
+4 "/home/roman/axiom/net/vit.py"
+
+FunctionNames
+1 "<module>"
+2 "main"
+3 "execute"
+4 "train"
+5 "init_params"
+6 "init_vit"
+7 "init_vit.<locals>.<genexpr>"
+8 "_init_block"
+9 "_rand"
+
+FileLocations
+1 {file_name_id=1 function_name_id=1 line=1602 end_line=1602 column=21 end_column=27}
+2 {file_name_id=1 function_name_id=2 line=1595 end_line=1595 column=18 end_column=31}
+3 {file_name_id=1 function_name_id=3 line=1435 end_line=1442 column=17 end_column=9}
+4 {file_name_id=2 function_name_id=4 line=2813 end_line=2813 column=13 end_column=74}
+5 {file_name_id=3 function_name_id=5 line=266 end_line=266 column=12 end_column=43}
+6 {file_name_id=4 function_name_id=6 line=77 end_line=77 column=13 end_column=75}
+7 {file_name_id=4 function_name_id=7 line=77 end_line=77 column=19 end_column=44}
+8 {file_name_id=4 function_name_id=8 line=43 end_line=43 column=15 end_column=40}
+9 {file_name_id=4 function_name_id=9 line=25 end_line=25 column=11 end_column=48}
+
+StackFrames
+1 {file_location_id=1 parent_frame_id=1}
+2 {file_location_id=2 parent_frame_id=2}
+3 {file_location_id=3 parent_frame_id=3}
+4 {file_location_id=4 parent_frame_id=4}
+5 {file_location_id=5 parent_frame_id=5}
+6 {file_location_id=6 parent_frame_id=6}
+7 {file_location_id=7 parent_frame_id=7}
+8 {file_location_id=8 parent_frame_id=8}
+9 {file_location_id=9 parent_frame_id=9}
+
+
+fused_multiply {
+  param_0 = f32[384,1536]{1,0} parameter(0)
+  param_1.1 = f32[] parameter(1)
+  mul.2.1 = f32[384,1536]{1,0} broadcast(param_1.1), dimensions={}, metadata={op_name="jit(multiply)/mul" stack_frame_id=9}
+  ROOT mul.3.1 = f32[384,1536]{1,0} multiply(param_0, mul.2.1), metadata={op_name="jit(multiply)/mul" stack_frame_id=9}
+}
+
+ENTRY main.1 {
+  x.1 = f32[384,1536]{1,0} parameter(0), metadata={op_name="x"}
+  y.1 = f32[] parameter(1), metadata={op_name="y"}
+  ROOT loop_multiply_fusion = f32[384,1536]{1,0} fusion(x.1, y.1), kind=kLoop, calls=fused_multiply, metadata={op_name="jit(multiply)/mul" stack_frame_id=9}
+}
+

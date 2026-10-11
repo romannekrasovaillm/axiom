@@ -1,0 +1,6 @@
+000: kCommandBuffer [source | sink] 
+    001: kCopy [source | sink] kCopy
+    002: kCopy [source | sink] kCopy
+    003: kCopy [source | sink] kCopy
+    004: kCopy [source | sink] kCopy
+    005: kCopy [source | sink] kCopy

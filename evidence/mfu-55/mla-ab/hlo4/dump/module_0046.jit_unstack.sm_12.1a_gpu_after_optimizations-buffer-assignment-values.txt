@@ -1,0 +1,45 @@
+
+Total bytes used: 72 (72B)
+
+Used values:
+<6 args_0_.1 @0>
+ positions:
+  args_0_.1
+ uses:
+  wrapped_slice, operand 0
+  wrapped_slice.1, operand 0
+  wrapped_slice.2, operand 0
+ from instruction: %args_0_.1 = u32[3,2]{1,0} parameter(0), metadata={op_name="args[0]"}
+<7 wrapped_slice @0>
+ positions:
+  wrapped_slice
+  tuple.1.0 {0}
+  bitcast.3
+ uses:
+  bitcast.3, operand 0
+  tuple.1.0, operand 0
+ from instruction: %wrapped_slice = u32[1,2]{1,0} fusion(%args_0_.1), kind=kLoop, calls=%wrapped_slice_computation, metadata={op_name="jit(unstack)/unstack" stack_frame_id=6}, backend_config={"operation_queue_id":"0","force_earliest_schedule":false,"reification_cost":[],"device_type":"DEVICE_TYPE_INVALID","native_emitter_backend_config":{"type":"NATIVE_EMITTER_TYPE_INVALID","unroll_factor":0}}
+<8 wrapped_slice.1 @0>
+ positions:
+  wrapped_slice.1
+  tuple.1.0 {1}
+  bitcast.1.0
+ uses:
+  bitcast.1.0, operand 0
+  tuple.1.0, operand 1
+ from instruction: %wrapped_slice.1 = u32[1,2]{1,0} fusion(%args_0_.1), kind=kLoop, calls=%wrapped_slice_computation.1, metadata={op_name="jit(unstack)/unstack" stack_frame_id=6}, backend_config={"operation_queue_id":"0","force_earliest_schedule":false,"reification_cost":[],"device_type":"DEVICE_TYPE_INVALID","native_emitter_backend_config":{"type":"NATIVE_EMITTER_TYPE_INVALID","unroll_factor":0}}
+<9 wrapped_slice.2 @0>
+ positions:
+  wrapped_slice.2
+  tuple.1.0 {2}
+  bitcast.2.0
+ uses:
+  bitcast.2.0, operand 0
+  tuple.1.0, operand 2
+ from instruction: %wrapped_slice.2 = u32[1,2]{1,0} fusion(%args_0_.1), kind=kLoop, calls=%wrapped_slice_computation.2, metadata={op_name="jit(unstack)/unstack" stack_frame_id=6}, backend_config={"operation_queue_id":"0","force_earliest_schedule":false,"reification_cost":[],"device_type":"DEVICE_TYPE_INVALID","native_emitter_backend_config":{"type":"NATIVE_EMITTER_TYPE_INVALID","unroll_factor":0}}
+<10 tuple.1.0{} @0>
+ positions:
+  tuple.1.0 {}
+ uses:
+  (none)
+ from instruction: %tuple.1.0 = (u32[2]{0}, u32[2]{0}, u32[2]{0}) tuple(%bitcast.3, %bitcast.1.0, %bitcast.2.0)

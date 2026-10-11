@@ -1,0 +1,51 @@
+HloLiveRange (max 20):
+  InstructionSequence:
+    0:args_0_.1
+    1:wrapped_slice.8
+    2:bitcast.8.0
+    3:wrapped_slice.7
+    4:bitcast.7.0
+    5:wrapped_slice.6
+    6:bitcast.6.0
+    7:wrapped_slice.5
+    8:bitcast.5.0
+    9:wrapped_slice.4
+    10:bitcast.4.0
+    11:wrapped_slice.3
+    12:bitcast.3.0
+    13:wrapped_slice.2
+    14:bitcast.2.0
+    15:wrapped_slice.1
+    16:bitcast.1.0
+    17:wrapped_slice
+    18:bitcast.9
+    19:tuple.1.0
+  BufferLiveRange:
+    args_0_.1{}:0-20
+    wrapped_slice{}:17-20
+    wrapped_slice.1{}:15-20
+    wrapped_slice.2{}:13-20
+    wrapped_slice.3{}:11-20
+    wrapped_slice.4{}:9-20
+    wrapped_slice.5{}:7-20
+    wrapped_slice.6{}:5-20
+    wrapped_slice.7{}:3-20
+    wrapped_slice.8{}:1-20
+    tuple.1.0{}:19-20
+  Live ranges at 19 (peak):
+    args_0_.1{}: 72 bytes (cumulative: 72 bytes)
+    tuple.1.0{}: 72 bytes (cumulative: 144 bytes)
+    wrapped_slice{}: 8 bytes (cumulative: 152 bytes)
+    wrapped_slice.1{}: 8 bytes (cumulative: 160 bytes)
+    wrapped_slice.2{}: 8 bytes (cumulative: 168 bytes)
+    wrapped_slice.3{}: 8 bytes (cumulative: 176 bytes)
+    wrapped_slice.4{}: 8 bytes (cumulative: 184 bytes)
+    wrapped_slice.5{}: 8 bytes (cumulative: 192 bytes)
+    wrapped_slice.6{}: 8 bytes (cumulative: 200 bytes)
+    wrapped_slice.7{}: 8 bytes (cumulative: 208 bytes)
+    wrapped_slice.8{}: 8 bytes (cumulative: 216 bytes)
+  Stack trace breakdown for peak usage: 216 bytes
+    main.1 (100.0%, total: 216 bytes, current: 0 bytes, remaining: 216 bytes)
+      ├── args[0] (33.3%, total: 72 bytes, current: 72 bytes, remaining: 144 bytes)
+      ├── jit(unstack)/unstack (33.3%, total: 72 bytes, current: 72 bytes, remaining: 72 bytes)
+      └── tuple.1.0 (33.3%, total: 72 bytes, current: 72 bytes, remaining: 0 bytes)

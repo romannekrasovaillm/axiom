@@ -1,0 +1,13 @@
+[donate-ab 06:30:54] === b2f_don: B=2 chunk=64 ce=4096 flash=ON donate=auto prealloc=false
+[donate-ab 06:35:14] --- b2f_don: rc=0 tok/s=491.1 mfu=1.507% loss=13.543514251708984->12.30741024017334
+[donate-ab 06:35:14] === b2f_don_pre: B=2 chunk=64 ce=4096 flash=ON donate=auto prealloc=true
+[donate-ab 06:35:40] --- b2f_don_pre: rc=137 tok/s= mfu=% loss=->
+[donate-ab 06:35:40] === b1f_don: B=1 chunk=64 ce=4096 flash=ON donate=auto prealloc=false
+[donate-ab 06:38:46] --- b1f_don: rc=0 tok/s=416.0 mfu=1.277% loss=13.542271614074707->12.603594779968262
+[donate-ab 06:38:46] лучшая: b2f_don (B=2) — nsys-профиль
+[donate-ab 06:45:22] профиль: /home/roman/axiom/evidence/mfu-55/donate-ab/profile-b2f_don/{api-summary.txt,dtod-count.txt}
+[donate-ab 06:45:22] DONATE-AB ЗАВЕРШЕНА
+cell	batch	chunk	tok_s	mfu_pct	rc	loss_first	loss_last
+b2f_don	2	64	491.1	1.507	0	13.543514251708984	12.30741024017334
+b2f_don_pre	2	64			137		
+b1f_don	1	64	416.0	1.277	0	13.542271614074707	12.603594779968262

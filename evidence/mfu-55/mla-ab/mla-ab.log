@@ -1,0 +1,9 @@
+[mla-ab 05:19:31] === b2_flash: B=2 chunk=64 ce=4096 flash=ON
+[mla-ab 05:23:03] --- b2_flash: rc=0 tok/s=490.2 mfu=1.505% loss=13.543514251708984->12.30347728729248
+[mla-ab 05:23:03] === b4_flash: B=4 chunk=64 ce=4096 flash=ON
+[mla-ab 05:24:08] --- b4_flash: rc=1 tok/s= mfu=% loss=->
+[mla-ab 05:24:08] b4_flash rc=1 — B=8 не запускаю; смотреть /home/roman/axiom/evidence/mfu-55/mla-ab/b4_flash/run.log
+[mla-ab 05:24:08] АБЛЯЦИЯ MLA ЗАВЕРШЕНА
+cell	batch	chunk	tok_s	mfu_pct	rc	loss_first	loss_last
+b2_flash	2	64	490.2	1.505	0	13.543514251708984	12.30347728729248
+b4_flash	4	64			1		

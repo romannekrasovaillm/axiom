@@ -1,0 +1,63 @@
+HloLiveRange (max 26):
+  InstructionSequence:
+    0:args_0_.1
+    1:wrapped_slice.11
+    2:bitcast.11.0
+    3:wrapped_slice.10
+    4:bitcast.10.0
+    5:wrapped_slice.9
+    6:bitcast.9.0
+    7:wrapped_slice.8
+    8:bitcast.8.0
+    9:wrapped_slice.7
+    10:bitcast.7.0
+    11:wrapped_slice.6
+    12:bitcast.6.0
+    13:wrapped_slice.5
+    14:bitcast.5.0
+    15:wrapped_slice.4
+    16:bitcast.4.0
+    17:wrapped_slice.3
+    18:bitcast.3.0
+    19:wrapped_slice.2
+    20:bitcast.2.0
+    21:wrapped_slice.1
+    22:bitcast.1.0
+    23:wrapped_slice
+    24:bitcast.12
+    25:tuple.1.0
+  BufferLiveRange:
+    args_0_.1{}:0-26
+    wrapped_slice{}:23-26
+    wrapped_slice.1{}:21-26
+    wrapped_slice.2{}:19-26
+    wrapped_slice.3{}:17-26
+    wrapped_slice.4{}:15-26
+    wrapped_slice.5{}:13-26
+    wrapped_slice.6{}:11-26
+    wrapped_slice.7{}:9-26
+    wrapped_slice.8{}:7-26
+    wrapped_slice.9{}:5-26
+    wrapped_slice.10{}:3-26
+    wrapped_slice.11{}:1-26
+    tuple.1.0{}:25-26
+  Live ranges at 25 (peak):
+    args_0_.1{}: 96 bytes (cumulative: 96 bytes)
+    tuple.1.0{}: 96 bytes (cumulative: 192 bytes)
+    wrapped_slice{}: 8 bytes (cumulative: 200 bytes)
+    wrapped_slice.1{}: 8 bytes (cumulative: 208 bytes)
+    wrapped_slice.10{}: 8 bytes (cumulative: 216 bytes)
+    wrapped_slice.11{}: 8 bytes (cumulative: 224 bytes)
+    wrapped_slice.2{}: 8 bytes (cumulative: 232 bytes)
+    wrapped_slice.3{}: 8 bytes (cumulative: 240 bytes)
+    wrapped_slice.4{}: 8 bytes (cumulative: 248 bytes)
+    wrapped_slice.5{}: 8 bytes (cumulative: 256 bytes)
+    wrapped_slice.6{}: 8 bytes (cumulative: 264 bytes)
+    wrapped_slice.7{}: 8 bytes (cumulative: 272 bytes)
+    wrapped_slice.8{}: 8 bytes (cumulative: 280 bytes)
+    wrapped_slice.9{}: 8 bytes (cumulative: 288 bytes)
+  Stack trace breakdown for peak usage: 288 bytes
+    main.1 (100.0%, total: 288 bytes, current: 0 bytes, remaining: 288 bytes)
+      ├── args[0] (33.3%, total: 96 bytes, current: 96 bytes, remaining: 192 bytes)
+      ├── jit(unstack)/unstack (33.3%, total: 96 bytes, current: 96 bytes, remaining: 96 bytes)
+      └── tuple.1.0 (33.3%, total: 96 bytes, current: 96 bytes, remaining: 0 bytes)

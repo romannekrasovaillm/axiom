@@ -1,0 +1,16 @@
+
+Total bytes used: 73736 (72.0KiB)
+
+Used values:
+<273 key.1 @0>
+ positions:
+  key.1
+ uses:
+  loop_multiply_fusion, operand 0
+ from instruction: %key.1 = u32[2]{0} parameter(0), metadata={op_name="key"}
+<274 loop_multiply_fusion @0>
+ positions:
+  loop_multiply_fusion
+ uses:
+  (none)
+ from instruction: %loop_multiply_fusion = f32[1536,12]{1,0} fusion(%key.1), kind=kLoop, calls=%fused_multiply, metadata={op_name="jit(_normal)/jit(_normal_real)/mul" stack_frame_id=7}, backend_config={"operation_queue_id":"0","force_earliest_schedule":false,"reification_cost":[],"device_type":"DEVICE_TYPE_INVALID","native_emitter_backend_config":{"type":"NATIVE_EMITTER_TYPE_INVALID","unroll_factor":0}}

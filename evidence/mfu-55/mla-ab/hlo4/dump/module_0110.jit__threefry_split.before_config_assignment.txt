@@ -1,0 +1,209 @@
+HloModule jit__threefry_split, entry_computation_layout={(u32[2]{0})->u32[5,2]{1,0}}, allow_spmd_sharding_propagation_to_parameters={true}, allow_spmd_sharding_propagation_to_output={true}
+
+FileNames
+1 "/home/roman/axiom/tools/pretrain_run.py"
+2 "/home/roman/axiom/net/train_loop.py"
+3 "/home/roman/axiom/net/model.py"
+4 "/home/roman/axiom/net/mtp.py"
+
+FunctionNames
+1 "<module>"
+2 "main"
+3 "execute"
+4 "train"
+5 "init_params"
+6 "init_mtp"
+
+FileLocations
+1 {file_name_id=1 function_name_id=1 line=1602 end_line=1602 column=21 end_column=27}
+2 {file_name_id=1 function_name_id=2 line=1595 end_line=1595 column=18 end_column=31}
+3 {file_name_id=1 function_name_id=3 line=1435 end_line=1442 column=17 end_column=9}
+4 {file_name_id=2 function_name_id=4 line=2813 end_line=2813 column=13 end_column=74}
+5 {file_name_id=3 function_name_id=5 line=265 end_line=265 column=12 end_column=43}
+6 {file_name_id=4 function_name_id=6 line=39 end_line=39 column=25 end_column=49}
+
+StackFrames
+1 {file_location_id=1 parent_frame_id=1}
+2 {file_location_id=2 parent_frame_id=2}
+3 {file_location_id=3 parent_frame_id=3}
+4 {file_location_id=4 parent_frame_id=4}
+5 {file_location_id=5 parent_frame_id=5}
+6 {file_location_id=6 parent_frame_id=6}
+
+
+fused_concatenate {
+  iota_2x32_shape.4.60 = u64[5]{0} iota(), iota_dimension=0, metadata={op_name="jit(_threefry_split)/iota_2x32_shape" stack_frame_id=6}
+  constant.33.1 = u64[] constant(32)
+  broadcast.31.23 = u64[5]{0} broadcast(constant.33.1), dimensions={}
+  iota_2x32_shape.5.23 = u64[5]{0} shift-right-logical(iota_2x32_shape.4.60, broadcast.31.23), metadata={op_name="jit(_threefry_split)/iota_2x32_shape" stack_frame_id=6}
+  iota_2x32_shape.7.23 = u32[5]{0} convert(iota_2x32_shape.5.23), metadata={op_name="jit(_threefry_split)/iota_2x32_shape" stack_frame_id=6}
+  param_0.228 = u32[2]{0} parameter(0)
+  unstack.4.99 = u32[1]{0} slice(param_0.228), slice={[0:1]}, metadata={op_name="jit(_threefry_split)/unstack" stack_frame_id=6}
+  bitcast.118 = u32[] bitcast(unstack.4.99), metadata={op_name="jit(_threefry_split)/unstack" stack_frame_id=6}
+  add.0.73 = u32[5]{0} broadcast(bitcast.118), dimensions={}, metadata={op_name="jit(_threefry_split)/add" stack_frame_id=6}
+  add.1.21 = u32[5]{0} add(iota_2x32_shape.7.23, add.0.73), metadata={op_name="jit(_threefry_split)/add" stack_frame_id=6}
+  iota_2x32_shape.4.59 = u64[5]{0} iota(), iota_dimension=0, metadata={op_name="jit(_threefry_split)/iota_2x32_shape" stack_frame_id=6}
+  iota_2x32_shape.6.41 = u32[5]{0} convert(iota_2x32_shape.4.59), metadata={op_name="jit(_threefry_split)/iota_2x32_shape" stack_frame_id=6}
+  unstack.6.119 = u32[1]{0} slice(param_0.228), slice={[1:2]}, metadata={op_name="jit(_threefry_split)/unstack" stack_frame_id=6}
+  bitcast.1.132 = u32[] bitcast(unstack.6.119), metadata={op_name="jit(_threefry_split)/unstack" stack_frame_id=6}
+  add.2.91 = u32[5]{0} broadcast(bitcast.1.132), dimensions={}, metadata={op_name="jit(_threefry_split)/add" stack_frame_id=6}
+  add.3.41 = u32[5]{0} add(iota_2x32_shape.6.41, add.2.91), metadata={op_name="jit(_threefry_split)/add" stack_frame_id=6}
+  add.4.19 = u32[5]{0} add(add.1.21, add.3.41), metadata={op_name="jit(_threefry_split)/add" stack_frame_id=6}
+  constant.0.1 = u32[] constant(13), metadata={op_name="jit(_threefry_split)" stack_frame_id=6}
+  broadcast.0.63 = u32[5]{0} broadcast(constant.0.1), dimensions={}, metadata={op_name="jit(_threefry_split)" stack_frame_id=6}
+  shift_left.0.21 = u32[5]{0} shift-left(add.3.41, broadcast.0.63), metadata={op_name="jit(_threefry_split)/shift_left" stack_frame_id=6}
+  constant.1.1 = u32[] constant(19), metadata={op_name="jit(_threefry_split)" stack_frame_id=6}
+  broadcast.1.57 = u32[5]{0} broadcast(constant.1.1), dimensions={}, metadata={op_name="jit(_threefry_split)" stack_frame_id=6}
+  shift_right_logical.0.19 = u32[5]{0} shift-right-logical(add.3.41, broadcast.1.57), metadata={op_name="jit(_threefry_split)/shift_right_logical" stack_frame_id=6}
+  or.0.19 = u32[5]{0} or(shift_left.0.21, shift_right_logical.0.19), metadata={op_name="jit(_threefry_split)/or" stack_frame_id=6}
+  xor.0.19 = u32[5]{0} xor(add.4.19, or.0.19), metadata={op_name="jit(_threefry_split)/xor" stack_frame_id=6}
+  add.5.74 = u32[5]{0} add(add.4.19, xor.0.19), metadata={op_name="jit(_threefry_split)/add" stack_frame_id=6}
+  constant.2.1 = u32[] constant(15), metadata={op_name="jit(_threefry_split)" stack_frame_id=6}
+  broadcast.2.111 = u32[5]{0} broadcast(constant.2.1), dimensions={}, metadata={op_name="jit(_threefry_split)" stack_frame_id=6}
+  shift_left.1.45 = u32[5]{0} shift-left(xor.0.19, broadcast.2.111), metadata={op_name="jit(_threefry_split)/shift_left" stack_frame_id=6}
+  constant.3.1 = u32[] constant(17), metadata={op_name="jit(_threefry_split)" stack_frame_id=6}
+  broadcast.3.109 = u32[5]{0} broadcast(constant.3.1), dimensions={}, metadata={op_name="jit(_threefry_split)" stack_frame_id=6}
+  shift_right_logical.1.43 = u32[5]{0} shift-right-logical(xor.0.19, broadcast.3.109), metadata={op_name="jit(_threefry_split)/shift_right_logical" stack_frame_id=6}
+  or.1.43 = u32[5]{0} or(shift_left.1.45, shift_right_logical.1.43), metadata={op_name="jit(_threefry_split)/or" stack_frame_id=6}
+  xor.1.43 = u32[5]{0} xor(add.5.74, or.1.43), metadata={op_name="jit(_threefry_split)/xor" stack_frame_id=6}
+  add.6.31 = u32[5]{0} add(add.5.74, xor.1.43), metadata={op_name="jit(_threefry_split)/add" stack_frame_id=6}
+  constant.4.1 = u32[] constant(26), metadata={op_name="jit(_threefry_split)" stack_frame_id=6}
+  broadcast.4.62 = u32[5]{0} broadcast(constant.4.1), dimensions={}, metadata={op_name="jit(_threefry_split)" stack_frame_id=6}
+  shift_left.2.11 = u32[5]{0} shift-left(xor.1.43, broadcast.4.62), metadata={op_name="jit(_threefry_split)/shift_left" stack_frame_id=6}
+  constant.5.1 = u32[] constant(6), metadata={op_name="jit(_threefry_split)" stack_frame_id=6}
+  broadcast.5.56 = u32[5]{0} broadcast(constant.5.1), dimensions={}, metadata={op_name="jit(_threefry_split)" stack_frame_id=6}
+  shift_right_logical.2.9 = u32[5]{0} shift-right-logical(xor.1.43, broadcast.5.56), metadata={op_name="jit(_threefry_split)/shift_right_logical" stack_frame_id=6}
+  or.2.9 = u32[5]{0} or(shift_left.2.11, shift_right_logical.2.9), metadata={op_name="jit(_threefry_split)/or" stack_frame_id=6}
+  xor.2.9 = u32[5]{0} xor(add.6.31, or.2.9), metadata={op_name="jit(_threefry_split)/xor" stack_frame_id=6}
+  add.7.18 = u32[5]{0} add(add.6.31, xor.2.9), metadata={op_name="jit(_threefry_split)/add" stack_frame_id=6}
+  add.9.11 = u32[5]{0} add(add.7.18, add.2.91), metadata={op_name="jit(_threefry_split)/add" stack_frame_id=6}
+  shift_left.3.11 = u32[5]{0} shift-left(xor.2.9, broadcast.5.56), metadata={op_name="jit(_threefry_split)/shift_left" stack_frame_id=6}
+  shift_right_logical.3.11 = u32[5]{0} shift-right-logical(xor.2.9, broadcast.4.62), metadata={op_name="jit(_threefry_split)/shift_right_logical" stack_frame_id=6}
+  or.3.11 = u32[5]{0} or(shift_left.3.11, shift_right_logical.3.11), metadata={op_name="jit(_threefry_split)/or" stack_frame_id=6}
+  xor.3.9 = u32[5]{0} xor(add.7.18, or.3.11), metadata={op_name="jit(_threefry_split)/xor" stack_frame_id=6}
+  xor.4.41 = u32[] xor(bitcast.118, bitcast.1.132), metadata={op_name="jit(_threefry_split)/xor" stack_frame_id=6}
+  constant.6.1 = u32[] constant(466688986), metadata={op_name="jit(_threefry_split)" stack_frame_id=6}
+  xor.5.39 = u32[] xor(xor.4.41, constant.6.1), metadata={op_name="jit(_threefry_split)/xor" stack_frame_id=6}
+  add.10.42 = u32[5]{0} broadcast(xor.5.39), dimensions={}, metadata={op_name="jit(_threefry_split)/add" stack_frame_id=6}
+  add.11.9 = u32[5]{0} add(xor.3.9, add.10.42), metadata={op_name="jit(_threefry_split)/add" stack_frame_id=6}
+  constant.7.1 = u32[] constant(1), metadata={op_name="jit(_threefry_split)" stack_frame_id=6}
+  broadcast.6.9 = u32[5]{0} broadcast(constant.7.1), dimensions={}, metadata={op_name="jit(_threefry_split)" stack_frame_id=6}
+  add.12.9 = u32[5]{0} add(add.11.9, broadcast.6.9), metadata={op_name="jit(_threefry_split)/add" stack_frame_id=6}
+  add.13.9 = u32[5]{0} add(add.9.11, add.12.9), metadata={op_name="jit(_threefry_split)/add" stack_frame_id=6}
+  shift_left.4.17 = u32[5]{0} shift-left(add.12.9, broadcast.3.109), metadata={op_name="jit(_threefry_split)/shift_left" stack_frame_id=6}
+  shift_right_logical.4.15 = u32[5]{0} shift-right-logical(add.12.9, broadcast.2.111), metadata={op_name="jit(_threefry_split)/shift_right_logical" stack_frame_id=6}
+  or.4.15 = u32[5]{0} or(shift_left.4.17, shift_right_logical.4.15), metadata={op_name="jit(_threefry_split)/or" stack_frame_id=6}
+  xor.6.15 = u32[5]{0} xor(add.13.9, or.4.15), metadata={op_name="jit(_threefry_split)/xor" stack_frame_id=6}
+  add.14.12 = u32[5]{0} add(add.13.9, xor.6.15), metadata={op_name="jit(_threefry_split)/add" stack_frame_id=6}
+  constant.8.1 = u32[] constant(29), metadata={op_name="jit(_threefry_split)" stack_frame_id=6}
+  broadcast.7.28 = u32[5]{0} broadcast(constant.8.1), dimensions={}, metadata={op_name="jit(_threefry_split)" stack_frame_id=6}
+  shift_left.5.11 = u32[5]{0} shift-left(xor.6.15, broadcast.7.28), metadata={op_name="jit(_threefry_split)/shift_left" stack_frame_id=6}
+  constant.9.1 = u32[] constant(3), metadata={op_name="jit(_threefry_split)" stack_frame_id=6}
+  broadcast.8.39 = u32[5]{0} broadcast(constant.9.1), dimensions={}, metadata={op_name="jit(_threefry_split)" stack_frame_id=6}
+  shift_right_logical.5.9 = u32[5]{0} shift-right-logical(xor.6.15, broadcast.8.39), metadata={op_name="jit(_threefry_split)/shift_right_logical" stack_frame_id=6}
+  or.5.9 = u32[5]{0} or(shift_left.5.11, shift_right_logical.5.9), metadata={op_name="jit(_threefry_split)/or" stack_frame_id=6}
+  xor.7.9 = u32[5]{0} xor(add.14.12, or.5.9), metadata={op_name="jit(_threefry_split)/xor" stack_frame_id=6}
+  add.15.3 = u32[5]{0} add(add.14.12, xor.7.9), metadata={op_name="jit(_threefry_split)/add" stack_frame_id=6}
+  constant.10.1 = u32[] constant(16), metadata={op_name="jit(_threefry_split)" stack_frame_id=6}
+  broadcast.9.28 = u32[5]{0} broadcast(constant.10.1), dimensions={}, metadata={op_name="jit(_threefry_split)" stack_frame_id=6}
+  shift_left.6.5 = u32[5]{0} shift-left(xor.7.9, broadcast.9.28), metadata={op_name="jit(_threefry_split)/shift_left" stack_frame_id=6}
+  shift_right_logical.6.3 = u32[5]{0} shift-right-logical(xor.7.9, broadcast.9.28), metadata={op_name="jit(_threefry_split)/shift_right_logical" stack_frame_id=6}
+  or.6.3 = u32[5]{0} or(shift_left.6.5, shift_right_logical.6.3), metadata={op_name="jit(_threefry_split)/or" stack_frame_id=6}
+  xor.8.3 = u32[5]{0} xor(add.15.3, or.6.3), metadata={op_name="jit(_threefry_split)/xor" stack_frame_id=6}
+  add.16.40 = u32[5]{0} add(add.15.3, xor.8.3), metadata={op_name="jit(_threefry_split)/add" stack_frame_id=6}
+  add.18.23 = u32[5]{0} add(add.16.40, add.10.42), metadata={op_name="jit(_threefry_split)/add" stack_frame_id=6}
+  constant.11.1 = u32[] constant(24), metadata={op_name="jit(_threefry_split)" stack_frame_id=6}
+  broadcast.10.30 = u32[5]{0} broadcast(constant.11.1), dimensions={}, metadata={op_name="jit(_threefry_split)" stack_frame_id=6}
+  shift_left.7.19 = u32[5]{0} shift-left(xor.8.3, broadcast.10.30), metadata={op_name="jit(_threefry_split)/shift_left" stack_frame_id=6}
+  constant.12.1 = u32[] constant(8), metadata={op_name="jit(_threefry_split)" stack_frame_id=6}
+  broadcast.11.30 = u32[5]{0} broadcast(constant.12.1), dimensions={}, metadata={op_name="jit(_threefry_split)" stack_frame_id=6}
+  shift_right_logical.7.19 = u32[5]{0} shift-right-logical(xor.8.3, broadcast.11.30), metadata={op_name="jit(_threefry_split)/shift_right_logical" stack_frame_id=6}
+  or.7.19 = u32[5]{0} or(shift_left.7.19, shift_right_logical.7.19), metadata={op_name="jit(_threefry_split)/or" stack_frame_id=6}
+  xor.9.17 = u32[5]{0} xor(add.16.40, or.7.19), metadata={op_name="jit(_threefry_split)/xor" stack_frame_id=6}
+  add.20.19 = u32[5]{0} add(xor.9.17, add.0.73), metadata={op_name="jit(_threefry_split)/add" stack_frame_id=6}
+  constant.13.1 = u32[] constant(2), metadata={op_name="jit(_threefry_split)" stack_frame_id=6}
+  broadcast.12.17 = u32[5]{0} broadcast(constant.13.1), dimensions={}, metadata={op_name="jit(_threefry_split)" stack_frame_id=6}
+  add.21.17 = u32[5]{0} add(add.20.19, broadcast.12.17), metadata={op_name="jit(_threefry_split)/add" stack_frame_id=6}
+  add.22.23 = u32[5]{0} add(add.18.23, add.21.17), metadata={op_name="jit(_threefry_split)/add" stack_frame_id=6}
+  shift_left.8.25 = u32[5]{0} shift-left(add.21.17, broadcast.0.63), metadata={op_name="jit(_threefry_split)/shift_left" stack_frame_id=6}
+  shift_right_logical.8.23 = u32[5]{0} shift-right-logical(add.21.17, broadcast.1.57), metadata={op_name="jit(_threefry_split)/shift_right_logical" stack_frame_id=6}
+  or.8.23 = u32[5]{0} or(shift_left.8.25, shift_right_logical.8.23), metadata={op_name="jit(_threefry_split)/or" stack_frame_id=6}
+  xor.10.23 = u32[5]{0} xor(add.22.23, or.8.23), metadata={op_name="jit(_threefry_split)/xor" stack_frame_id=6}
+  add.23.20 = u32[5]{0} add(add.22.23, xor.10.23), metadata={op_name="jit(_threefry_split)/add" stack_frame_id=6}
+  shift_left.9.19 = u32[5]{0} shift-left(xor.10.23, broadcast.2.111), metadata={op_name="jit(_threefry_split)/shift_left" stack_frame_id=6}
+  shift_right_logical.9.17 = u32[5]{0} shift-right-logical(xor.10.23, broadcast.3.109), metadata={op_name="jit(_threefry_split)/shift_right_logical" stack_frame_id=6}
+  or.9.17 = u32[5]{0} or(shift_left.9.19, shift_right_logical.9.17), metadata={op_name="jit(_threefry_split)/or" stack_frame_id=6}
+  xor.11.17 = u32[5]{0} xor(add.23.20, or.9.17), metadata={op_name="jit(_threefry_split)/xor" stack_frame_id=6}
+  add.24.3 = u32[5]{0} add(add.23.20, xor.11.17), metadata={op_name="jit(_threefry_split)/add" stack_frame_id=6}
+  shift_left.10.13 = u32[5]{0} shift-left(xor.11.17, broadcast.4.62), metadata={op_name="jit(_threefry_split)/shift_left" stack_frame_id=6}
+  shift_right_logical.10.11 = u32[5]{0} shift-right-logical(xor.11.17, broadcast.5.56), metadata={op_name="jit(_threefry_split)/shift_right_logical" stack_frame_id=6}
+  or.10.11 = u32[5]{0} or(shift_left.10.13, shift_right_logical.10.11), metadata={op_name="jit(_threefry_split)/or" stack_frame_id=6}
+  xor.12.11 = u32[5]{0} xor(add.24.3, or.10.11), metadata={op_name="jit(_threefry_split)/xor" stack_frame_id=6}
+  add.25.36 = u32[5]{0} add(add.24.3, xor.12.11), metadata={op_name="jit(_threefry_split)/add" stack_frame_id=6}
+  add.27.23 = u32[5]{0} add(add.25.36, add.0.73), metadata={op_name="jit(_threefry_split)/add" stack_frame_id=6}
+  shift_left.11.17 = u32[5]{0} shift-left(xor.12.11, broadcast.5.56), metadata={op_name="jit(_threefry_split)/shift_left" stack_frame_id=6}
+  shift_right_logical.11.17 = u32[5]{0} shift-right-logical(xor.12.11, broadcast.4.62), metadata={op_name="jit(_threefry_split)/shift_right_logical" stack_frame_id=6}
+  or.11.17 = u32[5]{0} or(shift_left.11.17, shift_right_logical.11.17), metadata={op_name="jit(_threefry_split)/or" stack_frame_id=6}
+  xor.13.15 = u32[5]{0} xor(add.25.36, or.11.17), metadata={op_name="jit(_threefry_split)/xor" stack_frame_id=6}
+  add.29.17 = u32[5]{0} add(xor.13.15, add.2.91), metadata={op_name="jit(_threefry_split)/add" stack_frame_id=6}
+  add.30.15 = u32[5]{0} add(add.29.17, broadcast.8.39), metadata={op_name="jit(_threefry_split)/add" stack_frame_id=6}
+  add.31.21 = u32[5]{0} add(add.27.23, add.30.15), metadata={op_name="jit(_threefry_split)/add" stack_frame_id=6}
+  shift_left.12.23 = u32[5]{0} shift-left(add.30.15, broadcast.3.109), metadata={op_name="jit(_threefry_split)/shift_left" stack_frame_id=6}
+  shift_right_logical.12.21 = u32[5]{0} shift-right-logical(add.30.15, broadcast.2.111), metadata={op_name="jit(_threefry_split)/shift_right_logical" stack_frame_id=6}
+  or.12.21 = u32[5]{0} or(shift_left.12.23, shift_right_logical.12.21), metadata={op_name="jit(_threefry_split)/or" stack_frame_id=6}
+  xor.14.21 = u32[5]{0} xor(add.31.21, or.12.21), metadata={op_name="jit(_threefry_split)/xor" stack_frame_id=6}
+  add.32.18 = u32[5]{0} add(add.31.21, xor.14.21), metadata={op_name="jit(_threefry_split)/add" stack_frame_id=6}
+  shift_left.13.17 = u32[5]{0} shift-left(xor.14.21, broadcast.7.28), metadata={op_name="jit(_threefry_split)/shift_left" stack_frame_id=6}
+  shift_right_logical.13.15 = u32[5]{0} shift-right-logical(xor.14.21, broadcast.8.39), metadata={op_name="jit(_threefry_split)/shift_right_logical" stack_frame_id=6}
+  or.13.15 = u32[5]{0} or(shift_left.13.17, shift_right_logical.13.15), metadata={op_name="jit(_threefry_split)/or" stack_frame_id=6}
+  xor.15.15 = u32[5]{0} xor(add.32.18, or.13.15), metadata={op_name="jit(_threefry_split)/xor" stack_frame_id=6}
+  add.33.3 = u32[5]{0} add(add.32.18, xor.15.15), metadata={op_name="jit(_threefry_split)/add" stack_frame_id=6}
+  shift_left.14.11 = u32[5]{0} shift-left(xor.15.15, broadcast.9.28), metadata={op_name="jit(_threefry_split)/shift_left" stack_frame_id=6}
+  shift_right_logical.14.9 = u32[5]{0} shift-right-logical(xor.15.15, broadcast.9.28), metadata={op_name="jit(_threefry_split)/shift_right_logical" stack_frame_id=6}
+  or.14.9 = u32[5]{0} or(shift_left.14.11, shift_right_logical.14.9), metadata={op_name="jit(_threefry_split)/or" stack_frame_id=6}
+  xor.16.9 = u32[5]{0} xor(add.33.3, or.14.9), metadata={op_name="jit(_threefry_split)/xor" stack_frame_id=6}
+  add.34.24 = u32[5]{0} add(add.33.3, xor.16.9), metadata={op_name="jit(_threefry_split)/add" stack_frame_id=6}
+  add.36.17 = u32[5]{0} add(add.34.24, add.2.91), metadata={op_name="jit(_threefry_split)/add" stack_frame_id=6}
+  shift_left.15.11 = u32[5]{0} shift-left(xor.16.9, broadcast.10.30), metadata={op_name="jit(_threefry_split)/shift_left" stack_frame_id=6}
+  shift_right_logical.15.11 = u32[5]{0} shift-right-logical(xor.16.9, broadcast.11.30), metadata={op_name="jit(_threefry_split)/shift_right_logical" stack_frame_id=6}
+  or.15.11 = u32[5]{0} or(shift_left.15.11, shift_right_logical.15.11), metadata={op_name="jit(_threefry_split)/or" stack_frame_id=6}
+  xor.17.9 = u32[5]{0} xor(add.34.24, or.15.11), metadata={op_name="jit(_threefry_split)/xor" stack_frame_id=6}
+  add.38.9 = u32[5]{0} add(xor.17.9, add.10.42), metadata={op_name="jit(_threefry_split)/add" stack_frame_id=6}
+  constant.14.1 = u32[] constant(4), metadata={op_name="jit(_threefry_split)" stack_frame_id=6}
+  broadcast.13.9 = u32[5]{0} broadcast(constant.14.1), dimensions={}, metadata={op_name="jit(_threefry_split)" stack_frame_id=6}
+  add.39.9 = u32[5]{0} add(add.38.9, broadcast.13.9), metadata={op_name="jit(_threefry_split)/add" stack_frame_id=6}
+  add.40.15 = u32[5]{0} add(add.36.17, add.39.9), metadata={op_name="jit(_threefry_split)/add" stack_frame_id=6}
+  shift_left.16.17 = u32[5]{0} shift-left(add.39.9, broadcast.0.63), metadata={op_name="jit(_threefry_split)/shift_left" stack_frame_id=6}
+  shift_right_logical.16.15 = u32[5]{0} shift-right-logical(add.39.9, broadcast.1.57), metadata={op_name="jit(_threefry_split)/shift_right_logical" stack_frame_id=6}
+  or.16.15 = u32[5]{0} or(shift_left.16.17, shift_right_logical.16.15), metadata={op_name="jit(_threefry_split)/or" stack_frame_id=6}
+  xor.18.15 = u32[5]{0} xor(add.40.15, or.16.15), metadata={op_name="jit(_threefry_split)/xor" stack_frame_id=6}
+  add.41.12 = u32[5]{0} add(add.40.15, xor.18.15), metadata={op_name="jit(_threefry_split)/add" stack_frame_id=6}
+  shift_left.17.11 = u32[5]{0} shift-left(xor.18.15, broadcast.2.111), metadata={op_name="jit(_threefry_split)/shift_left" stack_frame_id=6}
+  shift_right_logical.17.9 = u32[5]{0} shift-right-logical(xor.18.15, broadcast.3.109), metadata={op_name="jit(_threefry_split)/shift_right_logical" stack_frame_id=6}
+  or.17.9 = u32[5]{0} or(shift_left.17.11, shift_right_logical.17.9), metadata={op_name="jit(_threefry_split)/or" stack_frame_id=6}
+  xor.19.9 = u32[5]{0} xor(add.41.12, or.17.9), metadata={op_name="jit(_threefry_split)/xor" stack_frame_id=6}
+  add.42.3 = u32[5]{0} add(add.41.12, xor.19.9), metadata={op_name="jit(_threefry_split)/add" stack_frame_id=6}
+  shift_left.18.5 = u32[5]{0} shift-left(xor.19.9, broadcast.4.62), metadata={op_name="jit(_threefry_split)/shift_left" stack_frame_id=6}
+  shift_right_logical.18.3 = u32[5]{0} shift-right-logical(xor.19.9, broadcast.5.56), metadata={op_name="jit(_threefry_split)/shift_right_logical" stack_frame_id=6}
+  or.18.3 = u32[5]{0} or(shift_left.18.5, shift_right_logical.18.3), metadata={op_name="jit(_threefry_split)/or" stack_frame_id=6}
+  xor.20.3 = u32[5]{0} xor(add.42.3, or.18.3), metadata={op_name="jit(_threefry_split)/xor" stack_frame_id=6}
+  add.43.1 = u32[5]{0} add(add.42.3, xor.20.3), metadata={op_name="jit(_threefry_split)/add" stack_frame_id=6}
+  add.45.1 = u32[5]{0} add(add.43.1, add.10.42), metadata={op_name="jit(_threefry_split)/add" stack_frame_id=6}
+  bitcast.2.1 = u32[5,1]{1,0} bitcast(add.45.1), metadata={op_name="jit(_threefry_split)/add" stack_frame_id=6}
+  shift_left.19.5 = u32[5]{0} shift-left(xor.20.3, broadcast.5.56), metadata={op_name="jit(_threefry_split)/shift_left" stack_frame_id=6}
+  shift_right_logical.19.5 = u32[5]{0} shift-right-logical(xor.20.3, broadcast.4.62), metadata={op_name="jit(_threefry_split)/shift_right_logical" stack_frame_id=6}
+  or.19.5 = u32[5]{0} or(shift_left.19.5, shift_right_logical.19.5), metadata={op_name="jit(_threefry_split)/or" stack_frame_id=6}
+  xor.21.3 = u32[5]{0} xor(add.43.1, or.19.5), metadata={op_name="jit(_threefry_split)/xor" stack_frame_id=6}
+  add.47.5 = u32[5]{0} add(xor.21.3, add.0.73), metadata={op_name="jit(_threefry_split)/add" stack_frame_id=6}
+  constant.15.1 = u32[] constant(5), metadata={op_name="jit(_threefry_split)" stack_frame_id=6}
+  broadcast.14.3 = u32[5]{0} broadcast(constant.15.1), dimensions={}, metadata={op_name="jit(_threefry_split)" stack_frame_id=6}
+  add.48.3 = u32[5]{0} add(add.47.5, broadcast.14.3), metadata={op_name="jit(_threefry_split)/add" stack_frame_id=6}
+  bitcast.3.1 = u32[5,1]{1,0} bitcast(add.48.3), metadata={op_name="jit(_threefry_split)/add" stack_frame_id=6}
+  ROOT stack.5.1 = u32[5,2]{1,0} concatenate(bitcast.2.1, bitcast.3.1), dimensions={1}, metadata={op_name="jit(_threefry_split)/stack" stack_frame_id=6}
+}
+
+ENTRY main.2 {
+  key.1 = u32[2]{0} parameter(0), metadata={op_name="key"}
+  ROOT input_concatenate_fusion = u32[5,2]{1,0} fusion(key.1), kind=kInput, calls=fused_concatenate, metadata={op_name="jit(_threefry_split)/stack" stack_frame_id=6}
+}
+

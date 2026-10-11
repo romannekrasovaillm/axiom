@@ -1,0 +1,46 @@
+thunk_metadata {
+  thunk_info {
+    profile_annotation: "command_buffer_1"
+  }
+  thunk_kind: "kCommandBuffer"
+}
+thunk_metadata {
+  thunk_info {
+  }
+  thunk_kind: "kSequential"
+}
+thunk_metadata {
+  thunk_info {
+    profile_annotation: "wrapped_slice.4"
+    thunk_id: 1
+  }
+  thunk_kind: "kCopy"
+}
+thunk_metadata {
+  thunk_info {
+    profile_annotation: "wrapped_slice.3"
+    thunk_id: 2
+  }
+  thunk_kind: "kCopy"
+}
+thunk_metadata {
+  thunk_info {
+    profile_annotation: "wrapped_slice.2"
+    thunk_id: 3
+  }
+  thunk_kind: "kCopy"
+}
+thunk_metadata {
+  thunk_info {
+    profile_annotation: "wrapped_slice.1"
+    thunk_id: 4
+  }
+  thunk_kind: "kCopy"
+}
+thunk_metadata {
+  thunk_info {
+    profile_annotation: "wrapped_slice"
+    thunk_id: 5
+  }
+  thunk_kind: "kCopy"
+}

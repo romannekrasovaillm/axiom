@@ -1,0 +1,23 @@
+
+Total bytes used: 1769484 (1.69MiB)
+
+Used values:
+<277 key.1 @0>
+ positions:
+  key.1
+ uses:
+  loop_xor_fusion, operand 0
+  loop_multiply_fusion, operand 1
+ from instruction: %key.1 = u32[2]{0} parameter(0), metadata={op_name="key"}
+<278 loop_xor_fusion @0>
+ positions:
+  loop_xor_fusion
+ uses:
+  loop_multiply_fusion, operand 0
+ from instruction: %loop_xor_fusion = u32[] fusion(%key.1), kind=kLoop, calls=%fused_xor, metadata={op_name="jit(_normal)/jit(_normal_real)/jit(_uniform)/xor" stack_frame_id=9}, backend_config={"operation_queue_id":"0","force_earliest_schedule":false,"reification_cost":[],"device_type":"DEVICE_TYPE_INVALID","native_emitter_backend_config":{"type":"NATIVE_EMITTER_TYPE_INVALID","unroll_factor":0}}
+<279 loop_multiply_fusion @0>
+ positions:
+  loop_multiply_fusion
+ uses:
+  (none)
+ from instruction: %loop_multiply_fusion = f32[384,1152]{1,0} fusion(%loop_xor_fusion, %key.1), kind=kLoop, calls=%fused_multiply, metadata={op_name="jit(_normal)/jit(_normal_real)/mul" stack_frame_id=9}, backend_config={"operation_queue_id":"0","force_earliest_schedule":false,"reification_cost":[],"device_type":"DEVICE_TYPE_INVALID","native_emitter_backend_config":{"type":"NATIVE_EMITTER_TYPE_INVALID","unroll_factor":0}}

@@ -1,0 +1,11 @@
+Memory Space: default (color=0)
+Total bytes: 14155780 (13.50MiB)
+  cumulative_size;       size;       offset; used_by_n_values; shapes_list
+  ------------------------------------------------------------
+   13.50MiB(100%);   13.50MiB;            0;                1; f32[12,768,384]
+
+  cumulative_size;       size;       offset; used_by_n_values; shapes_list
+  ------------------------------------------------------------
+         4B(100%);         4B;            0;                1; f32[]
+
+

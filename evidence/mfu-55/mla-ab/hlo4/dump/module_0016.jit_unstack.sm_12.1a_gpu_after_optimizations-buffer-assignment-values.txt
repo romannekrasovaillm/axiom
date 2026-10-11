@@ -1,0 +1,135 @@
+
+Total bytes used: 288 (288B)
+
+Used values:
+<24 args_0_.1 @0>
+ positions:
+  args_0_.1
+ uses:
+  wrapped_slice, operand 0
+  wrapped_slice.1, operand 0
+  wrapped_slice.2, operand 0
+  wrapped_slice.3, operand 0
+  wrapped_slice.4, operand 0
+  wrapped_slice.5, operand 0
+  wrapped_slice.6, operand 0
+  wrapped_slice.7, operand 0
+  wrapped_slice.8, operand 0
+  wrapped_slice.9, operand 0
+  wrapped_slice.10, operand 0
+  wrapped_slice.11, operand 0
+ from instruction: %args_0_.1 = u32[12,2]{1,0} parameter(0), metadata={op_name="args[0]"}
+<25 wrapped_slice @0>
+ positions:
+  wrapped_slice
+  tuple.1.0 {0}
+  bitcast.12
+ uses:
+  bitcast.12, operand 0
+  tuple.1.0, operand 0
+ from instruction: %wrapped_slice = u32[1,2]{1,0} fusion(%args_0_.1), kind=kLoop, calls=%wrapped_slice_computation, metadata={op_name="jit(unstack)/unstack" stack_frame_id=6}, backend_config={"operation_queue_id":"0","force_earliest_schedule":false,"reification_cost":[],"device_type":"DEVICE_TYPE_INVALID","native_emitter_backend_config":{"type":"NATIVE_EMITTER_TYPE_INVALID","unroll_factor":0}}
+<26 wrapped_slice.1 @0>
+ positions:
+  wrapped_slice.1
+  tuple.1.0 {1}
+  bitcast.1.0
+ uses:
+  bitcast.1.0, operand 0
+  tuple.1.0, operand 1
+ from instruction: %wrapped_slice.1 = u32[1,2]{1,0} fusion(%args_0_.1), kind=kLoop, calls=%wrapped_slice_computation.1, metadata={op_name="jit(unstack)/unstack" stack_frame_id=6}, backend_config={"operation_queue_id":"0","force_earliest_schedule":false,"reification_cost":[],"device_type":"DEVICE_TYPE_INVALID","native_emitter_backend_config":{"type":"NATIVE_EMITTER_TYPE_INVALID","unroll_factor":0}}
+<27 wrapped_slice.2 @0>
+ positions:
+  wrapped_slice.2
+  tuple.1.0 {2}
+  bitcast.2.0
+ uses:
+  bitcast.2.0, operand 0
+  tuple.1.0, operand 2
+ from instruction: %wrapped_slice.2 = u32[1,2]{1,0} fusion(%args_0_.1), kind=kLoop, calls=%wrapped_slice_computation.2, metadata={op_name="jit(unstack)/unstack" stack_frame_id=6}, backend_config={"operation_queue_id":"0","force_earliest_schedule":false,"reification_cost":[],"device_type":"DEVICE_TYPE_INVALID","native_emitter_backend_config":{"type":"NATIVE_EMITTER_TYPE_INVALID","unroll_factor":0}}
+<28 wrapped_slice.3 @0>
+ positions:
+  wrapped_slice.3
+  tuple.1.0 {3}
+  bitcast.3.0
+ uses:
+  bitcast.3.0, operand 0
+  tuple.1.0, operand 3
+ from instruction: %wrapped_slice.3 = u32[1,2]{1,0} fusion(%args_0_.1), kind=kLoop, calls=%wrapped_slice_computation.3, metadata={op_name="jit(unstack)/unstack" stack_frame_id=6}, backend_config={"operation_queue_id":"0","force_earliest_schedule":false,"reification_cost":[],"device_type":"DEVICE_TYPE_INVALID","native_emitter_backend_config":{"type":"NATIVE_EMITTER_TYPE_INVALID","unroll_factor":0}}
+<29 wrapped_slice.4 @0>
+ positions:
+  wrapped_slice.4
+  tuple.1.0 {4}
+  bitcast.4.0
+ uses:
+  bitcast.4.0, operand 0
+  tuple.1.0, operand 4
+ from instruction: %wrapped_slice.4 = u32[1,2]{1,0} fusion(%args_0_.1), kind=kLoop, calls=%wrapped_slice_computation.4, metadata={op_name="jit(unstack)/unstack" stack_frame_id=6}, backend_config={"operation_queue_id":"0","force_earliest_schedule":false,"reification_cost":[],"device_type":"DEVICE_TYPE_INVALID","native_emitter_backend_config":{"type":"NATIVE_EMITTER_TYPE_INVALID","unroll_factor":0}}
+<30 wrapped_slice.5 @0>
+ positions:
+  wrapped_slice.5
+  tuple.1.0 {5}
+  bitcast.5.0
+ uses:
+  bitcast.5.0, operand 0
+  tuple.1.0, operand 5
+ from instruction: %wrapped_slice.5 = u32[1,2]{1,0} fusion(%args_0_.1), kind=kLoop, calls=%wrapped_slice_computation.5, metadata={op_name="jit(unstack)/unstack" stack_frame_id=6}, backend_config={"operation_queue_id":"0","force_earliest_schedule":false,"reification_cost":[],"device_type":"DEVICE_TYPE_INVALID","native_emitter_backend_config":{"type":"NATIVE_EMITTER_TYPE_INVALID","unroll_factor":0}}
+<31 wrapped_slice.6 @0>
+ positions:
+  wrapped_slice.6
+  tuple.1.0 {6}
+  bitcast.6.0
+ uses:
+  bitcast.6.0, operand 0
+  tuple.1.0, operand 6
+ from instruction: %wrapped_slice.6 = u32[1,2]{1,0} fusion(%args_0_.1), kind=kLoop, calls=%wrapped_slice_computation.6, metadata={op_name="jit(unstack)/unstack" stack_frame_id=6}, backend_config={"operation_queue_id":"0","force_earliest_schedule":false,"reification_cost":[],"device_type":"DEVICE_TYPE_INVALID","native_emitter_backend_config":{"type":"NATIVE_EMITTER_TYPE_INVALID","unroll_factor":0}}
+<32 wrapped_slice.7 @0>
+ positions:
+  wrapped_slice.7
+  tuple.1.0 {7}
+  bitcast.7.0
+ uses:
+  bitcast.7.0, operand 0
+  tuple.1.0, operand 7
+ from instruction: %wrapped_slice.7 = u32[1,2]{1,0} fusion(%args_0_.1), kind=kLoop, calls=%wrapped_slice_computation.7, metadata={op_name="jit(unstack)/unstack" stack_frame_id=6}, backend_config={"operation_queue_id":"0","force_earliest_schedule":false,"reification_cost":[],"device_type":"DEVICE_TYPE_INVALID","native_emitter_backend_config":{"type":"NATIVE_EMITTER_TYPE_INVALID","unroll_factor":0}}
+<33 wrapped_slice.8 @0>
+ positions:
+  wrapped_slice.8
+  tuple.1.0 {8}
+  bitcast.8.0
+ uses:
+  bitcast.8.0, operand 0
+  tuple.1.0, operand 8
+ from instruction: %wrapped_slice.8 = u32[1,2]{1,0} fusion(%args_0_.1), kind=kLoop, calls=%wrapped_slice_computation.8, metadata={op_name="jit(unstack)/unstack" stack_frame_id=6}, backend_config={"operation_queue_id":"0","force_earliest_schedule":false,"reification_cost":[],"device_type":"DEVICE_TYPE_INVALID","native_emitter_backend_config":{"type":"NATIVE_EMITTER_TYPE_INVALID","unroll_factor":0}}
+<34 wrapped_slice.9 @0>
+ positions:
+  wrapped_slice.9
+  tuple.1.0 {9}
+  bitcast.9.0
+ uses:
+  bitcast.9.0, operand 0
+  tuple.1.0, operand 9
+ from instruction: %wrapped_slice.9 = u32[1,2]{1,0} fusion(%args_0_.1), kind=kLoop, calls=%wrapped_slice_computation.9, metadata={op_name="jit(unstack)/unstack" stack_frame_id=6}, backend_config={"operation_queue_id":"0","force_earliest_schedule":false,"reification_cost":[],"device_type":"DEVICE_TYPE_INVALID","native_emitter_backend_config":{"type":"NATIVE_EMITTER_TYPE_INVALID","unroll_factor":0}}
+<35 wrapped_slice.10 @0>
+ positions:
+  wrapped_slice.10
+  tuple.1.0 {10}
+  bitcast.10.0
+ uses:
+  bitcast.10.0, operand 0
+  tuple.1.0, operand 10
+ from instruction: %wrapped_slice.10 = u32[1,2]{1,0} fusion(%args_0_.1), kind=kLoop, calls=%wrapped_slice_computation.10, metadata={op_name="jit(unstack)/unstack" stack_frame_id=6}, backend_config={"operation_queue_id":"0","force_earliest_schedule":false,"reification_cost":[],"device_type":"DEVICE_TYPE_INVALID","native_emitter_backend_config":{"type":"NATIVE_EMITTER_TYPE_INVALID","unroll_factor":0}}
+<36 wrapped_slice.11 @0>
+ positions:
+  wrapped_slice.11
+  tuple.1.0 {11}
+  bitcast.11.0
+ uses:
+  bitcast.11.0, operand 0
+  tuple.1.0, operand 11
+ from instruction: %wrapped_slice.11 = u32[1,2]{1,0} fusion(%args_0_.1), kind=kLoop, calls=%wrapped_slice_computation.11, metadata={op_name="jit(unstack)/unstack" stack_frame_id=6}, backend_config={"operation_queue_id":"0","force_earliest_schedule":false,"reification_cost":[],"device_type":"DEVICE_TYPE_INVALID","native_emitter_backend_config":{"type":"NATIVE_EMITTER_TYPE_INVALID","unroll_factor":0}}
+<37 tuple.1.0{} @0>
+ positions:
+  tuple.1.0 {}
+ uses:
+  (none)
+ from instruction: %tuple.1.0 = (u32[2]{0}, u32[2]{0}, u32[2]{0}, u32[2]{0}, u32[2]{0}, /*index=5*/u32[2]{0}, u32[2]{0}, u32[2]{0}, u32[2]{0}, u32[2]{0}, /*index=10*/u32[2]{0}, u32[2]{0}) tuple(%bitcast.12, %bitcast.1.0, %bitcast.2.0, %bitcast.3.0, %bitcast.4.0, /*index=5*/%bitcast.5.0, %bitcast.6.0, %bitcast.7.0, %bitcast.8.0, %bitcast.9.0, /*index=10*/%bitcast.10.0, %bitcast.11.0)

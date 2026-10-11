@@ -1,0 +1,59 @@
+HloLiveRange (max 24):
+  InstructionSequence:
+    0:args_0_.1
+    1:wrapped_slice.10
+    2:bitcast.10.0
+    3:wrapped_slice.9
+    4:bitcast.9.0
+    5:wrapped_slice.8
+    6:bitcast.8.0
+    7:wrapped_slice.7
+    8:bitcast.7.0
+    9:wrapped_slice.6
+    10:bitcast.6.0
+    11:wrapped_slice.5
+    12:bitcast.5.0
+    13:wrapped_slice.4
+    14:bitcast.4.0
+    15:wrapped_slice.3
+    16:bitcast.3.0
+    17:wrapped_slice.2
+    18:bitcast.2.0
+    19:wrapped_slice.1
+    20:bitcast.1.0
+    21:wrapped_slice
+    22:bitcast.11
+    23:tuple.1.0
+  BufferLiveRange:
+    args_0_.1{}:0-24
+    wrapped_slice{}:21-24
+    wrapped_slice.1{}:19-24
+    wrapped_slice.2{}:17-24
+    wrapped_slice.3{}:15-24
+    wrapped_slice.4{}:13-24
+    wrapped_slice.5{}:11-24
+    wrapped_slice.6{}:9-24
+    wrapped_slice.7{}:7-24
+    wrapped_slice.8{}:5-24
+    wrapped_slice.9{}:3-24
+    wrapped_slice.10{}:1-24
+    tuple.1.0{}:23-24
+  Live ranges at 23 (peak):
+    args_0_.1{}: 88 bytes (cumulative: 88 bytes)
+    tuple.1.0{}: 88 bytes (cumulative: 176 bytes)
+    wrapped_slice{}: 8 bytes (cumulative: 184 bytes)
+    wrapped_slice.1{}: 8 bytes (cumulative: 192 bytes)
+    wrapped_slice.10{}: 8 bytes (cumulative: 200 bytes)
+    wrapped_slice.2{}: 8 bytes (cumulative: 208 bytes)
+    wrapped_slice.3{}: 8 bytes (cumulative: 216 bytes)
+    wrapped_slice.4{}: 8 bytes (cumulative: 224 bytes)
+    wrapped_slice.5{}: 8 bytes (cumulative: 232 bytes)
+    wrapped_slice.6{}: 8 bytes (cumulative: 240 bytes)
+    wrapped_slice.7{}: 8 bytes (cumulative: 248 bytes)
+    wrapped_slice.8{}: 8 bytes (cumulative: 256 bytes)
+    wrapped_slice.9{}: 8 bytes (cumulative: 264 bytes)
+  Stack trace breakdown for peak usage: 264 bytes
+    main.1 (100.0%, total: 264 bytes, current: 0 bytes, remaining: 264 bytes)
+      ├── args[0] (33.3%, total: 88 bytes, current: 88 bytes, remaining: 176 bytes)
+      ├── jit(unstack)/unstack (33.3%, total: 88 bytes, current: 88 bytes, remaining: 88 bytes)
+      └── tuple.1.0 (33.3%, total: 88 bytes, current: 88 bytes, remaining: 0 bytes)

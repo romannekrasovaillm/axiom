@@ -1,0 +1,7 @@
+HloModule jit_convert_element_type, is_scheduled=true, entry_computation_layout={(u32[])->u32[]}, allow_spmd_sharding_propagation_to_parameters={true}, allow_spmd_sharding_propagation_to_output={true}, frontend_attributes={fingerprint_before_lhs="233faa59c2da1afb0f8b951af133be9c"}
+
+ENTRY main.1 {
+  args_0_.1 = u32[] parameter(0), metadata={op_name="args[0]"}
+  ROOT copy.1 = u32[] copy(args_0_.1)
+}
+

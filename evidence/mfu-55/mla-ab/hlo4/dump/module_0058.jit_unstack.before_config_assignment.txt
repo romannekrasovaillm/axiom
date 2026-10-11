@@ -1,0 +1,101 @@
+HloModule jit_unstack, entry_computation_layout={(u32[9,2]{1,0})->(u32[2]{0}, u32[2]{0}, u32[2]{0}, u32[2]{0}, u32[2]{0}, /*index=5*/u32[2]{0}, u32[2]{0}, u32[2]{0}, u32[2]{0})}, allow_spmd_sharding_propagation_to_parameters={true}, allow_spmd_sharding_propagation_to_output={true,true,true,true,true,true,true,true,true}
+
+FileNames
+1 "/home/roman/axiom/tools/pretrain_run.py"
+2 "/home/roman/axiom/net/train_loop.py"
+3 "/home/roman/axiom/net/model.py"
+4 "/home/roman/axiom/net/moe.py"
+
+FunctionNames
+1 "<module>"
+2 "main"
+3 "execute"
+4 "train"
+5 "init_params"
+6 "init_moe"
+
+FileLocations
+1 {file_name_id=1 function_name_id=1 line=1602 end_line=1602 column=21 end_column=27}
+2 {file_name_id=1 function_name_id=2 line=1595 end_line=1595 column=18 end_column=31}
+3 {file_name_id=1 function_name_id=3 line=1435 end_line=1442 column=17 end_column=9}
+4 {file_name_id=2 function_name_id=4 line=2813 end_line=2813 column=13 end_column=74}
+5 {file_name_id=3 function_name_id=5 line=250 end_line=250 column=17 end_column=51}
+6 {file_name_id=4 function_name_id=6 line=86 end_line=86 column=4 end_column=44}
+
+StackFrames
+1 {file_location_id=1 parent_frame_id=1}
+2 {file_location_id=2 parent_frame_id=2}
+3 {file_location_id=3 parent_frame_id=3}
+4 {file_location_id=4 parent_frame_id=4}
+5 {file_location_id=5 parent_frame_id=5}
+6 {file_location_id=6 parent_frame_id=6}
+
+
+wrapped_slice_computation {
+  param_0 = u32[9,2]{1,0} parameter(0)
+  ROOT unstack.18.1 = u32[1,2]{1,0} slice(param_0), slice={[0:1], [0:2]}, metadata={op_name="jit(unstack)/unstack" stack_frame_id=6}
+}
+
+wrapped_slice_computation.1 {
+  param_0.1 = u32[9,2]{1,0} parameter(0)
+  ROOT unstack.20.1 = u32[1,2]{1,0} slice(param_0.1), slice={[1:2], [0:2]}, metadata={op_name="jit(unstack)/unstack" stack_frame_id=6}
+}
+
+wrapped_slice_computation.2 {
+  param_0.2 = u32[9,2]{1,0} parameter(0)
+  ROOT unstack.22.1 = u32[1,2]{1,0} slice(param_0.2), slice={[2:3], [0:2]}, metadata={op_name="jit(unstack)/unstack" stack_frame_id=6}
+}
+
+wrapped_slice_computation.3 {
+  param_0.3 = u32[9,2]{1,0} parameter(0)
+  ROOT unstack.24.1 = u32[1,2]{1,0} slice(param_0.3), slice={[3:4], [0:2]}, metadata={op_name="jit(unstack)/unstack" stack_frame_id=6}
+}
+
+wrapped_slice_computation.4 {
+  param_0.4 = u32[9,2]{1,0} parameter(0)
+  ROOT unstack.26.1 = u32[1,2]{1,0} slice(param_0.4), slice={[4:5], [0:2]}, metadata={op_name="jit(unstack)/unstack" stack_frame_id=6}
+}
+
+wrapped_slice_computation.5 {
+  param_0.5 = u32[9,2]{1,0} parameter(0)
+  ROOT unstack.28.1 = u32[1,2]{1,0} slice(param_0.5), slice={[5:6], [0:2]}, metadata={op_name="jit(unstack)/unstack" stack_frame_id=6}
+}
+
+wrapped_slice_computation.6 {
+  param_0.6 = u32[9,2]{1,0} parameter(0)
+  ROOT unstack.30.1 = u32[1,2]{1,0} slice(param_0.6), slice={[6:7], [0:2]}, metadata={op_name="jit(unstack)/unstack" stack_frame_id=6}
+}
+
+wrapped_slice_computation.7 {
+  param_0.7 = u32[9,2]{1,0} parameter(0)
+  ROOT unstack.32.1 = u32[1,2]{1,0} slice(param_0.7), slice={[7:8], [0:2]}, metadata={op_name="jit(unstack)/unstack" stack_frame_id=6}
+}
+
+wrapped_slice_computation.8 {
+  param_0.8 = u32[9,2]{1,0} parameter(0)
+  ROOT unstack.34.1 = u32[1,2]{1,0} slice(param_0.8), slice={[8:9], [0:2]}, metadata={op_name="jit(unstack)/unstack" stack_frame_id=6}
+}
+
+ENTRY main.1 {
+  args_0_.1 = u32[9,2]{1,0} parameter(0), metadata={op_name="args[0]"}
+  wrapped_slice = u32[1,2]{1,0} fusion(args_0_.1), kind=kLoop, calls=wrapped_slice_computation, metadata={op_name="jit(unstack)/unstack" stack_frame_id=6}
+  bitcast.9 = u32[2]{0} bitcast(wrapped_slice), metadata={op_name="jit(unstack)/unstack" stack_frame_id=6}
+  wrapped_slice.1 = u32[1,2]{1,0} fusion(args_0_.1), kind=kLoop, calls=wrapped_slice_computation.1, metadata={op_name="jit(unstack)/unstack" stack_frame_id=6}
+  bitcast.1.0 = u32[2]{0} bitcast(wrapped_slice.1), metadata={op_name="jit(unstack)/unstack" stack_frame_id=6}
+  wrapped_slice.2 = u32[1,2]{1,0} fusion(args_0_.1), kind=kLoop, calls=wrapped_slice_computation.2, metadata={op_name="jit(unstack)/unstack" stack_frame_id=6}
+  bitcast.2.0 = u32[2]{0} bitcast(wrapped_slice.2), metadata={op_name="jit(unstack)/unstack" stack_frame_id=6}
+  wrapped_slice.3 = u32[1,2]{1,0} fusion(args_0_.1), kind=kLoop, calls=wrapped_slice_computation.3, metadata={op_name="jit(unstack)/unstack" stack_frame_id=6}
+  bitcast.3.0 = u32[2]{0} bitcast(wrapped_slice.3), metadata={op_name="jit(unstack)/unstack" stack_frame_id=6}
+  wrapped_slice.4 = u32[1,2]{1,0} fusion(args_0_.1), kind=kLoop, calls=wrapped_slice_computation.4, metadata={op_name="jit(unstack)/unstack" stack_frame_id=6}
+  bitcast.4.0 = u32[2]{0} bitcast(wrapped_slice.4), metadata={op_name="jit(unstack)/unstack" stack_frame_id=6}
+  wrapped_slice.5 = u32[1,2]{1,0} fusion(args_0_.1), kind=kLoop, calls=wrapped_slice_computation.5, metadata={op_name="jit(unstack)/unstack" stack_frame_id=6}
+  bitcast.5.0 = u32[2]{0} bitcast(wrapped_slice.5), metadata={op_name="jit(unstack)/unstack" stack_frame_id=6}
+  wrapped_slice.6 = u32[1,2]{1,0} fusion(args_0_.1), kind=kLoop, calls=wrapped_slice_computation.6, metadata={op_name="jit(unstack)/unstack" stack_frame_id=6}
+  bitcast.6.0 = u32[2]{0} bitcast(wrapped_slice.6), metadata={op_name="jit(unstack)/unstack" stack_frame_id=6}
+  wrapped_slice.7 = u32[1,2]{1,0} fusion(args_0_.1), kind=kLoop, calls=wrapped_slice_computation.7, metadata={op_name="jit(unstack)/unstack" stack_frame_id=6}
+  bitcast.7.0 = u32[2]{0} bitcast(wrapped_slice.7), metadata={op_name="jit(unstack)/unstack" stack_frame_id=6}
+  wrapped_slice.8 = u32[1,2]{1,0} fusion(args_0_.1), kind=kLoop, calls=wrapped_slice_computation.8, metadata={op_name="jit(unstack)/unstack" stack_frame_id=6}
+  bitcast.8.0 = u32[2]{0} bitcast(wrapped_slice.8), metadata={op_name="jit(unstack)/unstack" stack_frame_id=6}
+  ROOT tuple.1.0 = (u32[2]{0}, u32[2]{0}, u32[2]{0}, u32[2]{0}, u32[2]{0}, /*index=5*/u32[2]{0}, u32[2]{0}, u32[2]{0}, u32[2]{0}) tuple(bitcast.9, bitcast.1.0, bitcast.2.0, bitcast.3.0, bitcast.4.0, bitcast.5.0, bitcast.6.0, bitcast.7.0, bitcast.8.0)
+}
+

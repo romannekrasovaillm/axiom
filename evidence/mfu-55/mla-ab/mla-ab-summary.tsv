@@ -1,0 +1,3 @@
+cell	batch	chunk	tok_s	mfu_pct	rc	loss_first	loss_last
+b2_flash	2	64	490.2	1.505	0	13.543514251708984	12.30347728729248
+b4_flash	4	64			1		

@@ -1,0 +1,21 @@
+thunk_metadata {
+  thunk_info {
+    profile_annotation: "wrapped_slice.2"
+    thunk_id: 1
+  }
+  thunk_kind: "kCopy"
+}
+thunk_metadata {
+  thunk_info {
+    profile_annotation: "wrapped_slice.1"
+    thunk_id: 2
+  }
+  thunk_kind: "kCopy"
+}
+thunk_metadata {
+  thunk_info {
+    profile_annotation: "wrapped_slice"
+    thunk_id: 3
+  }
+  thunk_kind: "kCopy"
+}

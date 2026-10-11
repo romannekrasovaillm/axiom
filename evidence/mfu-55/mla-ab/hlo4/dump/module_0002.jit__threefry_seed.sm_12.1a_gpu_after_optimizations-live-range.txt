@@ -1,0 +1,14 @@
+HloLiveRange (max 2):
+  InstructionSequence:
+    0:seed.1
+    1:input_concatenate_fusion
+  BufferLiveRange:
+    seed.1{}:0-2
+    input_concatenate_fusion{}:1-2
+  Live ranges at 1 (peak):
+    input_concatenate_fusion{}: 8 bytes (cumulative: 8 bytes)
+    seed.1{}: 4 bytes (cumulative: 12 bytes)
+  Stack trace breakdown for peak usage: 12 bytes
+    main.1 (100.0%, total: 12 bytes, current: 0 bytes, remaining: 12 bytes)
+      ├── jit(_threefry_seed)/concatenate (66.7%, total: 8 bytes, current: 8 bytes, remaining: 4 bytes)
+      └── seed (33.3%, total: 4 bytes, current: 4 bytes, remaining: 0 bytes)

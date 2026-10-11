@@ -692,7 +692,7 @@ def cc_chunk_step(
 
 
 def kda_cc_impl() -> str:
-    """Implementation of the ``chunked_cc`` chunk body: ``jax`` | ``mosaic``.
+    """Implementation of the ``chunked_cc`` scan body: ``jax`` | ``mosaic`` | ``persistent``.
 
     ``AXIOM_KDA_CC_IMPL`` is read on every call (the flag is the rollback
     handle, so it is not cached — the same contract as ``AXIOM_KDA_SOLVE``).
@@ -707,7 +707,7 @@ def kda_cc_impl() -> str:
 
 
 #: Допустимые значения флага тела ``chunked_cc`` (``AXIOM_KDA_CC_IMPL``).
-KDA_CC_IMPLS = ("jax", "mosaic")
+KDA_CC_IMPLS = ("jax", "mosaic", "persistent")
 
 
 def _cc_chunk_step_mosaic(
@@ -768,6 +768,72 @@ def _cc_chunk_step_mosaic(
     return KDAState(s_new, q_buf, k_buf, v_buf), out
 
 
+def _apply_chunked_cc_persistent(
+    params: KDAParams, cfg: ModelConfig, x: jnp.ndarray, chunk_size: int
+) -> jnp.ndarray:
+    """Whole-scan ``chunked_cc`` pass through ONE persistent Mosaic launch (milestone 3).
+
+    ADR-054 Amendment 4: the per-chunk unit of fusing was measured *against* the
+    step (the custom-call boundary per chunk costs more than the launches it
+    saves -- 704k kernels/step, 117k DtoD = 13.7 s).  The unit is therefore the
+    whole scan of one layer-pass: the projections, the causal short-conv and
+    the post-processing run once over the padded sequence in XLA (a handful of
+    big GEMMs), then :func:`net.kernels.kda_cc_fused_persist.cc_scan` -- one
+    ``plgpu.kernel`` launch per layer-pass whose single program per head walks
+    every chunk with the state ``S`` in SMEM -- returns the pre-gate output of
+    all chunks, and the output gate runs on the full sequence.  Per layer-pass
+    the custom-call boundary count is 1 against 256 in the ``mosaic`` mode.
+
+    The chunk width comes from the caller (``chunk_size``); the kernel's sieve
+    rejects widths it cannot run (``C=64`` is over the GB10 SMEM budget and
+    ``C=16`` fails the mma tiling -- see the module's :func:`valid_config`).
+    ``cfg.kda_chunked_backward`` does not apply here: there is no XLA-side scan
+    body to rematerialise (the
+    kernel's own state is the only carried quantity, and the backward rule
+    rematerialises the per-chunk states itself -- variant A of the delta).
+    Requires a GPU: on a GPU-less host the call refuses with a typed error
+    instead of falling back silently (the ``mosaic`` mode's contract).
+    """
+    from .kernels import kda_cc_fused_persist as persist
+
+    if not persist.device_available():
+        raise RuntimeError(
+            "AXIOM_KDA_CC_IMPL=persistent: персистентный кернел исполняется только "
+            "на GPU (Mosaic sm_121, веха-3: один запуск на слой-проход); на CPU-узле "
+            "выберите AXIOM_KDA_CC_IMPL=jax. Тихого отката нет — impl выбирается явно.")
+
+    C = int(chunk_size)
+    H, dk, dv = cfg.num_heads, cfg.kda_dk, cfg.kda_dv
+    T = x.shape[0]
+    n_chunks = (T + C - 1) // C
+    pad = n_chunks * C - T
+    x_p = jnp.pad(x, ((0, pad), (0, 0))) if pad else x  # the scan's padding (ADR-047 path)
+    Tp = n_chunks * C
+
+    # Whole-sequence projections and the causal short-conv: identical values to
+    # the per-chunk helpers of the scan path (short_conv is causal; every other
+    # op is positional), so both modes consume the same interval.
+    proj = _project(params, cfg, x_p)
+    qc = short_conv(proj["qp"], params.conv_q)
+    kc = short_conv(proj["kp"], params.conv_k)
+    vc = short_conv(proj["vp"], params.conv_v)
+    q, k, v = _postprocess(qc, kc, vc, cfg)  # (Tp, H, dk) / (Tp, H, dk) / (Tp, H, dv)
+
+    dt = jnp.bfloat16  # the only operand path the GB10 mma lowering validated
+    beta = proj["beta"]  # (Tp, H)
+    beta32 = jnp.broadcast_to(beta[:, :, None], (Tp, H, 32)).reshape(Tp, H * 32)
+    o, _s_new = persist.cc_scan(
+        q.reshape(Tp, H * dk).astype(dt),
+        k.reshape(Tp, H * dk).astype(dt),
+        v.reshape(Tp, H * dv).astype(dt),
+        proj["alpha"].reshape(Tp, H * dk).astype(jnp.float32),
+        beta32.astype(jnp.float32),
+        jnp.zeros((H, dk, dv), jnp.float32),   # init_state's S: the scan starts empty
+        _cc_tile(cfg), C)
+    out = _output_gate(o.reshape(Tp, H, dv), proj["gate"], params)
+    return out[:T]
+
+
 def apply_chunked_cc(
     params: KDAParams,
     cfg: ModelConfig,
@@ -785,15 +851,28 @@ def apply_chunked_cc(
     :func:`apply_recurrent` (parity pinned by ``test_kda_chunked_cc.py``).
 
     ``AXIOM_KDA_CC_IMPL`` selects the scan body: ``jax`` (default — the
-    committed :func:`cc_chunk_step`) or ``mosaic`` (the fused differentiable
+    committed :func:`cc_chunk_step`), ``mosaic`` (the fused differentiable
     body of :mod:`net.kernels.kda_cc_fused`, ADR-054 stage-2b milestones 1-2:
     kernel forward + analytic adjoint via ``jax.custom_vjp`` — trainable;
-    GPU-only, a GPU-less host refuses with a typed error).  The flag changes
-    the *body* only — the padding, the scan structure and the window branch are
-    shared.
+    GPU-only, a GPU-less host refuses with a typed error), or ``persistent``
+    (milestone 3, ADR-054 Am.4: ONE persistent kernel launch per layer-pass —
+    the program walks the whole scan with the state in SMEM; see
+    :func:`_apply_chunked_cc_persistent`).  The flags change the *body* only —
+    the padding, the scan structure and the window branch are shared.
     """
     if chunk_size is None:
         chunk_size = cfg.kda_wyut_chunk
+
+    impl = kda_cc_impl()
+    if impl == "persistent":
+        # Whole-scan body (ADR-054 milestone 3): no XLA-side scan at all — one
+        # kernel launch per layer-pass.  The decision is made at trace time
+        # (`kda_cc_impl` reads the env on each call — the rollback handle is
+        # not cached); a GPU-less host gets a typed refusal, no silent fallback.
+        return _with_window(
+            _apply_chunked_cc_persistent(params, cfg, x, chunk_size),
+            params, cfg, x)
+
     T = x.shape[0]
     C = chunk_size
     n_chunks = (T + C - 1) // C
@@ -802,7 +881,7 @@ def apply_chunked_cc(
     x_chunks = x_p.reshape(n_chunks, C, -1)
     carry0 = init_state(cfg)
 
-    if kda_cc_impl() == "mosaic":
+    if impl == "mosaic":
         # Fused-kernel body (ADR-054 stage-2b, milestone 1).  The decision is
         # made at trace time (`kda_cc_impl` reads the env on each call — the
         # rollback handle is not cached); the kernel itself refuses a GPU-less

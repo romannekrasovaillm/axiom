@@ -225,6 +225,7 @@ def make_step(
     *,
     jit: bool = True,
     single_pass: bool = True,
+    donate: bool = False,
 ):
     """Build the optimizer step — jitted, one walk over the parameter tree.
 
@@ -251,6 +252,17 @@ def make_step(
     restores the pre-Amendment two-walk traversal as the parity oracle for the
     one-walk refactor — **never enable it in training**, it doubles the
     Newton–Schulz work.
+
+    ADR-054 (donate-аргументы): ``donate=True`` — **контракт владения
+    буферами**, не математика: шаг получает ``donate_argnums=(0, 1, 2)`` и
+    вправе переиспользовать буферы ``params`` (master) / ``grads`` / ``state``
+    под свои выходы.  Вызывающий обязан не читать переданные деревья после
+    вызова (они помечаются удалёнными: «Array has been deleted»); возврат шага
+    — новые деревья, они живые.  Арифметика выхода идентична ``donate=False``
+    (паритет — ``net/tests/test_donate_step.py``).  Дефолт ``False`` безопасен
+    для всех вызывающих, которые читают входные деревья после шага
+    (профайлер, SFT/RL-смоуки, тесты); тренировочный цикл включает donate
+    явно там, где буферы мертвы после вызова (``net/train_loop.py``).
     """
     if int(ns_steps) < 1:
         raise ValueError(f"ns_steps must be >= 1, got {ns_steps!r}")
@@ -362,7 +374,12 @@ def make_step(
         walk = _walk_once if single_pass else _walk_twice
         return walk(params, grads, state, lr)
 
-    return jax.jit(step) if jit else step
+    if not jit:
+        return step
+    if donate:
+        # ADR-054: master/grads/state потребляются шагом (владелец — возврат).
+        return jax.jit(step, donate_argnums=(0, 1, 2))
+    return jax.jit(step)
 
 
 def classification_report(

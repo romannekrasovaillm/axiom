@@ -1,7 +1,7 @@
 ---
 id: ADR-054
 title: "Исполнение шага: donate-аргументы jit (устранение ~28k DtoD-копий/шаг и ~420k API-вызовов), стадия-2 — фьюзинг; путь G1→G4 к 55% MFU"
-status: Proposed
+status: Accepted
 date: "2026-10-11"
 depends_on: [ADR-050, ADR-053]
 affects: [net/train_loop.py, net/optimizer.py, CMP-002]
@@ -35,9 +35,14 @@ S1 (3%) не взят, разрыв ×2.04; до 55% (17 917 ток/с) ×37. П
    - `grad_fn_donated = jax.jit(jax.value_and_grad(loss_fn), donate_argnums=(0,))` — используется
      в ветке одного микробатча (`len(group) == 1`, основной путь кампании); в accum-ветке params
      нужен на каждом микровызове — там остаётся недонированный `grad_fn`;
-   - `optimizer.make_step(..., donate: bool = True)`: `jax.jit(step, donate_argnums=(0, 1, 2))`
-     (master, grads, state потребляются); при `phase_profile` — `donate=False` (profiler
+   - `optimizer.make_step(..., donate: bool = False)`: `donate=True` → `jax.jit(step, donate_argnums=(0, 1, 2))`
+     (master, grads, state потребляются); **дефолт False** — безопасен для всех существующих вызывающих,
+     читающих входные деревья после шага (профайлер, SFT/RL-смоуки, тесты); тренировочный цикл передаёт
+     `donate=not train_config.phase_profile` явно. При `phase_profile` — donate=False (profiler
      читает `grads` после `step_fn`);
+   - grad-donate включается только в bf16-режиме (`use_bf16`): в fp32 `working_params` возвращает
+     сам мастер (`params is master`), и тот же буфер читает `step_fn(master, ...)` — там donate
+     запрещён, ветка оставляет недонированный вызов (edge-case найден исполнителем, закреплён тестом);
    - арифметика не меняется: donate — контракт владения буферами, не математика; паритет —
      существующие тесты + новый тест «шаг до/после donate: loss и params allclose» на CPU.
 2. **Стадия-2 (после ремера стадии-1, отдельной дельтой): фьюзинг узлов графа** — Pallas-кернел

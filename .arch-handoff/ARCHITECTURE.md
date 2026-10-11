@@ -1,105 +1,104 @@
 # Архитектурный контекст (epic-context)
 
-Собран: 2026-10-10T13:04:42.789957465+00:00
+Собран: 2026-10-11T08:17:25.376719054+00:00
 
 Источники:
-- /home/roman/axiom/evidence/mfu-55/mosaic/REPORT-rhs-layout.md
-- /home/roman/axiom/evidence/mfu-55/mosaic/REPORT-diagnostics.md
-- /home/roman/axiom/net/kernels/kda_ut_solve_mosaic.py
+- /home/roman/.arch-ml/worktrees/axiom-43e236d789188868/mfu55-step-exec/docs/adr/ADR-054-ispolnenie-shaga-donate-argumenty-jit-ustranenie-dtod-kopiy-fyuzing-put-g1-g4.md
+- /home/roman/.arch-ml/worktrees/axiom-43e236d789188868/mfu55-step-exec/docs/adr/ADR-053-kampaniya-krupnyy-shag-rost-mfu-cherez-ukrupnenie-raboty-batch-tokenov-gradientnye-tehniki-potolok-pamyati-izmeren.md
+- /home/roman/.arch-ml/worktrees/axiom-43e236d789188868/mfu55-step-exec/ARCHITECTURE-SPINE.md
 
-<!-- источник: /home/roman/axiom/evidence/mfu-55/mosaic/REPORT-rhs-layout.md -->
+<!-- источник: /home/roman/.arch-ml/worktrees/axiom-43e236d789188868/mfu55-step-exec/docs/adr/ADR-054-ispolnenie-shaga-donate-argumenty-jit-ustranenie-dtod-kopiy-fyuzing-put-g1-g4.md -->
 
-# Mosaic: раскладка RHS — решение открытого дефекта (GB10, jax 0.11.2)
+---
+id: ADR-054
+title: "Исполнение шага: donate-аргументы jit (устранение ~28k DtoD-копий/шаг и ~420k API-вызовов), стадия-2 — фьюзинг; путь G1→G4 к 55% MFU"
+status: Proposed
+date: "2026-10-11"
+depends_on: [ADR-050, ADR-053]
+affects: [net/train_loop.py, net/optimizer.py, CMP-002]
+spec_files: [ARCHITECTURE-SPINE.md]
+---
 
-**Дефект:** `UnsupportedTransferError: Tiled strides must be a multiple of the vector length, except for the load vectorized dimension` при загрузке правой части в `plgpu.mma`.
+# ADR-054. Исполнение шага (donate) и фьюзинг
 
-## Причина (установлена экспериментом)
+- Date: 2026-10-11
+- Status: Proposed
+- Маршрут: Standard (significant_nfr; financial_impact — ток/с определяет календарь 20B-прогона)
 
-`plgpu.mma(acc, a, b)` требует:
-- `a` — `MMA_LHS`, форма `(m, k)`;
-- `b` — `MMA_RHS`, форма `(k, n)`, **причём память RHS обязана быть `k`-контигуальной**, то есть исходный массив должен лежать в порядке **`(n, k)`** и подаваться через `.T`.
+## Context
 
-Проверено на GB10 (три варианта, один и тот же (M,K)=(128,128)):
+Все флаговые рычаги исчерпаны измерением (ADR-053 Am.3): лидер `c64_B2` = 478.7 ток/с (1.469% MFU),
+S1 (3%) не взят, разрыв ×2.04; до 55% (17 917 ток/с) ×37. Профиль лидера (nsys, стационар):
 
-## Рецепт (рабочий, проверен)
+- GPU-ядра **1.55 с из 34 с шага (4.6%)**; ~92k запусков ядер/шаг; ~28k DtoD-копий/шаг (**31.5 ГиБ**);
+  ~420k runtime-API-вызовов/шаг — хост-поток насыщен (165 с API на 157 с окна);
+- причина копий в коде: `grad_fn = jax.jit(jax.value_and_grad(loss_fn))` без donate
+  (`net/train_loop.py:2873`), `step_fn = jax.jit(step)` без donate (`net/optimizer.py:366`) —
+  каждый вызов таскает деревья params/grads/state через копии буферов; премисса donate уже есть:
+  `params = working_params(master)` пересоздаётся каждый шаг (`net/train_loop.py:2999`);
+- ядра без диспетчеризации дали бы ~10 570 ток/с ≈ 32% MFU — рамка Am.2 (≈16k ≈ 50%) достижима
+  при устранении исполнения-барьера; 55% требует и укрупнения форм (B≥4, заблокирован HLO-полом
+  109.38 GiB — отдельная диагностика).
 
-```python
-def body(l_ref, bt_ref, o_ref, smem):        # l_ref (H,M,K); bt_ref (H,N,K) — ПРАВАЯ ЧАСТЬ ТРАНСПОНИРОВАНА в памяти
-    h = jax.lax.axis_index("head")
-    acc = plgpu.layout_cast(jnp.zeros((M, N), ACC), plgpu.Layout.MMA_ACC(DT))
-    a   = plgpu.load(l_ref.at[h],    layout=plgpu.Layout.MMA_LHS(DT), optimized=False)
-    b   = plgpu.load(bt_ref.at[h].T, layout=plgpu.Layout.MMA_RHS(DT), optimized=False)   # .T → (K,N), k-контигуально
-    o_ref.at[h][...] = plgpu.mma(acc, a, b).astype(DT)
+## Decision
 
-kernel = plgpu.kernel(body, out_type=ShapeDtypeStruct((H, M, N), DT),
-                      scratch_types=[plgpu.SMEM((M, M), DT)],
-                      compiler_params=plgpu.CompilerParams(lowering_semantics=plgpu.LoweringSemantics.Lane),
-                      grid=(H,), grid_names=("head",))
-# вызов: kernel(L, B.transpose(0, 2, 1))   ← B в памяти (H, C, D) → (H, D, C)
-```
+1. **Стадия-1 (эта дельта, код через handoff): donate-аргументы.**
+   - `grad_fn_donated = jax.jit(jax.value_and_grad(loss_fn), donate_argnums=(0,))` — используется
+     в ветке одного микробатча (`len(group) == 1`, основной путь кампании); в accum-ветке params
+     нужен на каждом микровызове — там остаётся недонированный `grad_fn`;
+   - `optimizer.make_step(..., donate: bool = True)`: `jax.jit(step, donate_argnums=(0, 1, 2))`
+     (master, grads, state потребляются); при `phase_profile` — `donate=False` (profiler
+     читает `grads` после `step_fn`);
+   - арифметика не меняется: donate — контракт владения буферами, не математика; паритет —
+     существующие тесты + новый тест «шаг до/после donate: loss и params allclose» на CPU.
+2. **Стадия-2 (после ремера стадии-1, отдельной дельтой): фьюзинг узлов графа** — Pallas-кернел
+   KDA-чанка (один запуск на слой-проход вместо микро-узлов; скилл `pallas-gb10-kernel`), батчинг
+   NS5-итераций; приоритет по остаточному профилю.
+3. **Диагностика параллельно (архитектор, не код):** HLO-дамп B=4 — какой оп требует 88.91 ГиБ
+   (пол 109.38 GiB не срезается рематом, Am.3); закрывает/переоткрывает лестницу батча B=4/8 для G3.
+4. **Гейты (та же лестница ADR-050):** G1 ≥ 3% (977 ток/с) при `ядер/шаг ≤ 2000, синхронизаций ≤ 5000`;
+   далее G2 ≥ 10%, G3 ≥ 20% (нужен B ≥ 4), G4 55%. Приёмка стадии-1: A/B на c64_B2 —
+   DtoD/шаг < 2k (с ~28k), ток/с растёт (ожидание консервативное: шаг 34 → ≤ 25 с); loss-паритет.
+5. **Честность цели:** 55% не пинится как порог (ADR-045/050 п.3); «строгий выход на 55» =
+   движение по гейтам с числом на каждом, фиксация потолка измерением, если он ниже.
 
-## Что это значит для KDA-ядра
+## Alternatives Considered
 
-В модели правая часть `B` имеет форму `(H, C, dk+dv)` — то есть `(k=C, n=D)`. Для Mosaic её нужно подавать **транспонированной в памяти**: `(H, D, C)`. Дополнительная копия на входе — цена раскладки; альтернатива (если профиль покажет, что копия дорога) — держать правую часть в таком виде уже в `make_inputs`.
+| Вариант | Плюсы | Минусы |
+|---|---|---|
+| **A. Donate + затем фьюзинг по профилю** (принято) | Дешёво, адрес доказан (31.5 ГиБ DtoD = размер деревьев), арифметика не меняется | Не гарантирует S1 сам по себе; требует аккуратности с accum-веткой и profiler |
+| B. Сразу Pallas-фьюзинг KDA | Убирает микро-ядра в корне | Дорого, рискованно, а donate может снять большую часть барьера — профиль после стадии-1 переназначит приоритет |
+| C. Смена знаменателя (FP8/MXFP4) | Кратный множитель | Отдельное решение (ADR-050 п.5е), ломает сопоставимость; барьер исполнения не убирает |
+| D. Аренда внешнего GPU | Обход потолка GB10 | Не решает задачу владельца (свой бокс); ADR-050 требует сначала свой потолок |
 
-<!-- источник: /home/roman/axiom/evidence/mfu-55/mosaic/REPORT-diagnostics.md -->
+## Consequences
 
-# Mosaic-ядро KDA: журнал диагностики GPU-пути (5 итераций, 10.10.2026)
 
-Все дефекты выявлены **только исполнением/трассировкой на GB10** (jax 0.11.2, CC12.1). CPU-тесты их не ловят по построению.
 
-| # | Симптом | Класс | Статус |
-|---|---|---|---|
-| 1 | `NameError: _mosaic_gpu` (+ `_require_gpu`, `dataclasses`) | имя не определено на GPU-пути | ✅ исправлено (тесты с fake-Mosaic) |
-| 2 | `ValueError: grid_names must have the same length as grid` | создание ядра (Python) | ✅ исправлено (`grid_names=("head",)`) |
-| 3 | `_mma_abstract_eval: too many values to unpack` | `plgpu.mma` требует 2D-операндов | ✅ исправлено (`axis_index("head")` + `ref.at[h]`) |
-| 4 | `Incompatible shapes: lhs=(128,128), rhs=(256,128), acc=(128,256)` | лишняя транспозиция `b_h.T` (MMA_RHS ждёт `(k,n)`) | ✅ исправлено (на стенде, диагностически) |
-| 5 | `UnsupportedTransferError: Tiled strides must be a multiple of the vector length` | **транспорт раскладок**: `plgpu.load(l_h.T, layout=MMA_RHS)` — транспонирование рефа даёт strides `(1, M)`, несовместимые с векторизованной загрузкой | ❌ ОТКРЫТО |
+### Positive
 
-## Суть пятого дефекта
+- Прямой адрес измеренного барьера (DtoD = 43% API-времени); ожидание — кратное снижение
+  диспетчерской нагрузки и рост ток/с без изменения математики;
+- обратимость тотальная (флаг `donate`, дефолт безопасен), паритет — существующие тесты.
 
-Для `rhs` нужен реф формы `(k, n)` с `k`-контигуальной памятью. В апстрим-тесте это выполнялось через `b_ref.T` при `b` формы `(n, k)` (маленький `n=8`) — у нас же `(m,k)`/`(k,n)` матрицы размера 128/256, и простое транспонирование рефа даёт strides, которые векторизованный transfer не принимает.
+### Negative
 
-**Кандидаты решения (для следующей итерации):**
-1. Подавать RHS не транспонированием рефа, а копией в SMEM с нужной раскладкой (`plgpu.copy_gmem_to_smem` + `wait_gmem_to_smem`, как в апстрим-тесте для TMA-путей);
-2. Либо хранить правую часть в памяти уже в `(n, k)`-порядке (переупаковка в `make_inputs`), чтобы `.T` давал `k`-контигуальный доступ;
-3. Либо `optimized=True` для этой загрузки (проверить, примет ли transfer с крупным выравниванием `M=128`, `N=256`).
+- Donate с багом = « donated buffer reused» — ловится тестами на повторных шагах;
+- если DtoD-копии порождаются не jit-вызовами, а самим графом (например, prelayout-копиями),
+  стадия-1 даст меньше ожидаемого — тогда профиль стадии-1 переназначит стадию-2;
+- 55% остаётся за пределами гарантии: LPDDR5x-баланс и зрелость XLA на sm_121 — риск зафиксировать
+  потолок ниже цели (тогда развилка FP8/аренда — отдельный ADR, ADR-050 п.4).
 
-## Честная оценка стоимости
+## Reversibility
 
-5 итераций «дефект → прогон харнесса (~15–40 мин) → GPU-проверка (~10 мин)», и **ни один дефект не был виден на CPU** — то есть канал «исполнитель без GPU» структурно неэффективен для Mosaic-ядра: каждый цикл требует живого стенда. Ожидаемое число оставшихся итераций — 3–6 (транспорт раскладок, SMEM-бюджет, точность цепочки, детерминизм).
+**reversible.** Флаг `donate` (default True, откат — False одной строкой); код изолирован в
+worktree `arch/mfu55-step-exec`; веса/данные не затрагиваются.
 
-## Что предлагается (решение за архитектором/владельцем)
+## References
 
-1. **Сначала перемерить кампанию на 0.11.2** (дёшево, ~30 мин стенда): прогнать 4–6 шагов l3-full в `~/venv-axiom-0112` и снять `cuGraphLaunch`, tok/s, MFU против потолка 0.10.2 (**377 ток/с = 1.16%**; 33 418 `cuGraphLaunch` = 77% времени). Если новый XLA сам снимает барьер диспетчеризации — ценность Mosaic-кернела вторична, и усилия перераспределяются.
-2. **Mosaic-ядро продолжить после этого** — либо силами исполнителя с доступом к стенду (итерации станут минутами), либо довести диагностикой архитектора (5 дефектов уже так закрыты).
+- Профиль: `evidence/mfu-55/bigstep/sweep2/profile-best/` (sqlite-запросы в ADR-053 Am.3);
+- ADR-053 Am.3 (вердикты ночи-2), ADR-050 (лестница гейтов), ADR-041 (память), ADR-045 (рамка пина).
 
-<!-- источник: /home/roman/axiom/net/kernels/kda_ut_solve_mosaic.py -->
-
-"""Mosaic-перенос KDA-решения ``(I + L) X = B`` — контракт, backend-выбор и границы.
-
-Стадия 5 ADR-052. Модуль даёт: совпадающий контракт с Triton-версией
-:mod:`net.kernels.kda_ut_solve`, явный backend-выбор и само Mosaic-ядро —
-Neumann-цепочку ``plgpu.mma`` через SMEM (:func:`_build_kernel`).
-
-# --- Контракт Triton-версии: переиспользуем импортом (не копипаста) ---
-
-from .kda_ut_solve import (  # noqa: F401 — часть контракта модуля
-    CASES,
-    DEFAULT_PARAMS,
-    TOLERANCE,
-    TUNE_SPACE,
-    baseline,
-    baseline_t,
-    cost,
-    make_inputs,
-    reference,
-    reference_t,
-    solve_jax,
-    solve_jax_t,
-    valid_config as _triton_valid_config,
-)
-
-#: Допустимые зн
+<!-- источник: /home/roman/.arch-ml/worktrees/axiom-43e236d789188868/mfu55-step-exec/docs/adr/ADR-053-kampaniya-krupnyy-shag-rost-mfu-cherez-ukrupnenie-rab
 
 > **Контекст усечён** до 6000 символов; полные тексты — в файлах-источниках (см. MANIFEST.json).

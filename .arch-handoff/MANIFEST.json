@@ -1,34 +1,37 @@
 {
-  "created_at": "2026-10-10T13:04:52.815410410+00:00",
-  "task": "ЗАДАЧА (Mosaic-ядро KDA: применить найденный рецепт раскладки RHS — последний блокирующий дефект закрыт).\n\nСОСТОЯНИЕ. Четыре дефекта закрыты (NameError ×3, `grid_names`, 2D-операнды). Пятый — транспорт раскладок — **решён экспериментом на GB10**, рецепт в `evidence/mfu-55/mosaic/REPORT-rhs-layout.md`:\n\n**`plgpu.mma(acc, a, b)` требует, чтобы память RHS была `k`-контигуальной**: массив правой части надо подавать в порядке `(n, k)` и грузить через `.T`. Проверено для `N=8/64/256` — все `ok`, `max_abs 6.1e-05` (`mma_rhs_layout_proto.py`).\n\nРабочий паттерн (проверен на GB10 целиком):\n```python\ndef body(l_ref, bt_ref, o_ref, smem):     # l_ref (H,M,K); bt_ref (H,N,K) — B ТРАНСПОНИРОВАНА в памяти\n    h = jax.lax.axis_index(\"head\")\n    acc = plgpu.layout_cast(jnp.zeros((M, N), ACC), plgpu.Layout.MMA_ACC(DT))\n    a   = plgpu.load(l_ref.at[h],    layout=plgpu.Layout.MMA_LHS(DT), optimized=False)\n    b   = plgpu.load(bt_ref.at[h].T, layout=plgpu.Layout.MMA_RHS(DT), optimized=False)\n    o_ref.at[h][...] = plgpu.mma(acc, a, b).astype(DT)\n\nplgpu.kernel(body, out_type=ShapeDtypeStruct((H,M,N), DT),\n             scratch_types=[plgpu.SMEM((M,M), DT)],\n             compiler_params=plgpu.CompilerParams(lowering_semantics=plgpu.LoweringSemantics.Lane),\n             grid=(H,), grid_names=(\"head\",))\n# вызов: kernel(L, B.transpose(0, 2, 1))\n```\n\nЧТО СДЕЛАТЬ.\n1. Применить рецепт в `net/kernels/kda_ut_solve_mosaic.py`: правая часть `(H, C, D)` подаётся в ядро **транспонированной** `(H, D, C)` (в `kernel()` — `b.transpose(0, 2, 1)`), внутри — `plgpu.load(bt_ref.at[h].T, layout=MMA_RHS(...))`; LHS — `l_ref.at[h]` без транспозиции; выход `(H, M, N)` через `o_ref.at[h][...]`.\n2. Сохранить Neumann-цепочку и SMEM-переход между шагами (проверен: результата одного `mma` нельзя подать операндом напрямую, только через SMEM: `smem[...] = p.astype(DT)` → `plgpu.load(smem, layout=MMA_LHS/RHS, optimized=False)`). Для цепочки промежуточные матрицы `(M, M)` квадратные — там транспозиция в памяти не нужна, но **операнд RHS всё равно должен быть `k`-контигуален** (для квадратной `(M,M)` это выполняется при `.T` от row-major, как в прототипе).\n3. Математику, паддинг C→128 и семантику (дефолт backend `triton`) не менять.\n4. Тесты: дополнить `net/tests/test_kda_mosaic_parity.py` проверкой, что ядро вызывается с **транспонированной** правой частью (`b.transpose(0,2,1)`) и что в `body` RHS грузится через `.T` (статическая проверка исходника или spy на `plgpu.load`); сохранить требование «трассировка/создание ядра проходит без GPU» из прошлой дельты.\n5. Обновить docstring модуля: зафиксировать три требования раскладок (LHS `(m,k)` без транспозиции; RHS — память `(n,k)` + `.T`; ACC `(m,n)`), чтобы следующая правка не наступила на те же грабли.\n\nОГРАНИЧЕНИЯ. Зона: `net/kernels/*`, `net/tests/*`. GPU-прогоны не запускать (их делает архитектор). `net/kda.py`, `net/config.json` не трогать.\n\nПРОВЕРКА (ПК): `/home/roman/venv-axiom/bin/python -m pytest -q net/tests/test_kda_mosaic_parity.py` → все зелёные.\n\nРЕЗУЛЬТАТ. `.arch-handoff/result.json` + ФИНАЛЬНЫЙ git-commit. В assumptions — как реализована транспозиция входа и почему; в open_questions — что осталось измерить на GB10 (паритет bf16/fp32, IR/PTX = MMA, время против Triton и XLA, детерминизм, SMEM-бюджет).",
+  "created_at": "2026-10-11T08:17:29.690214078+00:00",
+  "task": "DONATE-дельта ADR-054 (стадия-1 «исполнение шага»): устранить ~28k DtoD-копий/шаг (31.5 ГиБ) и связанную диспетчерскую нагрузку, НЕ меняя арифметику.\n\nКОНТЕКСТ (измерено, ADR-053 Am.3 / ADR-054): профиль c64_B2 на GB10 — GPU-ядра 1.55 с из 34 с шага; ~420k runtime-API-вызовов/шаг; ~28k DtoD-копий/шаг (~31.5 ГиБ ≈ размер деревьев params/grads/state). Причина: jit-функции без donate — каждый вызов копирует буферы. Премисса donate уже есть в коде: `params = working_params(master)` пересоздаётся каждый шаг (net/train_loop.py:2999), значит буфер params после grad_fn мёртв.\n\nЧТО СДЕЛАТЬ.\n\n1. `net/train_loop.py` (функция ~2860-3000):\n   a. Рядом с `grad_fn = jax.jit(jax.value_and_grad(loss_fn))` (сейчас :2873) добавить\n      `grad_fn_donated = jax.jit(jax.value_and_grad(loss_fn), donate_argnums=(0,))`.\n   b. В ветке `len(group) == 1` (:2976) вызывать `grad_fn_donated(params, group[0])` — буфер params\n      после этого вызова в итерации не читается (профайлер ниже получает НОВЫЙ params из :2999; сверь\n      все использования params между вызовом и концом итерации — если найдётся читатель donated-буфера,\n      оставь недонированный вызов и запиши это в assumptions).\n   c. Ветку накопления (len(group) > 1, :2984-2995) НЕ трогать: params нужен на каждом микровызове.\n   d. `step_fn = optimizer.make_step(...)` (:2874) — передать `donate=not train_config.phase_profile`\n      (см. п.2): при живом профайлере grads читается ПОСЛЕ step_fn (profiler.measure, :3011-3021) —\n      donate там запрещён.\n2. `net/optimizer.py` `make_step(...)` (:217): новый kw-аргумент `donate: bool = False` (дефолт False —\n   обратная совместимость всех остальных вызовов); финал:\n   `return jax.jit(step, donate_argnums=(0, 1, 2)) if (jit and donate) else (jax.jit(step) if jit else step)`.\n   Docstring: donate — контракт владения буферами master/grads/state (аргументы потребляются);\n   арифметика идентична.\n3. Тесты (новый файл `net/tests/test_donate_step.py`, CPU):\n   - паритет: N=3 шага мини-конфига (существующий smoke-конфиг из соседних тестов) с donate=True и\n     donate=False → loss-последовательности и финальные params allclose (atol как в существующих\n     паритет-тестах); это доказывает «donate не меняет математику»;\n   - повторные вызовы не падают (buffer-reuse): 3+ последовательных шага donate-пути без\n     RuntimeError «donated buffer»;\n   - accum-ветка (micro-batch 2, accum_tokens) на donate-пути не использует grad_fn_donated\n     (проверка исходника или поведения);\n   - phase_profile=True → make_step получил donate=False (spy/инспекция флага).\n4. Docstrings: в train_loop у grad_fn_donated — правило «donate только когда буфер мёртв после вызова;\n   params пересоздаётся из master каждый шаг (:2999) — премисса».\n\nОГРАНИЧЕНИЯ. Только `net/train_loop.py`, `net/optimizer.py`, `net/tests/*`. Математику (loss_fn,\ncompute_loss, оптимизатор-арифметику), конфиги и остальные модули не трогать. GPU-прогоны не запускать\n(их делает архитектор на стенде). JAX на этом узле CPU-only — тесты обязаны идти на CPU.\n\nПРОВЕРКА (ПК): `/home/roman/venv-axiom/bin/python -m pytest -q net/tests/test_donate_step.py` зелёные;\nплюс регресс существующих: `... -m pytest -q net/tests -k \"train or optimizer or step\"` (CPU-подмножество).\n\nРЕЗУЛЬТАТ: `.arch-handoff/result.json` + финальный git-commit. В assumptions — все найденные читатели\nбуферов; в open_questions — что перемерить архитектору (A/B c64_B2, nsys DtoD/шаг).",
   "model": "deepseek",
   "sources": [
-    "/home/roman/axiom/evidence/mfu-55/mosaic/REPORT-rhs-layout.md",
-    "/home/roman/axiom/evidence/mfu-55/mosaic/REPORT-diagnostics.md",
-    "/home/roman/axiom/net/kernels/kda_ut_solve_mosaic.py"
+    "/home/roman/.arch-ml/worktrees/axiom-43e236d789188868/mfu55-step-exec/docs/adr/ADR-054-ispolnenie-shaga-donate-argumenty-jit-ustranenie-dtod-kopiy-fyuzing-put-g1-g4.md",
+    "/home/roman/.arch-ml/worktrees/axiom-43e236d789188868/mfu55-step-exec/docs/adr/ADR-053-kampaniya-krupnyy-shag-rost-mfu-cherez-ukrupnenie-raboty-batch-tokenov-gradientnye-tehniki-potolok-pamyati-izmeren.md",
+    "/home/roman/.arch-ml/worktrees/axiom-43e236d789188868/mfu55-step-exec/ARCHITECTURE-SPINE.md"
   ],
   "epic_context_chars": 6000,
   "epic_context_tokens": 1500,
   "route": "Standard",
   "recommended_timeout_secs": 3600,
-  "baseline_commit": "893c0e8",
+  "baseline_commit": "06a1498",
   "scope": {
     "write_allow": [
-      "net/kernels/*",
+      "net/train_loop.py",
+      "net/optimizer.py",
       "net/tests/*"
     ],
     "write_deny": [
       "model/",
       "ARCHITECTURE-SPINE.md",
-      "CONSTRAINTS.yaml"
+      "CONSTRAINTS.yaml",
+      "net/config.json"
     ],
     "exec_allow": [
-      "python3 -m pytest*"
+      "python3 -m pytest*",
+      "/home/roman/venv-axiom/bin/python -m pytest*"
     ],
     "net": "none"
   },
-  "scope_hash": "097ed6fca5e862f9648d555fd2425786b94793f96ccf7c29d1b510865b5be849",
-  "rollback_plan": "Откат: `git reset --hard 893c0e8` (baseline — последний коммит до работы исполнителя; вся его работа приходит одним коммитом поверх).\nСигналы отката: провал fitness-гейта (`arch-ml control check`), непустой `conflicts_with_prior_decisions`, статус `blocked`.\nВладелец решения об откате — solution-архитектор; исполнитель откат не выполняет и не маскирует проблему обходным редизайном.\nОбратимость: полная — единая точка изменений, коммит исполнителя.",
+  "scope_hash": "57651cd1036dba9e8e77a09ced285c0e36d68ab6ce22ca56aea1ea53f0571998",
+  "rollback_plan": "Откат: `git reset --hard 06a1498` (baseline — последний коммит до работы исполнителя; вся его работа приходит одним коммитом поверх).\nСигналы отката: провал fitness-гейта (`arch-ml control check`), непустой `conflicts_with_prior_decisions`, статус `blocked`.\nВладелец решения об откате — solution-архитектор; исполнитель откат не выполняет и не маскирует проблему обходным редизайном.\nОбратимость: полная — единая точка изменений, коммит исполнителя.",
   "skills": [
     "aar-benchmark-architecture",
     "agent-verification-eval",
@@ -226,6 +229,15 @@
       ]
     },
     {
+      "card": "harness-ab-selection",
+      "state": "latent",
+      "score": 20,
+      "skills": [
+        "harness-context-window-control",
+        "harness-tool-calling-trends"
+      ]
+    },
+    {
       "card": "local-agent-baseline-gb10",
       "state": "latent",
       "score": 20,
@@ -254,6 +266,15 @@
       ]
     },
     {
+      "card": "train-what-you-deploy",
+      "state": "latent",
+      "score": 20,
+      "skills": [
+        "lego-rl-harness-native-rl",
+        "agentic-rl-patterns"
+      ]
+    },
+    {
       "card": "axiom-pretrain-gb10",
       "state": "latent",
       "score": 19,
@@ -265,12 +286,13 @@
       ]
     },
     {
-      "card": "harness-ab-selection",
-      "state": "latent",
+      "card": "execution-grounded-benchmark-gen",
+      "state": "active",
       "score": 19,
       "skills": [
-        "harness-context-window-control",
-        "harness-tool-calling-trends"
+        "aar-benchmark-architecture",
+        "train-bench-builder",
+        "kat-tui-11-benchmark-evaluator"
       ]
     },
     {
@@ -281,25 +303,6 @@
         "moe-router-health",
         "motif3-moe-stabilization",
         "moe-stability-guard"
-      ]
-    },
-    {
-      "card": "train-what-you-deploy",
-      "state": "latent",
-      "score": 19,
-      "skills": [
-        "lego-rl-harness-native-rl",
-        "agentic-rl-patterns"
-      ]
-    },
-    {
-      "card": "execution-grounded-benchmark-gen",
-      "state": "active",
-      "score": 18,
-      "skills": [
-        "aar-benchmark-architecture",
-        "train-bench-builder",
-        "kat-tui-11-benchmark-evaluator"
       ]
     },
     {
@@ -430,15 +433,6 @@
       ]
     },
     {
-      "card": "moe-routing-effrank-monitor",
-      "state": "latent",
-      "score": 16,
-      "skills": [
-        "moe-router-health",
-        "stable-latent-moe"
-      ]
-    },
-    {
       "card": "muon-moonlight-lr-rule",
       "state": "latent",
       "score": 16,
@@ -477,6 +471,15 @@
       "score": 15,
       "skills": [
         "stepfun-02-mfa-afd-decoding"
+      ]
+    },
+    {
+      "card": "moe-routing-effrank-monitor",
+      "state": "latent",
+      "score": 15,
+      "skills": [
+        "moe-router-health",
+        "stable-latent-moe"
       ]
     },
     {
@@ -549,7 +552,7 @@
     {
       "card": "consistency-gap",
       "state": "active",
-      "score": 9,
+      "score": 10,
       "skills": [
         "effort-calibration-eval",
         "agent-verification-eval"
@@ -563,6 +566,14 @@
         "codewhale-fleet-automation",
         "harness-fleet-model-rollout",
         "map-graph-provenance-memory"
+      ]
+    },
+    {
+      "card": "skill-closure-authorization",
+      "state": "latent",
+      "score": 8,
+      "skills": [
+        "skill-management"
       ]
     },
     {
@@ -601,6 +612,14 @@
       ]
     },
     {
+      "card": "skills-from-traces",
+      "state": "fleeting",
+      "score": 7,
+      "skills": [
+        "skill-management"
+      ]
+    },
+    {
       "card": "mispo-is-correction-not-masks",
       "state": "latent",
       "score": 6,
@@ -617,19 +636,13 @@
       ]
     },
     {
-      "card": "skill-closure-authorization",
+      "card": "skill-graph-evolution",
       "state": "latent",
       "score": 6,
       "skills": [
-        "skill-management"
-      ]
-    },
-    {
-      "card": "skills-from-traces",
-      "state": "fleeting",
-      "score": 6,
-      "skills": [
-        "skill-management"
+        "trace-skill-bank-evolution",
+        "gse-globalized-skill-evolution",
+        "skill-library-manager"
       ]
     },
     {
@@ -650,30 +663,26 @@
       ]
     },
     {
+      "card": "skill-routing-diversity",
+      "state": "latent",
+      "score": 5,
+      "skills": [
+        "cobra-skill-optimization",
+        "lasko-skill-optimizer",
+        "skill-management"
+      ]
+    },
+    {
       "card": "dream-rsi-replay-simulator",
       "state": "latent",
       "score": 4,
       "skills": []
     },
     {
-      "card": "skill-graph-evolution",
-      "state": "latent",
-      "score": 4,
-      "skills": [
-        "trace-skill-bank-evolution",
-        "gse-globalized-skill-evolution",
-        "skill-library-manager"
-      ]
-    },
-    {
-      "card": "skill-routing-diversity",
-      "state": "latent",
-      "score": 4,
-      "skills": [
-        "cobra-skill-optimization",
-        "lasko-skill-optimizer",
-        "skill-management"
-      ]
+      "card": "decision-needs-execution-proof",
+      "state": "active",
+      "score": 3,
+      "skills": []
     },
     {
       "card": "manifest-head-hash-blindness",
@@ -717,12 +726,6 @@
     },
     {
       "card": "dataset-reproducibility-by-rebuild",
-      "state": "active",
-      "score": 2,
-      "skills": []
-    },
-    {
-      "card": "decision-needs-execution-proof",
       "state": "active",
       "score": 2,
       "skills": []

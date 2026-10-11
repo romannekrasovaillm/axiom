@@ -1,52 +1,61 @@
 # Задача для кодового харнесса
 
-ЗАДАЧА (Mosaic-ядро KDA: применить найденный рецепт раскладки RHS — последний блокирующий дефект закрыт).
+DONATE-дельта ADR-054 (стадия-1 «исполнение шага»): устранить ~28k DtoD-копий/шаг (31.5 ГиБ) и связанную диспетчерскую нагрузку, НЕ меняя арифметику.
 
-СОСТОЯНИЕ. Четыре дефекта закрыты (NameError ×3, `grid_names`, 2D-операнды). Пятый — транспорт раскладок — **решён экспериментом на GB10**, рецепт в `evidence/mfu-55/mosaic/REPORT-rhs-layout.md`:
-
-**`plgpu.mma(acc, a, b)` требует, чтобы память RHS была `k`-контигуальной**: массив правой части надо подавать в порядке `(n, k)` и грузить через `.T`. Проверено для `N=8/64/256` — все `ok`, `max_abs 6.1e-05` (`mma_rhs_layout_proto.py`).
-
-Рабочий паттерн (проверен на GB10 целиком):
-```python
-def body(l_ref, bt_ref, o_ref, smem):     # l_ref (H,M,K); bt_ref (H,N,K) — B ТРАНСПОНИРОВАНА в памяти
-    h = jax.lax.axis_index("head")
-    acc = plgpu.layout_cast(jnp.zeros((M, N), ACC), plgpu.Layout.MMA_ACC(DT))
-    a   = plgpu.load(l_ref.at[h],    layout=plgpu.Layout.MMA_LHS(DT), optimized=False)
-    b   = plgpu.load(bt_ref.at[h].T, layout=plgpu.Layout.MMA_RHS(DT), optimized=False)
-    o_ref.at[h][...] = plgpu.mma(acc, a, b).astype(DT)
-
-plgpu.kernel(body, out_type=ShapeDtypeStruct((H,M,N), DT),
-             scratch_types=[plgpu.SMEM((M,M), DT)],
-             compiler_params=plgpu.CompilerParams(lowering_semantics=plgpu.LoweringSemantics.Lane),
-             grid=(H,), grid_names=("head",))
-# вызов: kernel(L, B.transpose(0, 2, 1))
-```
+КОНТЕКСТ (измерено, ADR-053 Am.3 / ADR-054): профиль c64_B2 на GB10 — GPU-ядра 1.55 с из 34 с шага; ~420k runtime-API-вызовов/шаг; ~28k DtoD-копий/шаг (~31.5 ГиБ ≈ размер деревьев params/grads/state). Причина: jit-функции без donate — каждый вызов копирует буферы. Премисса donate уже есть в коде: `params = working_params(master)` пересоздаётся каждый шаг (net/train_loop.py:2999), значит буфер params после grad_fn мёртв.
 
 ЧТО СДЕЛАТЬ.
-1. Применить рецепт в `net/kernels/kda_ut_solve_mosaic.py`: правая часть `(H, C, D)` подаётся в ядро **транспонированной** `(H, D, C)` (в `kernel()` — `b.transpose(0, 2, 1)`), внутри — `plgpu.load(bt_ref.at[h].T, layout=MMA_RHS(...))`; LHS — `l_ref.at[h]` без транспозиции; выход `(H, M, N)` через `o_ref.at[h][...]`.
-2. Сохранить Neumann-цепочку и SMEM-переход между шагами (проверен: результата одного `mma` нельзя подать операндом напрямую, только через SMEM: `smem[...] = p.astype(DT)` → `plgpu.load(smem, layout=MMA_LHS/RHS, optimized=False)`). Для цепочки промежуточные матрицы `(M, M)` квадратные — там транспозиция в памяти не нужна, но **операнд RHS всё равно должен быть `k`-контигуален** (для квадратной `(M,M)` это выполняется при `.T` от row-major, как в прототипе).
-3. Математику, паддинг C→128 и семантику (дефолт backend `triton`) не менять.
-4. Тесты: дополнить `net/tests/test_kda_mosaic_parity.py` проверкой, что ядро вызывается с **транспонированной** правой частью (`b.transpose(0,2,1)`) и что в `body` RHS грузится через `.T` (статическая проверка исходника или spy на `plgpu.load`); сохранить требование «трассировка/создание ядра проходит без GPU» из прошлой дельты.
-5. Обновить docstring модуля: зафиксировать три требования раскладок (LHS `(m,k)` без транспозиции; RHS — память `(n,k)` + `.T`; ACC `(m,n)`), чтобы следующая правка не наступила на те же грабли.
 
-ОГРАНИЧЕНИЯ. Зона: `net/kernels/*`, `net/tests/*`. GPU-прогоны не запускать (их делает архитектор). `net/kda.py`, `net/config.json` не трогать.
+1. `net/train_loop.py` (функция ~2860-3000):
+   a. Рядом с `grad_fn = jax.jit(jax.value_and_grad(loss_fn))` (сейчас :2873) добавить
+      `grad_fn_donated = jax.jit(jax.value_and_grad(loss_fn), donate_argnums=(0,))`.
+   b. В ветке `len(group) == 1` (:2976) вызывать `grad_fn_donated(params, group[0])` — буфер params
+      после этого вызова в итерации не читается (профайлер ниже получает НОВЫЙ params из :2999; сверь
+      все использования params между вызовом и концом итерации — если найдётся читатель donated-буфера,
+      оставь недонированный вызов и запиши это в assumptions).
+   c. Ветку накопления (len(group) > 1, :2984-2995) НЕ трогать: params нужен на каждом микровызове.
+   d. `step_fn = optimizer.make_step(...)` (:2874) — передать `donate=not train_config.phase_profile`
+      (см. п.2): при живом профайлере grads читается ПОСЛЕ step_fn (profiler.measure, :3011-3021) —
+      donate там запрещён.
+2. `net/optimizer.py` `make_step(...)` (:217): новый kw-аргумент `donate: bool = False` (дефолт False —
+   обратная совместимость всех остальных вызовов); финал:
+   `return jax.jit(step, donate_argnums=(0, 1, 2)) if (jit and donate) else (jax.jit(step) if jit else step)`.
+   Docstring: donate — контракт владения буферами master/grads/state (аргументы потребляются);
+   арифметика идентична.
+3. Тесты (новый файл `net/tests/test_donate_step.py`, CPU):
+   - паритет: N=3 шага мини-конфига (существующий smoke-конфиг из соседних тестов) с donate=True и
+     donate=False → loss-последовательности и финальные params allclose (atol как в существующих
+     паритет-тестах); это доказывает «donate не меняет математику»;
+   - повторные вызовы не падают (buffer-reuse): 3+ последовательных шага donate-пути без
+     RuntimeError «donated buffer»;
+   - accum-ветка (micro-batch 2, accum_tokens) на donate-пути не использует grad_fn_donated
+     (проверка исходника или поведения);
+   - phase_profile=True → make_step получил donate=False (spy/инспекция флага).
+4. Docstrings: в train_loop у grad_fn_donated — правило «donate только когда буфер мёртв после вызова;
+   params пересоздаётся из master каждый шаг (:2999) — премисса».
 
-ПРОВЕРКА (ПК): `/home/roman/venv-axiom/bin/python -m pytest -q net/tests/test_kda_mosaic_parity.py` → все зелёные.
+ОГРАНИЧЕНИЯ. Только `net/train_loop.py`, `net/optimizer.py`, `net/tests/*`. Математику (loss_fn,
+compute_loss, оптимизатор-арифметику), конфиги и остальные модули не трогать. GPU-прогоны не запускать
+(их делает архитектор на стенде). JAX на этом узле CPU-only — тесты обязаны идти на CPU.
 
-РЕЗУЛЬТАТ. `.arch-handoff/result.json` + ФИНАЛЬНЫЙ git-commit. В assumptions — как реализована транспозиция входа и почему; в open_questions — что осталось измерить на GB10 (паритет bf16/fp32, IR/PTX = MMA, время против Triton и XLA, детерминизм, SMEM-бюджет).
+ПРОВЕРКА (ПК): `/home/roman/venv-axiom/bin/python -m pytest -q net/tests/test_donate_step.py` зелёные;
+плюс регресс существующих: `... -m pytest -q net/tests -k "train or optimizer or step"` (CPU-подмножество).
+
+РЕЗУЛЬТАТ: `.arch-handoff/result.json` + финальный git-commit. В assumptions — все найденные читатели
+буферов; в open_questions — что перемерить архитектору (A/B c64_B2, nsys DtoD/шаг).
 
 ## Границы (scope)
 
 Машинный контракт границ — `MANIFEST.json.scope` (хэш `scope_hash`); изменение вне границ ловится гейтом, а не обсуждается постфактум.
 
-- **Можно писать:** `net/kernels/*`, `net/tests/*`
-- **Нельзя писать (сильнее allow):** `model/`, `ARCHITECTURE-SPINE.md`, `CONSTRAINTS.yaml`
-- **Можно запускать:** `python3 -m pytest*`
+- **Можно писать:** `net/train_loop.py`, `net/optimizer.py`, `net/tests/*`
+- **Нельзя писать (сильнее allow):** `model/`, `ARCHITECTURE-SPINE.md`, `CONSTRAINTS.yaml`, `net/config.json`
+- **Можно запускать:** `python3 -m pytest*`, `/home/roman/venv-axiom/bin/python -m pytest*`
 - **Сеть:** сети нет (детерминированный узел)
 
 ## План отката
 
-Откат: `git reset --hard 893c0e8` (baseline — последний коммит до работы исполнителя; вся его работа приходит одним коммитом поверх).
+Откат: `git reset --hard 06a1498` (baseline — последний коммит до работы исполнителя; вся его работа приходит одним коммитом поверх).
 Сигналы отката: провал fitness-гейта (`arch-ml control check`), непустой `conflicts_with_prior_decisions`, статус `blocked`.
 Владелец решения об откате — solution-архитектор; исполнитель откат не выполняет и не маскирует проблему обходным редизайном.
 Обратимость: полная — единая точка изменений, коммит исполнителя.

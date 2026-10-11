@@ -90,7 +90,10 @@ def _primitive_names(obj, acc: set[str] | None = None) -> set[str]:
     if acc is None:
         acc = set()
     inner = getattr(obj, "jaxpr", None)
-    if inner is not None and not isinstance(obj, (dict, list, tuple)):
+    # jax >= 0.11: `Jaxpr.jaxpr` is a self-alias (`Jaxpr.jaxpr is Jaxpr`), so
+    # the bare `.jaxpr` hop below would recurse forever; a ClosedJaxpr's hop
+    # still descends, and an already-known Jaxpr is walked via its eqns.
+    if inner is not None and inner is not obj and not isinstance(obj, (dict, list, tuple)):
         return _primitive_names(inner, acc)
     eqns = getattr(obj, "eqns", None)
     if eqns is not None:

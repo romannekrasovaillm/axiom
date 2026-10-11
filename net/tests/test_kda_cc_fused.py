@@ -168,7 +168,11 @@ def _emulate_bf16(q_flat, k_flat, v_flat, alpha_flat, beta32, S, tile=16):
         y_t = (lam.astype(jnp.bfloat16).astype(f32) * kv.astype(f32)
                ).astype(jnp.bfloat16).astype(f32).T
         g = jnp.exp(jnp.sum(la, axis=0)).astype(jnp.bfloat16).astype(f32)
-        S_new = S_new.at[h].set(S[h] * g[None, :] + y_t @ vt_t.astype(f32).T)
+        # gamma^C decays the key channels -- a *row* scaling of the state (the
+        # kernel's phase-4 broadcast is pinned to the row vector by
+        # test_kda_cc_fused_bwd.py; at the campaign decay the term is ~1e-35,
+        # so this axis is only observable at weak decay).
+        S_new = S_new.at[h].set(S[h] * g[:, None] + y_t @ vt_t.astype(f32).T)
     return o, S_new
 
 

@@ -41,11 +41,16 @@ returns ``o`` before the gate -- exactly the quantities ``cc_chunk_step``
 computes between ``_postprocess`` and ``_output_gate``.  The reference below
 reads them with the same formulas.
 
-Milestone 2 (separate delta, ADR-054 stage-2b) is the backward pass:
-``custom_vjp`` (analytic adjoint through a transposed kernel, as
-``kda_ut_solve_mosaic`` does, or a jnp backward).  The forward kernel here
-carries no autodiff by construction and must not be placed under
-``jax.grad`` before that delta lands.
+Milestone 2 (this round): the backward pass.  ``make_cc_step`` /
+:func:`cc_step` wrap the body in ``jax.custom_vjp``: the forward rule runs the
+kernel, the backward rule runs the analytic jnp adjoint of
+:mod:`net.kernels.kda_cc_fused_bwd` (variant B of the milestone-2 delta —
+fwd and remat-fwd collapse into one launch per chunk, the backward pass runs as
+fused XLA/jnp; the fused backward *kernel* is a scoped follow-up, its blocker
+recorded in that module's docstring).  The bare :func:`kernel` remains
+forward-only by construction (a ``pallas_call`` carries no JVP) and must not be
+placed under ``jax.grad`` directly — the wrapper is the differentiable entry
+point.
 
 Campaign case and the SMEM fact that fixes it (round 2)
 -------------------------------------------------------
@@ -510,7 +515,15 @@ def _build_kernel(C, H, dk, dv, tile, dtype):
             ll = (la2 - lh.astype(f32)).astype(dt)
             gl_hi_t.transpose((1, 0))[...] = lh
             gl_lo_t.transpose((1, 0))[...] = ll
-            opb_s.at[pl.ds(0, C), pl.ds(0, C)][...] = (ridx2 >= cidx2).astype(dt)
+            # All-rows := the *full* row sum of ``log alpha`` (pattern ``cidx2 <= C-1``
+            # is the anchor idiom with ``p = C-1``), NOT the cumsum: ``lam`` needs
+            # ``sum_j la_j - G_c`` = ``gamma^{c+1->C}``.  With the cumsum the
+            # difference would be identically zero and ``lam`` would come out as
+            # ones -- a state-transfer error (measured up to ~5e-1 on the chunk
+            # state at the campaign geometry; caught by the declared-algebra audit
+            # ``test_kernel_declared_phase4_patterns`` in milestone 2, never on a
+            # device: milestone-1's GB10 probe measured launches only, not values).
+            opb_s.at[pl.ds(0, C), pl.ds(0, C)][...] = (cidx2 <= C - 1).astype(dt)
             glast = plgpu.mma(_zero((C, dk), ACC_C),
                               _l(opb_s.at[pl.ds(0, C), pl.ds(0, C)], L_C),
                               _l(gl_hi_t.T, R_C))
@@ -521,15 +534,18 @@ def _build_kernel(C, H, dk, dv, tile, dtype):
             opb_s[...] = lam.astype(dt)
             yv = (_l(opb_s, ACC_C).astype(f32) * kv.astype(f32)).astype(dt)
             y_t.transpose((1, 0))[...] = yv
-            # gamma^C as a column vector.  The vector is a side of a *different*
-            # layout family (C rows vs dk rows), so it goes through SMEM and is
-            # re-loaded with the destination layout's own reduce (the rmsnorm
-            # column-vector recipe: `load(vec, layout.reduce(0))`); the
-            # broadcast then needs an explicit target layout.
+            # gamma^C as a *row* vector of the (dk, dv)-shaped state (it decays the
+            # key channels -- rows of S).  The vector is a side of a different
+            # layout family ((C, dk) source vs the (dk, dv)-shaped destination
+            # value), so it goes through SMEM and is re-loaded with the
+            # destination layout's own *row-vector* reduce (the rmsnorm recipe:
+            # `load(vec, layout.reduce(1))` for a value tiling reduced on the
+            # column axis), with an explicit target layout on the broadcast --
+            # implicit broadcasting is not inferred.
             g_s[...] = jnp.exp(jnp.sum(la2, axis=0)).astype(dt)
-            gcv = _l(g_s, ACC_DK.reduce(0)).astype(f32)
+            gcv = _l(g_s, ACC_DK.reduce(1)).astype(f32)
             gc_b = plgpu.layout_cast(
-                jax.lax.broadcast_in_dim(gcv, (dk, dv), (1,)), ACC_DK)
+                jax.lax.broadcast_in_dim(gcv, (dk, dv), (0,)), ACC_DK)
             sv = _l(sg.at[h], ACC_DK)
             acc_s = plgpu.layout_cast(sv * gc_b, ACC_DK)
             s_out = plgpu.mma(acc_s, _l(y_t, L_DK), _l(vt_s.T, R_DK))
@@ -669,3 +685,98 @@ def reference(q, k, v, alpha, beta32, S, *, tile=16):
         y = lam * kh
         S_new = S_new.at[h].set(gc[:, None] * S[h] + y.T @ v_tilde)
     return o, S_new
+
+
+# ---------------------------------------------------------------------------
+# Differentiable wrapper (ADR-054 stage-2b, milestone 2)
+#
+# The bare ``kernel`` is a Pallas ``pallas_call``: it has no JVP, so a training
+# graph that inlines it fails ("Linearization failed to produce known values
+# for all output primals").  ``cc_step`` wraps it in ``jax.custom_vjp``: the
+# forward rule runs the kernel, the backward rule runs the analytic adjoint of
+# :mod:`net.kernels.kda_cc_fused_bwd` (derived, CPU-gradchecked and pinned
+# there).  Both rules resolve their implementation on the *module* at call
+# time, so tests can observe or substitute which forward/backward runs; the
+# factory takes explicit implementations for the GPU-less-node tests.
+# ---------------------------------------------------------------------------
+
+
+def _cc_forward(q, k, v, alpha, beta32, S, tile):
+    """Forward rule body — the fused kernel, resolved per call (module global)."""
+    return kernel(q, k, v, alpha, beta32, S, tile=tile)
+
+
+def _cc_backward(q, k, v, alpha, beta32, S, do, dS, tile):
+    """Backward rule body — the analytic adjoint, resolved per call.
+
+    The adjoint lives in the sibling module (lazy import: the forward module
+    stays importable without it; the attribute is looked up per call so tests
+    can spy on the routing exactly like ``kda_ut_solve``'s kernel spies).
+    """
+    from . import kda_cc_fused_bwd
+
+    return kda_cc_fused_bwd.reference_bwd(q, k, v, alpha, beta32, S, do, dS,
+                                          tile=tile)
+
+
+def make_cc_step(tile=16, forward=None, backward=None):
+    """Build the differentiable chunk body ``(q, k, v, alpha, beta32, S)``.
+
+    Returns a ``jax.custom_vjp`` function: forward = :func:`kernel` (or the
+    ``forward`` substitution), backward = :func:`kda_cc_fused_bwd.reference_bwd`
+    (or the ``backward`` substitution).  ``tile`` is **captured in the closure**
+    and not an argument: ``custom_vjp`` is jit-like, so a Python int passed as
+    an argument arrives inside the fwd rule as a weak int32 *tracer*
+    (``TracerIntegerConversionError`` on the kernel's ``int(tile)``); capturing
+    it keeps it a host constant.  The substitutions exist for the CPU test
+    suite (the kernel itself needs Mosaic GPU; the analytic adjoint does not).
+    """
+
+    def _fwd(q, k, v, alpha, beta32, S):
+        fn = forward if forward is not None else _cc_forward
+        return fn(q, k, v, alpha, beta32, S, tile)
+
+    def _bwd(q, k, v, alpha, beta32, S, do, dS):
+        fn = backward if backward is not None else _cc_backward
+        return fn(q, k, v, alpha, beta32, S, do, dS, tile)
+
+    @jax.custom_vjp
+    def step(q, k, v, alpha, beta32, S):
+        return _fwd(q, k, v, alpha, beta32, S)
+
+    def step_fwd(q, k, v, alpha, beta32, S):
+        o, s_new = _fwd(q, k, v, alpha, beta32, S)
+        return (o, s_new), (q, k, v, alpha, beta32, S)
+
+    def step_bwd(res, g):
+        q, k, v, alpha, beta32, S = res
+        do, dS = g
+        dq, dk, dv, dalpha, dbeta32, dS_in = _bwd(
+            q, k, v, alpha, beta32, S, do, dS)
+        return dq, dk, dv, dalpha, dbeta32, dS_in
+
+    step.defvjp(step_fwd, step_bwd)
+    return step
+
+
+#: Cache of the wrappers by static tile width (``net.kda._cc_tile`` is the
+#: declared source of the value; one wrapper per width).  The wrappers resolve
+#: ``kernel``/``reference_bwd`` on their modules at call time, so observing or
+#: substituting them keeps working through this cache.
+_CC_STEPS: dict[int, object] = {}
+
+
+def cc_step(q, k, v, alpha, beta32, S, tile=16):
+    """Differentiable body the ``AXIOM_KDA_CC_IMPL=mosaic`` mode installs.
+
+    ``jax.custom_vjp``: forward rule = the fused kernel, backward rule = the
+    analytic adjoint of :mod:`net.kernels.kda_cc_fused_bwd`.  ``tile`` is a
+    *static* host argument (the decay-factor tile width the kernel was built
+    with); the wrapper for each width is cached — the host dispatch happens at
+    trace time, before ``custom_vjp`` turns values into tracers.
+    """
+    step = _CC_STEPS.get(tile)
+    if step is None:
+        step = make_cc_step(tile=tile)
+        _CC_STEPS[tile] = step
+    return step(q, k, v, alpha, beta32, S)

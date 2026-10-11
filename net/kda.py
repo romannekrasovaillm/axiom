@@ -713,7 +713,7 @@ KDA_CC_IMPLS = ("jax", "mosaic")
 def _cc_chunk_step_mosaic(
     params: KDAParams, cfg: ModelConfig, carry: KDAState, x: jnp.ndarray
 ) -> tuple[KDAState, jnp.ndarray]:
-    """One ``chunked_cc`` chunk through the fused Mosaic kernel (forward only).
+    """One ``chunked_cc`` chunk through the fused Mosaic body (milestone 2: under grad).
 
     The XLA side keeps everything outside the measured launch cluster: the
     dense projections (:func:`_project`), the short-conv / swish / L2
@@ -725,17 +725,22 @@ def _cc_chunk_step_mosaic(
     output and the next state -- exactly the interval :func:`cc_chunk_step`
     computes between ``_postprocess`` and ``_output_gate``.
 
-    Forward only (ADR-054 stage-2b milestone 1): the kernel carries no
-    autodiff, so this body must not be placed under ``jax.grad`` before the
-    milestone-2 delta.  Requires a GPU: on a GPU-less host the call refuses
-    with a typed error instead of falling back silently.
+    Differentiable (ADR-054 stage-2b milestone 2): the body enters through
+    :data:`net.kernels.kda_cc_fused.cc_step` -- a ``jax.custom_vjp`` wrapper
+    whose forward rule runs the kernel and whose backward rule runs the
+    analytic adjoint of :mod:`net.kernels.kda_cc_fused_bwd` (variant B: fwd and
+    remat-fwd collapse to one launch per chunk; the backward pass runs as fused
+    XLA/jnp -- the fused backward *kernel* is a scoped follow-up).  The bare
+    ``kernel`` stays forward-only; this wrapper is the entry point a training
+    graph must use.  Requires a GPU: on a GPU-less host the call refuses with a
+    typed error instead of falling back silently.
     """
     from .kernels import kda_cc_fused  # локальный импорт: нужен только под флагом
 
     if not kda_cc_fused.device_available():
         raise RuntimeError(
             "AXIOM_KDA_CC_IMPL=mosaic: fused-кернел исполняется только на GPU "
-            "(Mosaic sm_121, веха-1 forward); на CPU-узле выберите "
+            "(Mosaic sm_121, веха-2: custom_vjp-обёртка cc_step); на CPU-узле выберите "
             "AXIOM_KDA_CC_IMPL=jax. Тихого отката нет — impl выбирается явно.")
 
     C = x.shape[0]
@@ -750,14 +755,14 @@ def _cc_chunk_step_mosaic(
     alpha = proj["alpha"]  # (C, H, dk)
     beta32 = jnp.broadcast_to(beta[:, :, None], (C, H, 32)).reshape(C, H * 32)
     dt = jnp.bfloat16  # the only operand path the GB10 mma lowering validated
-    o, s_new = kda_cc_fused.kernel(
+    o, s_new = kda_cc_fused.cc_step(
         q.reshape(C, H * dk).astype(dt),
         k.reshape(C, H * dk).astype(dt),
         v.reshape(C, H * dv).astype(dt),
         alpha.reshape(C, H * dk).astype(jnp.float32),
         beta32.astype(jnp.float32),
         carry.S.astype(jnp.float32),
-        tile=_cc_tile(cfg),
+        _cc_tile(cfg),
     )
     out = _output_gate(o.reshape(C, H, dv), proj["gate"], params)
     return KDAState(s_new, q_buf, k_buf, v_buf), out
@@ -780,10 +785,12 @@ def apply_chunked_cc(
     :func:`apply_recurrent` (parity pinned by ``test_kda_chunked_cc.py``).
 
     ``AXIOM_KDA_CC_IMPL`` selects the scan body: ``jax`` (default — the
-    committed :func:`cc_chunk_step`) or ``mosaic`` (the fused forward kernel
-    of :mod:`net.kernels.kda_cc_fused`, ADR-054 stage-2b milestone 1; forward
-    only, GPU-only, not for ``jax.grad``).  The flag changes the *body* only —
-    the padding, the scan structure and the window branch are shared.
+    committed :func:`cc_chunk_step`) or ``mosaic`` (the fused differentiable
+    body of :mod:`net.kernels.kda_cc_fused`, ADR-054 stage-2b milestones 1-2:
+    kernel forward + analytic adjoint via ``jax.custom_vjp`` — trainable;
+    GPU-only, a GPU-less host refuses with a typed error).  The flag changes
+    the *body* only — the padding, the scan structure and the window branch are
+    shared.
     """
     if chunk_size is None:
         chunk_size = cfg.kda_wyut_chunk

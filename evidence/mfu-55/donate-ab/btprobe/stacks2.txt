@@ -1,0 +1,586 @@
+#0  0x0000f61539795c0c in __GI_sched_yield () at ../sysdeps/unix/syscall-template.S:120
+#0  0x0000f61539795c0c in __GI_sched_yield () at ../sysdeps/unix/syscall-template.S:120
+#1  0x0000f614baea20dc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#2  0x0000f614ba181858 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#3  0x0000f614ba1e6678 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#4  0x0000f614ba1effb0 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#5  0x0000f614ba2dcc14 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#6  0x0000f614ba2d1e04 in cuGraphLaunch () from /lib/aarch64-linux-gnu/libcuda.so.1
+#7  0x0000f6125e457a80 in stream_executor::gpu::CudaCommandBuffer::LaunchGraph(stream_executor::Stream*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#8  0x0000f61257dd5b54 in xla::gpu::CommandBufferThunk::ExecuteOnStream(xla::gpu::Thunk::ExecuteParams const&) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#9  0x0000f61257f89a84 in xla::gpu::ThunkExecutor::ExecuteOnStream(xla::gpu::Thunk::ExecuteParams const&) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#10 0x0000f61257d9e92c in xla::gpu::GpuExecutable::ExecuteThunksImpl(xla::DebugOptions const*, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, int, xla::gpu::ThunkExecutor&, xla::gpu::Thunk::ExecutableSource, xla::ServiceExecutableRunOptions const*, xla::gpu::BufferAllocations const&, bool, std::optional<absl::lts_20260526::Span<long const> >, xla::gpu::GpuExecutable::NumAdditionalStreams, xla::gpu::CollectiveMemoryCache&, bool, xla::gpu::ExecutionWatchdogScope*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#11 0x0000f61257da3714 in xla::gpu::GpuExecutable::ExecuteThunks(xla::gpu::BufferAllocations const&, xla::ServiceExecutableRunOptions const*, std::optional<absl::lts_20260526::Span<long const> >) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#12 0x0000f61256872800 in absl::lts_20260526::Status absl::lts_20260526::functional_internal::InvokeObject<xla::RunGpuAsync(xla::LocalExecutable&, xla::PjRtStreamExecutorRawClient*, xla::LocalDeviceState*, absl::lts_20260526::Span<tsl::RCReference<xla::PjRtRawBufferInterface> const>, absl::lts_20260526::Span<tsl::RCReference<xla::PjRtRawBufferInterface> const>, absl::lts_20260526::Span<xla::PjRtDeviceEventPromiseRef>, xla::ExecutableRunOptions, bool)::$_4&, absl::lts_20260526::Status, xla::gpu::BufferAllocations const&, std::optional<absl::lts_20260526::Span<long const> > >(absl::lts_20260526::functional_internal::VoidPtr, absl::lts_20260526::functional_internal::ForwardT<xla::gpu::BufferAllocations const&>::type, absl::lts_20260526::functional_internal::ForwardT<std::optional<absl::lts_20260526::Span<long const> > >::type) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#13 0x0000f61257db8e00 in xla::gpu::GpuExecutableBufferAllocator::ExecutionScope::ExecuteWithBufferAllocations(xla::gpu::BufferAllocations const&, int, absl::lts_20260526::FunctionRef<absl::lts_20260526::Status (xla::gpu::BufferAllocations const&, std::optional<absl::lts_20260526::Span<long const> >)>) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#14 0x0000f6125686f3a8 in xla::RunGpuAsync(xla::LocalExecutable&, xla::PjRtStreamExecutorRawClient*, xla::LocalDeviceState*, absl::lts_20260526::Span<tsl::RCReference<xla::PjRtRawBufferInterface> const>, absl::lts_20260526::Span<tsl::RCReference<xla::PjRtRawBufferInterface> const>, absl::lts_20260526::Span<xla::PjRtDeviceEventPromiseRef>, xla::ExecutableRunOptions, bool) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#15 0x0000f612568b6cb4 in xla::RunAsync(xla::LocalExecutable&, xla::PjRtStreamExecutorRawClient*, xla::LocalDeviceState*, absl::lts_20260526::Span<tsl::RCReference<xla::PjRtRawBufferInterface> const>, absl::lts_20260526::Span<tsl::RCReference<xla::PjRtRawBufferInterface> const>, absl::lts_20260526::Span<xla::PjRtDeviceEventPromiseRef>, xla::ExecutableRunOptions, bool) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#16 0x0000f612568acdc4 in xla::PjRtStreamExecutorRawLoadedExecutable::Execute(xla::ExecuteOptions const&, absl::lts_20260526::Span<tsl::RCReference<xla::PjRtRawBufferInterface> const>, absl::lts_20260526::Span<tsl::RCReference<xla::PjRtRawBufferInterface> const>, xla::PjRtDeviceEventRefVector, xla::PjRtDeviceEventRefVector, bool, bool) &&::$_3::operator()() () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#17 0x0000f612568abb54 in xla::PjRtStreamExecutorRawLoadedExecutable::Execute(xla::ExecuteOptions const&, absl::lts_20260526::Span<tsl::RCReference<xla::PjRtRawBufferInterface> const>, absl::lts_20260526::Span<tsl::RCReference<xla::PjRtRawBufferInterface> const>, xla::PjRtDeviceEventRefVector, xla::PjRtDeviceEventRefVector, bool, bool) && () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#18 0x0000f612568f03c8 in xla::CommonPjRtLoadedExecutable::ExecuteLaunch(xla::CommonPjRtLoadedExecutable::ExecuteLaunchArgs&, bool) const () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#19 0x0000f612568f0d74 in xla::CommonPjRtLoadedExecutable::ExecuteHelperOnSingleDevice(absl::lts_20260526::Span<xla::PjRtBuffer* const>, xla::RunId, int, int, xla::ExecuteOptions const&, bool, xla::PjRtDevice*) const () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#0  0x0000f614ba378dc0 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#0  0x0000f614ba378dc0 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#1  0x0000f614ba17eebc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#2  0x0000f614ba1b8f44 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#3  0x0000f614bae73d2c in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#4  0x0000f614bae74148 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#5  0x0000f614ba189cdc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#6  0x0000f614ba23a234 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#7  0x0000f614bae8971c in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#8  0x0000f614ba1360b0 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#9  0x0000f614ba136770 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#10 0x0000f614ba136c00 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#11 0x0000f614ba2b7acc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#12 0x0000f614ba2b3940 in cuMemcpyHtoDAsync_v2 () from /lib/aarch64-linux-gnu/libcuda.so.1
+#13 0x0000f614f618d7e8 in ?? () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#14 0x0000f614f615c244 in ?? () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#15 0x0000f614f61b7a44 in cudaMemcpyAsync () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#16 0x0000f6125e20246c in stream_executor::cuda::(anonymous namespace)::CopyOffsets(void*, unsigned long, long, long, CUstream_st*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#17 0x0000f6125e205a20 in stream_executor::cuda::(anonymous namespace)::CubSortPairsExecute(xla::ffi::AnyBuffer, xla::ffi::AnyBuffer, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, bool, long, CUstream_st*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#18 0x0000f6125e206678 in xla::ffi::Handler<(xla::ffi::ExecutionStage)3, absl::lts_20260526::Status (*)(xla::ffi::AnyBuffer, xla::ffi::AnyBuffer, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, bool, long, CUstream_st*), xla::ffi::internal::ArgTag<xla::ffi::AnyBuffer>, xla::ffi::internal::ArgTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, xla::ffi::internal::AttrTag<bool>, xla::ffi::internal::AttrTag<long>, xla::ffi::internal::CtxTag<xla::ffi::PlatformStream<CUstream_st*> > >::Call(XLA_FFI_CallFrame*) const () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#19 0x0000f6125e202770 in stream_executor::cuda::(anonymous namespace)::$_5::__invoke(XLA_FFI_CallFrame*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#0  0x0000f614ba13229c in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#0  0x0000f614ba13229c in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#1  0x0000f614ba13cc28 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#2  0x0000f614ba13d320 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#3  0x0000f614ba2d6f64 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#4  0x0000f614ba2cf55c in cuLaunchKernel () from /lib/aarch64-linux-gnu/libcuda.so.1
+#5  0x0000f614b5ed7668 in ?? () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/nvidia/cu13/lib/libcublas.so.13
+#6  0x0000f614b5f2d8c4 in ?? () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/nvidia/cu13/lib/libcublas.so.13
+#7  0x0000f614b5d3a84c in ?? () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/nvidia/cu13/lib/libcublas.so.13
+#8  0x0000f614b5d36d24 in cublasSgetrfBatched () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/nvidia/cu13/lib/libcublas.so.13
+#9  0x0000f614f630f230 in absl::lts_20260526::Status jax::cuda::solver::GetrfBatched<float>(cublasContext*, int, float**, int, int*, int*, int) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/_solver.so
+#10 0x0000f614f62d7af8 in xla::ffi::Error jax::cuda::GetrfBatchedImpl<float>(long, long, CUstream_st*, xla::ffi::ScratchAllocator&, xla::ffi::AnyBuffer, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::Buffer<(xla::ffi::DataType)4, 18446744073709551615ul> >, xla::ffi::Result<xla::ffi::Buffer<(xla::ffi::DataType)4, 18446744073709551615ul> >) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/_solver.so
+#11 0x0000f614f62d6c54 in jax::cuda::GetrfDispatch(CUstream_st*, xla::ffi::ScratchAllocator, xla::ffi::AnyBuffer, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::Buffer<(xla::ffi::DataType)4, 18446744073709551615ul> >, xla::ffi::Result<xla::ffi::Buffer<(xla::ffi::DataType)4, 18446744073709551615ul> >) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/_solver.so
+#12 0x0000f614f62f29bc in xla::ffi::Handler<(xla::ffi::ExecutionStage)3, xla::ffi::Error (*)(CUstream_st*, xla::ffi::ScratchAllocator, xla::ffi::AnyBuffer, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::Buffer<(xla::ffi::DataType)4, 18446744073709551615ul> >, xla::ffi::Result<xla::ffi::Buffer<(xla::ffi::DataType)4, 18446744073709551615ul> >), xla::ffi::internal::CtxTag<xla::ffi::PlatformStream<CUstream_st*> >, xla::ffi::internal::CtxTag<xla::ffi::ScratchAllocator>, xla::ffi::internal::ArgTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::Buffer<(xla::ffi::DataType)4, 18446744073709551615ul> >, xla::ffi::internal::RetTag<xla::ffi::Buffer<(xla::ffi::DataType)4, 18446744073709551615ul> > >::Call(XLA_FFI_CallFrame*) const () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/_solver.so
+#13 0x0000f614f62d988c in GetrfFfi () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/_solver.so
+#14 0x0000f6125e25045c in absl::lts_20260526::StatusOr<XLA_FFI_Future*> xla::ffi::Invoke<XLA_FFI_Error* (*)(XLA_FFI_CallFrame*)>(XLA_FFI_Api const*, XLA_FFI_Error* (*&)(XLA_FFI_CallFrame*), xla::ffi::CallFrame&, xla::ffi::InvokeContext const&, xla::ffi::ExecutionStage) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#15 0x0000f6125e250308 in xla::ffi::Invoke(XLA_FFI_Api const*, XLA_FFI_Error* (*)(XLA_FFI_CallFrame*), xla::ffi::CallFrame&, xla::ffi::InvokeContext const&, XLA_FFI_ExecutionStage) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#16 0x0000f61257e5103c in xla::gpu::CustomCallThunk::ExecuteFfiHandler(xla::RunId, XLA_FFI_Error* (*)(XLA_FFI_CallFrame*), XLA_FFI_ExecutionStage, stream_executor::Stream*, absl::lts_20260526::flat_hash_map<tsl::gtl::IntType<xla::gpu::ThunkId_tag_, unsigned long>, tsl::UniqueAny, absl::lts_20260526::hash_internal::Hash<tsl::gtl::IntType<xla::gpu::ThunkId_tag_, unsigned long> >, std::equal_to<tsl::gtl::IntType<xla::gpu::ThunkId_tag_, unsigned long> >, std::allocator<std::pair<tsl::gtl::IntType<xla::gpu::ThunkId_tag_, unsigned long> const, tsl::UniqueAny> > >*, xla::ffi::ExecutionContext const*, xla::gpu::BufferAllocations const*, xla::gpu::CollectiveParams const*, xla::gpu::CollectiveCliqueRequests*, xla::gpu::CollectiveMemoryRequests*, xla::gpu::CollectiveCliques const*, xla::gpu::CollectiveMemory const*, absl::lts_20260526::Span<stream_executor::Stream* const>, XLA_FFI_Extension const*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#17 0x0000f61257e51740 in xla::gpu::CustomCallThunk::ExecuteOnStream(xla::gpu::Thunk::ExecuteParams const&) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#18 0x0000f61257f89a84 in xla::gpu::ThunkExecutor::ExecuteOnStream(xla::gpu::Thunk::ExecuteParams const&) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#19 0x0000f61257f7c5b4 in xla::gpu::WhileThunk::ExecuteOnStream(xla::gpu::Thunk::ExecuteParams const&) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#0  0x0000f61539a06584 in ?? ()
+#0  0x0000f61539a06584 in ?? ()
+#1  0x0000f614ba25daec in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#2  0x0000f614ba25daec in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#3  0x0000f614ba189f10 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#4  0x000000003cdcb790 in ?? ()
+#0  0x0000f614ba378df4 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#0  0x0000f614ba378df4 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#1  0x0000f614ba17eebc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#2  0x0000f614ba1b8f44 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#3  0x0000f614bae73d2c in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#4  0x0000f614bae74148 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#5  0x0000f614ba189cdc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#6  0x0000f614ba23a234 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#7  0x0000f614bae8971c in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#8  0x0000f614ba1360b0 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#9  0x0000f614ba136770 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#10 0x0000f614ba136c00 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#11 0x0000f614ba2b7acc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#12 0x0000f614ba2b3940 in cuMemcpyHtoDAsync_v2 () from /lib/aarch64-linux-gnu/libcuda.so.1
+#13 0x0000f614f618d7e8 in ?? () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#14 0x0000f614f615c244 in ?? () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#15 0x0000f614f61b7a44 in cudaMemcpyAsync () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#16 0x0000f6125e20246c in stream_executor::cuda::(anonymous namespace)::CopyOffsets(void*, unsigned long, long, long, CUstream_st*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#17 0x0000f6125e205a20 in stream_executor::cuda::(anonymous namespace)::CubSortPairsExecute(xla::ffi::AnyBuffer, xla::ffi::AnyBuffer, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, bool, long, CUstream_st*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#18 0x0000f6125e206678 in xla::ffi::Handler<(xla::ffi::ExecutionStage)3, absl::lts_20260526::Status (*)(xla::ffi::AnyBuffer, xla::ffi::AnyBuffer, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, bool, long, CUstream_st*), xla::ffi::internal::ArgTag<xla::ffi::AnyBuffer>, xla::ffi::internal::ArgTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, xla::ffi::internal::AttrTag<bool>, xla::ffi::internal::AttrTag<long>, xla::ffi::internal::CtxTag<xla::ffi::PlatformStream<CUstream_st*> > >::Call(XLA_FFI_CallFrame*) const () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#19 0x0000f6125e202770 in stream_executor::cuda::(anonymous namespace)::$_5::__invoke(XLA_FFI_CallFrame*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#0  0x0000f61539a06568 in ?? ()
+#0  0x0000f61539a06568 in ?? ()
+#1  0x0000f614ba25daec in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#2  0x0000f614ba25daec in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#3  0x0000f614ba189f10 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#4  0x000000003cdcb790 in ?? ()
+#0  0x0000f614ba19b12c in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#0  0x0000f614ba19b12c in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#1  0x0000f614ba189f10 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#2  0x0000f614ba23a234 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#3  0x0000f614bae8971c in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#4  0x0000f614ba1360b0 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#5  0x0000f614ba136770 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#6  0x0000f614ba136c00 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#7  0x0000f614ba2b7acc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#8  0x0000f614ba2b3940 in cuMemcpyHtoDAsync_v2 () from /lib/aarch64-linux-gnu/libcuda.so.1
+#9  0x0000f614f618d7e8 in ?? () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#10 0x0000f614f615c244 in ?? () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#11 0x0000f614f61b7a44 in cudaMemcpyAsync () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#12 0x0000f6125e20246c in stream_executor::cuda::(anonymous namespace)::CopyOffsets(void*, unsigned long, long, long, CUstream_st*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#13 0x0000f6125e205a20 in stream_executor::cuda::(anonymous namespace)::CubSortPairsExecute(xla::ffi::AnyBuffer, xla::ffi::AnyBuffer, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, bool, long, CUstream_st*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#14 0x0000f6125e206678 in xla::ffi::Handler<(xla::ffi::ExecutionStage)3, absl::lts_20260526::Status (*)(xla::ffi::AnyBuffer, xla::ffi::AnyBuffer, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, bool, long, CUstream_st*), xla::ffi::internal::ArgTag<xla::ffi::AnyBuffer>, xla::ffi::internal::ArgTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, xla::ffi::internal::AttrTag<bool>, xla::ffi::internal::AttrTag<long>, xla::ffi::internal::CtxTag<xla::ffi::PlatformStream<CUstream_st*> > >::Call(XLA_FFI_CallFrame*) const () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#15 0x0000f6125e202770 in stream_executor::cuda::(anonymous namespace)::$_5::__invoke(XLA_FFI_CallFrame*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#16 0x0000f6125e25045c in absl::lts_20260526::StatusOr<XLA_FFI_Future*> xla::ffi::Invoke<XLA_FFI_Error* (*)(XLA_FFI_CallFrame*)>(XLA_FFI_Api const*, XLA_FFI_Error* (*&)(XLA_FFI_CallFrame*), xla::ffi::CallFrame&, xla::ffi::InvokeContext const&, xla::ffi::ExecutionStage) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#17 0x0000f6125e250308 in xla::ffi::Invoke(XLA_FFI_Api const*, XLA_FFI_Error* (*)(XLA_FFI_CallFrame*), xla::ffi::CallFrame&, xla::ffi::InvokeContext const&, XLA_FFI_ExecutionStage) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#18 0x0000f61257e5103c in xla::gpu::CustomCallThunk::ExecuteFfiHandler(xla::RunId, XLA_FFI_Error* (*)(XLA_FFI_CallFrame*), XLA_FFI_ExecutionStage, stream_executor::Stream*, absl::lts_20260526::flat_hash_map<tsl::gtl::IntType<xla::gpu::ThunkId_tag_, unsigned long>, tsl::UniqueAny, absl::lts_20260526::hash_internal::Hash<tsl::gtl::IntType<xla::gpu::ThunkId_tag_, unsigned long> >, std::equal_to<tsl::gtl::IntType<xla::gpu::ThunkId_tag_, unsigned long> >, std::allocator<std::pair<tsl::gtl::IntType<xla::gpu::ThunkId_tag_, unsigned long> const, tsl::UniqueAny> > >*, xla::ffi::ExecutionContext const*, xla::gpu::BufferAllocations const*, xla::gpu::CollectiveParams const*, xla::gpu::CollectiveCliqueRequests*, xla::gpu::CollectiveMemoryRequests*, xla::gpu::CollectiveCliques const*, xla::gpu::CollectiveMemory const*, absl::lts_20260526::Span<stream_executor::Stream* const>, XLA_FFI_Extension const*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#19 0x0000f61257e51740 in xla::gpu::CustomCallThunk::ExecuteOnStream(xla::gpu::Thunk::ExecuteParams const&) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#0  0x0000f61539795c0c in __GI_sched_yield () at ../sysdeps/unix/syscall-template.S:120
+#0  0x0000f61539795c0c in __GI_sched_yield () at ../sysdeps/unix/syscall-template.S:120
+#1  0x0000f614baea20dc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#2  0x0000f614ba181858 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#3  0x0000f614ba3af160 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#4  0x0000f614bae6f288 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#5  0x0000f614bae93794 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#6  0x0000f614ba13222c in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#7  0x0000f614ba13cc28 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#8  0x0000f614ba13d320 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#9  0x0000f614ba2d6f64 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#10 0x0000f614ba2cf55c in cuLaunchKernel () from /lib/aarch64-linux-gnu/libcuda.so.1
+#11 0x0000f614f6158ee8 in ?? () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#12 0x0000f614f61bae3c in cudaLaunchKernel () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#13 0x0000f614f630e5d8 in __device_stub__ZN3jax4cuda58_GLOBAL__N__3df7bc74_25_make_batch_pointers_cu_cc_40c36aef28MakeBatchPointersAsyncKernelEPcPPvll(char*, void**, long, long) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/_solver.so
+#14 0x0000f614f62d7aa4 in xla::ffi::Error jax::cuda::GetrfBatchedImpl<float>(long, long, CUstream_st*, xla::ffi::ScratchAllocator&, xla::ffi::AnyBuffer, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::Buffer<(xla::ffi::DataType)4, 18446744073709551615ul> >, xla::ffi::Result<xla::ffi::Buffer<(xla::ffi::DataType)4, 18446744073709551615ul> >) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/_solver.so
+#15 0x0000f614f62d6c54 in jax::cuda::GetrfDispatch(CUstream_st*, xla::ffi::ScratchAllocator, xla::ffi::AnyBuffer, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::Buffer<(xla::ffi::DataType)4, 18446744073709551615ul> >, xla::ffi::Result<xla::ffi::Buffer<(xla::ffi::DataType)4, 18446744073709551615ul> >) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/_solver.so
+#16 0x0000f614f62f29bc in xla::ffi::Handler<(xla::ffi::ExecutionStage)3, xla::ffi::Error (*)(CUstream_st*, xla::ffi::ScratchAllocator, xla::ffi::AnyBuffer, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::Buffer<(xla::ffi::DataType)4, 18446744073709551615ul> >, xla::ffi::Result<xla::ffi::Buffer<(xla::ffi::DataType)4, 18446744073709551615ul> >), xla::ffi::internal::CtxTag<xla::ffi::PlatformStream<CUstream_st*> >, xla::ffi::internal::CtxTag<xla::ffi::ScratchAllocator>, xla::ffi::internal::ArgTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::Buffer<(xla::ffi::DataType)4, 18446744073709551615ul> >, xla::ffi::internal::RetTag<xla::ffi::Buffer<(xla::ffi::DataType)4, 18446744073709551615ul> > >::Call(XLA_FFI_CallFrame*) const () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/_solver.so
+#17 0x0000f614f62d988c in GetrfFfi () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/_solver.so
+#18 0x0000f6125e25045c in absl::lts_20260526::StatusOr<XLA_FFI_Future*> xla::ffi::Invoke<XLA_FFI_Error* (*)(XLA_FFI_CallFrame*)>(XLA_FFI_Api const*, XLA_FFI_Error* (*&)(XLA_FFI_CallFrame*), xla::ffi::CallFrame&, xla::ffi::InvokeContext const&, xla::ffi::ExecutionStage) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#19 0x0000f6125e250308 in xla::ffi::Invoke(XLA_FFI_Api const*, XLA_FFI_Error* (*)(XLA_FFI_CallFrame*), xla::ffi::CallFrame&, xla::ffi::InvokeContext const&, XLA_FFI_ExecutionStage) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#0  0x0000f61539795c0c in __GI_sched_yield () at ../sysdeps/unix/syscall-template.S:120
+#0  0x0000f61539795c0c in __GI_sched_yield () at ../sysdeps/unix/syscall-template.S:120
+#1  0x0000f614baea20dc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#2  0x0000f614ba181858 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#3  0x0000f614ba3af160 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#4  0x0000f614bae6f288 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#5  0x0000f614bae93794 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#6  0x0000f614ba13222c in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#7  0x0000f614ba13cc28 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#8  0x0000f614ba13d320 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#9  0x0000f614ba2d6f64 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#10 0x0000f614ba2cf55c in cuLaunchKernel () from /lib/aarch64-linux-gnu/libcuda.so.1
+#11 0x0000f6125eae9c5c in stream_executor::gpu::CudaStream::LaunchKernel(stream_executor::ThreadDim const&, stream_executor::BlockDim const&, std::optional<stream_executor::ClusterDim> const&, void*, std::basic_string_view<char, std::char_traits<char> >, void**, long, bool) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#12 0x0000f6125eaf2c9c in stream_executor::gpu::CudaKernel::Launch(stream_executor::ThreadDim const&, stream_executor::BlockDim const&, std::optional<stream_executor::ClusterDim> const&, stream_executor::Stream*, stream_executor::KernelArgs const&)::$_1::operator()(stream_executor::KernelArgsPackedArrayBase const&) const () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#13 0x0000f6125eaf2960 in stream_executor::gpu::CudaKernel::Launch(stream_executor::ThreadDim const&, stream_executor::BlockDim const&, std::optional<stream_executor::ClusterDim> const&, stream_executor::Stream*, stream_executor::KernelArgs const&) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#14 0x0000f61257f7ad28 in xla::gpu::MakeBatchPointers(stream_executor::Stream*, stream_executor::DeviceAddressBase, unsigned long, unsigned long, stream_executor::DeviceAddressBase) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#15 0x0000f61257f7921c in xla::gpu::RunTriangularSolve(stream_executor::DeviceAddressBase, stream_executor::DeviceAddressBase, stream_executor::DeviceAddressBase, stream_executor::blas::UpperLower, stream_executor::blas::Side, stream_executor::blas::Diagonal, stream_executor::blas::Transpose, xla::PrimitiveType, long, long, long, long, long, stream_executor::Stream*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#16 0x0000f61257f7903c in xla::gpu::TriangularSolveThunk::ExecuteOnStream(xla::gpu::Thunk::ExecuteParams const&) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#17 0x0000f61257f89a84 in xla::gpu::ThunkExecutor::ExecuteOnStream(xla::gpu::Thunk::ExecuteParams const&) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#18 0x0000f61257f783b4 in xla::gpu::SequentialThunk::ExecuteOnStream(xla::gpu::Thunk::ExecuteParams const&) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#19 0x0000f61257f89a84 in xla::gpu::ThunkExecutor::ExecuteOnStream(xla::gpu::Thunk::ExecuteParams const&) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#0  0x0000f614ba378e24 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#0  0x0000f614ba378e24 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#1  0x0000f614ba17eebc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#2  0x0000f614ba1b8f44 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#3  0x0000f614bae73d2c in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#4  0x0000f614bae74148 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#5  0x0000f614ba189cdc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#6  0x0000f614ba23a234 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#7  0x0000f614bae8971c in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#8  0x0000f614ba1360b0 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#9  0x0000f614ba136770 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#10 0x0000f614ba136c00 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#11 0x0000f614ba2b7acc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#12 0x0000f614ba2b3940 in cuMemcpyHtoDAsync_v2 () from /lib/aarch64-linux-gnu/libcuda.so.1
+#13 0x0000f614f618d7e8 in ?? () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#14 0x0000f614f615c244 in ?? () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#15 0x0000f614f61b7a44 in cudaMemcpyAsync () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#16 0x0000f6125e20246c in stream_executor::cuda::(anonymous namespace)::CopyOffsets(void*, unsigned long, long, long, CUstream_st*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#17 0x0000f6125e205a20 in stream_executor::cuda::(anonymous namespace)::CubSortPairsExecute(xla::ffi::AnyBuffer, xla::ffi::AnyBuffer, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, bool, long, CUstream_st*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#18 0x0000f6125e206678 in xla::ffi::Handler<(xla::ffi::ExecutionStage)3, absl::lts_20260526::Status (*)(xla::ffi::AnyBuffer, xla::ffi::AnyBuffer, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, bool, long, CUstream_st*), xla::ffi::internal::ArgTag<xla::ffi::AnyBuffer>, xla::ffi::internal::ArgTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, xla::ffi::internal::AttrTag<bool>, xla::ffi::internal::AttrTag<long>, xla::ffi::internal::CtxTag<xla::ffi::PlatformStream<CUstream_st*> > >::Call(XLA_FFI_CallFrame*) const () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#19 0x0000f6125e202770 in stream_executor::cuda::(anonymous namespace)::$_5::__invoke(XLA_FFI_CallFrame*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#0  0x0000f61539795c0c in __GI_sched_yield () at ../sysdeps/unix/syscall-template.S:120
+#0  0x0000f61539795c0c in __GI_sched_yield () at ../sysdeps/unix/syscall-template.S:120
+#1  0x0000f614baea20dc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#2  0x0000f614ba181858 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#3  0x0000f614ba3af160 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#4  0x0000f614bae6f288 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#5  0x0000f614bae93794 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#6  0x0000f614ba2e3900 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#7  0x0000f614ba2e801c in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#8  0x0000f614ba329b5c in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#9  0x0000f614ba2048c0 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#10 0x0000f614ba2179f0 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#11 0x0000f614bae89c78 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#12 0x0000f614ba1360b0 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#13 0x0000f614ba136770 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#14 0x0000f614ba13723c in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#15 0x0000f614ba2b7d4c in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#16 0x0000f614ba2b3ab0 in cuMemcpyDtoDAsync_v2 () from /lib/aarch64-linux-gnu/libcuda.so.1
+#17 0x0000f6125eae8f14 in stream_executor::gpu::CudaStream::Memcpy(stream_executor::DeviceAddressBase*, stream_executor::DeviceAddressBase const&, unsigned long) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#18 0x0000f61257e60138 in xla::gpu::DeviceToDeviceCopyThunk::ExecuteOnStream(xla::gpu::Thunk::ExecuteParams const&) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#19 0x0000f61257f89a84 in xla::gpu::ThunkExecutor::ExecuteOnStream(xla::gpu::Thunk::ExecuteParams const&) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#0  syscall () at ../sysdeps/unix/sysv/linux/aarch64/syscall.S:38
+#0  syscall () at ../sysdeps/unix/sysv/linux/aarch64/syscall.S:38
+#1  0x0000f6125fb4683c in absl::lts_20260526::synchronization_internal::FutexWaiter::WaitUntil(std::atomic<int>*, int, absl::lts_20260526::synchronization_internal::KernelTimeout) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#2  0x0000f6125fb46900 in absl::lts_20260526::synchronization_internal::FutexWaiter::Wait(absl::lts_20260526::synchronization_internal::KernelTimeout) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#3  0x0000f6125fb46448 in AbslInternalPerThreadSemWait_lts_20260526 () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#4  0x0000f6125fb43b28 in absl::lts_20260526::Mutex::Block(absl::lts_20260526::base_internal::PerThreadSynch*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#5  0x0000f6125fb43ed4 in absl::lts_20260526::Mutex::LockSlowWithDeadline(absl::lts_20260526::MuHowS const*, absl::lts_20260526::Condition const*, absl::lts_20260526::synchronization_internal::KernelTimeout, int) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#6  0x0000f61256928048 in xla::Semaphore::Acquire(long) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#7  0x0000f612569281b0 in xla::Semaphore::ScopedAcquire(long) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#8  0x0000f612568ab1b4 in xla::PjRtStreamExecutorRawLoadedExecutable::Execute(xla::ExecuteOptions const&, absl::lts_20260526::Span<tsl::RCReference<xla::PjRtRawBufferInterface> const>, absl::lts_20260526::Span<tsl::RCReference<xla::PjRtRawBufferInterface> const>, xla::PjRtDeviceEventRefVector, xla::PjRtDeviceEventRefVector, bool, bool) && () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#9  0x0000f612568f03c8 in xla::CommonPjRtLoadedExecutable::ExecuteLaunch(xla::CommonPjRtLoadedExecutable::ExecuteLaunchArgs&, bool) const () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#10 0x0000f612568f0d74 in xla::CommonPjRtLoadedExecutable::ExecuteHelperOnSingleDevice(absl::lts_20260526::Span<xla::PjRtBuffer* const>, xla::RunId, int, int, xla::ExecuteOptions const&, bool, xla::PjRtDevice*) const () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#11 0x0000f612568f236c in xla::CommonPjRtLoadedExecutable::Execute(absl::lts_20260526::Span<std::vector<xla::PjRtBuffer*, std::allocator<xla::PjRtBuffer*> > const>, xla::ExecuteOptions const&, std::optional<std::vector<tsl::Future<void>, std::allocator<tsl::Future<void> > > >&) const () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#12 0x0000f612568398ac in pjrt::PJRT_LoadedExecutable_Execute(PJRT_LoadedExecutable_Execute_Args*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#13 0x0000f614fa9924b0 in xla::PjRtCApiLoadedExecutable::Execute(absl::lts_20260526::Span<std::vector<xla::PjRtBuffer*, std::allocator<xla::PjRtBuffer*> > const>, xla::ExecuteOptions const&, std::optional<std::vector<tsl::Future<void>, std::allocator<tsl::Future<void> > > >&) const () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jaxlib/libjax_common.so
+#14 0x0000f614fa963550 in xla::ifrt::PjRtLoadedExecutable::Execute(absl::lts_20260526::Span<tsl::RCReference<xla::ifrt::Array> >, xla::ifrt::ExecuteOptions const&, std::optional<xla::ifrt::RCReferenceWrapper<xla::ifrt::DeviceList> >) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jaxlib/libjax_common.so
+#15 0x0000f614fe406e40 in jax::(anonymous namespace)::PjitFunction::Call(nanobind::handle, _object* const*, unsigned long, _object*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jaxlib/libjax_common.so
+#16 0x0000f614fe403950 in PjitFunction_tp_vectorcall () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jaxlib/libjax_common.so
+#17 0x0000000000566f94 in _PyEval_EvalFrameDefault ()
+#18 0x00000000006e69d4 [PAC] in ?? ()
+#19 0x00000000005ef64c [PAC] in ?? ()
+#0  0x0000f61539a06568 in ?? ()
+#0  0x0000f61539a06568 in ?? ()
+#1  0x0000f614ba25daec in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#2  0x0000f614ba25daec in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#3  0x0000f614ba189f10 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#4  0x000000003cdcb790 in ?? ()
+#0  0x0000f614ba378d94 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#0  0x0000f614ba378d94 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#1  0x0000f614ba17eebc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#2  0x0000f614ba1b8f44 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#3  0x0000f614bae73d2c in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#4  0x0000f614bae74148 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#5  0x0000f614ba189cdc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#6  0x0000f614ba23a234 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#7  0x0000f614bae8971c in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#8  0x0000f614ba1360b0 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#9  0x0000f614ba136770 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#10 0x0000f614ba136c00 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#11 0x0000f614ba2b7acc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#12 0x0000f614ba2b3940 in cuMemcpyHtoDAsync_v2 () from /lib/aarch64-linux-gnu/libcuda.so.1
+#13 0x0000f614f618d7e8 in ?? () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#14 0x0000f614f615c244 in ?? () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#15 0x0000f614f61b7a44 in cudaMemcpyAsync () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#16 0x0000f6125e20246c in stream_executor::cuda::(anonymous namespace)::CopyOffsets(void*, unsigned long, long, long, CUstream_st*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#17 0x0000f6125e205a20 in stream_executor::cuda::(anonymous namespace)::CubSortPairsExecute(xla::ffi::AnyBuffer, xla::ffi::AnyBuffer, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, bool, long, CUstream_st*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#18 0x0000f6125e206678 in xla::ffi::Handler<(xla::ffi::ExecutionStage)3, absl::lts_20260526::Status (*)(xla::ffi::AnyBuffer, xla::ffi::AnyBuffer, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, bool, long, CUstream_st*), xla::ffi::internal::ArgTag<xla::ffi::AnyBuffer>, xla::ffi::internal::ArgTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, xla::ffi::internal::AttrTag<bool>, xla::ffi::internal::AttrTag<long>, xla::ffi::internal::CtxTag<xla::ffi::PlatformStream<CUstream_st*> > >::Call(XLA_FFI_CallFrame*) const () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#19 0x0000f6125e202770 in stream_executor::cuda::(anonymous namespace)::$_5::__invoke(XLA_FFI_CallFrame*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#0  0x0000f614ba378e24 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#0  0x0000f614ba378e24 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#1  0x0000f614ba17eebc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#2  0x0000f614ba1b8f44 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#3  0x0000f614bae73d2c in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#4  0x0000f614bae74148 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#5  0x0000f614ba189cdc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#6  0x0000f614ba23a234 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#7  0x0000f614bae8971c in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#8  0x0000f614ba1360b0 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#9  0x0000f614ba136770 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#10 0x0000f614ba136c00 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#11 0x0000f614ba2b7acc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#12 0x0000f614ba2b3940 in cuMemcpyHtoDAsync_v2 () from /lib/aarch64-linux-gnu/libcuda.so.1
+#13 0x0000f614f618d7e8 in ?? () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#14 0x0000f614f615c244 in ?? () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#15 0x0000f614f61b7a44 in cudaMemcpyAsync () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#16 0x0000f6125e20246c in stream_executor::cuda::(anonymous namespace)::CopyOffsets(void*, unsigned long, long, long, CUstream_st*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#17 0x0000f6125e205a20 in stream_executor::cuda::(anonymous namespace)::CubSortPairsExecute(xla::ffi::AnyBuffer, xla::ffi::AnyBuffer, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, bool, long, CUstream_st*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#18 0x0000f6125e206678 in xla::ffi::Handler<(xla::ffi::ExecutionStage)3, absl::lts_20260526::Status (*)(xla::ffi::AnyBuffer, xla::ffi::AnyBuffer, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, bool, long, CUstream_st*), xla::ffi::internal::ArgTag<xla::ffi::AnyBuffer>, xla::ffi::internal::ArgTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, xla::ffi::internal::AttrTag<bool>, xla::ffi::internal::AttrTag<long>, xla::ffi::internal::CtxTag<xla::ffi::PlatformStream<CUstream_st*> > >::Call(XLA_FFI_CallFrame*) const () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#19 0x0000f6125e202770 in stream_executor::cuda::(anonymous namespace)::$_5::__invoke(XLA_FFI_CallFrame*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#0  0x0000f614ba17ee44 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#0  0x0000f614ba17ee44 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#1  0x0000f614ba1b8f44 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#2  0x0000f614bae73d2c in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#3  0x0000f614bae74148 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#4  0x0000f614ba189cdc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#5  0x0000f614ba23a234 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#6  0x0000f614bae8971c in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#7  0x0000f614ba1360b0 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#8  0x0000f614ba136770 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#9  0x0000f614ba136c00 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#10 0x0000f614ba2b7acc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#11 0x0000f614ba2b3940 in cuMemcpyHtoDAsync_v2 () from /lib/aarch64-linux-gnu/libcuda.so.1
+#12 0x0000f614f618d7e8 in ?? () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#13 0x0000f614f615c244 in ?? () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#14 0x0000f614f61b7a44 in cudaMemcpyAsync () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#15 0x0000f6125e20246c in stream_executor::cuda::(anonymous namespace)::CopyOffsets(void*, unsigned long, long, long, CUstream_st*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#16 0x0000f6125e205a20 in stream_executor::cuda::(anonymous namespace)::CubSortPairsExecute(xla::ffi::AnyBuffer, xla::ffi::AnyBuffer, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, bool, long, CUstream_st*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#17 0x0000f6125e206678 in xla::ffi::Handler<(xla::ffi::ExecutionStage)3, absl::lts_20260526::Status (*)(xla::ffi::AnyBuffer, xla::ffi::AnyBuffer, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, bool, long, CUstream_st*), xla::ffi::internal::ArgTag<xla::ffi::AnyBuffer>, xla::ffi::internal::ArgTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, xla::ffi::internal::AttrTag<bool>, xla::ffi::internal::AttrTag<long>, xla::ffi::internal::CtxTag<xla::ffi::PlatformStream<CUstream_st*> > >::Call(XLA_FFI_CallFrame*) const () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#18 0x0000f6125e202770 in stream_executor::cuda::(anonymous namespace)::$_5::__invoke(XLA_FFI_CallFrame*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#19 0x0000f6125e25045c in absl::lts_20260526::StatusOr<XLA_FFI_Future*> xla::ffi::Invoke<XLA_FFI_Error* (*)(XLA_FFI_CallFrame*)>(XLA_FFI_Api const*, XLA_FFI_Error* (*&)(XLA_FFI_CallFrame*), xla::ffi::CallFrame&, xla::ffi::InvokeContext const&, xla::ffi::ExecutionStage) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#0  0x0000f614ba378d94 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#0  0x0000f614ba378d94 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#1  0x0000f614ba17eebc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#2  0x0000f614ba1b8f44 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#3  0x0000f614bae73d2c in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#4  0x0000f614bae74148 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#5  0x0000f614ba189cdc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#6  0x0000f614ba23a234 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#7  0x0000f614bae8971c in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#8  0x0000f614ba1360b0 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#9  0x0000f614ba136770 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#10 0x0000f614ba136c00 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#11 0x0000f614ba2b7acc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#12 0x0000f614ba2b3940 in cuMemcpyHtoDAsync_v2 () from /lib/aarch64-linux-gnu/libcuda.so.1
+#13 0x0000f614f618d7e8 in ?? () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#14 0x0000f614f615c244 in ?? () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#15 0x0000f614f61b7a44 in cudaMemcpyAsync () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#16 0x0000f6125e20246c in stream_executor::cuda::(anonymous namespace)::CopyOffsets(void*, unsigned long, long, long, CUstream_st*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#17 0x0000f6125e205a20 in stream_executor::cuda::(anonymous namespace)::CubSortPairsExecute(xla::ffi::AnyBuffer, xla::ffi::AnyBuffer, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, bool, long, CUstream_st*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#18 0x0000f6125e206678 in xla::ffi::Handler<(xla::ffi::ExecutionStage)3, absl::lts_20260526::Status (*)(xla::ffi::AnyBuffer, xla::ffi::AnyBuffer, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, bool, long, CUstream_st*), xla::ffi::internal::ArgTag<xla::ffi::AnyBuffer>, xla::ffi::internal::ArgTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, xla::ffi::internal::AttrTag<bool>, xla::ffi::internal::AttrTag<long>, xla::ffi::internal::CtxTag<xla::ffi::PlatformStream<CUstream_st*> > >::Call(XLA_FFI_CallFrame*) const () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#19 0x0000f6125e202770 in stream_executor::cuda::(anonymous namespace)::$_5::__invoke(XLA_FFI_CallFrame*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#0  0x0000f614ba378e24 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#0  0x0000f614ba378e24 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#1  0x0000f614ba17eebc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#2  0x0000f614ba1b8f44 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#3  0x0000f614bae73d2c in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#4  0x0000f614bae74148 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#5  0x0000f614ba189cdc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#6  0x0000f614ba23a234 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#7  0x0000f614bae8971c in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#8  0x0000f614ba1360b0 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#9  0x0000f614ba136770 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#10 0x0000f614ba136c00 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#11 0x0000f614ba2b7acc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#12 0x0000f614ba2b3940 in cuMemcpyHtoDAsync_v2 () from /lib/aarch64-linux-gnu/libcuda.so.1
+#13 0x0000f614f618d7e8 in ?? () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#14 0x0000f614f615c244 in ?? () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#15 0x0000f614f61b7a44 in cudaMemcpyAsync () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#16 0x0000f6125e20246c in stream_executor::cuda::(anonymous namespace)::CopyOffsets(void*, unsigned long, long, long, CUstream_st*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#17 0x0000f6125e205a20 in stream_executor::cuda::(anonymous namespace)::CubSortPairsExecute(xla::ffi::AnyBuffer, xla::ffi::AnyBuffer, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, bool, long, CUstream_st*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#18 0x0000f6125e206678 in xla::ffi::Handler<(xla::ffi::ExecutionStage)3, absl::lts_20260526::Status (*)(xla::ffi::AnyBuffer, xla::ffi::AnyBuffer, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, bool, long, CUstream_st*), xla::ffi::internal::ArgTag<xla::ffi::AnyBuffer>, xla::ffi::internal::ArgTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, xla::ffi::internal::AttrTag<bool>, xla::ffi::internal::AttrTag<long>, xla::ffi::internal::CtxTag<xla::ffi::PlatformStream<CUstream_st*> > >::Call(XLA_FFI_CallFrame*) const () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#19 0x0000f6125e202770 in stream_executor::cuda::(anonymous namespace)::$_5::__invoke(XLA_FFI_CallFrame*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#0  0x0000f614ba378e30 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#0  0x0000f614ba378e30 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#1  0x0000f614ba17eebc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#2  0x0000f614ba1b8f44 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#3  0x0000f614bae73d2c in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#4  0x0000f614bae74148 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#5  0x0000f614ba189cdc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#6  0x0000f614ba23a234 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#7  0x0000f614bae8971c in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#8  0x0000f614ba1360b0 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#9  0x0000f614ba136770 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#10 0x0000f614ba136c00 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#11 0x0000f614ba2b7acc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#12 0x0000f614ba2b3940 in cuMemcpyHtoDAsync_v2 () from /lib/aarch64-linux-gnu/libcuda.so.1
+#13 0x0000f614f618d7e8 in ?? () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#14 0x0000f614f615c244 in ?? () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#15 0x0000f614f61b7a44 in cudaMemcpyAsync () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#16 0x0000f6125e20246c in stream_executor::cuda::(anonymous namespace)::CopyOffsets(void*, unsigned long, long, long, CUstream_st*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#17 0x0000f6125e205a20 in stream_executor::cuda::(anonymous namespace)::CubSortPairsExecute(xla::ffi::AnyBuffer, xla::ffi::AnyBuffer, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, bool, long, CUstream_st*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#18 0x0000f6125e206678 in xla::ffi::Handler<(xla::ffi::ExecutionStage)3, absl::lts_20260526::Status (*)(xla::ffi::AnyBuffer, xla::ffi::AnyBuffer, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, bool, long, CUstream_st*), xla::ffi::internal::ArgTag<xla::ffi::AnyBuffer>, xla::ffi::internal::ArgTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, xla::ffi::internal::AttrTag<bool>, xla::ffi::internal::AttrTag<long>, xla::ffi::internal::CtxTag<xla::ffi::PlatformStream<CUstream_st*> > >::Call(XLA_FFI_CallFrame*) const () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#19 0x0000f6125e202770 in stream_executor::cuda::(anonymous namespace)::$_5::__invoke(XLA_FFI_CallFrame*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#0  0x0000f614ba378e24 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#0  0x0000f614ba378e24 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#1  0x0000f614ba17eebc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#2  0x0000f614ba1b8f44 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#3  0x0000f614bae73d2c in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#4  0x0000f614bae74148 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#5  0x0000f614ba189cdc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#6  0x0000f614ba23a234 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#7  0x0000f614bae8971c in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#8  0x0000f614ba1360b0 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#9  0x0000f614ba136770 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#10 0x0000f614ba136c00 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#11 0x0000f614ba2b7acc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#12 0x0000f614ba2b3940 in cuMemcpyHtoDAsync_v2 () from /lib/aarch64-linux-gnu/libcuda.so.1
+#13 0x0000f614f618d7e8 in ?? () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#14 0x0000f614f615c244 in ?? () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#15 0x0000f614f61b7a44 in cudaMemcpyAsync () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#16 0x0000f6125e20246c in stream_executor::cuda::(anonymous namespace)::CopyOffsets(void*, unsigned long, long, long, CUstream_st*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#17 0x0000f6125e205a20 in stream_executor::cuda::(anonymous namespace)::CubSortPairsExecute(xla::ffi::AnyBuffer, xla::ffi::AnyBuffer, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, bool, long, CUstream_st*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#18 0x0000f6125e206678 in xla::ffi::Handler<(xla::ffi::ExecutionStage)3, absl::lts_20260526::Status (*)(xla::ffi::AnyBuffer, xla::ffi::AnyBuffer, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, bool, long, CUstream_st*), xla::ffi::internal::ArgTag<xla::ffi::AnyBuffer>, xla::ffi::internal::ArgTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, xla::ffi::internal::AttrTag<bool>, xla::ffi::internal::AttrTag<long>, xla::ffi::internal::CtxTag<xla::ffi::PlatformStream<CUstream_st*> > >::Call(XLA_FFI_CallFrame*) const () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#19 0x0000f6125e202770 in stream_executor::cuda::(anonymous namespace)::$_5::__invoke(XLA_FFI_CallFrame*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#0  0x0000f614ba378ec0 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#0  0x0000f614ba378ec0 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#1  0x0000f614ba17eebc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#2  0x0000f614ba1b8f44 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#3  0x0000f614bae73d2c in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#4  0x0000f614bae74148 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#5  0x0000f614ba189cdc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#6  0x0000f614ba23a234 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#7  0x0000f614bae8971c in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#8  0x0000f614ba1360b0 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#9  0x0000f614ba136770 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#10 0x0000f614ba136c00 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#11 0x0000f614ba2b7acc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#12 0x0000f614ba2b3940 in cuMemcpyHtoDAsync_v2 () from /lib/aarch64-linux-gnu/libcuda.so.1
+#13 0x0000f614f618d7e8 in ?? () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#14 0x0000f614f615c244 in ?? () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#15 0x0000f614f61b7a44 in cudaMemcpyAsync () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#16 0x0000f6125e20246c in stream_executor::cuda::(anonymous namespace)::CopyOffsets(void*, unsigned long, long, long, CUstream_st*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#17 0x0000f6125e205a20 in stream_executor::cuda::(anonymous namespace)::CubSortPairsExecute(xla::ffi::AnyBuffer, xla::ffi::AnyBuffer, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, bool, long, CUstream_st*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#18 0x0000f6125e206678 in xla::ffi::Handler<(xla::ffi::ExecutionStage)3, absl::lts_20260526::Status (*)(xla::ffi::AnyBuffer, xla::ffi::AnyBuffer, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, bool, long, CUstream_st*), xla::ffi::internal::ArgTag<xla::ffi::AnyBuffer>, xla::ffi::internal::ArgTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, xla::ffi::internal::AttrTag<bool>, xla::ffi::internal::AttrTag<long>, xla::ffi::internal::CtxTag<xla::ffi::PlatformStream<CUstream_st*> > >::Call(XLA_FFI_CallFrame*) const () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#19 0x0000f6125e202770 in stream_executor::cuda::(anonymous namespace)::$_5::__invoke(XLA_FFI_CallFrame*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#0  0x0000f61539795c0c in __GI_sched_yield () at ../sysdeps/unix/syscall-template.S:120
+#0  0x0000f61539795c0c in __GI_sched_yield () at ../sysdeps/unix/syscall-template.S:120
+#1  0x0000f614baea20dc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#2  0x0000f614ba181858 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#3  0x0000f614ba1ebfa4 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#4  0x0000f614ba1f07a8 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#5  0x0000f614ba2dcc14 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#6  0x0000f614ba2d1e04 in cuGraphLaunch () from /lib/aarch64-linux-gnu/libcuda.so.1
+#7  0x0000f6125e457a80 in stream_executor::gpu::CudaCommandBuffer::LaunchGraph(stream_executor::Stream*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#8  0x0000f61257dd5b54 in xla::gpu::CommandBufferThunk::ExecuteOnStream(xla::gpu::Thunk::ExecuteParams const&) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#9  0x0000f61257f89a84 in xla::gpu::ThunkExecutor::ExecuteOnStream(xla::gpu::Thunk::ExecuteParams const&) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#10 0x0000f61257d9e92c in xla::gpu::GpuExecutable::ExecuteThunksImpl(xla::DebugOptions const*, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, int, xla::gpu::ThunkExecutor&, xla::gpu::Thunk::ExecutableSource, xla::ServiceExecutableRunOptions const*, xla::gpu::BufferAllocations const&, bool, std::optional<absl::lts_20260526::Span<long const> >, xla::gpu::GpuExecutable::NumAdditionalStreams, xla::gpu::CollectiveMemoryCache&, bool, xla::gpu::ExecutionWatchdogScope*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#11 0x0000f61257da3714 in xla::gpu::GpuExecutable::ExecuteThunks(xla::gpu::BufferAllocations const&, xla::ServiceExecutableRunOptions const*, std::optional<absl::lts_20260526::Span<long const> >) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#12 0x0000f61256872800 in absl::lts_20260526::Status absl::lts_20260526::functional_internal::InvokeObject<xla::RunGpuAsync(xla::LocalExecutable&, xla::PjRtStreamExecutorRawClient*, xla::LocalDeviceState*, absl::lts_20260526::Span<tsl::RCReference<xla::PjRtRawBufferInterface> const>, absl::lts_20260526::Span<tsl::RCReference<xla::PjRtRawBufferInterface> const>, absl::lts_20260526::Span<xla::PjRtDeviceEventPromiseRef>, xla::ExecutableRunOptions, bool)::$_4&, absl::lts_20260526::Status, xla::gpu::BufferAllocations const&, std::optional<absl::lts_20260526::Span<long const> > >(absl::lts_20260526::functional_internal::VoidPtr, absl::lts_20260526::functional_internal::ForwardT<xla::gpu::BufferAllocations const&>::type, absl::lts_20260526::functional_internal::ForwardT<std::optional<absl::lts_20260526::Span<long const> > >::type) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#13 0x0000f61257db8e00 in xla::gpu::GpuExecutableBufferAllocator::ExecutionScope::ExecuteWithBufferAllocations(xla::gpu::BufferAllocations const&, int, absl::lts_20260526::FunctionRef<absl::lts_20260526::Status (xla::gpu::BufferAllocations const&, std::optional<absl::lts_20260526::Span<long const> >)>) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#14 0x0000f6125686f3a8 in xla::RunGpuAsync(xla::LocalExecutable&, xla::PjRtStreamExecutorRawClient*, xla::LocalDeviceState*, absl::lts_20260526::Span<tsl::RCReference<xla::PjRtRawBufferInterface> const>, absl::lts_20260526::Span<tsl::RCReference<xla::PjRtRawBufferInterface> const>, absl::lts_20260526::Span<xla::PjRtDeviceEventPromiseRef>, xla::ExecutableRunOptions, bool) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#15 0x0000f612568b6cb4 in xla::RunAsync(xla::LocalExecutable&, xla::PjRtStreamExecutorRawClient*, xla::LocalDeviceState*, absl::lts_20260526::Span<tsl::RCReference<xla::PjRtRawBufferInterface> const>, absl::lts_20260526::Span<tsl::RCReference<xla::PjRtRawBufferInterface> const>, absl::lts_20260526::Span<xla::PjRtDeviceEventPromiseRef>, xla::ExecutableRunOptions, bool) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#16 0x0000f612568acdc4 in xla::PjRtStreamExecutorRawLoadedExecutable::Execute(xla::ExecuteOptions const&, absl::lts_20260526::Span<tsl::RCReference<xla::PjRtRawBufferInterface> const>, absl::lts_20260526::Span<tsl::RCReference<xla::PjRtRawBufferInterface> const>, xla::PjRtDeviceEventRefVector, xla::PjRtDeviceEventRefVector, bool, bool) &&::$_3::operator()() () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#17 0x0000f612568abb54 in xla::PjRtStreamExecutorRawLoadedExecutable::Execute(xla::ExecuteOptions const&, absl::lts_20260526::Span<tsl::RCReference<xla::PjRtRawBufferInterface> const>, absl::lts_20260526::Span<tsl::RCReference<xla::PjRtRawBufferInterface> const>, xla::PjRtDeviceEventRefVector, xla::PjRtDeviceEventRefVector, bool, bool) && () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#18 0x0000f612568f03c8 in xla::CommonPjRtLoadedExecutable::ExecuteLaunch(xla::CommonPjRtLoadedExecutable::ExecuteLaunchArgs&, bool) const () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#19 0x0000f612568f0d74 in xla::CommonPjRtLoadedExecutable::ExecuteHelperOnSingleDevice(absl::lts_20260526::Span<xla::PjRtBuffer* const>, xla::RunId, int, int, xla::ExecuteOptions const&, bool, xla::PjRtDevice*) const () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#0  0x0000f614ba378dbc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#0  0x0000f614ba378dbc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#1  0x0000f614ba17eebc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#2  0x0000f614ba1b8f44 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#3  0x0000f614bae73d2c in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#4  0x0000f614bae74148 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#5  0x0000f614ba189cdc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#6  0x0000f614ba23a234 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#7  0x0000f614bae8971c in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#8  0x0000f614ba1360b0 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#9  0x0000f614ba136770 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#10 0x0000f614ba136c00 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#11 0x0000f614ba2b7acc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#12 0x0000f614ba2b3940 in cuMemcpyHtoDAsync_v2 () from /lib/aarch64-linux-gnu/libcuda.so.1
+#13 0x0000f614f618d7e8 in ?? () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#14 0x0000f614f615c244 in ?? () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#15 0x0000f614f61b7a44 in cudaMemcpyAsync () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#16 0x0000f6125e20246c in stream_executor::cuda::(anonymous namespace)::CopyOffsets(void*, unsigned long, long, long, CUstream_st*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#17 0x0000f6125e205a20 in stream_executor::cuda::(anonymous namespace)::CubSortPairsExecute(xla::ffi::AnyBuffer, xla::ffi::AnyBuffer, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, bool, long, CUstream_st*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#18 0x0000f6125e206678 in xla::ffi::Handler<(xla::ffi::ExecutionStage)3, absl::lts_20260526::Status (*)(xla::ffi::AnyBuffer, xla::ffi::AnyBuffer, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, bool, long, CUstream_st*), xla::ffi::internal::ArgTag<xla::ffi::AnyBuffer>, xla::ffi::internal::ArgTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, xla::ffi::internal::AttrTag<bool>, xla::ffi::internal::AttrTag<long>, xla::ffi::internal::CtxTag<xla::ffi::PlatformStream<CUstream_st*> > >::Call(XLA_FFI_CallFrame*) const () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#19 0x0000f6125e202770 in stream_executor::cuda::(anonymous namespace)::$_5::__invoke(XLA_FFI_CallFrame*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#0  0x0000f614ba378e24 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#0  0x0000f614ba378e24 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#1  0x0000f614ba17eebc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#2  0x0000f614ba1b8f44 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#3  0x0000f614bae73d2c in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#4  0x0000f614bae74148 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#5  0x0000f614ba189cdc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#6  0x0000f614ba23a234 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#7  0x0000f614bae8971c in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#8  0x0000f614ba1360b0 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#9  0x0000f614ba136770 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#10 0x0000f614ba136c00 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#11 0x0000f614ba2b7acc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#12 0x0000f614ba2b3940 in cuMemcpyHtoDAsync_v2 () from /lib/aarch64-linux-gnu/libcuda.so.1
+#13 0x0000f614f618d7e8 in ?? () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#14 0x0000f614f615c244 in ?? () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#15 0x0000f614f61b7a44 in cudaMemcpyAsync () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#16 0x0000f6125e20246c in stream_executor::cuda::(anonymous namespace)::CopyOffsets(void*, unsigned long, long, long, CUstream_st*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#17 0x0000f6125e205a20 in stream_executor::cuda::(anonymous namespace)::CubSortPairsExecute(xla::ffi::AnyBuffer, xla::ffi::AnyBuffer, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, bool, long, CUstream_st*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#18 0x0000f6125e206678 in xla::ffi::Handler<(xla::ffi::ExecutionStage)3, absl::lts_20260526::Status (*)(xla::ffi::AnyBuffer, xla::ffi::AnyBuffer, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, bool, long, CUstream_st*), xla::ffi::internal::ArgTag<xla::ffi::AnyBuffer>, xla::ffi::internal::ArgTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, xla::ffi::internal::AttrTag<bool>, xla::ffi::internal::AttrTag<long>, xla::ffi::internal::CtxTag<xla::ffi::PlatformStream<CUstream_st*> > >::Call(XLA_FFI_CallFrame*) const () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#19 0x0000f6125e202770 in stream_executor::cuda::(anonymous namespace)::$_5::__invoke(XLA_FFI_CallFrame*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#0  0x0000f614ba378dc4 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#0  0x0000f614ba378dc4 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#1  0x0000f614ba17eebc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#2  0x0000f614ba1b8f44 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#3  0x0000f614bae73d2c in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#4  0x0000f614bae74148 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#5  0x0000f614ba189cdc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#6  0x0000f614ba23a234 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#7  0x0000f614bae8971c in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#8  0x0000f614ba1360b0 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#9  0x0000f614ba136770 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#10 0x0000f614ba136c00 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#11 0x0000f614ba2b7acc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#12 0x0000f614ba2b3940 in cuMemcpyHtoDAsync_v2 () from /lib/aarch64-linux-gnu/libcuda.so.1
+#13 0x0000f614f618d7e8 in ?? () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#14 0x0000f614f615c244 in ?? () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#15 0x0000f614f61b7a44 in cudaMemcpyAsync () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#16 0x0000f6125e20246c in stream_executor::cuda::(anonymous namespace)::CopyOffsets(void*, unsigned long, long, long, CUstream_st*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#17 0x0000f6125e205a20 in stream_executor::cuda::(anonymous namespace)::CubSortPairsExecute(xla::ffi::AnyBuffer, xla::ffi::AnyBuffer, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, bool, long, CUstream_st*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#18 0x0000f6125e206678 in xla::ffi::Handler<(xla::ffi::ExecutionStage)3, absl::lts_20260526::Status (*)(xla::ffi::AnyBuffer, xla::ffi::AnyBuffer, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, bool, long, CUstream_st*), xla::ffi::internal::ArgTag<xla::ffi::AnyBuffer>, xla::ffi::internal::ArgTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, xla::ffi::internal::AttrTag<bool>, xla::ffi::internal::AttrTag<long>, xla::ffi::internal::CtxTag<xla::ffi::PlatformStream<CUstream_st*> > >::Call(XLA_FFI_CallFrame*) const () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#19 0x0000f6125e202770 in stream_executor::cuda::(anonymous namespace)::$_5::__invoke(XLA_FFI_CallFrame*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#0  0x0000f614ba378e24 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#0  0x0000f614ba378e24 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#1  0x0000f614ba17eebc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#2  0x0000f614ba1b8f44 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#3  0x0000f614bae73d2c in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#4  0x0000f614bae74148 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#5  0x0000f614ba189cdc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#6  0x0000f614ba23a234 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#7  0x0000f614bae8971c in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#8  0x0000f614ba1360b0 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#9  0x0000f614ba136770 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#10 0x0000f614ba136c00 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#11 0x0000f614ba2b7acc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#12 0x0000f614ba2b3940 in cuMemcpyHtoDAsync_v2 () from /lib/aarch64-linux-gnu/libcuda.so.1
+#13 0x0000f614f618d7e8 in ?? () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#14 0x0000f614f615c244 in ?? () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#15 0x0000f614f61b7a44 in cudaMemcpyAsync () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#16 0x0000f6125e20246c in stream_executor::cuda::(anonymous namespace)::CopyOffsets(void*, unsigned long, long, long, CUstream_st*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#17 0x0000f6125e205a20 in stream_executor::cuda::(anonymous namespace)::CubSortPairsExecute(xla::ffi::AnyBuffer, xla::ffi::AnyBuffer, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, bool, long, CUstream_st*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#18 0x0000f6125e206678 in xla::ffi::Handler<(xla::ffi::ExecutionStage)3, absl::lts_20260526::Status (*)(xla::ffi::AnyBuffer, xla::ffi::AnyBuffer, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, bool, long, CUstream_st*), xla::ffi::internal::ArgTag<xla::ffi::AnyBuffer>, xla::ffi::internal::ArgTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, xla::ffi::internal::AttrTag<bool>, xla::ffi::internal::AttrTag<long>, xla::ffi::internal::CtxTag<xla::ffi::PlatformStream<CUstream_st*> > >::Call(XLA_FFI_CallFrame*) const () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#19 0x0000f6125e202770 in stream_executor::cuda::(anonymous namespace)::$_5::__invoke(XLA_FFI_CallFrame*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#0  0x0000f614ba378e2c in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#0  0x0000f614ba378e2c in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#1  0x0000f614ba17eebc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#2  0x0000f614ba1b8f44 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#3  0x0000f614bae73d2c in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#4  0x0000f614bae74148 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#5  0x0000f614ba189cdc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#6  0x0000f614ba23a234 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#7  0x0000f614bae8971c in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#8  0x0000f614ba1360b0 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#9  0x0000f614ba136770 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#10 0x0000f614ba136c00 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#11 0x0000f614ba2b7acc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#12 0x0000f614ba2b3940 in cuMemcpyHtoDAsync_v2 () from /lib/aarch64-linux-gnu/libcuda.so.1
+#13 0x0000f614f618d7e8 in ?? () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#14 0x0000f614f615c244 in ?? () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#15 0x0000f614f61b7a44 in cudaMemcpyAsync () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#16 0x0000f6125e20246c in stream_executor::cuda::(anonymous namespace)::CopyOffsets(void*, unsigned long, long, long, CUstream_st*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#17 0x0000f6125e205a20 in stream_executor::cuda::(anonymous namespace)::CubSortPairsExecute(xla::ffi::AnyBuffer, xla::ffi::AnyBuffer, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, bool, long, CUstream_st*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#18 0x0000f6125e206678 in xla::ffi::Handler<(xla::ffi::ExecutionStage)3, absl::lts_20260526::Status (*)(xla::ffi::AnyBuffer, xla::ffi::AnyBuffer, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, bool, long, CUstream_st*), xla::ffi::internal::ArgTag<xla::ffi::AnyBuffer>, xla::ffi::internal::ArgTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, xla::ffi::internal::AttrTag<bool>, xla::ffi::internal::AttrTag<long>, xla::ffi::internal::CtxTag<xla::ffi::PlatformStream<CUstream_st*> > >::Call(XLA_FFI_CallFrame*) const () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#19 0x0000f6125e202770 in stream_executor::cuda::(anonymous namespace)::$_5::__invoke(XLA_FFI_CallFrame*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#0  0x0000f614ba378dc4 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#0  0x0000f614ba378dc4 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#1  0x0000f614ba17eebc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#2  0x0000f614ba1b8f44 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#3  0x0000f614bae73d2c in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#4  0x0000f614bae74148 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#5  0x0000f614ba189cdc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#6  0x0000f614ba23a234 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#7  0x0000f614bae8971c in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#8  0x0000f614ba1360b0 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#9  0x0000f614ba136770 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#10 0x0000f614ba136c00 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#11 0x0000f614ba2b7acc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#12 0x0000f614ba2b3940 in cuMemcpyHtoDAsync_v2 () from /lib/aarch64-linux-gnu/libcuda.so.1
+#13 0x0000f614f618d7e8 in ?? () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#14 0x0000f614f615c244 in ?? () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#15 0x0000f614f61b7a44 in cudaMemcpyAsync () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#16 0x0000f6125e20246c in stream_executor::cuda::(anonymous namespace)::CopyOffsets(void*, unsigned long, long, long, CUstream_st*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#17 0x0000f6125e205a20 in stream_executor::cuda::(anonymous namespace)::CubSortPairsExecute(xla::ffi::AnyBuffer, xla::ffi::AnyBuffer, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, bool, long, CUstream_st*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#18 0x0000f6125e206678 in xla::ffi::Handler<(xla::ffi::ExecutionStage)3, absl::lts_20260526::Status (*)(xla::ffi::AnyBuffer, xla::ffi::AnyBuffer, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, bool, long, CUstream_st*), xla::ffi::internal::ArgTag<xla::ffi::AnyBuffer>, xla::ffi::internal::ArgTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, xla::ffi::internal::AttrTag<bool>, xla::ffi::internal::AttrTag<long>, xla::ffi::internal::CtxTag<xla::ffi::PlatformStream<CUstream_st*> > >::Call(XLA_FFI_CallFrame*) const () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#19 0x0000f6125e202770 in stream_executor::cuda::(anonymous namespace)::$_5::__invoke(XLA_FFI_CallFrame*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#0  0x0000f614ba378e24 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#0  0x0000f614ba378e24 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#1  0x0000f614ba17eebc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#2  0x0000f614ba1b8f44 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#3  0x0000f614bae73d2c in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#4  0x0000f614bae74148 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#5  0x0000f614ba189cdc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#6  0x0000f614ba23a234 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#7  0x0000f614bae8971c in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#8  0x0000f614ba1360b0 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#9  0x0000f614ba136770 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#10 0x0000f614ba136c00 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#11 0x0000f614ba2b7acc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#12 0x0000f614ba2b3940 in cuMemcpyHtoDAsync_v2 () from /lib/aarch64-linux-gnu/libcuda.so.1
+#13 0x0000f614f618d7e8 in ?? () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#14 0x0000f614f615c244 in ?? () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#15 0x0000f614f61b7a44 in cudaMemcpyAsync () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#16 0x0000f6125e20246c in stream_executor::cuda::(anonymous namespace)::CopyOffsets(void*, unsigned long, long, long, CUstream_st*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#17 0x0000f6125e205a20 in stream_executor::cuda::(anonymous namespace)::CubSortPairsExecute(xla::ffi::AnyBuffer, xla::ffi::AnyBuffer, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, bool, long, CUstream_st*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#18 0x0000f6125e206678 in xla::ffi::Handler<(xla::ffi::ExecutionStage)3, absl::lts_20260526::Status (*)(xla::ffi::AnyBuffer, xla::ffi::AnyBuffer, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, bool, long, CUstream_st*), xla::ffi::internal::ArgTag<xla::ffi::AnyBuffer>, xla::ffi::internal::ArgTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, xla::ffi::internal::AttrTag<bool>, xla::ffi::internal::AttrTag<long>, xla::ffi::internal::CtxTag<xla::ffi::PlatformStream<CUstream_st*> > >::Call(XLA_FFI_CallFrame*) const () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#19 0x0000f6125e202770 in stream_executor::cuda::(anonymous namespace)::$_5::__invoke(XLA_FFI_CallFrame*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#0  0x0000f614ba378dc0 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#0  0x0000f614ba378dc0 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#1  0x0000f614ba17eebc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#2  0x0000f614ba1b8f44 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#3  0x0000f614bae73d2c in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#4  0x0000f614bae74148 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#5  0x0000f614ba189cdc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#6  0x0000f614ba23a234 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#7  0x0000f614bae8971c in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#8  0x0000f614ba1360b0 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#9  0x0000f614ba136770 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#10 0x0000f614ba136c00 in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#11 0x0000f614ba2b7acc in ?? () from /lib/aarch64-linux-gnu/libcuda.so.1
+#12 0x0000f614ba2b3940 in cuMemcpyHtoDAsync_v2 () from /lib/aarch64-linux-gnu/libcuda.so.1
+#13 0x0000f614f618d7e8 in ?? () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#14 0x0000f614f615c244 in ?? () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#15 0x0000f614f61b7a44 in cudaMemcpyAsync () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_cuda13_plugin/../nvidia/cu13/lib/libcudart.so.13
+#16 0x0000f6125e20246c in stream_executor::cuda::(anonymous namespace)::CopyOffsets(void*, unsigned long, long, long, CUstream_st*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#17 0x0000f6125e205a20 in stream_executor::cuda::(anonymous namespace)::CubSortPairsExecute(xla::ffi::AnyBuffer, xla::ffi::AnyBuffer, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, bool, long, CUstream_st*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#18 0x0000f6125e206678 in xla::ffi::Handler<(xla::ffi::ExecutionStage)3, absl::lts_20260526::Status (*)(xla::ffi::AnyBuffer, xla::ffi::AnyBuffer, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::AnyBuffer>, xla::ffi::Result<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, bool, long, CUstream_st*), xla::ffi::internal::ArgTag<xla::ffi::AnyBuffer>, xla::ffi::internal::ArgTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::AnyBuffer>, xla::ffi::internal::RetTag<xla::ffi::Buffer<(xla::PrimitiveType)6, 1ul> >, xla::ffi::internal::AttrTag<bool>, xla::ffi::internal::AttrTag<long>, xla::ffi::internal::CtxTag<xla::ffi::PlatformStream<CUstream_st*> > >::Call(XLA_FFI_CallFrame*) const () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+#19 0x0000f6125e202770 in stream_executor::cuda::(anonymous namespace)::$_5::__invoke(XLA_FFI_CallFrame*) () from /home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax_plugins/xla_cuda13/xla_cuda_plugin.so
+DONE

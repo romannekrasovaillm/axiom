@@ -124,6 +124,10 @@ Verification status (honest, same standard as milestones 1-2)
   GPU-less refusal, the padding path and the inert remat flag;
 * the *launch-count claim at the API seam* is pinned: exactly one kernel call
   per layer-pass (the per-chunk ``mosaic`` body called it once per chunk);
+* the *build/jit caches* are pinned at the same seam: one static spec -> one
+  built body and one jitted run (a spy on the builders counts the rebuilds),
+  so the Python-side cost of a step is paid once per geometry instead of once
+  per call -- see the cache note above :func:`_forward_run`;
 * the kernel *lowers* for sm_121 under the skill's patched lowering (the
   ``lower_check`` contract: every live case OK, oversize cases honestly
   skipped by :func:`valid_config`), and the lowered module carries exactly one
@@ -157,6 +161,7 @@ milestone 1):
 from __future__ import annotations
 
 import dataclasses
+import functools
 
 import jax
 import jax.numpy as jnp
@@ -344,8 +349,17 @@ def _mma_m_warps(m: int) -> int:
     return 1 if m < 64 else 4
 
 
+@functools.lru_cache(maxsize=8)
 def _build_kernel(T, C, H, dk, dv, tile, dtype, state_dtype):
-    """Build the persistent Mosaic GPU kernel: one program per head, all chunks."""
+    """Build the persistent Mosaic GPU kernel: one program per head, all chunks.
+
+    Cached by the static spec: the arguments are primitives, so the shape/type
+    tuple *is* the key.  The measured reason is in the cache note above
+    :func:`_forward_run` (54 rebuilds/step at ~0.5 s of Python each were the
+    barrier); the body is a pure function of the spec -- nothing device- or
+    context-dependent is captured by it -- and ``maxsize=8`` holds the
+    campaign's one or two geometries with room to spare.
+    """
     from jax.experimental import pallas as pl
     from jax.experimental.pallas import mosaic_gpu as plgpu
 
@@ -644,6 +658,33 @@ class _KernelSpec:
     state_dtype: str
 
 
+#: Build-and-jit caches of the persistent kernels: one static spec -> one built
+#: body AND one ``jax.jit`` wrapper.  The measured reason (the delta's GB10
+#: profile of the full step): ``kernel``/``kernel_bwd`` re-ran the whole Mosaic
+#: body construction and wrapped it in a *fresh* ``jax.jit`` on every call --
+#: 54 calls per step (18 layers x 3 passes), priced at ~0.5 s of Python each by
+#: that profile, which is what the >1 ms GPU gap at each custom-call boundary
+#: was made of (step 27.7 s against ~7.5 s of CUDA API and 0.19 s of GPU work).
+#: This node measures the same split on the pieces (C=32, dk=dv=128, T=256):
+#: the builder costs 37 ms (it builds the *body*, so it is T- and H-invariant),
+#: creating the ``jax.jit`` wrapper is itself cheap (~0.1 ms) but it carries no
+#: executable and re-traces on its first call (35 ms) -- so the wrapper is
+#: cached as well, not only the build.  A cached call is a lookup (~2 us).
+#:
+#: Substitution contract (the one :data:`_CC_SCANS` states): the dispatchers
+#: resolve ``_build_kernel``/``_build_bwd_kernel`` on this module at call time,
+#: so observing or replacing them keeps working through these caches.
+#:
+#: Invariant: one spec -> one build -> one jitted run.  The call semantics do
+#: not change (same arguments, same result -- the parity tests pin them).
+
+
+@functools.lru_cache(maxsize=8)
+def _forward_run(T, C, H, dk, dv, tile, dtype, state_dtype):
+    """The jitted persistent forward run of one static spec (see the cache note)."""
+    return jax.jit(_build_kernel(T, C, H, dk, dv, tile, dtype, state_dtype))
+
+
 def kernel(q, k, v, alpha, beta32, S, *, tile=16, chunk=CHUNK):
     """Persistent scan: ``(q, k, v, alpha, beta32, S) -> (o, S_new)``, one launch.
 
@@ -678,9 +719,9 @@ def kernel(q, k, v, alpha, beta32, S, *, tile=16, chunk=CHUNK):
             f"no silent fallback")
     spec = _KernelSpec(T, C, H, dk, dv, int(tile), jnp.dtype(dt).name,
                        jnp.dtype(STATE_DTYPE).name)
-    run = _build_kernel(spec.T, spec.C, spec.H, spec.dk, spec.dv, spec.tile,
-                        spec.dtype, spec.state_dtype)
-    return jax.jit(run)(q, k, v, alpha, beta32, S)
+    run = _forward_run(spec.T, spec.C, spec.H, spec.dk, spec.dv, spec.tile,
+                       spec.dtype, spec.state_dtype)
+    return run(q, k, v, alpha, beta32, S)
 
 
 # ---------------------------------------------------------------------------
@@ -1005,6 +1046,7 @@ class _BwdKernelSpec:
     chain_dtype: str
 
 
+@functools.lru_cache(maxsize=8)
 def _build_bwd_kernel(T, C, H, dk, dv, tile, dtype, state_dtype, *,
                       _enable_a=True, _enable_b=True):
     """Build the persistent backward Mosaic GPU kernel: one program per head.
@@ -1015,6 +1057,11 @@ def _build_bwd_kernel(T, C, H, dk, dv, tile, dtype, state_dtype, *,
     runs the analytic adjoint, accumulates the cotangents and carries ``dS``
     in the SMEM state.  The GMEM scratch is an ``out_type`` buffer written in
     loop A and read in loop B (read-after-write ordered within a program).
+
+    Cached by the static spec, like :func:`_build_kernel`: the shape/type
+    arguments are primitives (the debug flags ``_enable_a``/``_enable_b`` stay
+    part of the key), so the tuple *is* the cache key -- see the cache note
+    above :func:`_forward_run`.
     """
     from jax.experimental import pallas as pl
     from jax.experimental.pallas import mosaic_gpu as plgpu
@@ -1511,6 +1558,17 @@ def _build_bwd_kernel(T, C, H, dk, dv, tile, dtype, state_dtype, *,
     )
 
 
+@functools.lru_cache(maxsize=8)
+def _backward_run(T, C, H, dk, dv, tile, dtype, state_dtype):
+    """The jitted persistent backward run of one static spec (see the cache note).
+
+    Same invariant as :func:`_forward_run`.  The carried chain dtype is *not* a
+    builder argument (``BWD_CHAIN_DTYPE`` is fixed by the design), so it is not
+    part of the key either.
+    """
+    return jax.jit(_build_bwd_kernel(T, C, H, dk, dv, tile, dtype, state_dtype))
+
+
 def kernel_bwd(q, k, v, alpha, beta32, S, do, dS, *, tile=16, chunk=CHUNK):
     """Persistent backward pass: ``(q, k, v, alpha, beta32, S, do, dS)`` ->
     ``(dq, dk, dv, dalpha, dbeta32, dS_in)``, one launch per layer-pass.
@@ -1548,8 +1606,8 @@ def kernel_bwd(q, k, v, alpha, beta32, S, do, dS, *, tile=16, chunk=CHUNK):
     spec = _BwdKernelSpec(T, C, H, dk, dv, int(tile), jnp.dtype(dt).name,
                           jnp.dtype(BWD_STATE_DTYPE).name,
                           jnp.dtype(BWD_CHAIN_DTYPE).name)
-    run = _build_bwd_kernel(spec.T, spec.C, spec.H, spec.dk, spec.dv, spec.tile,
-                            spec.dtype, spec.state_dtype)
-    dq, dk_o, dv_o, da, db, ds_in, _chain, _chain_t, _dvt = jax.jit(run)(
+    run = _backward_run(spec.T, spec.C, spec.H, spec.dk, spec.dv, spec.tile,
+                        spec.dtype, spec.state_dtype)
+    dq, dk_o, dv_o, da, db, ds_in, _chain, _chain_t, _dvt = run(
         q, k, v, alpha, beta32, S, do, dS)
     return dq, dk_o, dv_o, da, db, ds_in

@@ -768,6 +768,83 @@ def test_the_lowered_module_carries_the_chunk_loop():
 
 
 # ---------------------------------------------------------------------------
+# the build/jit caches: one static spec -> one built and jitted run
+#
+# The measured barrier of the full step (GB10 profile, 18 layers x 3 passes):
+# ``kernel``/``kernel_bwd`` re-executed the whole Mosaic body construction and
+# wrapped it in a *fresh* ``jax.jit`` on every one of the 54 calls/step, which
+# is what the >1 ms GPU gaps at the custom-call boundaries were made of.  The
+# caches below collapse that to one build and one jit per static spec.
+# ---------------------------------------------------------------------------
+
+
+def test_kernel_and_kernel_bwd_serve_a_spec_from_the_cache(monkeypatch):
+    """The second call at the same geometry rebuilds nothing and jits nothing.
+
+    Distinguishing power: a spy on ``_build_kernel`` / ``_build_bwd_kernel``
+    counts the *Python-side* builds.  Before the caches the count is one per
+    call (the measured 54 rebuilds/step); with them the second call at the
+    same shapes must not reach the builder at all, and the result must be the
+    first one -- the call semantics do not change.
+
+    The spy returns a plain jnp body, so the test needs no Mosaic device: the
+    cache key and the reuse are exercised on this CPU node, where the exact
+    same code path runs before the jit hands the build to the compiler.
+    """
+    fwd_builds, bwd_builds = [], []
+
+    def fake_forward_build(*spec):
+        fwd_builds.append(spec)
+
+        def run(q, k, v, alpha, beta32, S):
+            return q.astype(jnp.float32) * 2.0, S + 1.0
+
+        return run
+
+    def fake_backward_build(*spec):
+        bwd_builds.append(spec)
+
+        def run(q, k, v, alpha, beta32, S, do, dS):
+            return (q, k, v, alpha, beta32, S, S, do, dS)
+
+        return run
+
+    try:
+        persist._forward_run.cache_clear()
+        persist._backward_run.cache_clear()
+        monkeypatch.setattr(persist, "_build_kernel", fake_forward_build)
+        monkeypatch.setattr(persist, "_build_bwd_kernel", fake_backward_build)
+        # T=64 is used by no other test, so the caches start cold for this spec.
+        fwd = persist.make_inputs(jax.random.key(0), T=64, C=32, H=2, dk=128, dv=128)
+        first = persist.kernel(*fwd, chunk=32)
+        second = persist.kernel(*fwd, chunk=32)
+        assert len(fwd_builds) == 1, (
+            f"kernel() rebuilt the spec {len(fwd_builds)} times for two calls")
+        assert all(jnp.array_equal(a, b) for a, b in zip(first, second))
+        assert tuple(first[0].shape) == (64, 2 * 128)
+        # The jitted wrapper itself is shared, not re-created per call: a fresh
+        # ``jax.jit`` carries no executable cache and re-traces.  ``spec`` is
+        # the T=64 key the two calls above already materialised, ``other`` (H=4)
+        # is a different key -- both go through the spy, so no device is needed.
+        spec = (64, 32, 2, 128, 128, 16, "bfloat16", "bfloat16")
+        other = (64, 32, 4, 128, 128, 16, "bfloat16", "bfloat16")
+        assert persist._forward_run(*spec) is persist._forward_run(*spec)
+        assert persist._forward_run(*spec) is not persist._forward_run(*other)
+        assert len(fwd_builds) == 2, "the other spec is a second build, not a reuse"
+
+        bwd = persist.make_bwd_inputs(jax.random.key(0), T=64, C=32, H=2, dk=128, dv=128)
+        bwd_first = persist.kernel_bwd(*bwd, chunk=32)
+        bwd_second = persist.kernel_bwd(*bwd, chunk=32)
+        assert len(bwd_builds) == 1, (
+            f"kernel_bwd() rebuilt the spec {len(bwd_builds)} times for two calls")
+        assert all(jnp.array_equal(a, b) for a, b in zip(bwd_first, bwd_second))
+        assert len(bwd_first) == 6  # (dq, dk, dv, dalpha, dbeta32, dS_in)
+    finally:
+        persist._forward_run.cache_clear()
+        persist._backward_run.cache_clear()
+
+
+# ---------------------------------------------------------------------------
 # the backward kernel (variant B): its declared numerics on CPU
 # ---------------------------------------------------------------------------
 

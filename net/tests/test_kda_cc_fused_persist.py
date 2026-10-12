@@ -936,7 +936,11 @@ def _emulate_bf16_bwd(q, k, v, alpha, beta32, S, do, dS, *, tile=16, chunk=C):
                     rq = (row.astype(f32)
                           * (rf.astype(bf).astype(f32) * rowmask)).astype(bf)
                     colmask = (ar < p + tile).astype(f32)[:, None]
-                    cf = jnp.exp(anchor - G)
+                    # The milestone-4c clamp of the column factor (the kernel's
+                    # ``COL_EXP_BUDGET``): computed on the whole chunk, the raw
+                    # exp is inf beyond the tile and ``inf * 0 == nan`` on the
+                    # mask.  In-tile values are unchanged by the clamp.
+                    cf = jnp.exp(jnp.minimum(anchor - G, persist.COL_EXP_BUDGET))
                     ck = (kk.astype(f32)
                           * (cf * colmask).astype(bf).astype(f32)).astype(bf)
                     acc = acc + rq.astype(f32) @ ck.astype(f32).T
@@ -1030,7 +1034,9 @@ def _emulate_bf16_bwd(q, k, v, alpha, beta32, S, do, dS, *, tile=16, chunk=C):
                 dT = (daqk * rm).astype(bf).astype(f32)
                 anchor = jnp.sum(G * (ar == p)[:, None].astype(f32), axis=0)
                 rf = jnp.exp(jnp.minimum(G - anchor[None, :], 0.0))
-                cf = jnp.exp(anchor[None, :] - G)
+                # the milestone-4c clamp (as in the kernel's adjoint loops):
+                # beyond the tile the factor is inf and the far-row rf is 0.
+                cf = jnp.exp(jnp.minimum(anchor[None, :] - G, persist.COL_EXP_BUDGET))
                 part = dT @ (kv.astype(f32) * cf).astype(bf).astype(f32)
                 dr_a = dr_a + rf * part
                 part = dT.T @ (qv.astype(f32) * rf).astype(bf).astype(f32)
@@ -1070,7 +1076,9 @@ def _emulate_bf16_bwd(q, k, v, alpha, beta32, S, do, dS, *, tile=16, chunk=C):
                 dT = (dlv * rm).astype(bf).astype(f32)
                 anchor = jnp.sum(G * (ar == p)[:, None].astype(f32), axis=0)
                 rf = jnp.exp(jnp.minimum(G - anchor[None, :], 0.0))
-                cf = jnp.exp(anchor[None, :] - G)
+                # the milestone-4c clamp (as in the kernel's adjoint loops):
+                # beyond the tile the factor is inf and the far-row rf is 0.
+                cf = jnp.exp(jnp.minimum(anchor[None, :] - G, persist.COL_EXP_BUDGET))
                 part = dT @ (kv.astype(f32) * cf).astype(bf).astype(f32)
                 dr_k = dr_k + rf * part
                 part = dT.T @ (kbf * rf).astype(bf).astype(f32)
@@ -1189,3 +1197,98 @@ def test_persistent_b_4step_training_parity(monkeypatch):
         err = _max_abs(got, ref)
         assert err <= BF16_RTOL * scale, (
             f"final d{name}: max|d|={err:.3e} scale={scale:.3e}")
+
+
+# ---------------------------------------------------------------------------
+# milestone 4c: the 10-step training parity (the second nan stabilization)
+# ---------------------------------------------------------------------------
+
+
+def _parity_arms(monkeypatch, cfg, params, x, w, lr, steps):
+    """Both arms of a training parity run: the jax body and variant B."""
+    def loss(p):
+        return jnp.sum(kda.apply_chunked_cc(p, cfg, x, chunk_size=C) * w)
+
+    monkeypatch.setenv("AXIOM_KDA_CC_IMPL", "jax")
+    losses_j, params_j = _sgd_arm(loss, params, lr, steps)
+    _enable_persistent_on_cpu(monkeypatch)
+    losses_p, params_p = _sgd_arm(loss, params, lr, steps)
+    return losses_j, params_j, losses_p, params_p
+
+
+def _assert_nan_gate_and_parity(losses_j, params_j, losses_p, params_p, label):
+    """The 4b/4c contract: every step finite; losses and params at 2e-2."""
+    assert all(jnp.isfinite(v) for v in losses_j), f"{label} jax losses: {losses_j}"
+    assert all(jnp.isfinite(v) for v in losses_p), (
+        f"{label} persistent losses (nan gate): {losses_p}")
+    assert all(jnp.all(jnp.isfinite(p)) for p in
+               jax.tree_util.tree_leaves(params_p)), f"{label} params: non-finite"
+    for k, (lp, lj) in enumerate(zip(losses_p, losses_j)):
+        scale = max(1.0, abs(lj))
+        assert abs(lp - lj) <= BF16_RTOL * scale, (
+            f"{label} step {k}: persistent loss {lp!r} vs jax {lj!r}")
+    for name in params_j._fields:
+        got = getattr(params_p, name)
+        ref = getattr(params_j, name)
+        if got is None or ref is None:
+            assert got is None and ref is None, f"{label} {name}"
+            continue
+        scale = max(1.0, float(jnp.max(jnp.abs(ref))))
+        err = _max_abs(got, ref)
+        assert err <= BF16_RTOL * scale, (
+            f"{label} final d{name}: max|d|={err:.3e} scale={scale:.3e}")
+
+
+@pytest.mark.parametrize("z0", [0.22, 6.0], ids=["campaign-like", "boundary-alpha"])
+def test_persistent_b_10step_training_parity(monkeypatch, z0):
+    """10 training steps through variant B == the same through the jax body.
+
+    Two regimes, both at the model's own parameterisation, 10 jit-SGD steps
+    with an update after every loss, the milestone-4b tolerances:
+
+    * ``campaign-like`` (``z0 = 0.22``): ``|g| = 5 sigma(0.22) = 2.774`` per
+      token uniformly -- the milestone-4b window -- extended to 10 steps, the
+      length at which the GB10 battery (ADR-054 Am.8) still lost the persistent
+      arm while the jax control ran clean 10/10;
+    * ``boundary-alpha`` (``z0 = 6.0``): ``|g| = 5 sigma(6.0) = 4.99``, i.e.
+      the decay at its model bound ``|g_min| = 5`` (``alpha = e^-4.99``) -- the
+      regime the weight updates drive the decay projections into within a few
+      steps, and the **milestone-4c nan gate**.
+
+    The 4c mechanism, located on CPU by this test (red before the fix, at the
+    *first* call: the step-0 loss of the persistent arm is already nan while
+    the jax arm is finite): the tile-anchored column factor of the scores,
+    ``exp(G_p - G_i)``, is evaluated on the **whole** chunk and the tile mask
+    multiplies the product afterwards.  The in-tile reach is a constant of the
+    model (``tile - 1`` positions, the ``net.kda._cc_tile`` budget), but for
+    the rows *beyond* the tile the exponent grows with the chunk: at
+    ``|la| = 4.99`` it crosses ``ln(3.4e38) = 88.72`` around position ``18``
+    (``18 * 4.99 = 89.8``), the raw ``exp`` returns ``inf``, and the
+    masked-out rows compute ``inf * 0 = nan`` -- in the forward as well as in
+    both score adjoints of the backward (where the far-row ``rf`` has already
+    underflown to zero, so the adjoint accumulates ``0 * inf`` directly).
+    The jax body is immune because its factor argument is *sliced* to the tile
+    (``net.kda._cc_scores``); the persistent kernel is fixed by clamping the
+    column exponent at the declared budget ``COL_EXP_BUDGET`` (in-tile values
+    are bitwise unchanged; the masked rows become ``e^80 * 0 = 0``).
+
+    At the campaign-like decay the same quantity reaches only ``2.2e37``
+    (inside fp32) -- which is why the real run's steps 1-4 were clean and the
+    loss flipped to nan once the updates pushed ``|la|`` past ~2.96 (the
+    ``88.72 / 30`` position-average of the first tile's tail).
+    """
+    H, T, seed, lr, steps = 2, 256, 0, 1e-4, 10
+    cfg = _cfg(H)
+    params = kda.init_kda(jr.PRNGKey(seed), cfg)
+    params = params._replace(
+        W_a_down=jnp.zeros_like(params.W_a_down),
+        W_a_up=jnp.zeros_like(params.W_a_up),
+        b_alpha=jnp.full_like(params.b_alpha, z0),
+        A=jnp.zeros_like(params.A),
+    )
+    x = jr.normal(jr.PRNGKey(seed + 5), (T, cfg.hidden))
+    w = jr.normal(jr.PRNGKey(seed + 6), (T, cfg.hidden))
+    losses_j, params_j, losses_p, params_p = _parity_arms(
+        monkeypatch, cfg, params, x, w, lr, steps)
+    _assert_nan_gate_and_parity(losses_j, params_j, losses_p, params_p,
+                                f"10-step z0={z0}")

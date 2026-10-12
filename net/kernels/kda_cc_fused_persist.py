@@ -892,11 +892,28 @@ def cc_scan(q, k, v, alpha, beta32, S, tile=16, chunk=CHUNK):
 # reformulations the kernel uses to keep the operand set small (both mirrored
 # by the CPU emulation and pinned against :func:`reference_bwd_scan`):
 #
-# * the decay-ratio factors of the score adjoints are evaluated factored,
-#   ``E[c,i,d] = gamma_c/d / gamma_i/d`` (the same identity the forward kernel
-#   rebuilds tile-wise);
+# * the decay-ratio factors of the score adjoints are evaluated **tile-wise
+#   anchored**, ``E[c,i,d] = exp(G_c - G_p) * exp(G_p - G_i)`` with ``p`` the
+#   first row of the row-tile of ``c`` -- the same identity the forward kernel
+#   rebuilds tile-wise in ``_score_matrix``.  Both factors stay representable
+#   (the row one is <= 1, the column one is bounded by the tile budget
+#   ``exp(_CC_EXP_BUDGET)``), and no reciprocal of ``exp(G)`` is ever formed:
+#   the first formulation of this adjoint used the *flat* factors
+#   ``k exp(-G)``/``q exp(+G)``, whose fp32 accumulator overflows as soon as a
+#   chunk's cumulative log-decay sinks below ``ln(2^-126) = -87.34`` (this
+#   backend flushes ``exp`` subnormals to zero, so ``1/exp(G) = inf`` and
+#   ``gc / gamma = nan``) -- measured on the milestone-4b mini-run and fixed
+#   here (ADR-054 Am.6);
+# * ``lam = gamma^{c+1->C}`` is computed in the direct ``exp(sum la - G)``
+#   form of the forward phase 4, not as ``gc / gamma`` (same underflow);
 # * ``dL = -(Yw W^T + Yu U^T)`` with ``Yw = -Yu S^T`` collapses to
 #   ``dL = -Yu vt^T`` (matrix associativity; exact in real arithmetic).
+#
+# The carried ``dS`` state stays bf16 in SMEM (the measured SMEM budget: an
+# fp32 carry needs 125 440 B against the 99 KiB GB10 block, see
+# :func:`_bwd_smem_floor_bytes`); every reduction and accumulation along the
+# cotangent chain is fp32, and the ``dvt`` crossing between the two adjoint
+# scopes is fp32 (its mma operands stay the declared bf16 storages).
 #
 # The declared bf16 rounding points are mirrored by
 # ``net/tests/test_kda_cc_fused_persist.py`` (:func:`_emulate_bf16_bwd`), which
@@ -936,7 +953,7 @@ def _bwd_smem_floor_bytes(C, dk, dv, itemsize=2, state_itemsize=2):
     solve = 2 * C * C + C * dk                             # forward solve set
     staging = dv * dk                                      # S^T staging (state pass)
     phase4 = 4 * C * dk + dk                               # state pass phase 4
-    adj1 = C * dv + 2 * C * dk + 2 * C * C                 # adjoint: arguments
+    adj1 = C * dv + 2 * C * dk + C * C                     # adjoint: arguments
     adj2 = C * dk + 2 * C * dv + 5 * C * C + dk            # adjoint: solves+staging
     pool = max(dec_scores, solve, staging, phase4, adj1, adj2)
     return (itemsize * (persistent + pool) + state_itemsize * dk * dv
@@ -1244,9 +1261,21 @@ def _build_bwd_kernel(T, C, H, dk, dv, tile, dtype, state_dtype, *,
                                        la_hi_t, la_lo_t)
                 aqk_s[...] = acc_qk.astype(dt)
                 g_s[...] = jnp.exp(jnp.sum(la, axis=0)).astype(dt)
-                return G
+                # lam = gamma^{c+1->C} = exp(sum_c la - G) in the *direct* form
+                # of the forward kernel's phase 4 (the same pattern anchor with
+                # p = C-1).  The former ``gc / gamma`` form divided by an
+                # ``exp(G)`` that underflows to zero (G below ln(2^-126) =
+                # -87.34 on this backend) and returned 0/0 = nan on real
+                # distributions -- ADR-054 Am.6/4b, located at this stage.
+                pat_s[...] = (cidx2 <= C - 1).astype(dt)
+                glast = plgpu.mma(_zero((C, dk), ACC_C),
+                                  _l(pat_s, L_C), _l(la_hi_t.T, R_C))
+                glast = plgpu.mma(glast,
+                                  _l(pat_s, L_C), _l(la_lo_t.T, R_C))
+                lam = jnp.exp(jnp.minimum(glast - G, 0.0))
+                return G, lam
 
-            G = pl.run_scoped(
+            G, lam = pl.run_scoped(
                 _b1,
                 plgpu.SMEM((dk, C), dt), plgpu.SMEM((dk, C), dt),
                 plgpu.SMEM((C, dk), dt), plgpu.SMEM((C, C), dt),
@@ -1271,7 +1300,7 @@ def _build_bwd_kernel(T, C, H, dk, dv, tile, dtype, state_dtype, *,
 
             # --- adjoint stage 1: dS part 1, daqk, dvt, dY input, dgq, the
             #     aqk score adjoint and the dq output (one sibling scope) -----
-            def _adj1(do_s, gq_t, y_s, daqk_s, pat_s):
+            def _adj1(do_s, gq_t, y_s, pat_s):
                 gcv = _l(g_s, ACC_DK.reduce(1)).astype(f32)
                 gc_b = plgpu.layout_cast(
                     jax.lax.broadcast_in_dim(gcv, (dk, dv), (0,)), ACC_DK)
@@ -1282,27 +1311,45 @@ def _build_bwd_kernel(T, C, H, dk, dv, tile, dtype, state_dtype, *,
                 pat_s[...] = (ridx2 >= cidx2).astype(dt)
                 daqk = plgpu.mma(_zero((C, C), ACC_C), _l(do_s, L_C),
                                  _l(vw_t, R_C))
-                mk = _l(pat_s, ACC_C).astype(f32)
-                daqk_s[...] = (daqk * mk).astype(dt)
-                emg = 1.0 / gam
-                gcv_c = _l(g_s, ACC_C.reduce(0)).astype(f32)
-                lam_b = plgpu.layout_cast(
-                    jax.lax.broadcast_in_dim(gcv_c, (C, dk), (1,)), ACC_C)
-                lam = lam_b / gam
+                daqk = daqk * _l(pat_s, ACC_C).astype(f32)       # tril mask
                 y_s[...] = (lam * kvf).astype(dt)
                 dvt = plgpu.mma(_zero((C, dv), ACC_C), _l(y_s, L_C),
                                 _l(st_s, R_C))
                 dvt = plgpu.mma(dvt, _l(aqk_s.T, L_C), _l(do_s, R_C))
-                dvt_g.at[h, i][...] = dvt.astype(dt)   # crossing -> stage 2
+                dvt_g.at[h, i][...] = dvt              # fp32 crossing -> stage 2
                 dgq = plgpu.mma(_zero((C, dk), ACC_C), _l(do_s, L_C),
                                 _l(scg_nat.at[h, i].T, R_C))
                 st_s[...] = acc.astype(stdt)      # dS part 1 (old dS reads done)
-                y_s[...] = (kvf * emg).astype(dt)
-                dr_a = plgpu.mma(_zero((C, dk), ACC_C), _l(daqk_s, L_C),
-                                 _l(y_s, R_C)) * gam
-                y_s[...] = (qv * gam).astype(dt)
-                dc_a = plgpu.mma(_zero((C, dk), ACC_C), _l(daqk_s.T, L_C),
-                                 _l(y_s, R_C)) * emg
+                # The aqk score adjoint, tile-factored exactly like the forward
+                # `_score_matrix`: E[c,i] = exp(G_c - G_p) * exp(G_p - G_i)
+                # against the tile's own first row p.  Both factors stay
+                # representable (the row one is <= 1, the column one <=
+                # exp(|g_min| (tile-1)) of the tile budget), and -- the point --
+                # no reciprocal of exp(G) is ever formed.  The former flat form
+                # ``(dT @ (k exp(-G))) exp(G)`` overflowed the fp32 accumulator
+                # (exp(-G) ~ e^87 against the underflowed exp(G)) and produced
+                # inf/nan on the real run (ADR-054 Am.6/4b).
+                dr_a = _zero((C, dk), ACC_C)
+                dc_a = _zero((C, dk), ACC_C)
+                for p in range(0, C, tile):
+                    pat_s[...] = ((ridx2 >= p) & (ridx2 < p + tile)).astype(dt)
+                    rm = _l(pat_s, ACC_C).astype(f32)
+                    pat_s[...] = (daqk * rm).astype(dt)      # the tile's rows
+                    y_s[...] = (ridx == p).astype(dt)        # anchor row one-hot
+                    oh = _l(y_s, ACC_C).astype(f32)
+                    anchor_b = plgpu.layout_cast(
+                        jax.lax.broadcast_in_dim(
+                            jnp.sum(G * oh, axis=0), (C, dk), (1,)), ACC_C)
+                    rf = jnp.exp(jnp.minimum(G - anchor_b, 0.0))   # rows: <= 1
+                    cf = jnp.exp(anchor_b - G)                # cols: tile budget
+                    y_s[...] = (kvf * cf).astype(dt)
+                    part = plgpu.mma(_zero((C, dk), ACC_C),
+                                     _l(pat_s, L_C), _l(y_s, R_C))
+                    dr_a = dr_a + plgpu.layout_cast(rf * part, ACC_C)
+                    y_s[...] = (qv * rf).astype(dt)
+                    part = plgpu.mma(_zero((C, dk), ACC_C),
+                                     _l(pat_s.T, L_C), _l(y_s, R_C))
+                    dc_a = dc_a + plgpu.layout_cast(cf * part, ACC_C)
                 dqh = dgq * gam + dr_a
                 dqg.at[pl.ds(i * C, C), pl.ds(qo, dk)][...] = dqh.astype(dt)
                 dkh = dc_a
@@ -1313,7 +1360,6 @@ def _build_bwd_kernel(T, C, H, dk, dv, tile, dtype, state_dtype, *,
                 _adj1,
                 plgpu.SMEM((C, dv), dt), plgpu.SMEM((dk, C), dt),
                 plgpu.SMEM((C, dk), dt), plgpu.SMEM((C, C), dt),
-                plgpu.SMEM((C, C), dt),
             )
 
             # --- adjoint stage 2: the carried state, the transposed solves,
@@ -1364,22 +1410,38 @@ def _build_bwd_kernel(T, C, H, dk, dv, tile, dtype, state_dtype, *,
                 dl_s[...] = (dlv * mks).astype(dt)
                 kbf = kvf * beta_c
                 dG2 = dG + (ywv * kbf) * gam
-                dkh2 = dkh + ywv * (gam * kbf)
+                # dk += Yw * (gamma * beta) -- the derivative of xw = gamma*k*beta
+                # w.r.t. k.  The former ``gam * kbf`` carried an extra factor k
+                # (found by the milestone-4b CPU pin against the gradchecked
+                # adjoint, 17 % on dk; mirrored below in the emulation).
+                dkh2 = dkh + ywv * (gam * beta_c)
                 dbv = (jnp.sum(ywv * gam * kvf, axis=1)
                        + jnp.sum(yuv * vvf, axis=1))
                 dvg.at[pl.ds(i * C, C), pl.ds(vo, dv)][...] = (yuv * beta_v).astype(dt)
-                # -- the dL score adjoint, factored decay ratios --
-                emg = 1.0 / gam
-                y_s[...] = (kvf * emg).astype(dt)      # ccol / gamma
-                dr_k = plgpu.mma(_zero((C, dk), ACC_C), _l(dl_s, L_C),
-                                 _l(y_s, R_C)) * gam
-                y_s[...] = (kbf * gam).astype(dt)      # ccol * beta * gamma
-                dc_k = plgpu.mma(_zero((C, dk), ACC_C), _l(dl_s.T, L_C),
-                                 _l(y_s, R_C)) * emg
+                # -- the dL score adjoint, same tile-factored ratios -----------
+                dlr = _l(dl_s, ACC_C).astype(f32)      # the stored (bf16) dL
+                dr_k = _zero((C, dk), ACC_C)
+                dc_k = _zero((C, dk), ACC_C)
+                for p in range(0, C, tile):
+                    pat_s[...] = ((ridx2 >= p) & (ridx2 < p + tile)).astype(dt)
+                    rm = _l(pat_s, ACC_C).astype(f32)
+                    pat_s[...] = (dlr * rm).astype(dt)       # the tile's rows
+                    y_s[...] = (ridx == p).astype(dt)        # anchor row one-hot
+                    oh = _l(y_s, ACC_C).astype(f32)
+                    anchor_b = plgpu.layout_cast(
+                        jax.lax.broadcast_in_dim(
+                            jnp.sum(G * oh, axis=0), (C, dk), (1,)), ACC_C)
+                    rf = jnp.exp(jnp.minimum(G - anchor_b, 0.0))
+                    cf = jnp.exp(anchor_b - G)
+                    y_s[...] = (kvf * cf).astype(dt)
+                    part = plgpu.mma(_zero((C, dk), ACC_C),
+                                     _l(pat_s, L_C), _l(y_s, R_C))
+                    dr_k = dr_k + plgpu.layout_cast(rf * part, ACC_C)
+                    y_s[...] = (kbf * rf).astype(dt)
+                    part = plgpu.mma(_zero((C, dk), ACC_C),
+                                     _l(pat_s.T, L_C), _l(y_s, R_C))
+                    dc_k = dc_k + plgpu.layout_cast(cf * part, ACC_C)
                 gcv_c = _l(g_s, ACC_C.reduce(0)).astype(f32)
-                lam_b = plgpu.layout_cast(
-                    jax.lax.broadcast_in_dim(gcv_c, (C, dk), (1,)), ACC_C)
-                lam = lam_b / gam
                 dlam = dyv * kvf
                 dz = dlam * lam
                 dkh2 = dkh2 + dr_k * beta_c + dc_k + dyv * lam
@@ -1431,7 +1493,7 @@ def _build_bwd_kernel(T, C, H, dk, dv, tile, dtype, state_dtype, *,
             jax.ShapeDtypeStruct((H, dk, dv), f32),          # dS_in
             jax.ShapeDtypeStruct((H, n_chunks, dk, dv), stdt),  # chain (natural)
             jax.ShapeDtypeStruct((H, n_chunks, dv, dk), stdt),  # chain (transposed)
-            jax.ShapeDtypeStruct((H, n_chunks, C, dv), stdt),   # dvt crossing
+            jax.ShapeDtypeStruct((H, n_chunks, C, dv), f32),    # dvt crossing (fp32)
         ),
         scratch_types=[
             plgpu.SMEM((dk, dv), stdt),  # carried state (A: forward, B: dS)

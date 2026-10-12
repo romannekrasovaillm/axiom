@@ -251,7 +251,11 @@ def test_unknown_policy_raises_even_with_boundaries_off():
         loss(params)
 
 
-def test_unknown_policy_raises_in_kda_scan_body():
+def test_unknown_policy_raises_in_kda_scan_body(monkeypatch):
+    # Политику проверяет XLA-тело скана: кампанийный дефолт ``persistent``
+    # (ADR-054 Am.7) GPU-only и ключ ``kda_chunked_backward`` не применяет —
+    # тело выбирается явно.
+    monkeypatch.setenv("AXIOM_KDA_CC_IMPL", "jax")
     cfg = _remat_config(remat_policy="nope")
     params = kda.init_kda(jr.PRNGKey(0), cfg)
     x = jr.normal(jr.PRNGKey(1), (16, cfg.hidden))
@@ -408,13 +412,15 @@ def test_default_field_is_bitwise_the_explicit_none():
     assert jnp.array_equal(implicit, explicit)
 
 
-def test_policies_do_not_touch_the_chunked_ce_path():
+def test_policies_do_not_touch_the_chunked_ce_path(monkeypatch):
     """Chunked CE — не граница ADR-049: политика его не настраивает.
 
     Причина: сохранять там matmul-выход (``dots_saveable``) значило бы держать
     ровно тот ``(chunk, vocab)`` тензор, ради отказа от которого чекинг и
     сделан.  Проверяем, что граф CE-пути одинаков при всех политиках.
     """
+    # KDA-слой здесь — XLA-тело: кампанийный дефолт (``persistent``) GPU-only.
+    monkeypatch.setenv("AXIOM_KDA_CC_IMPL", "jax")
     cfg = dataclasses.replace(
         _remat_config(), ce_chunk_tokens=8, grad_ckpt_policy="none"
     )

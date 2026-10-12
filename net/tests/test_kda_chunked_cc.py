@@ -49,17 +49,32 @@ CONFIG_PATH = Path(__file__).resolve().parents[1] / "config.json"
 #: launch — GB10 artifacts that *by design* refuse a GPU-less host (fail-closed,
 #: ``net.kda._cc_chunk_step_mosaic`` / ``net.kda._apply_chunked_cc_persistent``).
 #: On this CPU node those modes are therefore not runnable at all: the honest
-#: form is a skip with the reason, not a red suite.  Without the flag (the
-#: default, the committed path) everything below runs exactly as before.  The
-#: fused bodies themselves are pinned by ``test_kda_cc_fused.py`` (mosaic) and
+#: form is a skip with the reason, not a red suite.  The campaign default
+#: (``persistent`` since 2026-10-12, ADR-054 Am.7) is such a mode too, so the
+#: tests below pin the committed XLA body by selecting it *explicitly*
+#: (``_committed_jax_body``) — everything runs exactly as before.  The fused
+#: bodies themselves are pinned by ``test_kda_cc_fused.py`` (mosaic) and
 #: ``test_kda_cc_fused_persist.py`` (persistent: sieve, lowering, mux, parity).
-if (os.environ.get("AXIOM_KDA_CC_IMPL", "jax").strip().lower()
+if (os.environ.get("AXIOM_KDA_CC_IMPL", "").strip().lower()
         in ("mosaic", "persistent")
         and not any(d.platform == "gpu" for d in jax.devices())):
     pytest.skip(
         "AXIOM_KDA_CC_IMPL=mosaic|persistent: the Mosaic kernels require a GPU "
         "(sm_121) and refuse CPU hosts by design; on CPU the jax path is "
         "the pinned implementation", allow_module_level=True)
+
+
+@pytest.fixture(autouse=True)
+def _committed_jax_body(monkeypatch):
+    """The body these parity tests pin: the committed XLA scan, selected explicitly.
+
+    The module verifies ``apply_chunked_cc``/``apply_kda`` against the oracles
+    on CPU; the campaign body (``persistent``) is a GB10 kernel that refuses
+    this node by design, so the mode is set rather than inherited from the
+    default.
+    """
+    monkeypatch.setenv("AXIOM_KDA_CC_IMPL", "jax")
+
 
 #: Sequence length of the parity runs.
 SEQ = 128

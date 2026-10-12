@@ -353,7 +353,7 @@ def test_persistent_mode_matches_the_jax_body(monkeypatch, H, T, seed):
     params = kda.init_kda(jr.PRNGKey(seed), cfg)
     x = jr.normal(jr.PRNGKey(seed + 9), (T, cfg.hidden))
 
-    monkeypatch.delenv("AXIOM_KDA_CC_IMPL", raising=False)
+    monkeypatch.setenv("AXIOM_KDA_CC_IMPL", "jax")
     ref = kda.apply_chunked_cc(params, cfg, x, chunk_size=C)
 
     _enable_persistent_on_cpu(monkeypatch)
@@ -438,18 +438,31 @@ def test_persistent_mode_rejects_a_non_live_chunk_width(monkeypatch):
         kda.apply_chunked_cc(params, cfg, x, chunk_size=64)
 
 
-def test_persistent_mode_not_entered_by_default(monkeypatch):
-    """Default env: the flag's absence installs the committed scan body."""
-    monkeypatch.delenv("AXIOM_KDA_CC_IMPL", raising=False)
+def test_persistent_mode_is_the_default(monkeypatch):
+    """Default env: the flag's absence installs the campaign (persistent) body.
 
-    def spy(*args, **kwargs):  # pragma: no cover — must never run here
-        raise AssertionError("default must not touch the persistent body")
+    The persistent body is spied on and must be entered; the kernel seams are
+    substituted with the declared CPU numerics (the same substitution the
+    parity tests above use), so the default path is exercised end to end on
+    this node.
+    """
+    monkeypatch.delenv("AXIOM_KDA_CC_IMPL", raising=False)
+    monkeypatch.setattr(persist, "device_available", lambda: True)
+    monkeypatch.setattr(persist, "kernel", _cpu_emulated_kernel)
+    monkeypatch.setattr(persist, "kernel_bwd", _emulate_bf16_bwd)
+    calls = {"persistent": 0}
+    real = kda._apply_chunked_cc_persistent
+
+    def spy(*args, **kwargs):
+        calls["persistent"] += 1
+        return real(*args, **kwargs)
 
     monkeypatch.setattr(kda, "_apply_chunked_cc_persistent", spy)
     cfg = _cfg(H=2)
     params = kda.init_kda(jr.PRNGKey(0), cfg)
     x = jr.normal(jr.PRNGKey(1), (96, cfg.hidden))
     kda.apply_chunked_cc(params, cfg, x, chunk_size=C)
+    assert calls["persistent"] == 1
 
 
 def test_impl_mux_names_the_persistent_mode():
@@ -523,7 +536,7 @@ def test_grad_of_the_persistent_mux_matches_the_jax_body(monkeypatch, H, T, seed
     x = jr.normal(jr.PRNGKey(seed + 5), (T, cfg.hidden))
     w = jr.normal(jr.PRNGKey(seed + 6), (T, cfg.hidden))
 
-    monkeypatch.delenv("AXIOM_KDA_CC_IMPL", raising=False)
+    monkeypatch.setenv("AXIOM_KDA_CC_IMPL", "jax")
 
     def loss_jax(xx):
         return jnp.sum(kda.apply_chunked_cc(params, cfg, xx, chunk_size=C) * w)
@@ -564,7 +577,7 @@ def test_grad_of_the_persistent_mux_wrt_params(monkeypatch):
     x = jr.normal(jr.PRNGKey(seed + 5), (T, cfg.hidden))
     w = jr.normal(jr.PRNGKey(seed + 6), (T, cfg.hidden))
 
-    monkeypatch.delenv("AXIOM_KDA_CC_IMPL", raising=False)
+    monkeypatch.setenv("AXIOM_KDA_CC_IMPL", "jax")
 
     def f(p):
         return jnp.sum(kda.apply_chunked_cc(p, cfg, x, chunk_size=C) * w)
@@ -1070,7 +1083,7 @@ def test_persistent_b_4step_training_parity(monkeypatch):
     def loss(p):
         return jnp.sum(kda.apply_chunked_cc(p, cfg, x, chunk_size=C) * w)
 
-    monkeypatch.delenv("AXIOM_KDA_CC_IMPL", raising=False)
+    monkeypatch.setenv("AXIOM_KDA_CC_IMPL", "jax")
     losses_j, params_j = _sgd_arm(loss, params, lr, steps)
 
     _enable_persistent_on_cpu(monkeypatch)

@@ -696,10 +696,15 @@ def kda_cc_impl() -> str:
 
     ``AXIOM_KDA_CC_IMPL`` is read on every call (the flag is the rollback
     handle, so it is not cached — the same contract as ``AXIOM_KDA_SOLVE``).
-    Default ``jax`` (the committed path).  An unknown value is an explicit
-    error, never a silent fallback (fail-closed, the ``AXIOM_MOE_TOPK`` form).
+    Default ``persistent`` since 2026-10-12 — the owner's decision on the
+    campaign configuration (ADR-054 Am.7: 591.8 tok/s against 457.3 for
+    ``jax``, loss parity 0.0014, the 4-step training-parity test).  ``jax``
+    remains the reference body and the rollback handle; ``mosaic`` is
+    variant A, not the campaign configuration.  An unknown value is an
+    explicit error, never a silent fallback (fail-closed, the
+    ``AXIOM_MOE_TOPK`` form).
     """
-    value = (os.environ.get("AXIOM_KDA_CC_IMPL") or "jax").strip().lower()
+    value = (os.environ.get("AXIOM_KDA_CC_IMPL") or "persistent").strip().lower()
     if value not in KDA_CC_IMPLS:
         raise ValueError(
             f"AXIOM_KDA_CC_IMPL={value!r}: ожидается одно из {KDA_CC_IMPLS}")
@@ -850,15 +855,18 @@ def apply_chunked_cc(
     declarative width the WY/UT form uses.  Semantics are identical to
     :func:`apply_recurrent` (parity pinned by ``test_kda_chunked_cc.py``).
 
-    ``AXIOM_KDA_CC_IMPL`` selects the scan body: ``jax`` (default — the
-    committed :func:`cc_chunk_step`), ``mosaic`` (the fused differentiable
-    body of :mod:`net.kernels.kda_cc_fused`, ADR-054 stage-2b milestones 1-2:
-    kernel forward + analytic adjoint via ``jax.custom_vjp`` — trainable;
-    GPU-only, a GPU-less host refuses with a typed error), or ``persistent``
-    (milestone 3, ADR-054 Am.4: ONE persistent kernel launch per layer-pass —
-    the program walks the whole scan with the state in SMEM; see
-    :func:`_apply_chunked_cc_persistent`).  The flags change the *body* only —
-    the padding, the scan structure and the window branch are shared.
+    ``AXIOM_KDA_CC_IMPL`` selects the scan body: ``persistent`` (default since
+    2026-10-12 — the owner's campaign decision, ADR-054 Am.7: milestone 3,
+    ONE persistent kernel launch per layer-pass, the program walks the whole
+    scan with the state in SMEM; see :func:`_apply_chunked_cc_persistent`;
+    GPU-only, a GPU-less host refuses with a typed error), ``jax`` (the
+    reference/oracle body — the committed :func:`cc_chunk_step` scan, and the
+    rollback handle), or ``mosaic`` (the fused differentiable body of
+    :mod:`net.kernels.kda_cc_fused`, ADR-054 stage-2b milestones 1-2: kernel
+    forward + analytic adjoint via ``jax.custom_vjp`` — trainable; variant A,
+    an option rather than the campaign configuration; GPU-only, a GPU-less
+    host refuses with a typed error).  The flags change the *body* only — the
+    padding, the scan structure and the window branch are shared.
     """
     if chunk_size is None:
         chunk_size = cfg.kda_wyut_chunk

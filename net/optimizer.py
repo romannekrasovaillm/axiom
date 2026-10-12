@@ -226,6 +226,7 @@ def make_step(
     jit: bool = True,
     single_pass: bool = True,
     donate: bool = False,
+    work_dtype: str | None = None,
 ):
     """Build the optimizer step — jitted, one walk over the parameter tree.
 
@@ -263,9 +264,21 @@ def make_step(
     для всех вызывающих, которые читают входные деревья после шага
     (профайлер, SFT/RL-смоуки, тесты); тренировочный цикл включает donate
     явно там, где буферы мертвы после вызова (``net/train_loop.py``).
+
+    ADR-054 (цикл-4, Am.10 п.1): ``work_dtype`` — dtype **рабочей копии**
+    параметров, возвращаемой третьим выходом шага
+    (``(new_params, new_state, new_work)``).  Каст ``new_params.astype(work_dtype)``
+    идёт **внутри того же jitted-графа**, что и сам шаг: у цикла исчезает
+    ``working_params(master)`` вне jit — на шаг это ~330 отдельных
+    ``jit(convert_element_type)`` модулей (замер цикла-3, ADR-054 Am.10 «Очередь»).
+    Премисса легальности при ``donate=True``: каст читает ``new_params`` — уже
+    вычисленный возврат шага, а не донированный вход.  ``None`` (дефолт) —
+    прежний контракт (два выхода); существующие вызывающие не меняются.
     """
     if int(ns_steps) < 1:
         raise ValueError(f"ns_steps must be >= 1, got {ns_steps!r}")
+    # Опечатка в dtype падает здесь, на сборке шага, а не в первом шаге цикла.
+    work_dtype = None if work_dtype is None else jnp.dtype(work_dtype)
     heads = cfg.num_heads
     wd = cfg.weight_decay
 
@@ -372,7 +385,15 @@ def make_step(
 
     def step(params, grads, state, lr):
         walk = _walk_once if single_pass else _walk_twice
-        return walk(params, grads, state, lr)
+        new_params, new_state = walk(params, grads, state, lr)
+        if work_dtype is None:
+            return new_params, new_state
+        # ADR-054 (цикл-4): рабочая копия — часть того же графа; при donate=True
+        # new_params — возврат шага (не донированный вход), каст легален.
+        new_work = jax.tree_util.tree_map(
+            lambda leaf: leaf.astype(work_dtype), new_params
+        )
+        return new_params, new_state, new_work
 
     if not jit:
         return step

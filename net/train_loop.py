@@ -2873,16 +2873,16 @@ def train(
     grad_fn = jax.jit(jax.value_and_grad(loss_fn))
     # ADR-054 (стадия-1): donate-вариант для ветки одного микробатча
     # (``len(group) == 1``, основной путь кампании).  Контракт donate: буфер
-    # допустимо отдать, только когда он мёртв после вызова.  Премисса дельты —
-    # ``params = working_params(master)`` пересоздаётся каждый шаг (:3025), так
-    # что старый буфер ``params`` не нужен.  Дерево читателей сверено: после
-    # донированного вызова на ``params`` (или его буферы) ссылается только
-    # ``step_fn(master, ...)`` (:3024) — и лишь когда ``params is master``, т.е.
-    # в fp32-режиме (``working_params`` без astype отдаёт сам мастер); там
-    # donate запрещён и ветка оставляет старый вызов.  В accum-ветке
-    # (``len(group) > 1``) ``grad_fn`` зовётся на каждом микробатче с теми же
-    # ``params`` — donate там запрещён, ветка его не берёт.
+    # допустимо отдать, только когда он мёртв после вызова.  В bf16 ``params`` —
+    # третья выход шага (bf16-каст в его же графе, цикл-4): буфер живёт от
+    # возврата шага до градиента следующего, причём ``step_fn`` читает не его, а
+    # ``master``; после донированного градиента буфер мёртв до переприсваивания.
+    # В fp32 ``working_params`` отдаёт сам мастер (``params is master``), его
+    # читает ``step_fn`` — donate градиента запрещён, ветка оставляет старый
+    # вызов.  В accum-ветке (``len(group) > 1``) ``grad_fn`` зовётся на каждом
+    # микробатче с теми же ``params`` — donate там запрещён, ветка его не берёт.
     grad_fn_donated = jax.jit(jax.value_and_grad(loss_fn), donate_argnums=(0,))
+    use_bf16 = train_config.param_dtype == "bfloat16"
     step_fn = optimizer.make_step(
         cfg,
         ns_steps=train_config.ns_steps,
@@ -2891,11 +2891,16 @@ def train(
         # (profiler.measure, :3037) — donate запрещён; без профайлера буферы
         # master/grads/state мертвы после вызова (возврат шага — их владелец).
         donate=not train_config.phase_profile,
+        # ADR-054 (цикл-4, Am.10 п.1): bf16-рабочая копия — третий выход того же
+        # jitted-шага; отдельного ``jit(convert_element_type)`` на лист дерева
+        # (~330 модулей/шаг) в цикле больше нет.
+        work_dtype="bfloat16" if use_bf16 else None,
     )
 
-    use_bf16 = train_config.param_dtype == "bfloat16"
-
     def working_params(fp32_params):
+        # Только каст шага-0 (до первого ``step_fn``) и fp32-тождество: начиная
+        # с цикла-4 bf16-копия на шагах — третий выход самого шага (ADR-054
+        # Am.10 п.1), а не tree_map astype по ~330 листьям вне jit.
         return jax.tree_util.tree_map(lambda leaf: leaf.astype(jnp.bfloat16), fp32_params) if use_bf16 else fp32_params
 
     params = working_params(master)
@@ -2990,12 +2995,12 @@ def train(
         if len(group) == 1:
             # No accumulation happened: identical to the pre-delta step.
             # ADR-054: donate-ветка включается только там, где буфер мёртв после
-            # вызова.  В bf16 ``params`` — своё дерево (astype от мастера, :2899):
-            # после вызова его не читает никто до пересоздания (:3025), поэтому
-            # можно отдать буфер.  В fp32 ``working_params`` возвращает сам
-            # мастер (``params is master``), и тот же буфер читает
-            # ``step_fn(master, ...)`` (:3024) — donate запрещён, остаётся
-            # недонированный ``grad_fn``.
+            # вызова.  В bf16 ``params`` — своё дерево (каст шага-0, :2906; дальше
+            # третий выход шага): после вызова его не читает никто (шаг читает
+            # ``master``, :3032), поэтому буфер можно отдать.  В fp32
+            # ``working_params`` возвращает сам мастер (``params is master``), и
+            # тот же буфер читает ``step_fn(master, ...)`` — donate запрещён,
+            # остаётся недонированный ``grad_fn``.
             if use_bf16:
                 loss, grads = grad_fn_donated(params, group[0])
             else:
@@ -3021,8 +3026,15 @@ def train(
             loss_value = loss_acc / total
         if use_bf16:
             grads = jax.tree_util.tree_map(lambda leaf: leaf.astype(jnp.float32), grads)
-        master, state = step_fn(master, grads, state, lr_at(absolute - 1))
-        params = working_params(master)
+            # ADR-054 (цикл-4, Am.10 п.1): bf16-рабочая копия — третий выход
+            # того же jitted-шага (каст в его графе); отдельного
+            # ``working_params(master)`` вне jit на шаг больше нет.
+            master, state, params = step_fn(master, grads, state, lr_at(absolute - 1))
+        else:
+            master, state = step_fn(master, grads, state, lr_at(absolute - 1))
+            # fp32: рабочая копия и есть мастер (``params is master``) — прежний
+            # путь; в bf16 её вернул шаг выше.
+            params = working_params(master)
         elapsed = time.time() - tick
         if index == 0:
             first_tick = elapsed

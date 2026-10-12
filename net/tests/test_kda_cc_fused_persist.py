@@ -599,17 +599,22 @@ def test_grad_of_the_persistent_mux_wrt_params(monkeypatch):
 
 def test_custom_vjp_routes_forward_and_backward(monkeypatch):
     """The shipped ``cc_scan`` uses the kernel seam forward and the variant-B
-    backward seam (``kernel_bwd``) as the adjoint rule."""
-    calls = {"fwd": 0, "bwd": 0}
+    backward seam (``kernel_bwd``) as the adjoint rule; the rule asks for the
+    slim build explicitly (``debug_outputs=False`` -- no scratch at the
+    custom_vjp boundary)."""
+    calls = {"fwd": 0, "bwd": 0, "bwd_debug": None}
 
     def stub(q, k, v, alpha, beta32, S, *, tile=16, chunk=32):
         calls["fwd"] += 1
         return persist.reference(q, k, v, alpha, beta32, S, tile=tile, chunk=chunk)
 
-    def spy_bwd(q, k, v, alpha, beta32, S, do, dS, *, tile=16, chunk=32):
+    def spy_bwd(q, k, v, alpha, beta32, S, do, dS, *, tile=16, chunk=32,
+                debug_outputs=False):
         calls["bwd"] += 1
+        calls["bwd_debug"] = debug_outputs
         return _emulate_bf16_bwd(q, k, v, alpha, beta32, S, do, dS,
-                                 tile=tile, chunk=chunk)
+                                 tile=tile, chunk=chunk,
+                                 debug_outputs=debug_outputs)
 
     monkeypatch.setattr(persist, "kernel", stub)
     monkeypatch.setattr(persist, "kernel_bwd", spy_bwd)
@@ -781,6 +786,140 @@ def test_the_lowered_module_carries_the_chunk_loop():
 
 
 # ---------------------------------------------------------------------------
+# the backward kernel's two builds: the slim default and the debug variant
+#
+# The measured fact this delta acts on (ADR-054 cycle-3): ``kernel_bwd``
+# declared nine ``out_type`` entries and the custom_vjp rule dropped the last
+# three; the discarded snapshots cost a full GMEM write+read per call
+# (``chain_t`` bf16, ``dvt`` fp32).  The slim build (the default) materialises
+# neither; the debug build keeps them for diagnostics.
+# ---------------------------------------------------------------------------
+
+#: The cheapest live geometry (T=256/H=2, the one the parity tests and the
+#: adapter's CASES use).
+_BWD_CASE = dict(T=256, C=32, H=2, dk=128, dv=128, tile=16, dtype="bfloat16")
+
+
+def _bwd_build_fn(case, debug_outputs):
+    """The traced backward build of one case/mode (no device needed)."""
+    return jax.jit(lambda *a: persist._build_bwd_kernel(
+        case["T"], case["C"], case["H"], case["dk"], case["dv"], case["tile"],
+        case["dtype"], jnp.dtype(persist.BWD_STATE_DTYPE).name,
+        debug_outputs)(*a))
+
+
+def _lower_bwd_case(case, debug_outputs=False, limit=None):
+    """Lower ``_build_bwd_kernel`` for sm_121 as the skill's lower_check does.
+
+    The companion adapter (``net/tests/kda_persist_bwd_lower.py``) hands the
+    same builder to the skill under its ``debug_outputs`` knob; this is the
+    in-suite twin of that gate on the cheapest live geometry.
+    """
+    from jax.experimental.mosaic import gpu as mosaic_mod
+    from jax.experimental.mosaic.gpu import utils as mosaic_utils
+
+    mosaic_utils._infer_arch = lambda: (12, 1)
+    ctx = mosaic_mod.core.artificial_shared_memory_limit(
+        persist.SMEM_LIMIT_BYTES if limit is None else limit)
+    with ctx:
+        shapes = jax.eval_shape(
+            lambda: persist.make_bwd_inputs(jax.random.key(0), **case))
+        return _bwd_build_fn(case, debug_outputs).trace(*shapes).lower(
+            lowering_platforms=("cuda",)).as_text()
+
+
+def _measured_bwd_smem(case, debug_outputs=False):
+    """The lowering's own SMEM number, extracted by the artificial limit."""
+    try:
+        _lower_bwd_case(case, debug_outputs, limit=1)
+    except ValueError as e:
+        msg = str(e)
+        assert "shared memory" in msg, msg
+        assert "smem_bytes=" in msg, msg
+        return int(msg.split("smem_bytes=")[1].split()[0])
+    raise AssertionError("the artificial 1-byte limit did not bite")
+
+
+@pytest.mark.parametrize("debug_outputs", [False, True], ids=["slim", "debug"])
+def test_bwd_builds_lower_for_sm121(debug_outputs):
+    """Both builds of the backward kernel lower under the GB10 SMEM limit.
+
+    The slim build adds one ``(dv, dk)`` bf16 SMEM staging scope in pass B
+    (the re-derived ``S^T``, replacing the stored transposed chain).  The
+    measured floor is the same 92 160 B in both builds: the staging scope
+    pools against the sibling adjoint scopes by liveness, so the GB10 budget
+    holds for either build.
+    """
+    assert _lower_bwd_case(_BWD_CASE, debug_outputs)  # produced a module
+    measured = _measured_bwd_smem(_BWD_CASE, debug_outputs)
+    assert measured == 92160
+    assert measured <= persist.SMEM_LIMIT_BYTES
+
+
+def test_bwd_debug_outputs_flag_keeps_the_live_math(monkeypatch):
+    """The debug flag moves only the scratch plumbing, never the adjoint math.
+
+    Mechanical pins on this CPU node:
+
+    * the output arity: seven outputs for the slim default -- the six live
+      cotangents plus the one irreducible GMEM scratch (the natural state
+      chain; ``plgpu.kernel`` has no other GMEM-scratch mechanism and SMEM
+      cannot hold it), nine for the debug build (``+ chain_t, + dvt``) -- with
+      the first six ``out_type`` entries identical in shape and dtype;
+    * the *trace-time* MMA call count is equal in both builds: the adjoint
+      MMAs are the same calls in the same order.  The slim build only changes
+      where two of their operands come from (``S^T`` is re-derived through
+      SMEM from the natural chain -- the same bf16 bits; ``dvt`` arrives as an
+      fp32 value instead of an exact fp32 GMEM round trip), so the six live
+      outputs are the same computation built two ways.
+
+    Value-level bit-identity of the six outputs across the builds needs a GB10
+    execution (the CPU node cannot run Mosaic kernels); the declared numerics
+    the suite pins through ``_scan_backward`` are the slim build's, and the
+    re-measure of the pair on the device is an open item of this delta.
+    """
+    from jax.experimental.pallas import mosaic_gpu as plgpu
+
+    calls = {"mma": 0}
+    real_mma = plgpu.mma
+
+    def counting_mma(*args, **kwargs):
+        calls["mma"] += 1
+        return real_mma(*args, **kwargs)
+
+    monkeypatch.setattr(plgpu, "mma", counting_mma)
+    shapes = jax.eval_shape(
+        lambda: persist.make_bwd_inputs(jax.random.key(0), **_BWD_CASE))
+
+    built = {}
+    try:
+        persist._build_bwd_kernel.cache_clear()  # count the real trace
+        for dbg in (False, True):
+            calls["mma"] = 0
+            out = jax.eval_shape(lambda: _bwd_build_fn(_BWD_CASE, dbg)(*shapes))
+            built[dbg] = (calls["mma"], tuple(out))
+    finally:
+        persist._build_bwd_kernel.cache_clear()
+
+    slim_mma, slim = built[False]
+    dbg_mma, dbg = built[True]
+    assert len(slim) == 7 and len(dbg) == 9, (len(slim), len(dbg))
+    assert slim_mma == dbg_mma, (
+        f"the MMA algebra moved between the builds: {slim_mma} vs {dbg_mma}")
+    assert slim_mma > 0  # the counter really saw the traces
+    assert [(s.shape, s.dtype) for s in slim[:6]] == \
+        [(s.shape, s.dtype) for s in dbg[:6]]
+    n_chunks = _BWD_CASE["T"] // _BWD_CASE["C"]
+    H, dk, dv = _BWD_CASE["H"], _BWD_CASE["dk"], _BWD_CASE["dv"]
+    chain = ((H, n_chunks, dk, dv), jnp.bfloat16)
+    assert (slim[6].shape, slim[6].dtype) == chain       # the chain (natural)
+    assert (dbg[6].shape, dbg[6].dtype) == chain
+    assert (dbg[7].shape, dbg[7].dtype) == chain         # chain (transposed)
+    assert (dbg[8].shape, dbg[8].dtype) == (
+        (H, n_chunks, _BWD_CASE["C"], dv), jnp.float32)  # dvt crossing
+
+
+# ---------------------------------------------------------------------------
 # the build/jit caches: one static spec -> one built and jitted run
 #
 # The measured barrier of the full step (GB10 profile, 18 layers x 3 passes):
@@ -815,10 +954,12 @@ def test_kernel_and_kernel_bwd_serve_a_spec_from_the_cache(monkeypatch):
         return run
 
     def fake_backward_build(*spec):
+        # The slim build's arity: the six live cotangents plus the one
+        # irreducible chain scratch (the debug build adds the two snapshots).
         bwd_builds.append(spec)
 
         def run(q, k, v, alpha, beta32, S, do, dS):
-            return (q, k, v, alpha, beta32, S, S, do, dS)
+            return (q, k, v, alpha, beta32, S, S)
 
         return run
 
@@ -852,6 +993,15 @@ def test_kernel_and_kernel_bwd_serve_a_spec_from_the_cache(monkeypatch):
             f"kernel_bwd() rebuilt the spec {len(bwd_builds)} times for two calls")
         assert all(jnp.array_equal(a, b) for a, b in zip(bwd_first, bwd_second))
         assert len(bwd_first) == 6  # (dq, dk, dv, dalpha, dbeta32, dS_in)
+        # ``debug_outputs`` is part of the key: the same geometry in the two
+        # modes is a second build, and each mode is reused on its own.
+        assert len(bwd_builds[0]) == 9  # …T, C, H, dk, dv, tile, dtype, state, mode
+        assert bwd_builds[0][-1] is False  # the default mode is the slim build
+        assert (persist._backward_run(*spec, False)
+                is persist._backward_run(*spec, False))
+        assert (persist._backward_run(*spec, False)
+                is not persist._backward_run(*spec, True))
+        assert len(bwd_builds) == 2, "the debug mode is a second build, not a reuse"
     finally:
         persist._forward_run.cache_clear()
         persist._backward_run.cache_clear()
@@ -862,7 +1012,8 @@ def test_kernel_and_kernel_bwd_serve_a_spec_from_the_cache(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def _emulate_bf16_bwd(q, k, v, alpha, beta32, S, do, dS, *, tile=16, chunk=C):
+def _emulate_bf16_bwd(q, k, v, alpha, beta32, S, do, dS, *, tile=16, chunk=C,
+                      debug_outputs=False):
     """The variant-B kernel's declared numerics: a jnp mirror, chunk by chunk.
 
     The two passes of :func:`net.kernels.kda_cc_fused_persist.kernel_bwd` at
@@ -883,6 +1034,17 @@ def _emulate_bf16_bwd(q, k, v, alpha, beta32, S, do, dS, *, tile=16, chunk=C):
     This is the seam the CPU tests substitute for the kernel execution; it is
     pinned against the fp32 adjoint (:func:`persist.reference_bwd_scan`) at the
     declared 2e-2 operand budget.
+
+    ``debug_outputs`` is accepted for the seam signature only (the rule
+    :func:`persist._scan_backward` passes ``False``): the mirror models the
+    *six live outputs*, which are the same declared numerics in both builds.
+    The two extra outputs of ``debug_outputs=True`` (the transposed chain, the
+    ``dvt`` buffer) are the kernel's raw GMEM scratch; the slim build derives
+    the transposed-chain operand from the natural chain (same bf16 bits) and
+    hands ``dvt`` from stage 1 to stage 2 as an fp32 value instead of a GMEM
+    round trip -- the mirror's ``chain_t`` and ``dvt`` storages therefore stay
+    valid for both builds (the crossing is fp32 either way, the MMA operands
+    are the same bf16 storages).
     """
     T = q.shape[0]
     Cc = int(chunk)

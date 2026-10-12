@@ -30,9 +30,13 @@ from net.kernels import kda_cc_fused_persist as _persist  # noqa: E402
 #: honestly skipped by the sieve.
 CASES = _persist.CASES
 
-#: The static knobs passed through to the kernel: the decay-factor tile and the
-#: chunk width (the live grid is C=32; the sieve keeps the rest out).
-TUNE_SPACE = dict(tile=[16], chunk=[_persist.CHUNK])
+#: The static knobs passed through to the kernel: the decay-factor tile, the
+#: chunk width (the live grid is C=32; the sieve keeps the rest out) and the
+#: output mode -- the slim build (six live cotangents + the irreducible chain
+#: scratch) and the debug build (all nine outputs) both lower, so the static
+#: check covers both.
+TUNE_SPACE = dict(tile=[16], chunk=[_persist.CHUNK],
+                  debug_outputs=[False, True])
 
 
 def make_inputs(key, **case):
@@ -45,10 +49,12 @@ def valid_config(case, params):
     return _persist.valid_config_bwd(case, params)
 
 
-def kernel(q, k, v, alpha, beta32, S, do, dS, *, tile=16, chunk=32):
+def kernel(q, k, v, alpha, beta32, S, do, dS, *, tile=16, chunk=32,
+           debug_outputs=False):
     """The persistent backward kernel (one launch per layer-pass, variant B)."""
     return _persist.kernel_bwd(q, k, v, alpha, beta32, S, do, dS,
-                               tile=tile, chunk=int(chunk))
+                               tile=tile, chunk=int(chunk),
+                               debug_outputs=bool(debug_outputs))
 
 
 def reference(q, k, v, alpha, beta32, S, do, dS, *, tile=16, chunk=32):

@@ -862,9 +862,13 @@ def _scan_backward(q, k, v, alpha, beta32, S, do, dS, tile, chunk):
     its declared numerics, and the routing itself stays observable.  The
     milestone-2 analytic adjoint (:func:`reference_bwd_scan`) stays as the
     numerical reference the kernel is pinned against.
+
+    ``debug_outputs=False`` is explicit: the rule consumes the six live
+    cotangents only, so the slim build must be the one traced (no scratch
+    outputs at the custom_vjp boundary).
     """
     return kernel_bwd(q, k, v, alpha, beta32, S, do, dS,
-                      tile=tile, chunk=chunk)
+                      tile=tile, chunk=chunk, debug_outputs=False)
 
 
 def make_cc_scan(tile=16, chunk=CHUNK, forward=None, backward=None):
@@ -950,8 +954,10 @@ def cc_scan(q, k, v, alpha, beta32, S, tile=16, chunk=CHUNK):
 #
 # * a program may write a GMEM scratch (an ``out_type`` buffer) in one loop and
 #   read it back in the next one -- that is how the recompute loop persists the
-#   per-chunk incoming states ``S_i`` without a second launch (the state chain;
-#   two orientations, bf16);
+#   per-chunk incoming states ``S_i`` without a second launch (the state chain,
+#   bf16; the default build keeps the natural orientation only and re-derives
+#   ``S^T`` per chunk in pass B through SMEM, the debug build stores both --
+#   see :func:`_build_bwd_kernel`);
 # * for GMEM operands the Mosaic lowering admits exactly two MMA load forms:
 #   ``MMA_LHS`` direct from an ``(m, k)`` k-contiguous buffer, and ``MMA_RHS``
 #   through the ``.T`` view of an ``(n, k)`` k-contiguous buffer (the template
@@ -1014,7 +1020,9 @@ def cc_scan(q, k, v, alpha, beta32, S, tile=16, chunk=CHUNK):
 BWD_STATE_DTYPE = jnp.bfloat16
 
 #: The state chain of the recompute pass is persisted in a GMEM scratch (an
-#: ``out_type`` buffer of the kernel), bf16, in both orientations.
+#: ``out_type`` buffer of the kernel), bf16.  The default build stores the
+#: natural orientation; the transposed copy is debug-only (the slim build
+#: re-derives ``S^T`` in pass B through the SMEM staging idiom).
 BWD_CHAIN_DTYPE = jnp.bfloat16
 
 
@@ -1090,24 +1098,50 @@ class _BwdKernelSpec:
     dtype: str
     state_dtype: str
     chain_dtype: str
+    debug_outputs: bool
 
 
 @functools.lru_cache(maxsize=8)
-def _build_bwd_kernel(T, C, H, dk, dv, tile, dtype, state_dtype, *,
-                      _enable_a=True, _enable_b=True):
+def _build_bwd_kernel(T, C, H, dk, dv, tile, dtype, state_dtype,
+                      debug_outputs=False, *, _enable_a=True, _enable_b=True):
     """Build the persistent backward Mosaic GPU kernel: one program per head.
 
     Two loops inside one program: (A) the forward recompute writes the chain
-    of incoming states ``S_i`` (natural and transposed, bf16) into the GMEM
-    scratch; (B) the reverse loop recomputes each chunk body from its ``S_i``,
-    runs the analytic adjoint, accumulates the cotangents and carries ``dS``
-    in the SMEM state.  The GMEM scratch is an ``out_type`` buffer written in
-    loop A and read in loop B (read-after-write ordered within a program).
+    of incoming states ``S_i`` into the GMEM scratch; (B) the reverse loop
+    recomputes each chunk body from its ``S_i``, runs the analytic adjoint,
+    accumulates the cotangents and carries ``dS`` in the SMEM state.  The GMEM
+    scratch is an ``out_type`` buffer written in loop A and read in loop B
+    (read-after-write ordered within a program).
+
+    ``debug_outputs`` selects what that GMEM scratch is exposed as.  The
+    design has exactly one GMEM scratch the two loops cannot do without -- the
+    natural state chain ``S_i`` (a program-private GMEM buffer *is* an
+    ``out_type`` entry here: ``plgpu.kernel`` has no other GMEM-scratch
+    mechanism, and SMEM cannot hold ``n_chunks x dk x dv``).  The other two
+    ``out_type`` buffers of the debug build are avoidable snapshots:
+
+    * ``chain_t`` (the *transposed* chain, bf16, another ``H x n_chunks x dk
+      x dv``): the slim build re-derives ``S^T`` per chunk from the natural
+      chain through the existing SMEM staging idiom (the ``(dv, dk)``
+      transpose of ``_a3``, here fed by a GMEM load; SMEM admits the MMA_LHS
+      form of it, a GMEM operand does not -- the two-load-form rule above);
+    * ``dvt`` (the fp32 adjoint crossing of the two scopes, ``H x n_chunks x
+      C x dv``): the slim build hands the fp32 accumulator of stage 1 to
+      stage 2 as a value (the same discharge path ``dkh``/``dG`` already use;
+      the bf16 operand staging the MMAs consume is unchanged, and the fp32
+      round trip through GMEM was exact, so the consumed bits are identical).
+
+    ``debug_outputs=True`` restores the full three-buffer build unchanged
+    (the diagnostics: the caller receives all nine outputs).  Default
+    ``False``: ``out_type`` is the six live cotangents plus the one
+    irreducible chain, and neither of the two removable snapshots is written
+    at all (not masked out -- absent from the body, so they cost no GMEM
+    traffic and no store staging).
 
     Cached by the static spec, like :func:`_build_kernel`: the shape/type
-    arguments are primitives (the debug flags ``_enable_a``/``_enable_b`` stay
-    part of the key), so the tuple *is* the cache key -- see the cache note
-    above :func:`_forward_run`.
+    arguments (and ``debug_outputs``) are primitives (the debug flags
+    ``_enable_a``/``_enable_b`` stay part of the key), so the tuple *is* the
+    cache key -- see the cache note above :func:`_forward_run`.
     """
     from jax.experimental import pallas as pl
     from jax.experimental.pallas import mosaic_gpu as plgpu
@@ -1134,9 +1168,21 @@ def _build_bwd_kernel(T, C, H, dk, dv, tile, dtype, state_dtype, *,
     def _zero(shape, acc_layout):
         return plgpu.layout_cast(jnp.zeros(shape, f32), acc_layout)
 
-    def _body(qg, kg, vg, ag, bg, sg, dog, dsg,
-              dqg, dkg, dvg, dag, dbg, dsog, scg_nat, scg_t, dvt_g, st_s,
-              xw_t, vw_t, aqk_s, lkk_s, g_s):
+    #: The output arity the two modes build (inputs | outputs | scratch is the
+    #: plgpu.kernel operand order): the slim build drops ``chain_t`` and
+    #: ``dvt_g`` from the outputs, nothing else moves.
+    n_outs = 9 if debug_outputs else 7
+
+    def _body(*refs):
+        qg, kg, vg, ag, bg, sg, dog, dsg = refs[:8]
+        outs = refs[8:8 + n_outs]
+        dqg, dkg, dvg, dag, dbg, dsog = outs[:6]
+        if debug_outputs:
+            scg_nat, scg_t, dvt_g = outs[6:]
+        else:
+            (scg_nat,) = outs[6:]
+        st_s, xw_t, vw_t, aqk_s, lkk_s, g_s = refs[8 + n_outs:]
+
         h = jax.lax.axis_index("head")
         qo, vo, bo = h * dk, h * dv, h * 32
 
@@ -1271,12 +1317,14 @@ def _build_bwd_kernel(T, C, H, dk, dv, tile, dtype, state_dtype, *,
             )
 
             def _a3(s_t):
-                # The entry state S_i -> the chain (natural and transposed);
+                # The entry state S_i -> the chain (the transposed snapshot is
+                # debug-only: the slim build re-derives S^T in pass B);
                 # ws_t = S^T W^T; vt^T = U^T - (W S)^T.
                 sv = _l(st_s, ACC_DK)
                 s_t.transpose((1, 0))[...] = sv.astype(dt)
                 scg_nat.at[h, i][...] = sv
-                scg_t.at[h, i][...] = _l(s_t, ACC_DK)
+                if debug_outputs:
+                    scg_t.at[h, i][...] = _l(s_t, ACC_DK)
                 ws_t = plgpu.mma(_zero((dv, C), ACC_DK), _l(s_t, L_DK),
                                  _l(xw_t, R_DK))
                 uv = _l(vw_t, ACC_DK)
@@ -1387,10 +1435,21 @@ def _build_bwd_kernel(T, C, H, dk, dv, tile, dtype, state_dtype, *,
                 plgpu.SMEM((C, dk), dt),
             )
 
-            # ws_t = S^T W^T (the transposed chain copy is the LHS);
-            # vt^T = U^T - (W S)^T.
-            ws_t = plgpu.mma(_zero((dv, C), ACC_DK), _l(scg_t.at[h, i], L_DK),
-                             _l(xw_t, R_DK))
+            # ws_t = S^T W^T; vt^T = U^T - (W S)^T.  A GMEM MMA_LHS operand
+            # cannot be a transposed view (the two-load-form rule above), so
+            # the debug build reads the stored transposed chain while the slim
+            # build stages S^T per chunk from the natural chain through SMEM
+            # (the _a3 transpose idiom; the staged bits are the same bf16).
+            if debug_outputs:
+                ws_t = plgpu.mma(_zero((dv, C), ACC_DK),
+                                 _l(scg_t.at[h, i], L_DK), _l(xw_t, R_DK))
+            else:
+                def _ws_slim(s_t):
+                    s_t.transpose((1, 0))[...] = sv.astype(dt)
+                    return plgpu.mma(_zero((dv, C), ACC_DK), _l(s_t, L_DK),
+                                     _l(xw_t, R_DK))
+
+                ws_t = pl.run_scoped(_ws_slim, plgpu.SMEM((dv, dk), dt))
             uv = _l(vw_t, ACC_DK)
             vw_t[...] = (uv.astype(f32) - ws_t).astype(dt)
 
@@ -1412,7 +1471,8 @@ def _build_bwd_kernel(T, C, H, dk, dv, tile, dtype, state_dtype, *,
                 dvt = plgpu.mma(_zero((C, dv), ACC_C), _l(y_s, L_C),
                                 _l(st_s, R_C))
                 dvt = plgpu.mma(dvt, _l(aqk_s.T, L_C), _l(do_s, R_C))
-                dvt_g.at[h, i][...] = dvt              # fp32 crossing -> stage 2
+                if debug_outputs:
+                    dvt_g.at[h, i][...] = dvt          # fp32 crossing -> stage 2
                 dgq = plgpu.mma(_zero((C, dk), ACC_C), _l(do_s, L_C),
                                 _l(scg_nat.at[h, i].T, R_C))
                 st_s[...] = acc.astype(stdt)      # dS part 1 (old dS reads done)
@@ -1454,20 +1514,32 @@ def _build_bwd_kernel(T, C, H, dk, dv, tile, dtype, state_dtype, *,
                 dqg.at[pl.ds(i * C, C), pl.ds(qo, dk)][...] = dqh.astype(dt)
                 dkh = dc_a
                 dG = dr_a * qv - dc_a * kvf + (dgq * qv) * gam   # + dgamma * gamma
-                return dkh, dG
+                if debug_outputs:
+                    return dkh, dG
+                return dkh, dG, dvt          # fp32 crossing as a value -> stage 2
 
-            dkh, dG = pl.run_scoped(
-                _adj1,
-                plgpu.SMEM((C, dv), dt), plgpu.SMEM((dk, C), dt),
-                plgpu.SMEM((C, dk), dt), plgpu.SMEM((C, C), dt),
-            )
+            if debug_outputs:
+                dkh, dG = pl.run_scoped(
+                    _adj1,
+                    plgpu.SMEM((C, dv), dt), plgpu.SMEM((dk, C), dt),
+                    plgpu.SMEM((C, dk), dt), plgpu.SMEM((C, C), dt),
+                )
+            else:
+                dkh, dG, dvt = pl.run_scoped(
+                    _adj1,
+                    plgpu.SMEM((C, dv), dt), plgpu.SMEM((dk, C), dt),
+                    plgpu.SMEM((C, dk), dt), plgpu.SMEM((C, C), dt),
+                )
 
             # --- adjoint stage 2: the carried state, the transposed solves,
             #     dL, the score adjoint, dk/dv/dbeta and dalpha (a sibling
-            #     scope; dvt crosses through the GMEM scratch as a value) -----
+            #     scope; the debug build crosses dvt through the GMEM scratch,
+            #     the slim build hands it over as an fp32 value) -------------
             def _adj2(y_s, dvt_s, pw_s, pw_t, smt_s, yu_s, dl_s, pat_s, bs_s):
-                dvt_v = _l(dvt_g.at[h, i], ACC_C)
-                dvt_s[...] = dvt_v.astype(dt)
+                if debug_outputs:
+                    dvt_s[...] = _l(dvt_g.at[h, i], ACC_C).astype(dt)
+                else:
+                    dvt_s[...] = dvt.astype(dt)  # fp32 value, exact -> bf16 operand
                 dyv = plgpu.mma(_zero((C, dk), ACC_C), _l(vw_t.T, L_C),
                                 _l(st_s.T, R_C))
                 acc2 = _l(st_s, ACC_DK).astype(f32)
@@ -1592,9 +1664,15 @@ def _build_bwd_kernel(T, C, H, dk, dv, tile, dtype, state_dtype, *,
             jax.ShapeDtypeStruct((T, H * dk), f32),          # dalpha
             jax.ShapeDtypeStruct((T, H * 32), f32),          # dbeta32
             jax.ShapeDtypeStruct((H, dk, dv), f32),          # dS_in
+            # The one GMEM scratch the two loops must share -- an out_type
+            # entry is the only GMEM-scratch mechanism of plgpu.kernel (see
+            # the builder docstring): written in pass A, read in pass B.
             jax.ShapeDtypeStruct((H, n_chunks, dk, dv), stdt),  # chain (natural)
-            jax.ShapeDtypeStruct((H, n_chunks, dv, dk), stdt),  # chain (transposed)
-            jax.ShapeDtypeStruct((H, n_chunks, C, dv), f32),    # dvt crossing (fp32)
+        ) + (
+            (
+                jax.ShapeDtypeStruct((H, n_chunks, dv, dk), stdt),  # chain (T)
+                jax.ShapeDtypeStruct((H, n_chunks, C, dv), f32),  # dvt (fp32)
+            ) if debug_outputs else ()
         ),
         scratch_types=[
             plgpu.SMEM((dk, dv), stdt),  # carried state (A: forward, B: dS)
@@ -1613,17 +1691,21 @@ def _build_bwd_kernel(T, C, H, dk, dv, tile, dtype, state_dtype, *,
 
 
 @functools.lru_cache(maxsize=8)
-def _backward_run(T, C, H, dk, dv, tile, dtype, state_dtype):
+def _backward_run(T, C, H, dk, dv, tile, dtype, state_dtype,
+                  debug_outputs=False):
     """The jitted persistent backward run of one static spec (see the cache note).
 
     Same invariant as :func:`_forward_run`.  The carried chain dtype is *not* a
     builder argument (``BWD_CHAIN_DTYPE`` is fixed by the design), so it is not
-    part of the key either.
+    part of the key either; ``debug_outputs`` *is* part of it (the build
+    product differs -- nine outputs vs seven).
     """
-    return jax.jit(_build_bwd_kernel(T, C, H, dk, dv, tile, dtype, state_dtype))
+    return jax.jit(_build_bwd_kernel(T, C, H, dk, dv, tile, dtype, state_dtype,
+                                     debug_outputs))
 
 
-def kernel_bwd(q, k, v, alpha, beta32, S, do, dS, *, tile=16, chunk=CHUNK):
+def kernel_bwd(q, k, v, alpha, beta32, S, do, dS, *, tile=16, chunk=CHUNK,
+               debug_outputs=False):
     """Persistent backward pass: ``(q, k, v, alpha, beta32, S, do, dS)`` ->
     ``(dq, dk, dv, dalpha, dbeta32, dS_in)``, one launch per layer-pass.
 
@@ -1635,6 +1717,13 @@ def kernel_bwd(q, k, v, alpha, beta32, S, do, dS, *, tile=16, chunk=CHUNK):
     output, ``dS`` the cotangent of the final state; the returned cotangents
     carry the primal dtypes (bf16 ``dq``/``dk``/``dv``, fp32 ``dalpha``/
     ``dbeta32``/``dS_in``) -- the ``custom_vjp`` contract of milestone 2.
+
+    ``debug_outputs=True`` appends the kernel's GMEM scratch to the result
+    (``chain_nat``, ``chain_t``, ``dvt``; nine outputs, the diagnostics of the
+    milestone-4 runs).  The default ``False`` builds the slim kernel: the
+    transposed chain and the fp32 ``dvt`` crossing are not materialized (the
+    live math is the same computation -- see :func:`_build_bwd_kernel`), and
+    only the six live cotangents are returned.
 
     Execution needs Mosaic GPU (GB10); the lowering runs anywhere
     (``lower_check.py`` on this CPU node, via the companion module
@@ -1659,9 +1748,16 @@ def kernel_bwd(q, k, v, alpha, beta32, S, do, dS, *, tile=16, chunk=CHUNK):
             f"valid_config_bwd); no silent fallback")
     spec = _BwdKernelSpec(T, C, H, dk, dv, int(tile), jnp.dtype(dt).name,
                           jnp.dtype(BWD_STATE_DTYPE).name,
-                          jnp.dtype(BWD_CHAIN_DTYPE).name)
+                          jnp.dtype(BWD_CHAIN_DTYPE).name, bool(debug_outputs))
     run = _backward_run(spec.T, spec.C, spec.H, spec.dk, spec.dv, spec.tile,
-                        spec.dtype, spec.state_dtype)
-    dq, dk_o, dv_o, da, db, ds_in, _chain, _chain_t, _dvt = run(
+                        spec.dtype, spec.state_dtype, spec.debug_outputs)
+    if debug_outputs:
+        dq, dk_o, dv_o, da, db, ds_in, chain, chain_t, dvt = run(
+            q, k, v, alpha, beta32, S, do, dS)
+        return dq, dk_o, dv_o, da, db, ds_in, chain, chain_t, dvt
+    # The slim build's seventh output is its one irreducible GMEM scratch (the
+    # natural state chain, written in pass A, read in pass B); it is dropped
+    # here -- the custom_vjp rule takes the six live cotangents.
+    dq, dk_o, dv_o, da, db, ds_in, _chain = run(
         q, k, v, alpha, beta32, S, do, dS)
     return dq, dk_o, dv_o, da, db, ds_in

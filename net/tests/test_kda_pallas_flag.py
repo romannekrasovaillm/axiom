@@ -120,6 +120,10 @@ def test_layer_level_parity_between_modes(monkeypatch, cfg):
     """Слой целиком: обе формы (``wyut`` и ``chunked_cc``) совпадают между режимами."""
     from net.tests.test_kda_wyut import _params, _x  # те же фикстуры, что у формы wyut
 
+    # Обе формы здесь — XLA-тела: кампанийный дефолт ``chunked_cc``
+    # (``persistent``, ADR-054 Am.7) GPU-only и на CPU отвергается, поэтому
+    # тело выбирается явно.
+    monkeypatch.setenv("AXIOM_KDA_CC_IMPL", "jax")
     p = _params(cfg)
     x = _x(cfg, cfg.kda_wyut_chunk * 2 if hasattr(cfg, "kda_wyut_chunk") else 64)
 

@@ -352,6 +352,9 @@ def test_rewritten_forms_match_the_preport_tree_within_atol(
     """
     monkeypatch.delenv(GATE, raising=False)
     assert compute_dtype.mode() == compute_dtype.FP32
+    # ``chunked_cc`` runs on the committed XLA body: the campaign default
+    # (``persistent``, ADR-054 Am.7) is GPU-only and refuses this CPU node.
+    monkeypatch.setenv("AXIOM_KDA_CC_IMPL", "jax")
 
     cfg = _cfg(impl, kda_chunked_backward=backward)
     params = preport.kda.init_kda(jr.PRNGKey(0), cfg)
@@ -374,6 +377,8 @@ def test_the_window_branch_is_gate_off_transparent(preport, monkeypatch):
     ``chunked_cc``, so it inherits that form's atol criterion.
     """
     monkeypatch.delenv(GATE, raising=False)
+    # ``chunked_cc``: the committed XLA body explicitly (campaign default is GPU-only).
+    monkeypatch.setenv("AXIOM_KDA_CC_IMPL", "jax")
     overrides = dict(swa_window=8, swa_share_kda_projections=False)
     cfg = _cfg("chunked_cc", kda_chunked_backward=False, **overrides)
     params = preport.kda.init_kda(jr.PRNGKey(0), cfg)
@@ -448,6 +453,8 @@ def test_the_gate_still_refuses_an_unknown_value(monkeypatch):
     value must raise there rather than quietly producing an fp32 graph.
     """
     monkeypatch.setenv(GATE, "bogus")
+    # ``chunked_cc``: the committed XLA body explicitly (campaign default is GPU-only).
+    monkeypatch.setenv("AXIOM_KDA_CC_IMPL", "jax")
     cfg = _cfg("chunked_cc")
     params = kda.init_kda(jr.PRNGKey(0), cfg)
     x = jr.normal(jr.PRNGKey(1), (2, cfg.hidden))

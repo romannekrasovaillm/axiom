@@ -252,7 +252,7 @@ def test_grad_of_the_mux_matches_the_jax_body(monkeypatch, H, T, seed):
     x = jr.normal(jr.PRNGKey(seed + 5), (T, cfg.hidden))
     w = jr.normal(jr.PRNGKey(seed + 6), (T, cfg.hidden))
 
-    monkeypatch.delenv("AXIOM_KDA_CC_IMPL", raising=False)
+    monkeypatch.setenv("AXIOM_KDA_CC_IMPL", "jax")
     loss_jax = lambda xx: jnp.sum(kda.apply_chunked_cc(params, cfg, xx, chunk_size=C) * w)
     g_jax = jax.grad(loss_jax)(x)
 
@@ -272,7 +272,7 @@ def test_grad_of_the_mux_matches_the_jax_body_wrt_params(monkeypatch):
     x = jr.normal(jr.PRNGKey(seed + 5), (T, cfg.hidden))
     w = jr.normal(jr.PRNGKey(seed + 6), (T, cfg.hidden))
 
-    monkeypatch.delenv("AXIOM_KDA_CC_IMPL", raising=False)
+    monkeypatch.setenv("AXIOM_KDA_CC_IMPL", "jax")
     f = lambda p: jnp.sum(kda.apply_chunked_cc(p, cfg, x, chunk_size=C) * w)
     g_jax = jax.grad(f)(params)
 

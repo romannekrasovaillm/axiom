@@ -28,9 +28,11 @@ CPU node** and states plainly what is not:
 * the kernel *lowers* for sm_121 under the skill's patched lowering (arch
   (12,1), 101 376 B SMEM limit) for every live case, and the sieve
   (:func:`kda_cc_fused.valid_config`) rejects what does not fit (C=64);
-* the ``AXIOM_KDA_CC_IMPL`` mux is fail-closed: default ``jax`` is the
-  committed path, an unknown value is an error, ``mosaic`` on a GPU-less host
-  refuses with a typed error (no silent fallback);
+* the ``AXIOM_KDA_CC_IMPL`` mux is fail-closed: the default ``persistent``
+  (the campaign body since 2026-10-12, ADR-054 Am.7) is the committed path,
+  ``jax`` (the rollback handle) selects the reference body, an unknown value
+  is an error, ``mosaic`` on a GPU-less host refuses with a typed error (no
+  silent fallback);
 * **the kernel itself is not executed here** (no GPU on this node, and jax
   0.11.2's GPU interpret mode carries no rule for ``plgpu.mma``): device
   parity, timing and determinism are the architect's ``check_kernel.py`` run
@@ -322,13 +324,14 @@ def test_kernel_rejects_non_bf16_operands():
 
 
 # ---------------------------------------------------------------------------
-# the AXIOM_KDA_CC_IMPL mux: default jax, unknown is an error, mosaic refuses CPU
+# the AXIOM_KDA_CC_IMPL mux: default persistent, unknown is an error, mosaic refuses CPU
 # ---------------------------------------------------------------------------
 
 
-def test_default_impl_is_jax(monkeypatch):
+def test_default_impl_is_persistent(monkeypatch):
+    """The owner's campaign default (2026-10-12, ADR-054 Am.7): variant B."""
     monkeypatch.delenv("AXIOM_KDA_CC_IMPL", raising=False)
-    assert kda.kda_cc_impl() == "jax"
+    assert kda.kda_cc_impl() == "persistent"
 
 
 def test_unknown_impl_is_an_error(monkeypatch):
@@ -350,18 +353,19 @@ def test_mosaic_mode_without_gpu_is_fail_closed(monkeypatch):
 
 
 def test_jax_mode_is_the_committed_path(monkeypatch):
-    """Default env: the flag's absence installs the committed scan body.
+    """``AXIOM_KDA_CC_IMPL=jax`` (the rollback handle) installs the committed
+    scan body.
 
     The fused body is spied on and must not be entered; the result matches a
     manual ``cc_chunk_step`` scan of the same chunks (fp32; the bound is the
     XLA reordering slack of the scan fusion, not a semantic difference).
     """
-    monkeypatch.delenv("AXIOM_KDA_CC_IMPL", raising=False)
+    monkeypatch.setenv("AXIOM_KDA_CC_IMPL", "jax")
     calls = {"mosaic": 0}
 
     def spy(*args, **kwargs):  # pragma: no cover — must never run here
         calls["mosaic"] += 1
-        raise AssertionError("AXIOM_KDA_CC_IMPL default must not touch the fused body")
+        raise AssertionError("AXIOM_KDA_CC_IMPL=jax must not touch the fused body")
 
     monkeypatch.setattr(kda, "_cc_chunk_step_mosaic", spy)
     cfg = _cfg(H=2)

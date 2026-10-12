@@ -51,9 +51,24 @@ over).  The step built by :func:`make_step` is therefore jitted (``lr`` is a
 *dynamic* argument — a Python-float ``lr`` closed over would recompile on every
 schedule tick) and walks the tree once.  The per-branch arithmetic is unchanged;
 the CPU smoke in ``tools/optimizer_jit_smoke.py`` measures the ratio.
+
+Batching of Newton–Schulz (ADR-054 Am.11, веха-5)
+--------------------------------------------------
+After the KDA victory the GPU front-end (not arithmetic) is the barrier: the
+optimizer's NS5 was unrolled **per leaf** (``tree_map`` over ~533 Muon leaves on
+l3-full), so the step carried hundreds of small fusion chains.  ``opt_batch =
+"grouped"`` (``AXIOM_OPT_BATCH=grouped``) collects the Muon leaves of one
+parameter group *and one shape* into a stack and runs NS5 with **one** ``vmap``
+per group — one batched ``dot_general`` instead of N.  The arithmetic of a leaf
+is unchanged (parity: ``net/tests/test_34_optimizer_ns5_batch.py``).  No padding:
+groups are strictly equal-shape (``newtonschulz5(0) = 0`` exactly — verified —
+so pad-to-max would be numerically safe, but it re-rounds the reductions and
+burns FLOPs on the pad).  Default stays ``leaf`` — the rollback handle.
 """
 
 from __future__ import annotations
+
+import os
 
 import jax
 import jax.numpy as jnp
@@ -122,6 +137,41 @@ GROUP_NAMES = (
 #: Groups whose state is the AdamW pair ``(m, v)``; all others keep one Muon
 #: momentum buffer.
 _ADAMW_GROUPS = frozenset({GROUP_ADAMW_VECTOR, GROUP_ADAMW_EMBED})
+
+#: Muon groups — the ones whose NS5 is batched by shape under
+#: ``AXIOM_OPT_BATCH=grouped``.  The AdamW branches are elementwise and stay
+#: per-leaf: they are not touched by the batching (Am.11).
+_MUON_GROUPS = frozenset({GROUP_MUON_MATRIX, GROUP_MUON_PER_HEAD, GROUP_MUON_BATCHED})
+
+# ---------------------------------------------------------------------------
+# ADR-054 (цикл-4, веха-5) — режим батчинга NS5
+# ---------------------------------------------------------------------------
+
+#: Flag values of ``AXIOM_OPT_BATCH``: ``leaf`` — the previous path (default,
+#: the rollback handle), ``grouped`` — NS5 batched by shape-group.
+OPT_BATCH_ENV = "AXIOM_OPT_BATCH"
+OPT_BATCH_LEAF = "leaf"
+OPT_BATCH_GROUPED = "grouped"
+OPT_BATCH_MODES = (OPT_BATCH_LEAF, OPT_BATCH_GROUPED)
+
+
+def opt_batch_mode(value: str | None = None) -> str:
+    """NS5 batching mode: ``leaf`` (default) | ``grouped``.
+
+    ``AXIOM_OPT_BATCH`` is read when the step is **built** (:func:`make_step`),
+    not per call: the mode changes the *structure of the traced graph* (the
+    grouping is built during tracing, where the shapes are static), so it cannot
+    change in the middle of a run.  As with ``AXIOM_KDA_*``, an unknown value is
+    an explicit error, never a silent fallback (fail-closed) — a typo must not
+    pick a mode by accident.  An explicit ``value`` (the ``make_step(opt_batch=)``
+    argument) wins over the environment.
+    """
+    raw = value if value is not None else os.environ.get(OPT_BATCH_ENV)
+    mode = (raw or OPT_BATCH_LEAF).strip().lower()
+    if mode not in OPT_BATCH_MODES:
+        raise ValueError(
+            f"{OPT_BATCH_ENV}={mode!r}: ожидается одно из {OPT_BATCH_MODES}")
+    return mode
 
 
 class UnclassifiedMatrixError(ValueError):
@@ -227,6 +277,7 @@ def make_step(
     single_pass: bool = True,
     donate: bool = False,
     work_dtype: str | None = None,
+    opt_batch: str | None = None,
 ):
     """Build the optimizer step — jitted, one walk over the parameter tree.
 
@@ -274,6 +325,22 @@ def make_step(
     Премисса легальности при ``donate=True``: каст читает ``new_params`` — уже
     вычисленный возврат шага, а не донированный вход.  ``None`` (дефолт) —
     прежний контракт (два выхода); существующие вызывающие не меняются.
+
+    ADR-054 (цикл-4, Am.11, веха-5): ``opt_batch`` — режим NS5-батчинга
+    (:func:`opt_batch_mode`; ``None`` = ``AXIOM_OPT_BATCH`` или ``leaf``).
+    ``"leaf"`` — прежний путь: NS5 разворачивается **по каждому** Muon-листу
+    отдельно (на l3-full 533 Muon-листа ⇒ сотни мелких фьюзий в step_fn —
+    доминирующая стоимость GPU front-end после победы над KDA, Am.11).
+    ``"grouped"`` — Muon-листья собираются в стёк по **(группа, форма)** и NS5
+    исполняется одним ``vmap`` на группу: одно batched ``dot_general`` вместо N,
+    на l3-full 533 цепочки NS5 → 23 (17 групп ``muon_matrix`` + 2
+    ``muon_per_head`` + 4 ``muon_batched``; из них 2 листа-одиночки своей формы
+    идут прямым вызовом).  Арифметика на лист та же (момент,
+    NS5, wd, clip; паритет — ``net/tests/test_34_optimizer_ns5_batch.py``);
+    группы строго равной формы, паддинга нет.  Одиночный лист своей группы
+    проходит прежним leaf-вызовом (побитово прежнее), AdamW-группы и их
+    momentum/Adam-цепочки батчинг не трогает.  ``single_pass=False`` (оракул
+    паритета «один проход ↔ два») остаётся leaf-обходом и старше ``opt_batch``.
     """
     if int(ns_steps) < 1:
         raise ValueError(f"ns_steps must be >= 1, got {ns_steps!r}")
@@ -281,6 +348,10 @@ def make_step(
     work_dtype = None if work_dtype is None else jnp.dtype(work_dtype)
     heads = cfg.num_heads
     wd = cfg.weight_decay
+    # Веха-5: режим читается на сборке шага — группировка строится на трассировке
+    # (формы статичны), тип графа от режима зависит.  Неизвестное значение флага
+    # падает здесь, а не тихо выбирает путь.
+    batch = opt_batch_mode(opt_batch)
 
     def _matrix_step(p, g, m, lr, per_head):
         m = muon_momentum * m + (1.0 - muon_momentum) * g
@@ -319,6 +390,37 @@ def make_step(
             p = jnp.clip(p, -weight_clip, weight_clip)
         return p, (m, v)
 
+    def _muon_leaf(group, p, g, m, lr):
+        """Muon одного листа по его группе — тело ``_matrix_step``/``_batched``."""
+        if group == GROUP_MUON_PER_HEAD:
+            return _matrix_step(p, g, m, lr, True)  # (new_p, momentum)
+        if group == GROUP_MUON_MATRIX:
+            return _matrix_step(p, g, m, lr, False)  # (new_p, momentum)
+        return _batched_matrix_step(p, g, m, lr)  # (new_p, momentum)
+
+    def _muon_group_step(group, ps, gs, ms, lr):
+        """Muon для стека листьев одной (группа, форма): ОДИН NS5 на группу.
+
+        Тот же момент ``m``, тот же NS5 (vmap по стеку вместо разворачивания по
+        листьям), тот же wd/clip: одно batched ``dot_general`` на итерацию вместо
+        ``len(ps)`` отдельных.  Внутри — те же функции, что у leaf-пути
+        (:func:`newtonschulz5` / :func:`per_head_newtonschulz5`).
+        """
+        m = muon_momentum * ms + (1.0 - muon_momentum) * gs
+        if group == GROUP_MUON_PER_HEAD:
+            upd = jax.vmap(lambda one: per_head_newtonschulz5(one, heads, ns_steps))(m)
+        elif group == GROUP_MUON_BATCHED:
+            # (N, n, d_in, d_out) -> (N*n, d_in, d_out): тот же разворот ведущей
+            # оси, что у ``_batched_matrix_step`` на одном листе.
+            flat = m.reshape(-1, *m.shape[-2:])
+            upd = jax.vmap(lambda one: newtonschulz5(one, ns_steps))(flat).reshape(m.shape)
+        else:
+            upd = jax.vmap(lambda one: newtonschulz5(one, ns_steps))(m)
+        p = ps * (1.0 - lr * wd) - lr * upd
+        if weight_clip is not None:
+            p = jnp.clip(p, -weight_clip, weight_clip)
+        return p, m
+
     def _one(path, p, g, s, lr):
         """Update one leaf; returns ``(new_param, new_state_leaf)``."""
         name = leaf_name(path[-1]) if path else ""
@@ -329,12 +431,8 @@ def make_step(
                 "классификации ADR-048: дополни MUON_MATRIX_LEAVES или "
                 "ADAMW_MATRIX_LEAVES, либо включи legacy_muon_all_2d"
             )
-        if group == GROUP_MUON_PER_HEAD:
-            return _matrix_step(p, g, s, lr, True)  # (new_p, momentum)
-        if group == GROUP_MUON_MATRIX:
-            return _matrix_step(p, g, s, lr, False)  # (new_p, momentum)
-        if group == GROUP_MUON_BATCHED:
-            return _batched_matrix_step(p, g, s, lr)  # (new_p, momentum)
+        if group in _MUON_GROUPS:
+            return _muon_leaf(group, p, g, s, lr)
         if group == GROUP_ADAMW_EMBED:
             return _adamw_step(p, g, s, lr, clip=True)  # (new_p, (m, v))
         # ``adamw_vector`` — norms, biases, scalars.
@@ -367,6 +465,79 @@ def make_step(
             ),
         )
 
+    def _walk_grouped(params, grads, state, lr):
+        """Один проход, Muon-часть — батчированными shape-группами (веха-5).
+
+        Классификация та же (:func:`classify_leaf`, fail-closed на неизвестном
+        2-D имени — как ``_walk_once``); Muon-листья одной группы и одной формы
+        собираются в стёк и обрабатываются одним ``vmap``-NS5 на группу
+        (:func:`_muon_group_step`).  Ключ группы — ``(группа, форма, dtypes)``:
+        в один ``jnp.stack`` попадают только строго совместимые листья, паддинга
+        нет (Am.11 — группы строго equal-shape).  Одиночный лист группы и все
+        AdamW-листья идут прежним leaf-путём (побитово теми же вызовами).
+
+        Группировка строится **на трассировке** (формы статичны) — под ``jit``
+        она выполняется один раз, в графе остаются только batched-операции.
+        """
+        path_leaves, param_treedef = jax.tree_util.tree_flatten_with_path(params)
+        grads_for = param_treedef.flatten_up_to(grads)
+        state_for = param_treedef.flatten_up_to(state)
+        leaf_groups: list[str] = []
+        for path, p in path_leaves:
+            name = leaf_name(path[-1]) if path else ""
+            group = classify_leaf(name, p.ndim, legacy=legacy_muon_all_2d)
+            if group == GROUP_UNCLASSIFIED:
+                raise UnclassifiedMatrixError(
+                    f"2-D параметр {name!r} ({jax.tree_util.keystr(path)}) вне "
+                    "классификации ADR-048: дополни MUON_MATRIX_LEAVES или "
+                    "ADAMW_MATRIX_LEAVES, либо включи legacy_muon_all_2d"
+                )
+            leaf_groups.append(group)
+        # (группа, форма, dtypes) -> индексы плоских листьев, в порядке дерева.
+        buckets: dict[tuple, list[int]] = {}
+        for index, group in enumerate(leaf_groups):
+            if group not in _MUON_GROUPS:
+                continue
+            p = path_leaves[index][1]
+            key = (group, p.shape, p.dtype, grads_for[index].dtype, state_for[index].dtype)
+            buckets.setdefault(key, []).append(index)
+
+        new_params: list = [None] * len(path_leaves)
+        new_state: list = [None] * len(path_leaves)
+        for key, indices in buckets.items():
+            group = key[0]
+            if len(indices) == 1:
+                # Одиночная группа (одна такая форма на всю модель): прежний
+                # leaf-вызов — побитово прежняя арифметика.
+                index = indices[0]
+                new_params[index], new_state[index] = _muon_leaf(
+                    group, path_leaves[index][1], grads_for[index], state_for[index], lr
+                )
+                continue
+            p_stack, m_stack = _muon_group_step(
+                group,
+                jnp.stack([path_leaves[i][1] for i in indices]),
+                jnp.stack([grads_for[i] for i in indices]),
+                jnp.stack([state_for[i] for i in indices]),
+                lr,
+            )
+            for k, index in enumerate(indices):
+                new_params[index] = p_stack[k]
+                new_state[index] = m_stack[k]
+        for index, group in enumerate(leaf_groups):
+            if group in _MUON_GROUPS:
+                continue
+            new_params[index], new_state[index] = _adamw_step(
+                path_leaves[index][1], grads_for[index], state_for[index], lr,
+                clip=group == GROUP_ADAMW_EMBED,
+            )
+        return (
+            param_treedef.unflatten(new_params),
+            jax.tree_util.tree_structure(state).unflatten(
+                [leaf for ns in new_state for leaf in jax.tree_util.tree_leaves(ns)]
+            ),
+        )
+
     def _walk_twice(params, grads, state, lr):
         """Pre-Amendment traversal (the parity oracle): two walks, twice the work.
 
@@ -384,7 +555,14 @@ def make_step(
         return new_params, new_state
 
     def step(params, grads, state, lr):
-        walk = _walk_once if single_pass else _walk_twice
+        if not single_pass:
+            # Пре-Amendment обход — оракул паритета «один проход ↔ два»; он
+            # старше режима батчинга: grouped-путь — это и есть новый один проход.
+            walk = _walk_twice
+        elif batch == OPT_BATCH_GROUPED:
+            walk = _walk_grouped
+        else:
+            walk = _walk_once
         new_params, new_state = walk(params, grads, state, lr)
         if work_dtype is None:
             return new_params, new_state
@@ -476,6 +654,49 @@ def format_report(report: dict) -> str:
             "НЕ КЛАССИФИЦИРОВАНО (fail-closed): " + ", ".join(report["unclassified"])
         )
     return "\n".join(lines)
+
+
+def ns5_shape_groups(params, *, legacy_muon_all_2d: bool = False, examples: int = 2) -> dict:
+    """Muon-листья по (группа, форма) — расчёт NS5-цепочек режима ``grouped``.
+
+    Отчёт-инструмент вехи-5 (ADR-054 Am.11): под ``AXIOM_OPT_BATCH=grouped``
+    каждый кортеж (группа, форма) исполняется **одним** ``vmap``-вызовом NS5
+    (листья одной формы собираются в стёк), лист-одиночка своей формы идёт
+    прежним прямым вызовом.  ``chains_leaf`` — столько NS5-цепочек
+    разворачивает ``leaf``-режим (по вызову на лист), ``chains_grouped`` —
+    столько остаётся в ``grouped``.  Принимает и абстрактное дерево
+    ``jax.eval_shape``: геометрия l3-full считается без аллокации.  Ключ здесь —
+    (группа, форма) без dtypes (отчёт о геометрии); сам ``_walk_grouped``
+    страхует совместимость стека по dtypes.
+    """
+    buckets: dict[tuple, dict] = {}
+    muon_leaves = 0
+
+    def visit(path, leaf):
+        nonlocal muon_leaves
+        group = classify_leaf(
+            leaf_name(path[-1]) if path else "", leaf.ndim, legacy=legacy_muon_all_2d
+        )
+        if group not in _MUON_GROUPS:
+            return
+        muon_leaves += 1
+        entry = buckets.setdefault(
+            (group, tuple(leaf.shape)), {"group": group, "shape": list(leaf.shape), "leaves": 0, "examples": []}
+        )
+        entry["leaves"] += 1
+        if len(entry["examples"]) < examples:
+            entry["examples"].append(jax.tree_util.keystr(path))
+
+    jax.tree_util.tree_map_with_path(visit, params)
+    groups = sorted(buckets.values(), key=lambda e: (-e["leaves"], e["group"], e["shape"]))
+    return {
+        "legacy_muon_all_2d": bool(legacy_muon_all_2d),
+        "groups": groups,
+        "muon_leaves": muon_leaves,
+        "chains_leaf": muon_leaves,
+        "chains_grouped": len(groups),
+        "batched_chains": sum(1 for entry in groups if entry["leaves"] > 1),
+    }
 
 
 def cosine_schedule(peak_lr: float, total_steps: int, warmup_ratio: float = 0.01, min_ratio: float = 0.0):

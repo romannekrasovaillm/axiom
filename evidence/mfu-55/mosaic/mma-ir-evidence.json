@@ -1,0 +1,11 @@
+{
+ "hlo_has_mma": true,
+ "hlo_mma_lines": [
+  "%0 = stablehlo.custom_call @mosaic_gpu_v2(%arg0, %arg1) {backend_config = \"\", mhlo.backend_config = {kernel_hash = \"M\\05"
+ ],
+ "ptx_has_mma_sync": true,
+ "ptx_mma_lines": [
+  "ROOT %mpmd_map.1 = bf16[12,128,256]{2,1,0} custom-call(%operands_0_.1, %operands_1_.1), custom_call_target=\"mosaic_gpu_v"
+ ],
+ "ptx_bytes": 719988
+}

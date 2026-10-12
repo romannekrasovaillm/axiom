@@ -133,7 +133,14 @@ def _emulate_bf16(q_flat, k_flat, v_flat, alpha_flat, beta32, S, tile=16):
                 rq = (row.astype(f32) * (rf.astype(jnp.bfloat16).astype(f32) * rowmask)
                       ).astype(jnp.bfloat16)
                 colmask = (ar < p + tile).astype(f32)[:, None]
-                cf = jnp.exp(anchor - G)
+                # The column factor is built on the whole chunk and masked
+                # afterwards; beyond the tile its exponent grows with the chunk
+                # and the raw exp is inf -> ``inf * 0 == nan`` on the mask
+                # (milestone-4c, located with the persistent variant-B kernel;
+                # the same tile rule the model's ``_cc_tile`` budgets).  Below
+                # the budget the clamp is a no-op, so in-tile values are
+                # unchanged.
+                cf = jnp.exp(jnp.minimum(anchor - G, kda._CC_EXP_BUDGET))
                 ck = (kv.astype(f32) * (cf * colmask).astype(jnp.bfloat16).astype(f32)
                       ).astype(jnp.bfloat16)
                 acc = acc + rq.astype(f32) @ ck.astype(f32).T

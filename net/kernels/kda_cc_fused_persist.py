@@ -122,6 +122,13 @@ Verification status (honest, same standard as milestones 1-2)
   with the kernel seam substituted by its declared numerics: forward parity,
   gradient parity (inputs and parameters), repeatability, the fail-closed
   GPU-less refusal, the padding path and the inert remat flag;
+* the *second* nan class (milestone 4c: the tile-anchored column factor
+  ``exp(G_p - G_i)`` evaluated beyond the tile -- ``inf`` times the zero mask,
+  located on CPU in the regime the weight updates drive the decay projections
+  into) is pinned by a 10-step training parity at ``alpha`` at its boundary
+  (``|g| -> |g_min|``), red before the ``COL_EXP_BUDGET`` clamp and green
+  after -- the same gate the milestone-4b 4-step test provides for the first
+  class;
 * the *launch-count claim at the API seam* is pinned: exactly one kernel call
   per layer-pass (the per-chunk ``mosaic`` body called it once per chunk);
 * the *build/jit caches* are pinned at the same seam: one static spec -> one
@@ -198,6 +205,23 @@ SMEM_EPILOGUE_BYTES = 4 * 1024
 
 #: The tile budget rule of ``net.kda._cc_tile``, mirrored as a static bound.
 TILE_MAX = 16
+
+#: Exponent budget of the tile-anchored *column* factor ``exp(G_p - G_i)``,
+#: the value of ``net.kda._CC_EXP_BUDGET`` (the tile rule of ``_cc_tile``:
+#: inside a tile the factor is at most ``exp(|g_min| * (tile - 1)) <= e^80``).
+#:
+#: The factor is evaluated on the *whole* chunk (the tile mask multiplies the
+#: product afterwards), and for the rows i beyond the tile the exponent
+#: ``sum_{j in (p, i]} |la_j|`` is not a tile-budget constant: it grows with
+#: the chunk.  At the campaign decay it crosses ``ln(3.4e38) = 88.72`` around
+#: row ``p + 18`` and the raw ``exp`` returns ``inf``; the masked-out rows then
+#: compute ``inf * 0 == nan`` (milestone-4c: located on CPU by the 10-step
+#: parity test at ``|la| -> |g_min|``, the regime the weight updates drive the
+#: decay projections into).  Clamping the
+#: exponent at the declared budget leaves every *in-tile* value bitwise
+#: unchanged (they cannot exceed the budget) and turns the masked-out rows into
+#: a finite ``e^80``, which the masks then multiply to an exact zero.
+COL_EXP_BUDGET = 80.0
 
 #: The declared chunk width of the persistent scan (the campaign value of
 #: ``cfg.kda_wyut_chunk``; the kernel takes it as a static parameter).
@@ -449,7 +473,13 @@ def _build_kernel(T, C, H, dk, dv, tile, dtype, state_dtype):
                     rq = _l(op_s, L_C)
                     op_s[...] = (ridx < p + tile).astype(dt)
                     cmk = _l(op_s, ACC_C).astype(f32)
-                    cf = jnp.exp(anchor - G)                     # cols i < p + tile
+                    # Column factor, clamped at the declared tile budget: it is
+                    # evaluated on the whole chunk (the mask multiplies after),
+                    # and beyond the tile the exponent grows past
+                    # ln(3.4e38) -> the raw exp is inf and inf * 0 == nan
+                    # (milestone-4c; see COL_EXP_BUDGET).  In-tile values are
+                    # bitwise unchanged by the clamp.
+                    cf = jnp.exp(jnp.minimum(anchor - G, COL_EXP_BUDGET))
                     op_s[...] = (cf * cmk).astype(dt)
                     cf_wg = _l(op_s, ACC_C).astype(f32)
                     op_s[...] = (kv.astype(f32) * cf_wg).astype(dt)
@@ -945,6 +975,22 @@ def cc_scan(q, k, v, alpha, beta32, S, tile=16, chunk=CHUNK):
 #   backend flushes ``exp`` subnormals to zero, so ``1/exp(G) = inf`` and
 #   ``gc / gamma = nan``) -- measured on the milestone-4b mini-run and fixed
 #   here (ADR-054 Am.6);
+# * the two factors are built on the *whole* chunk and masked afterwards, and
+#   their reach is not symmetric: the row factor saturates at 1 (the ``min``),
+#   but for the rows *beyond* the tile the column exponent is no longer a
+#   tile-budget constant -- it sums ``|la|`` over the whole span from the tile
+#   start and crosses ``ln(3.4e38) = 88.72`` around ``p + 18`` positions.  The
+#   raw ``exp`` then returns ``inf``; on the aqk/dR side it multiplies the
+#   exactly-zero ``dT`` entries and on the dL side it meets the far-row ``rf``
+#   that has already underflown to ``0``: both products are ``0 * inf = nan``
+#   (milestone-4c: located on CPU by the boundary-alpha 10-step parity test,
+#   the regime the weight updates drive the decay projections into -- the
+#   battery lost the loss on step 5 exactly after the projections saturated).
+#   Fixed by clamping the *column* exponent at the declared budget
+#   ``COL_EXP_BUDGET``: in-tile values cannot exceed it (bitwise unchanged),
+#   the masked-out rows become a finite ``e^80`` and the masks multiply them to
+#   an exact zero.  The forward ``_score_matrix`` has the same defect in its
+#   ``cf * cmk`` product and carries the same clamp;
 # * ``lam = gamma^{c+1->C}`` is computed in the direct ``exp(sum la - G)``
 #   form of the forward phase 4, not as ``gc / gamma`` (same underflow);
 # * ``dL = -(Yw W^T + Yu U^T)`` with ``Yw = -Yu S^T`` collapses to
@@ -1140,7 +1186,10 @@ def _build_bwd_kernel(T, C, H, dk, dv, tile, dtype, state_dtype, *,
                 rq = _l(op_s, L_C)
                 op_s[...] = (ridx < p + tile).astype(dt)
                 cmk = _l(op_s, ACC_C).astype(f32)
-                cf = jnp.exp(anchor - G)                     # cols i < p + tile
+                # Column factor, clamped at the declared tile budget (the
+                # milestone-4c fix of the forward/recompute twin above: the raw
+                # exp is inf beyond the tile and inf * 0 == nan on the mask).
+                cf = jnp.exp(jnp.minimum(anchor - G, COL_EXP_BUDGET))
                 op_s[...] = (cf * cmk).astype(dt)
                 cf_wg = _l(op_s, ACC_C).astype(f32)
                 op_s[...] = (k_full.astype(f32) * cf_wg).astype(dt)
@@ -1388,7 +1437,11 @@ def _build_bwd_kernel(T, C, H, dk, dv, tile, dtype, state_dtype, *,
                         jax.lax.broadcast_in_dim(
                             jnp.sum(G * oh, axis=0), (C, dk), (1,)), ACC_C)
                     rf = jnp.exp(jnp.minimum(G - anchor_b, 0.0))   # rows: <= 1
-                    cf = jnp.exp(anchor_b - G)                # cols: tile budget
+                    # Same clamp as the forward's column factor: for the rows
+                    # past the tile the raw exp is inf, and the far-row rf
+                    # underflows to 0 -> 0 * inf == nan in dr_a/dc_a
+                    # (milestone-4c).  In-tile values are unchanged.
+                    cf = jnp.exp(jnp.minimum(anchor_b - G, COL_EXP_BUDGET))
                     y_s[...] = (kvf * cf).astype(dt)
                     part = plgpu.mma(_zero((C, dk), ACC_C),
                                      _l(pat_s, L_C), _l(y_s, R_C))
@@ -1479,7 +1532,8 @@ def _build_bwd_kernel(T, C, H, dk, dv, tile, dtype, state_dtype, *,
                         jax.lax.broadcast_in_dim(
                             jnp.sum(G * oh, axis=0), (C, dk), (1,)), ACC_C)
                     rf = jnp.exp(jnp.minimum(G - anchor_b, 0.0))
-                    cf = jnp.exp(anchor_b - G)
+                    # Same clamp as in the aqk score adjoint above.
+                    cf = jnp.exp(jnp.minimum(anchor_b - G, COL_EXP_BUDGET))
                     y_s[...] = (kvf * cf).astype(dt)
                     part = plgpu.mma(_zero((C, dk), ACC_C),
                                      _l(pat_s, L_C), _l(y_s, R_C))

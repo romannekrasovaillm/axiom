@@ -784,14 +784,16 @@ def _scan_forward(q, k, v, alpha, beta32, S, tile, chunk):
 
 
 def _scan_backward(q, k, v, alpha, beta32, S, do, dS, tile, chunk):
-    """Backward rule body -- the scan-of-chunks adjoint, resolved per call.
+    """Backward rule body -- the persistent backward kernel (variant B).
 
-    The adjoint lives in the sibling modules (lazy import: this module stays
-    importable without them; the attributes are looked up per call so tests
-    can spy on the routing exactly like the milestone-2 wrapper's).
+    The name ``kernel_bwd`` is resolved on the module at call time, exactly
+    like the forward seam: the CPU suite substitutes the kernel execution by
+    its declared numerics, and the routing itself stays observable.  The
+    milestone-2 analytic adjoint (:func:`reference_bwd_scan`) stays as the
+    numerical reference the kernel is pinned against.
     """
-    return reference_bwd_scan(q, k, v, alpha, beta32, S, do, dS,
-                              tile=tile, chunk=chunk)
+    return kernel_bwd(q, k, v, alpha, beta32, S, do, dS,
+                      tile=tile, chunk=chunk)
 
 
 def make_cc_scan(tile=16, chunk=CHUNK, forward=None, backward=None):
@@ -856,3 +858,636 @@ def cc_scan(q, k, v, alpha, beta32, S, tile=16, chunk=CHUNK):
         scan = make_cc_scan(tile=key[0], chunk=key[1])
         _CC_SCANS[key] = scan
     return scan(q, k, v, alpha, beta32, S)
+
+
+# ---------------------------------------------------------------------------
+# Variant B (ADR-054 Amendment 5, milestone 4): the persistent *backward* kernel
+#
+# Variant A (milestone 3) collapsed the forward pass into one launch per
+# layer-pass but left the backward as a jnp reverse scan: the full step stayed
+# at 752k kernels and lost to the jax base (428.8 vs 491.1 tokens/s, Am.5).
+# Variant B -- this section -- collapses the *backward* pass itself: one
+# program per head walks the chunks in reverse order, carrying the adjoint
+# state ``dS`` in SMEM; per chunk it recomputes the forward chunk body inside
+# itself (the declared-bf16 phases of the shipped forward kernel), forms the
+# analytic adjoint of :mod:`net.kernels.kda_cc_fused_bwd`, accumulates the
+# cotangents into GMEM and hands the state cotangent to its predecessor.
+# Per layer-pass the custom-call boundary count is 1 in each direction.
+#
+# The structural facts the design leans on (pinned by lowering on this node,
+# not assumed):
+#
+# * a program may write a GMEM scratch (an ``out_type`` buffer) in one loop and
+#   read it back in the next one -- that is how the recompute loop persists the
+#   per-chunk incoming states ``S_i`` without a second launch (the state chain;
+#   two orientations, bf16);
+# * for GMEM operands the Mosaic lowering admits exactly two MMA load forms:
+#   ``MMA_LHS`` direct from an ``(m, k)`` k-contiguous buffer, and ``MMA_RHS``
+#   through the ``.T`` view of an ``(n, k)`` k-contiguous buffer (the template
+#   idiom).  SMEM admits the natural and the view forms of both.  The chain is
+#   therefore stored twice: the natural copy feeds the ``S`` RHS sites
+#   (``do @ S^T``) and the transposed copy the ``S^T`` LHS site (``W S``).
+#
+# The adjoint algebra is the milestone-2 analytic adjoint, with exactly-equal
+# reformulations the kernel uses to keep the operand set small (both mirrored
+# by the CPU emulation and pinned against :func:`reference_bwd_scan`):
+#
+# * the decay-ratio factors of the score adjoints are evaluated factored,
+#   ``E[c,i,d] = gamma_c/d / gamma_i/d`` (the same identity the forward kernel
+#   rebuilds tile-wise);
+# * ``dL = -(Yw W^T + Yu U^T)`` with ``Yw = -Yu S^T`` collapses to
+#   ``dL = -Yu vt^T`` (matrix associativity; exact in real arithmetic).
+#
+# The declared bf16 rounding points are mirrored by
+# ``net/tests/test_kda_cc_fused_persist.py`` (:func:`_emulate_bf16_bwd`), which
+# pins the drift term of the backward against the fp32 adjoint.
+# ---------------------------------------------------------------------------
+
+
+#: The carried adjoint state (``dS``) lives in SMEM between chunk iterations;
+#: bf16 is the milestone-4 budget decision (the measured lowering numbers are
+#: pinned by the tests).
+BWD_STATE_DTYPE = jnp.bfloat16
+
+#: The state chain of the recompute pass is persisted in a GMEM scratch (an
+#: ``out_type`` buffer of the kernel), bf16, in both orientations.
+BWD_CHAIN_DTYPE = jnp.bfloat16
+
+
+def _bwd_smem_floor_bytes(C, dk, dv, itemsize=2, state_itemsize=2):
+    """Declared SMEM floor of the backward kernel (the milestone-4 budget).
+
+    The allocation model of ``pl.run_scoped`` (measured on this node): the
+    buffers of one scope are allocated as a block (no intra-scope pooling),
+    sibling scopes are pooled by liveness (the max, not the sum).  The floor is
+    therefore ``persistent + max(scope blocks) + the carried state + the
+    epilogue margin``:
+
+    * persistent (kernel-level scratch): ``W^T`` ``(dk,C)``, ``U^T``/``vt^T``
+      ``(dv,C)`` (one buffer, reused), ``aqk``/``L`` ``(C,C)``, ``gc``;
+    * scope blocks: the phase-1 decay/scores arena of the recompute, the solve
+      set, the ``S^T`` staging of the state pass, phase 4 of the state pass,
+      and the two adjoint scopes (arguments; solves/``Yu``/staging masks);
+      the binding block is the second adjoint scope (declared in the tests'
+      measured numbers: 92 160 B for C=32, dk=dv=128, bf16 state).
+    """
+    persistent = dk * C + dv * C + 2 * C * C + dk
+    dec_scores = 3 * C * dk + C * C                        # forward phase 1
+    solve = 2 * C * C + C * dk                             # forward solve set
+    staging = dv * dk                                      # S^T staging (state pass)
+    phase4 = 4 * C * dk + dk                               # state pass phase 4
+    adj1 = C * dv + 2 * C * dk + 2 * C * C                 # adjoint: arguments
+    adj2 = C * dk + 2 * C * dv + 5 * C * C + dk            # adjoint: solves+staging
+    pool = max(dec_scores, solve, staging, phase4, adj1, adj2)
+    return (itemsize * (persistent + pool) + state_itemsize * dk * dv
+            + SMEM_EPILOGUE_BYTES)
+
+
+def valid_config_bwd(case, params):
+    """Static sieve of the backward kernel: the forward shape rules + its floor.
+
+    The mma tiling rules are the forward kernel's (:func:`valid_config`); the
+    SMEM floor is the backward one -- an fp32 carried state is over the GB10
+    budget (the measured lowering rejects it), bf16 at C=32 is live.
+    """
+    C, H, dk, dv = (int(case[k]) for k in ("C", "H", "dk", "dv"))
+    tile = int(params.get("tile", case.get("tile", TILE_MAX)))
+    if (C % 16 or C < 32 or dk % 64 or dv % 8 or dv > 128 or dk > 128
+            or tile > TILE_MAX or tile < 1
+            or (C * dk) % 128 or (C * dv) % 128):
+        return False
+    dt = jnp.dtype(case.get("dtype", "bfloat16"))
+    if dt not in (jnp.bfloat16, jnp.float32):
+        return False
+    st = jnp.dtype(case.get("bwd_state_dtype", BWD_STATE_DTYPE))
+    return _bwd_smem_floor_bytes(C, dk, dv, dt.itemsize, st.itemsize) <= SMEM_LIMIT_BYTES
+
+
+def make_bwd_inputs(key, T, C, H, dk, dv, tile=16, dtype="bfloat16", **kw):
+    """Inputs of one backward pass: the forward interval plus ``(do, dS)``."""
+    q, k, v, alpha, beta32, S = make_inputs(key, T, C, H, dk, dv, tile=tile,
+                                            dtype=dtype, **kw)
+    k1, k2 = jax.random.split(jax.random.fold_in(key, 17), 2)
+    do = jax.random.normal(k1, (T, H * dv), jnp.float32)
+    dS = jax.random.normal(k2, (H, dk, dv), jnp.float32)
+    return q, k, v, alpha, beta32, S, do, dS
+
+
+@dataclasses.dataclass(frozen=True)
+class _BwdKernelSpec:
+    """Static shapes the backward kernel was built for (jit cache key)."""
+
+    T: int
+    C: int
+    H: int
+    dk: int
+    dv: int
+    tile: int
+    dtype: str
+    state_dtype: str
+    chain_dtype: str
+
+
+def _build_bwd_kernel(T, C, H, dk, dv, tile, dtype, state_dtype, *,
+                      _enable_a=True, _enable_b=True):
+    """Build the persistent backward Mosaic GPU kernel: one program per head.
+
+    Two loops inside one program: (A) the forward recompute writes the chain
+    of incoming states ``S_i`` (natural and transposed, bf16) into the GMEM
+    scratch; (B) the reverse loop recomputes each chunk body from its ``S_i``,
+    runs the analytic adjoint, accumulates the cotangents and carries ``dS``
+    in the SMEM state.  The GMEM scratch is an ``out_type`` buffer written in
+    loop A and read in loop B (read-after-write ordered within a program).
+    """
+    from jax.experimental import pallas as pl
+    from jax.experimental.pallas import mosaic_gpu as plgpu
+
+    dt = jnp.dtype(dtype)
+    stdt = jnp.dtype(state_dtype)
+    f32 = jnp.float32
+    n_chunks = T // C
+
+    def _l(ref, layout):
+        return plgpu.load(ref, layout=layout, optimized=False)
+
+    def _mma_layouts(m):
+        mw = _mma_m_warps(m)
+        return (
+            plgpu.Layout.MMA_ACC(dt, m_warps=mw),
+            plgpu.Layout.MMA_LHS(dt, m_warps=mw),
+            plgpu.Layout.MMA_RHS(dt, m_warps=mw),
+        )
+
+    ACC_C, L_C, R_C = _mma_layouts(C)
+    ACC_DK, L_DK, R_DK = _mma_layouts(dk)
+
+    def _zero(shape, acc_layout):
+        return plgpu.layout_cast(jnp.zeros(shape, f32), acc_layout)
+
+    def _body(qg, kg, vg, ag, bg, sg, dog, dsg,
+              dqg, dkg, dvg, dag, dbg, dsog, scg_nat, scg_t, dvt_g, st_s,
+              xw_t, vw_t, aqk_s, lkk_s, g_s):
+        h = jax.lax.axis_index("head")
+        qo, vo, bo = h * dk, h * dv, h * 32
+
+        def _iota(shape, axis):
+            return plgpu.layout_cast(
+                plgpu.broadcasted_iota(jnp.int32, shape, axis),
+                plgpu.Layout.WG_STRIDED(shape, 2))
+
+        ridx = _iota((C, dk), 0)
+        cidx = _iota((C, dk), 1)
+        ridx2 = _iota((C, C), 0)
+        cidx2 = _iota((C, C), 1)
+
+        # -- the shared chunk-body helpers (explicit operands: the same code
+        #    runs in the state recompute and in the reverse pass) ------------
+        def _decay(av, la_hi_t, la_lo_t, pat_s):
+            """log(alpha) -> hi/lo bf16 halves -> fp32 cumsum via the tril mma."""
+            la = jnp.log(av)
+            la_hi = la.astype(dt)
+            la_lo = (la - la_hi.astype(f32)).astype(dt)
+            la_hi_t.transpose((1, 0))[...] = la_hi
+            la_lo_t.transpose((1, 0))[...] = la_lo
+            pat_s[...] = (ridx2 >= cidx2).astype(dt)          # tril ones
+            acc = _zero((C, dk), ACC_C)
+            acc = plgpu.mma(acc, _l(pat_s, L_C), _l(la_hi_t.T, R_C))
+            acc = plgpu.mma(acc, _l(pat_s, L_C), _l(la_lo_t.T, R_C))
+            return la, acc
+
+        def _anchor(p, pat_s, la_hi_t, la_lo_t):
+            """All rows := reference row p of G, via the prefix pattern x la."""
+            pat_s[...] = (cidx2 <= p).astype(dt)
+            out = _zero((C, dk), ACC_C)
+            out = plgpu.mma(out, _l(pat_s, L_C), _l(la_hi_t.T, R_C))
+            return plgpu.mma(out, _l(pat_s, L_C), _l(la_lo_t.T, R_C))
+
+        def _score_matrix(row_v, k_full, strict, G, op_s, pat_s, la_hi_t, la_lo_t):
+            """Tile-wise decay-weighted C x C scores (net.kda._cc_scores math)."""
+            acc = _zero((C, C), ACC_C)
+            for p in range(0, C, tile):
+                anchor = _anchor(p, pat_s, la_hi_t, la_lo_t)
+                op_s[...] = ((ridx >= p) & (ridx < p + tile)).astype(dt)
+                rmk = _l(op_s, ACC_C).astype(f32)
+                rf = jnp.exp(jnp.minimum(G - anchor, 0.0))   # rows c in the tile
+                op_s[...] = rf.astype(dt)
+                rf_wg = _l(op_s, ACC_C).astype(f32) * rmk
+                op_s[...] = (row_v.astype(f32) * rf_wg).astype(dt)
+                rq = _l(op_s, L_C)
+                op_s[...] = (ridx < p + tile).astype(dt)
+                cmk = _l(op_s, ACC_C).astype(f32)
+                cf = jnp.exp(anchor - G)                     # cols i < p + tile
+                op_s[...] = (cf * cmk).astype(dt)
+                cf_wg = _l(op_s, ACC_C).astype(f32)
+                op_s[...] = (k_full.astype(f32) * cf_wg).astype(dt)
+                ck = _l(op_s.T, R_C)
+                acc = plgpu.mma(acc, rq, ck)
+            pat_s[...] = ((ridx2 > cidx2) if strict else (ridx2 >= cidx2)).astype(dt)
+            mk = _l(pat_s, ACC_C).astype(f32)                # structural mask
+            return acc * mk
+
+        def _solve(xw_t, vw_t, pw_s, pw_t, op2_s, gam, kb, vv, beta_v):
+            """(I + L)^{-1} [xw | vw], the transposed left-multiplied chain."""
+            lv = _l(lkk_s, ACC_C)
+            pw_s[...] = lv.astype(dt)
+            pw_t.transpose((1, 0))[...] = lv.astype(dt)
+            vw_t.transpose((1, 0))[...] = (vv.astype(f32) * beta_v).astype(dt)
+            op2_s[...] = gam.astype(dt)                      # gamma (<= 1)
+            gam_wg = _l(op2_s, ACC_C).astype(f32)
+            xw_t.transpose((1, 0))[...] = (gam_wg * kb.astype(f32)).astype(dt)
+            acc = _l(xw_t, ACC_DK).astype(f32)
+            acc = plgpu.mma(acc, _l(xw_t, L_DK), -_l(pw_s.T, R_DK))
+            xw_t[...] = acc.astype(dt)
+            acc = _l(vw_t, ACC_DK).astype(f32)
+            acc = plgpu.mma(acc, _l(vw_t, L_DK), -_l(pw_s.T, R_DK))
+            vw_t[...] = acc.astype(dt)
+            steps = 0
+            while (1 << steps) < C:
+                steps += 1
+            for _ in range(steps - 1):
+                p2 = plgpu.mma(_zero((C, C), ACC_C), _l(pw_s, L_C), _l(pw_t.T, R_C))
+                pw_s[...] = p2.astype(dt)
+                pw_t.transpose((1, 0))[...] = p2.astype(dt)
+                acc = _l(xw_t, ACC_DK).astype(f32)
+                acc = plgpu.mma(acc, _l(xw_t, L_DK), _l(pw_s.T, R_DK))
+                xw_t[...] = acc.astype(dt)
+                acc = _l(vw_t, ACC_DK).astype(f32)
+                acc = plgpu.mma(acc, _l(vw_t, L_DK), _l(pw_s.T, R_DK))
+                vw_t[...] = acc.astype(dt)
+
+        # ------------------------------------------------------------------
+        # Pass A: the forward state recompute -> the chain of S_i
+        # ------------------------------------------------------------------
+        st_s[...] = _l(sg.at[h], ACC_DK).astype(stdt)
+
+        def _chunk_a(i):
+            qv = _l(qg.at[pl.ds(i * C, C), pl.ds(qo, dk)], ACC_C).astype(f32)
+            kv = _l(kg.at[pl.ds(i * C, C), pl.ds(qo, dk)], ACC_C)
+            cv = _l(bg.at[pl.ds(i * C, C), pl.ds(bo, 32)], ACC_C).astype(f32)
+            betav = jnp.sum(cv, axis=1) * (1.0 / 32.0)
+            beta_c = plgpu.layout_cast(
+                jax.lax.broadcast_in_dim(betav, (C, dk), (0,)), ACC_C)
+            beta_v = plgpu.layout_cast(
+                jax.lax.broadcast_in_dim(betav, (C, dv), (0,)), ACC_C)
+            vv = _l(vg.at[pl.ds(i * C, C), pl.ds(vo, dv)], ACC_C)
+            kb = (kv.astype(f32) * beta_c).astype(dt)
+            av = _l(ag.at[pl.ds(i * C, C), pl.ds(qo, dk)], ACC_C).astype(f32)
+
+            def _a1(la_hi_t, la_lo_t, op_s, pat_s):
+                la, G = _decay(av, la_hi_t, la_lo_t, pat_s)
+                row_k = (kv.astype(f32) * beta_c).astype(dt)
+                acc_kk = _score_matrix(row_k, kv, True, G, op_s, pat_s,
+                                       la_hi_t, la_lo_t)
+                lkk_s[...] = acc_kk.astype(dt)
+                return G, la
+
+            G, la2 = pl.run_scoped(
+                _a1,
+                plgpu.SMEM((dk, C), dt), plgpu.SMEM((dk, C), dt),
+                plgpu.SMEM((C, dk), dt), plgpu.SMEM((C, C), dt),
+            )
+            gam = jnp.exp(G)
+
+            def _a2(pw_s, pw_t, op2_s):
+                _solve(xw_t, vw_t, pw_s, pw_t, op2_s, gam, kb, vv, beta_v)
+
+            pl.run_scoped(
+                _a2,
+                plgpu.SMEM((C, C), dt), plgpu.SMEM((C, C), dt),
+                plgpu.SMEM((C, dk), dt),
+            )
+
+            def _a3(s_t):
+                # The entry state S_i -> the chain (natural and transposed);
+                # ws_t = S^T W^T; vt^T = U^T - (W S)^T.
+                sv = _l(st_s, ACC_DK)
+                s_t.transpose((1, 0))[...] = sv.astype(dt)
+                scg_nat.at[h, i][...] = sv
+                scg_t.at[h, i][...] = _l(s_t, ACC_DK)
+                ws_t = plgpu.mma(_zero((dv, C), ACC_DK), _l(s_t, L_DK),
+                                 _l(xw_t, R_DK))
+                uv = _l(vw_t, ACC_DK)
+                vw_t[...] = (uv.astype(f32) - ws_t).astype(dt)
+
+            pl.run_scoped(_a3, plgpu.SMEM((dv, dk), dt))
+
+            def _a4(gl_hi_t, gl_lo_t, opb_s, y_t, g2_s):
+                # Phase 4 of the shipped forward kernel (bitwise): lam from the
+                # full row sums, y, gc and the state transfer.
+                lh = la2.astype(dt)
+                ll = (la2 - lh.astype(f32)).astype(dt)
+                gl_hi_t.transpose((1, 0))[...] = lh
+                gl_lo_t.transpose((1, 0))[...] = ll
+                opb_s.at[pl.ds(0, C), pl.ds(0, C)][...] = (cidx2 <= C - 1).astype(dt)
+                glast = plgpu.mma(_zero((C, dk), ACC_C),
+                                  _l(opb_s.at[pl.ds(0, C), pl.ds(0, C)], L_C),
+                                  _l(gl_hi_t.T, R_C))
+                glast = plgpu.mma(glast,
+                                  _l(opb_s.at[pl.ds(0, C), pl.ds(0, C)], L_C),
+                                  _l(gl_lo_t.T, R_C))
+                lam = jnp.exp(jnp.minimum(glast - G, 0.0))
+                opb_s[...] = lam.astype(dt)
+                yv = (_l(opb_s, ACC_C).astype(f32) * kv.astype(f32)).astype(dt)
+                y_t.transpose((1, 0))[...] = yv
+                g2_s[...] = jnp.exp(jnp.sum(la2, axis=0)).astype(dt)
+                gcv = _l(g2_s, ACC_DK.reduce(1)).astype(f32)
+                gc_b = plgpu.layout_cast(
+                    jax.lax.broadcast_in_dim(gcv, (dk, dv), (0,)), ACC_DK)
+                sv = _l(st_s, ACC_DK)
+                acc_s = plgpu.layout_cast(sv.astype(f32) * gc_b, ACC_DK)
+                s_out = plgpu.mma(acc_s, _l(y_t, L_DK), _l(vw_t.T, R_DK))
+                st_s[...] = s_out.astype(stdt)
+
+            pl.run_scoped(
+                _a4,
+                plgpu.SMEM((dk, C), dt), plgpu.SMEM((dk, C), dt),
+                plgpu.SMEM((C, dk), dt), plgpu.SMEM((dk, C), dt),
+                plgpu.SMEM((dk,), dt),
+            )
+
+        if _enable_a:
+            pl.loop(0, n_chunks)(_chunk_a)
+
+        # ------------------------------------------------------------------
+        # Pass B: the reverse pass -- recompute, adjoint, cotangents
+        # ------------------------------------------------------------------
+        st_s[...] = _l(dsg.at[h], ACC_DK).astype(stdt)
+
+        def _chunk_b(j):
+            i = n_chunks - 1 - j
+            qv = _l(qg.at[pl.ds(i * C, C), pl.ds(qo, dk)], ACC_C).astype(f32)
+            kv = _l(kg.at[pl.ds(i * C, C), pl.ds(qo, dk)], ACC_C)
+            cv = _l(bg.at[pl.ds(i * C, C), pl.ds(bo, 32)], ACC_C).astype(f32)
+            betav = jnp.sum(cv, axis=1) * (1.0 / 32.0)
+            beta_c = plgpu.layout_cast(
+                jax.lax.broadcast_in_dim(betav, (C, dk), (0,)), ACC_C)
+            beta_v = plgpu.layout_cast(
+                jax.lax.broadcast_in_dim(betav, (C, dv), (0,)), ACC_C)
+            vv = _l(vg.at[pl.ds(i * C, C), pl.ds(vo, dv)], ACC_C)
+            kb = (kv.astype(f32) * beta_c).astype(dt)
+            av = _l(ag.at[pl.ds(i * C, C), pl.ds(qo, dk)], ACC_C).astype(f32)
+            dov = _l(dog.at[pl.ds(i * C, C), pl.ds(vo, dv)], ACC_C).astype(f32)
+            sv = _l(scg_nat.at[h, i], ACC_DK)                # bf16 entry state
+            dshv = _l(st_s, ACC_DK).astype(f32)              # incoming dS (bf16)
+            kvf = kv.astype(f32)
+            vvf = vv.astype(f32)
+            dgc = jnp.sum(sv.astype(f32) * dshv, axis=1)     # (dk,) value
+
+            # --- the recompute (phases 1-3 of the forward body) -------------
+            def _b1(la_hi_t, la_lo_t, op_s, pat_s):
+                la, G = _decay(av, la_hi_t, la_lo_t, pat_s)
+                row_k = (kvf * beta_c).astype(dt)
+                acc_kk = _score_matrix(row_k, kv, True, G, op_s, pat_s,
+                                       la_hi_t, la_lo_t)
+                lkk_s[...] = acc_kk.astype(dt)
+                acc_qk = _score_matrix(qv.astype(dt), kv, False, G, op_s, pat_s,
+                                       la_hi_t, la_lo_t)
+                aqk_s[...] = acc_qk.astype(dt)
+                g_s[...] = jnp.exp(jnp.sum(la, axis=0)).astype(dt)
+                return G
+
+            G = pl.run_scoped(
+                _b1,
+                plgpu.SMEM((dk, C), dt), plgpu.SMEM((dk, C), dt),
+                plgpu.SMEM((C, dk), dt), plgpu.SMEM((C, C), dt),
+            )
+            gam = jnp.exp(G)
+
+            def _b2(pw_s, pw_t, op2_s):
+                _solve(xw_t, vw_t, pw_s, pw_t, op2_s, gam, kb, vv, beta_v)
+
+            pl.run_scoped(
+                _b2,
+                plgpu.SMEM((C, C), dt), plgpu.SMEM((C, C), dt),
+                plgpu.SMEM((C, dk), dt),
+            )
+
+            # ws_t = S^T W^T (the transposed chain copy is the LHS);
+            # vt^T = U^T - (W S)^T.
+            ws_t = plgpu.mma(_zero((dv, C), ACC_DK), _l(scg_t.at[h, i], L_DK),
+                             _l(xw_t, R_DK))
+            uv = _l(vw_t, ACC_DK)
+            vw_t[...] = (uv.astype(f32) - ws_t).astype(dt)
+
+            # --- adjoint stage 1: dS part 1, daqk, dvt, dY input, dgq, the
+            #     aqk score adjoint and the dq output (one sibling scope) -----
+            def _adj1(do_s, gq_t, y_s, daqk_s, pat_s):
+                gcv = _l(g_s, ACC_DK.reduce(1)).astype(f32)
+                gc_b = plgpu.layout_cast(
+                    jax.lax.broadcast_in_dim(gcv, (dk, dv), (0,)), ACC_DK)
+                acc = plgpu.layout_cast(dshv * gc_b, ACC_DK)
+                do_s[...] = dov.astype(dt)
+                gq_t.transpose((1, 0))[...] = (gam * qv).astype(dt)
+                acc = plgpu.mma(acc, _l(gq_t, L_DK), _l(do_s, R_DK))
+                pat_s[...] = (ridx2 >= cidx2).astype(dt)
+                daqk = plgpu.mma(_zero((C, C), ACC_C), _l(do_s, L_C),
+                                 _l(vw_t, R_C))
+                mk = _l(pat_s, ACC_C).astype(f32)
+                daqk_s[...] = (daqk * mk).astype(dt)
+                emg = 1.0 / gam
+                gcv_c = _l(g_s, ACC_C.reduce(0)).astype(f32)
+                lam_b = plgpu.layout_cast(
+                    jax.lax.broadcast_in_dim(gcv_c, (C, dk), (1,)), ACC_C)
+                lam = lam_b / gam
+                y_s[...] = (lam * kvf).astype(dt)
+                dvt = plgpu.mma(_zero((C, dv), ACC_C), _l(y_s, L_C),
+                                _l(st_s, R_C))
+                dvt = plgpu.mma(dvt, _l(aqk_s.T, L_C), _l(do_s, R_C))
+                dvt_g.at[h, i][...] = dvt.astype(dt)   # crossing -> stage 2
+                dgq = plgpu.mma(_zero((C, dk), ACC_C), _l(do_s, L_C),
+                                _l(scg_nat.at[h, i].T, R_C))
+                st_s[...] = acc.astype(stdt)      # dS part 1 (old dS reads done)
+                y_s[...] = (kvf * emg).astype(dt)
+                dr_a = plgpu.mma(_zero((C, dk), ACC_C), _l(daqk_s, L_C),
+                                 _l(y_s, R_C)) * gam
+                y_s[...] = (qv * gam).astype(dt)
+                dc_a = plgpu.mma(_zero((C, dk), ACC_C), _l(daqk_s.T, L_C),
+                                 _l(y_s, R_C)) * emg
+                dqh = dgq * gam + dr_a
+                dqg.at[pl.ds(i * C, C), pl.ds(qo, dk)][...] = dqh.astype(dt)
+                dkh = dc_a
+                dG = dr_a * qv - dc_a * kvf + (dgq * qv) * gam   # + dgamma * gamma
+                return dkh, dG
+
+            dkh, dG = pl.run_scoped(
+                _adj1,
+                plgpu.SMEM((C, dv), dt), plgpu.SMEM((dk, C), dt),
+                plgpu.SMEM((C, dk), dt), plgpu.SMEM((C, C), dt),
+                plgpu.SMEM((C, C), dt),
+            )
+
+            # --- adjoint stage 2: the carried state, the transposed solves,
+            #     dL, the score adjoint, dk/dv/dbeta and dalpha (a sibling
+            #     scope; dvt crosses through the GMEM scratch as a value) -----
+            def _adj2(y_s, dvt_s, pw_s, pw_t, smt_s, yu_s, dl_s, pat_s, bs_s):
+                dvt_v = _l(dvt_g.at[h, i], ACC_C)
+                dvt_s[...] = dvt_v.astype(dt)
+                dyv = plgpu.mma(_zero((C, dk), ACC_C), _l(vw_t.T, L_C),
+                                _l(st_s.T, R_C))
+                acc2 = _l(st_s, ACC_DK).astype(f32)
+                acc2 = plgpu.mma(acc2, _l(xw_t, L_DK), -_l(dvt_s, R_DK))
+                st_s[...] = acc2.astype(stdt)
+                smt_s[...] = (ridx2 == cidx2).astype(dt)
+                x = plgpu.mma(_l(smt_s, ACC_C).astype(f32), -_l(lkk_s.T, L_C),
+                              _l(smt_s, R_C))
+                smt_s[...] = x.astype(dt)
+                p2 = plgpu.mma(_zero((C, C), ACC_C), _l(lkk_s, L_C),
+                               _l(lkk_s, R_C))
+                pw_s[...] = p2.astype(dt)
+                x = plgpu.mma(_l(smt_s, ACC_C).astype(f32), _l(pw_s.T, L_C),
+                              _l(smt_s, R_C))
+                smt_s[...] = x.astype(dt)
+                p4 = plgpu.mma(_zero((C, C), ACC_C), _l(pw_s, L_C), _l(pw_s, R_C))
+                pw_t[...] = p4.astype(dt)
+                x = plgpu.mma(_l(smt_s, ACC_C).astype(f32), _l(pw_t.T, L_C),
+                              _l(smt_s, R_C))
+                smt_s[...] = x.astype(dt)
+                p8 = plgpu.mma(_zero((C, C), ACC_C), _l(pw_t, L_C), _l(pw_t, R_C))
+                pw_s[...] = p8.astype(dt)
+                x = plgpu.mma(_l(smt_s, ACC_C).astype(f32), _l(pw_s.T, L_C),
+                              _l(smt_s, R_C))
+                smt_s[...] = x.astype(dt)
+                p16 = plgpu.mma(_zero((C, C), ACC_C), _l(pw_s, L_C), _l(pw_s, R_C))
+                pw_t[...] = p16.astype(dt)
+                x = plgpu.mma(_l(smt_s, ACC_C).astype(f32), _l(pw_t.T, L_C),
+                              _l(smt_s, R_C))
+                smt_s[...] = x.astype(dt)
+                yuv = plgpu.mma(_zero((C, dv), ACC_C), _l(smt_s, L_C),
+                                _l(dvt_s, R_C))
+                yu_s[...] = yuv.astype(dt)
+                ywv = plgpu.mma(_zero((C, dk), ACC_C), _l(yu_s, L_C),
+                                -_l(scg_nat.at[h, i].T, R_C))
+                dlv = plgpu.mma(_zero((C, C), ACC_C), _l(yu_s, L_C),
+                                -_l(vw_t, R_C))
+                pat_s[...] = (ridx2 > cidx2).astype(dt)
+                mks = _l(pat_s, ACC_C).astype(f32)
+                dl_s[...] = (dlv * mks).astype(dt)
+                kbf = kvf * beta_c
+                dG2 = dG + (ywv * kbf) * gam
+                dkh2 = dkh + ywv * (gam * kbf)
+                dbv = (jnp.sum(ywv * gam * kvf, axis=1)
+                       + jnp.sum(yuv * vvf, axis=1))
+                dvg.at[pl.ds(i * C, C), pl.ds(vo, dv)][...] = (yuv * beta_v).astype(dt)
+                # -- the dL score adjoint, factored decay ratios --
+                emg = 1.0 / gam
+                y_s[...] = (kvf * emg).astype(dt)      # ccol / gamma
+                dr_k = plgpu.mma(_zero((C, dk), ACC_C), _l(dl_s, L_C),
+                                 _l(y_s, R_C)) * gam
+                y_s[...] = (kbf * gam).astype(dt)      # ccol * beta * gamma
+                dc_k = plgpu.mma(_zero((C, dk), ACC_C), _l(dl_s.T, L_C),
+                                 _l(y_s, R_C)) * emg
+                gcv_c = _l(g_s, ACC_C.reduce(0)).astype(f32)
+                lam_b = plgpu.layout_cast(
+                    jax.lax.broadcast_in_dim(gcv_c, (C, dk), (1,)), ACC_C)
+                lam = lam_b / gam
+                dlam = dyv * kvf
+                dz = dlam * lam
+                dkh2 = dkh2 + dr_k * beta_c + dc_k + dyv * lam
+                dkg.at[pl.ds(i * C, C), pl.ds(qo, dk)][...] = dkh2.astype(dt)
+                dbv = dbv + jnp.sum(dr_k * kvf, axis=1)
+                dG2 = dG2 + dr_k * kbf - dc_k * kvf - dz
+                dsum = jnp.sum(dz, axis=0)
+                db32 = plgpu.layout_cast(
+                    jax.lax.broadcast_in_dim(dbv * (1.0 / 32.0), (C, 32), (0,)),
+                    ACC_C)
+                dbg.at[pl.ds(i * C, C), pl.ds(bo, 32)][...] = db32
+                y_s[...] = dG2.astype(dt)       # reuse the staging buffer for dG
+                pat_s[...] = (ridx2 >= cidx2).astype(dt)
+                dla = plgpu.mma(_zero((C, dk), ACC_C),
+                                _l(pat_s.T, L_C), _l(y_s, R_C))
+                # dgc arrives in the (dk,dv)-reduction family; the SMEM round
+                # trip lands it in the (C,dk)-broadcast family of gcv_c/dsum.
+                bs_s[...] = dgc.astype(dt)
+                dgc_c = _l(bs_s, ACC_C.reduce(0)).astype(f32)
+                bc_b = plgpu.layout_cast(
+                    jax.lax.broadcast_in_dim(gcv_c * dgc_c + dsum, (C, dk), (1,)),
+                    ACC_C)
+                av2 = _l(ag.at[pl.ds(i * C, C), pl.ds(qo, dk)], ACC_C).astype(f32)
+                dag.at[pl.ds(i * C, C), pl.ds(qo, dk)][...] = (dla + bc_b) / av2
+
+            pl.run_scoped(
+                _adj2,
+                plgpu.SMEM((C, dk), dt), plgpu.SMEM((C, dv), dt),
+                plgpu.SMEM((C, C), dt), plgpu.SMEM((C, C), dt),
+                plgpu.SMEM((C, C), dt), plgpu.SMEM((C, dv), dt),
+                plgpu.SMEM((C, C), dt), plgpu.SMEM((C, C), dt),
+                plgpu.SMEM((dk,), dt),
+            )
+
+        if _enable_b:
+            pl.loop(0, n_chunks)(_chunk_b)
+
+        # The final state cotangent, written once after the reverse scan.
+        dsog.at[h][...] = _l(st_s, ACC_DK).astype(f32)
+
+    return plgpu.kernel(
+        _body,
+        out_type=(
+            jax.ShapeDtypeStruct((T, H * dk), dt),           # dq
+            jax.ShapeDtypeStruct((T, H * dk), dt),           # dk
+            jax.ShapeDtypeStruct((T, H * dv), dt),           # dv
+            jax.ShapeDtypeStruct((T, H * dk), f32),          # dalpha
+            jax.ShapeDtypeStruct((T, H * 32), f32),          # dbeta32
+            jax.ShapeDtypeStruct((H, dk, dv), f32),          # dS_in
+            jax.ShapeDtypeStruct((H, n_chunks, dk, dv), stdt),  # chain (natural)
+            jax.ShapeDtypeStruct((H, n_chunks, dv, dk), stdt),  # chain (transposed)
+            jax.ShapeDtypeStruct((H, n_chunks, C, dv), stdt),   # dvt crossing
+        ),
+        scratch_types=[
+            plgpu.SMEM((dk, dv), stdt),  # carried state (A: forward, B: dS)
+            plgpu.SMEM((dk, C), dt),     # W^T
+            plgpu.SMEM((dv, C), dt),     # U^T then vt^T (reused)
+            plgpu.SMEM((C, C), dt),      # aqk
+            plgpu.SMEM((C, C), dt),      # L
+            plgpu.SMEM((dk,), dt),       # gc
+        ],
+        compiler_params=dataclasses.replace(
+            plgpu.CompilerParams(), lowering_semantics=plgpu.LoweringSemantics.Lane
+        ),
+        grid=(H,),
+        grid_names=("head",),
+    )
+
+
+def kernel_bwd(q, k, v, alpha, beta32, S, do, dS, *, tile=16, chunk=CHUNK):
+    """Persistent backward pass: ``(q, k, v, alpha, beta32, S, do, dS)`` ->
+    ``(dq, dk, dv, dalpha, dbeta32, dS_in)``, one launch per layer-pass.
+
+    The whole-sequence adjoint of the persistent forward scan (variant B of the
+    milestone-4 delta): the reverse walk over the chunks, the forward
+    recompute, the analytic adjoint and the cotangent accumulation all live in
+    one ``plgpu.kernel`` (the cotangent structure is exactly
+    :func:`reference_bwd_scan`'s).  ``do`` is the cotangent of the pre-gate
+    output, ``dS`` the cotangent of the final state; the returned cotangents
+    carry the primal dtypes (bf16 ``dq``/``dk``/``dv``, fp32 ``dalpha``/
+    ``dbeta32``/``dS_in``) -- the ``custom_vjp`` contract of milestone 2.
+
+    Execution needs Mosaic GPU (GB10); the lowering runs anywhere
+    (``lower_check.py`` on this CPU node, via the companion module
+    ``net/tests/kda_persist_bwd_lower.py``).
+    """
+    T, _ = q.shape
+    H, dk, dv = S.shape
+    C = int(chunk)
+    dt = q.dtype
+    if v.dtype != dt or dt not in (jnp.bfloat16,):
+        raise ValueError(
+            f"persistent backward kernel consumes bf16 q/k/v (the same operand "
+            f"path as the forward kernel); got q.dtype={dt}, v.dtype={v.dtype}")
+    if T % C:
+        raise ValueError(f"T={T} must be a multiple of the chunk width C={C}")
+    if not valid_config_bwd(dict(T=T, C=C, H=H, dk=dk, dv=dv, tile=int(tile),
+                                 dtype=jnp.dtype(dt).name), {"tile": int(tile)}):
+        raise ValueError(
+            f"persistent backward kernel: configuration (C={C}, H={H}, dk={dk}, "
+            f"dv={dv}, dtype={jnp.dtype(dt).name}) is not among the live cases of "
+            f"the sieve (mma tiling rules and the GB10 SMEM floor -- see "
+            f"valid_config_bwd); no silent fallback")
+    spec = _BwdKernelSpec(T, C, H, dk, dv, int(tile), jnp.dtype(dt).name,
+                          jnp.dtype(BWD_STATE_DTYPE).name,
+                          jnp.dtype(BWD_CHAIN_DTYPE).name)
+    run = _build_bwd_kernel(spec.T, spec.C, spec.H, spec.dk, spec.dv, spec.tile,
+                            spec.dtype, spec.state_dtype)
+    dq, dk_o, dv_o, da, db, ds_in, _chain, _chain_t, _dvt = jax.jit(run)(
+        q, k, v, alpha, beta32, S, do, dS)
+    return dq, dk_o, dv_o, da, db, ds_in

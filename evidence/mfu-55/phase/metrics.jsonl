@@ -1,0 +1,1 @@
+{"schema": "pretrain-metrics/v1", "step": 1, "loss": 13.537934303283691, "lr": 0.0, "phase": "stable", "tokens": 16384, "tokens_seen": 16384, "step_seconds": 77.87126207351685, "tokens_per_sec": 210.39854194904615, "tflops_achieved": 0.6342244003842884, "mfu": 0.006458496948923507, "mfu_params_only": true, "gpu_hours": 0.02163505282666948, "optimizer_classification": "adr-048"}

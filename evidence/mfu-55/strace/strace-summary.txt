@@ -1,0 +1,149 @@
+strace: Process 2715056 attached with 129 threads
+strace: Process 2715056 detached
+strace: Process 2715573 detached
+strace: Process 2715575 detached
+strace: Process 2715574 detached
+strace: Process 2715572 detached
+strace: Process 2715571 detached
+strace: Process 2715570 detached
+strace: Process 2715569 detached
+strace: Process 2715568 detached
+strace: Process 2715567 detached
+strace: Process 2715566 detached
+strace: Process 2715565 detached
+strace: Process 2715564 detached
+strace: Process 2715563 detached
+strace: Process 2715562 detached
+strace: Process 2715561 detached
+strace: Process 2715560 detached
+strace: Process 2715196 detached
+strace: Process 2715195 detached
+strace: Process 2715194 detached
+strace: Process 2715193 detached
+strace: Process 2715192 detached
+strace: Process 2715191 detached
+strace: Process 2715190 detached
+strace: Process 2715189 detached
+strace: Process 2715188 detached
+strace: Process 2715187 detached
+strace: Process 2715186 detached
+strace: Process 2715185 detached
+strace: Process 2715184 detached
+strace: Process 2715183 detached
+strace: Process 2715182 detached
+strace: Process 2715181 detached
+strace: Process 2715180 detached
+strace: Process 2715179 detached
+strace: Process 2715178 detached
+strace: Process 2715173 detached
+strace: Process 2715172 detached
+strace: Process 2715171 detached
+strace: Process 2715170 detached
+strace: Process 2715165 detached
+strace: Process 2715164 detached
+strace: Process 2715160 detached
+strace: Process 2715159 detached
+strace: Process 2715158 detached
+strace: Process 2715157 detached
+strace: Process 2715151 detached
+strace: Process 2715150 detached
+strace: Process 2715149 detached
+strace: Process 2715148 detached
+strace: Process 2715147 detached
+strace: Process 2715146 detached
+strace: Process 2715145 detached
+strace: Process 2715144 detached
+strace: Process 2715143 detached
+strace: Process 2715142 detached
+strace: Process 2715141 detached
+strace: Process 2715140 detached
+strace: Process 2715139 detached
+strace: Process 2715138 detached
+strace: Process 2715137 detached
+strace: Process 2715136 detached
+strace: Process 2715135 detached
+strace: Process 2715134 detached
+strace: Process 2715133 detached
+strace: Process 2715132 detached
+strace: Process 2715131 detached
+strace: Process 2715130 detached
+strace: Process 2715129 detached
+strace: Process 2715128 detached
+strace: Process 2715127 detached
+strace: Process 2715124 detached
+strace: Process 2715123 detached
+strace: Process 2715122 detached
+strace: Process 2715121 detached
+strace: Process 2715120 detached
+strace: Process 2715119 detached
+strace: Process 2715118 detached
+strace: Process 2715117 detached
+strace: Process 2715116 detached
+strace: Process 2715115 detached
+strace: Process 2715114 detached
+strace: Process 2715113 detached
+strace: Process 2715112 detached
+strace: Process 2715111 detached
+strace: Process 2715110 detached
+strace: Process 2715109 detached
+strace: Process 2715108 detached
+strace: Process 2715107 detached
+strace: Process 2715106 detached
+strace: Process 2715105 detached
+strace: Process 2715104 detached
+strace: Process 2715103 detached
+strace: Process 2715102 detached
+strace: Process 2715101 detached
+strace: Process 2715100 detached
+strace: Process 2715099 detached
+strace: Process 2715098 detached
+strace: Process 2715097 detached
+strace: Process 2715096 detached
+strace: Process 2715095 detached
+strace: Process 2715094 detached
+strace: Process 2715093 detached
+strace: Process 2715092 detached
+strace: Process 2715091 detached
+strace: Process 2715090 detached
+strace: Process 2715089 detached
+strace: Process 2715088 detached
+strace: Process 2715087 detached
+strace: Process 2715083 detached
+strace: Process 2715081 detached
+strace: Process 2715080 detached
+strace: Process 2715079 detached
+strace: Process 2715078 detached
+strace: Process 2715077 detached
+strace: Process 2715076 detached
+strace: Process 2715075 detached
+strace: Process 2715074 detached
+strace: Process 2715073 detached
+strace: Process 2715072 detached
+strace: Process 2715071 detached
+strace: Process 2715070 detached
+strace: Process 2715069 detached
+strace: Process 2715068 detached
+strace: Process 2715067 detached
+strace: Process 2715066 detached
+strace: Process 2715065 detached
+strace: Process 2715064 detached
+strace: Process 2715063 detached
+% time     seconds  usecs/call     calls    errors syscall
+------ ----------- ----------- --------- --------- ----------------
+ 79,17    8,269375         949      8710      1882 futex
+ 13,88    1,449600         466      3108           ppoll
+  6,16    0,643837           1    323691           sched_yield
+  0,49    0,051553          16      3212           write
+  0,25    0,025951          12      2108           read
+  0,04    0,004576        2288         2         2 restart_syscall
+  0,00    0,000099          49         2           gettid
+  0,00    0,000082          41         2           openat
+  0,00    0,000022          11         2           fstat
+  0,00    0,000019           9         2           close
+  0,00    0,000012           2         6           lseek
+  0,00    0,000006           3         2         2 mkdirat
+  0,00    0,000005           2         2           newfstatat
+  0,00    0,000002           1         2         2 ioctl
+------ ----------- ----------- --------- --------- ----------------
+100,00   10,445139          30    340851      1888 total
+DONE

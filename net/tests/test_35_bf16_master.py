@@ -36,7 +36,10 @@ Delta: ``AXIOM_MASTER_DTYPE=bf16`` держит дерево параметро�
   fp32-дерево на входе bf16-шага — отказ, состояние bf16-режима: моменты fp32
   + слот компенсации;
 * **(з) метрика-строка** несёт ``opt_batch``/``master_dtype``/``master_comp``;
-  оси режимов ортогональны (``AXIOM_OPT_BATCH=grouped`` работает и здесь).
+  связка ``bf16``-мастер × ``grouped`` **запрещена fail-closed** на сборке шага
+  (фикс-раунд вехи-6: batched NS5 переупорядочивает редукции — в bf16-хранилище
+  расхождение скатывается к шагу сетки, см. :func:`test_h2_...`), а разрешённые
+  половины осей (``leaf`` × bf16 и ``grouped`` × fp32) живы.
 
 Пин формулы kahan (ADR-054 Am.13 ↔ TASK.md п.2)
 ------------------------------------------------
@@ -898,36 +901,48 @@ def test_h_metrics_rows_carry_active_modes(cfg, tmp_path):
     assert row["master_dtype"] == "fp32" and row["master_comp"] == "none"
 
 
-def test_h2_opt_batch_grouped_is_supported_in_bf16_master(cfg):
-    """Оси режимов ортогональны: ``AXIOM_OPT_BATCH=grouped`` работает и в bf16-мастере.
+def test_h2_opt_batch_grouped_is_rejected_in_bf16_master(cfg):
+    """``bf16``-мастер × ``AXIOM_OPT_BATCH=grouped`` — fail-closed на сборке (Am.13).
 
-    grouped переупорядочивает редукции NS5 (Am.11: до ~1e-7 в обновлении), а в
-    bf16-мастере любое расхождение обновления может перешагнуть шаг сетки
-    хранилища — поэтому паритет меряется там, где он осмыслен: по **loss**
-    (метрика приёмки Am.13) и по гранулярности хранилища (разница листьев не
-    больше шага сетки bf16, т.е. ноги — один алгоритм, а не два).
+    Фикс-раунд вехи-6: связка отвергнута, а не «тихо живёт».  Диагноз измерен
+    на CPU (small-конфиг), а не унаследован:
+
+    * применение компенсации в grouped-пути **симметрично** leaf — каждый лист
+      применяется со своим ``comp``-буфером (штемпель: ручная реконструкция
+      шага-2 побитово повторяет обе ноги), так что подозрение (а) TASK.md не
+      подтверждается;
+    * корень — batched NS5: он переупорядочивает редукции (Am.11), дельта
+      обновления на бакете ``expert_d`` (6,16,32) — до ~1.1e-5 абс. (~2e-5 отн.);
+    * в bf16-хранилище микро-сдвиг после ``lr`` (~1.6e-8) у части элементов
+      ложится вблизи середины округления — сохранённые листья расходятся **ровно
+      на шаг сетки bf16** (соседние представимые значения; проверено побитово:
+      диф 1.907e-06 = next-представимое bf16 при |w|~4.4e-4);
+    * формула порога старого теста ``|y|·2^-8`` недооценивает шаг сетки: у bf16
+      семь бит мантиссы, шаг в 1..2 раза больше, поэтому «ровно одно округление
+      хранилища» по этой формуле неотличимо от расходимости — по построению
+      зелёного «как есть» не существует (батчинг меняет порядок редукций).
+      Решение — запрет на сборке шага с читаемой ошибкой (как
+      :class:`optimizer.UnclassifiedMatrixError`), а не тихий дрейф.
+
+    Разрешённые половины осей остаются живы: ``leaf`` × bf16 и ``grouped`` × fp32
+    (вторая — прежняя дорога вехи-5, ``test_34``).
     """
-    batches = _batches(cfg, 2, seed=5)
     with master_mode("bf16", "kahan"):
-        reference = _train_leg(cfg, 2, seed=7, batches=batches)
-    previous = os.environ.get(optimizer.OPT_BATCH_ENV)
-    os.environ[optimizer.OPT_BATCH_ENV] = optimizer.OPT_BATCH_GROUPED
-    try:
-        with master_mode("bf16", "kahan"):
-            grouped = _train_leg(cfg, 2, seed=7, batches=batches)
-    finally:
-        if previous is None:
-            os.environ.pop(optimizer.OPT_BATCH_ENV, None)
-        else:
-            os.environ[optimizer.OPT_BATCH_ENV] = previous
-    assert grouped.steps_done == 2
-    assert all(np.isfinite(loss) for loss in grouped.losses)
-    assert _loss_drift(grouped.losses, reference.losses) <= 1e-3, (
-        "grouped разошёлся с leaf в bf16-мастере сильнее допуска по loss"
-    )
-    for x, y in zip(_leaves(grouped.master_params), _leaves(reference.master_params)):
-        xa, ya = np.asarray(x, np.float32), np.asarray(y, np.float32)
-        ulp = np.abs(ya) * 2.0 ** -8
-        assert np.all(np.abs(xa - ya) <= np.maximum(ulp, 1e-30)), (
-            "разница листьев больше шага сетки bf16 — это не одно округление хранилища"
-        )
+        with pytest.raises(optimizer.IncompatibleModeError, match="grouped"):
+            optimizer.make_step(cfg, master_dtype="bf16", opt_batch="grouped")
+        # Окружение — тот же запрет; явный leaf-аргумент снимает связку.
+        previous = os.environ.get(optimizer.OPT_BATCH_ENV)
+        os.environ[optimizer.OPT_BATCH_ENV] = optimizer.OPT_BATCH_GROUPED
+        try:
+            with pytest.raises(
+                optimizer.IncompatibleModeError, match=optimizer.OPT_BATCH_ENV
+            ):
+                optimizer.make_step(cfg, master_dtype="bf16")
+            optimizer.make_step(cfg, master_dtype="bf16", opt_batch="leaf")
+        finally:
+            if previous is None:
+                os.environ.pop(optimizer.OPT_BATCH_ENV, None)
+            else:
+                os.environ[optimizer.OPT_BATCH_ENV] = previous
+    # fp32 × grouped — прежняя дорога, запрет её не касается.
+    optimizer.make_step(cfg, master_dtype="fp32", opt_batch="grouped")

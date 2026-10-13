@@ -82,6 +82,23 @@ update.  The leaf maths is therefore split in two:
   of a bf16-mode leaf is ``(m, extra)`` (Muon) / ``(m, v, extra)`` (AdamW),
   where ``extra`` is the compensation buffer (bf16), the RNG key (uint32[2]) or
   ``None``.  Checkpoint/resume across modes goes through :func:`adapt_state`.
+
+Связка с NS5-батчингом запрещена (фикс-раунд вехи-6)
+----------------------------------------------------
+
+``bf16``-мастер × ``AXIOM_OPT_BATCH=grouped`` **отвергается на сборке шага**
+(:class:`IncompatibleModeError`).  Причина измерена: применение компенсации в
+grouped-пути симметрично leaf (каждый лист применяется со своим ``comp``-
+буфером — это проверено), но batched NS5 переупорядочивает редукции (Am.11;
+на бакете (6,16,32) дельта обновления до ~1.1e-5 абс. ≈ 2e-5 отн.), а в
+bf16-хранилище микро-сдвиг обновления (после ``lr`` — ~1.6e-8) перешагивает
+середину округления: сохранённые листья расходятся ровно на шаг сетки bf16
+(соседние представимые значения).  Критерий приёмки «не больше одного
+округления хранилища» в формуле ``|y|·2^-8`` не выразим: у bf16 семь бит
+мантиссы, и шаг сетки в 1..2 раза больше — «одно округление» становится
+неотличимо от тихой расходимости.  До отдельного решения архитектора связка
+не живёт молча (Am.13): шаг строится только как ``leaf`` × fp32-in-bf16-tree
+или ``grouped`` × fp32-мастер.
 """
 
 from __future__ import annotations
@@ -202,6 +219,20 @@ class UnclassifiedMatrixError(ValueError):
     and silently switching it to AdamW would hide a missing entry from the
     report.  Fix by adding the leaf name to :data:`MUON_MATRIX_LEAVES` or
     :data:`ADAMW_MATRIX_LEAVES` (or by running with ``legacy_muon_all_2d``).
+    """
+
+
+class IncompatibleModeError(ValueError):
+    """Связка режимов шага отвергнута на сборке — fail-closed (ADR-054 Am.13).
+
+    Первый случай — ``AXIOM_MASTER_DTYPE=bf16`` × ``AXIOM_OPT_BATCH=grouped``:
+    batched NS5 переупорядочивает редукции (Am.11), а bf16-хранилище мастера
+    превращает микро-сдвиг обновления в скачок округления у части элементов
+    (фикс-раунд вехи-6: расхождение — ровно шаг сетки bf16, соседние
+    представимые значения, при формально «одном округлении»).  Пока связка не
+    доказана по критерию «не больше одного округления хранилища», она падает
+    здесь, а не молча расходится.  Симптом лечится выбором ``leaf`` (дефолт)
+    или fp32-мастера.
     """
 
 
@@ -513,6 +544,11 @@ def make_step(
     проходит прежним leaf-вызовом (побитово прежнее), AdamW-группы и их
     momentum/Adam-цепочки батчинг не трогает.  ``single_pass=False`` (оракул
     паритета «один проход ↔ два») остаётся leaf-обходом и старше ``opt_batch``.
+    Связка ``"grouped"`` с bf16-мастером запрещена на сборке
+    (:class:`IncompatibleModeError`; причина — см. блок Am.13 ниже и модульный
+    докстринг): batched NS5 переупорядочивает редукции (Am.11), а в
+    bf16-хранилище это даёт расхождение мастеров на шаг сетки, не отличимое от
+    тихой расходимости.
 
     ADR-054 (цикл-5, Am.13): ``master_dtype`` (``None`` = ``AXIOM_MASTER_DTYPE``,
     дефолт ``fp32``) и ``master_comp`` (``None`` = ``AXIOM_MASTER_COMP``,
@@ -531,7 +567,14 @@ def make_step(
       стохастическое округление с ключом, ``none`` — контрольное RN-плечо;
     * третий выход (``work_dtype``) упразднён: рабочая копия **есть** мастер
       (``params is master``); передать оба аргумента — ошибка сборки, а не
-      тихий выбор одного из двух контрактов.
+      тихий выбор одного из двух контрактов;
+    * связка с ``opt_batch="grouped"`` — тоже ошибка сборки
+      (:class:`IncompatibleModeError`, фикс-раунд вехи-6): batched NS5 меняет
+      порядок редукций (Am.11; измеренная дельта обновления ~2e-5 отн.), и в
+      bf16-хранилище микро-сдвиг перешагивает середину округления — листья
+      расходятся ровно на шаг сетки bf16, а порог «одно округление» в
+      ``|y|·2^-8`` (7 бит мантиссы у bf16) такой скачок не ловит; запрет — вместо
+      тихой расходимости.
     """
     if int(ns_steps) < 1:
         raise ValueError(f"ns_steps must be >= 1, got {ns_steps!r}")
@@ -552,6 +595,27 @@ def make_step(
         raise ValueError(
             "work_dtype задан при bf16-мастере: рабочая копия ЕСТЬ мастер "
             "(params is master), третьего выхода в этом режиме нет"
+        )
+    if bf16_master and batch == OPT_BATCH_GROUPED:
+        # Фикс-раунд вехи-6: связка «bf16-мастер × grouped» отвергнута на сборке.
+        # Причина измерена, а не унаследована: применение компенсации в grouped
+        # симметрично leaf (каждый лист — со своим буфером), но batched NS5
+        # переупорядочивает редукции (Am.11) — на бакете (6,16,32) дельта
+        # обновления до 1.1e-5 абс.; после lr=1e-2 это ~1.6e-8, и элементы
+        # вблизи середины округления хранилища перескакивают на соседнее bf16-
+        # значение: разница листьев — ровно шаг сетки bf16 (7 бит мантиссы, шаг до
+        # 2x больше |y|·2^-8).  Критерий «не больше одного округления хранилища»
+        # по построению не выразим, поэтому связка падает здесь (Am.13: «тихо
+        # расходится» — неприемлемо), а не тихо живёт.
+        raise IncompatibleModeError(
+            f"{master_dtype_mod.MASTER_DTYPE_ENV}=bf16 несовместим с "
+            f"{OPT_BATCH_ENV}=grouped: batched NS5 переупорядочивает редукции "
+            "(Am.11), а в bf16-хранилище микро-сдвиг обновления перешагивает "
+            "середину округления — листья master расходятся на шаг сетки bf16 "
+            "(7 бит манты: шаг до 2x больше |y|·2^-8), т.е. «одно округление "
+            "хранилища» не отличимо от тихой расходимости. Выбери "
+            f"{OPT_BATCH_ENV}=leaf (дефолт) или "
+            f"{master_dtype_mod.MASTER_DTYPE_ENV}=fp32."
         )
 
     def _matrix_step(p, g, m, lr, per_head):
@@ -652,27 +716,6 @@ def make_step(
         new_p, new_extra = master_dtype_mod.apply_update(comp, p, target - p32, extra)
         return new_p, (m, v, new_extra)
 
-    def _bf16_group_apply(p_stack, update_stack, extra_stack):
-        """Применение плеча к стёку листьев одной группы (vmap по ведущей оси).
-
-        Арифметика — пофайлово та же, что у ``_bf16_muon_leaf`` (элементные
-        операции), поэтому grouped-путь bf16-режима побитово равен leaf-пути:
-        у NS5 переупорядочивание редукций возможно (Am.11), у применения
-        обновления — нет.
-        """
-        if comp == master_dtype_mod.KAHAN:
-            return jax.vmap(
-                lambda p, u, c: master_dtype_mod.kahan_apply(p, u, c)
-            )(p_stack, update_stack, extra_stack)
-        if comp == master_dtype_mod.SR:
-            # Batched-ключ (N, 2) split не принимает — vmap по строке ключа.
-            return jax.vmap(
-                lambda p, u, k: master_dtype_mod.sr_apply(p, u, k)
-            )(p_stack, update_stack, extra_stack)
-        return jax.vmap(
-            lambda p, u: master_dtype_mod.rn_apply(p, u)
-        )(p_stack, update_stack), extra_stack
-
     def _muon_group_step(group, ps, gs, ss, lr):
         """Muon для стека листьев одной (группа, форма): ОДИН NS5 на группу.
 
@@ -681,27 +724,16 @@ def make_step(
         ``len(ps)`` отдельных.  Внутри — те же функции, что у leaf-пути
         (:func:`newtonschulz5` / :func:`per_head_newtonschulz5`).
 
-        bf16-мастер (Am.13): ``ss`` — стёк пар ``(m, extra)``; момент и NS5 те
-        же, применение обновления — :func:`_bf16_group_apply`.
+        bf16-мастер сюда не доходит: связка «bf16 × grouped» отвергается на
+        сборке шага (:class:`IncompatibleModeError`, фикс-раунд вехи-6 — batched
+        NS5 переупорядочивает редукции, и в bf16-хранилище это перешагивает
+        округление), поэтому здесь только fp32-ветка.
         """
-        if bf16_master:
-            ms, extra = ss
-            g32 = gs.astype(jnp.float32)
-            m = muon_momentum * ms + (1.0 - muon_momentum) * g32
-            if group == GROUP_MUON_PER_HEAD:
-                upd = jax.vmap(lambda one: per_head_newtonschulz5(one, heads, ns_steps))(m)
-            elif group == GROUP_MUON_BATCHED:
-                flat = m.reshape(-1, *m.shape[-2:])
-                upd = jax.vmap(lambda one: newtonschulz5(one, ns_steps))(flat).reshape(m.shape)
-            else:
-                upd = jax.vmap(lambda one: newtonschulz5(one, ns_steps))(m)
-            p32 = ps.astype(jnp.float32)
-            target = p32 * (1.0 - lr * wd) - lr * upd
-            if weight_clip is not None:
-                target = jnp.clip(target, -weight_clip, weight_clip)
-            new_p, new_extra = _bf16_group_apply(ps, target - p32, extra)
-            return new_p, (m, new_extra)
-        m = muon_momentum * ms + (1.0 - muon_momentum) * gs
+        # ss — стёк моментов (fp32-режим; ветка bf16 сюда не доходит — связка
+        # с grouped отвергнута на сборке).  Веха-6 переименовала параметр
+        # ms -> ss (под пару (m, extra)); здесь — восстановленная привязка
+        # fp32-пути (без неё grouped × fp32 падал NameError).
+        m = muon_momentum * ss + (1.0 - muon_momentum) * gs
         if group == GROUP_MUON_PER_HEAD:
             upd = jax.vmap(lambda one: per_head_newtonschulz5(one, heads, ns_steps))(m)
         elif group == GROUP_MUON_BATCHED:
@@ -778,6 +810,11 @@ def make_step(
 
         Группировка строится **на трассировке** (формы статичны) — под ``jit``
         она выполняется один раз, в графе остаются только batched-операции.
+
+        bf16-мастер (Am.13) этой дорогой не идёт: связка отвергается на сборке
+        шага (:class:`IncompatibleModeError`) — batched NS5 переупорядочивает
+        редукции (Am.11), а в bf16-хранилище это перешагивает середину округления
+        (фикс-раунд вехи-6), поэтому здесь предполагается fp32-дерево.
         """
         path_leaves, param_treedef = jax.tree_util.tree_flatten_with_path(params)
         grads_for = param_treedef.flatten_up_to(grads)
@@ -807,7 +844,9 @@ def make_step(
         new_state: list = [None] * len(path_leaves)
         for key, indices in buckets.items():
             group = key[0]
-            leaf_call = _bf16_muon_leaf if bf16_master else _muon_leaf
+            # bf16-мастер сюда не доходит (IncompatibleModeError на сборке шага):
+            # режим дерева несовместим с переупорядочиванием редукций batched NS5.
+            leaf_call = _muon_leaf
             if len(indices) == 1:
                 # Одиночная группа (одна такая форма на всю модель): прежний
                 # leaf-вызов — побитово прежняя арифметика.
@@ -820,9 +859,8 @@ def make_step(
                 group,
                 jnp.stack([path_leaves[i][1] for i in indices]),
                 jnp.stack([grads_for[i] for i in indices]),
-                # Лист состояния — либо момент (fp32-режим), либо пара
-                # (момент, слот компенсации): стёк строится по дереву, поэтому
-                # работает в обоих режимах одной строкой.
+                # Лист состояния fp32-режима — момент или пара (m, v); стёк
+                # строится по дереву и разбирается обратно по индексам.
                 jax.tree_util.tree_map(
                     lambda *xs: jnp.stack(list(xs)), *[state_for[i] for i in indices]
                 ),
@@ -831,7 +869,7 @@ def make_step(
             for k, index in enumerate(indices):
                 new_params[index] = p_stack[k]
                 new_state[index] = jax.tree_util.tree_map(lambda x, k=k: x[k], state_stack)
-        adam_call = _bf16_adamw_step if bf16_master else _adamw_step
+        adam_call = _adamw_step
         for index, group in enumerate(leaf_groups):
             if group in _MUON_GROUPS:
                 continue

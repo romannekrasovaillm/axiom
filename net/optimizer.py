@@ -64,6 +64,24 @@ is unchanged (parity: ``net/tests/test_34_optimizer_ns5_batch.py``).  No padding
 groups are strictly equal-shape (``newtonschulz5(0) = 0`` exactly — verified —
 so pad-to-max would be numerically safe, but it re-rounds the reductions and
 burns FLOPs on the pad).  Default stays ``leaf`` — the rollback handle.
+
+bf16 master tree (ADR-054 Am.13, цикл-5)
+----------------------------------------
+
+``master_dtype="bf16"`` (env ``AXIOM_MASTER_DTYPE``) keeps the parameter tree in
+bf16 as its **only** representation: ``params is master``, grads arrive in bf16,
+and fp32 survives only in the moments and in the arithmetic of the applied
+update.  The leaf maths is therefore split in two:
+
+* moment + Newton–Schulz — unchanged, but explicitly in fp32
+  (``g.astype(jnp.float32)`` before the moment, so a bf16 grad does not round
+  the momentum update in bf16);
+* application — the fp32 target ``p32·(1 − lr·wd) − lr·upd`` (clip as before) is
+  turned into ``update = target − p32`` and applied to the bf16 leaf by one of
+  the :mod:`net.master_dtype` arms (``kahan`` | ``sr`` | ``none``).  The state
+  of a bf16-mode leaf is ``(m, extra)`` (Muon) / ``(m, v, extra)`` (AdamW),
+  where ``extra`` is the compensation buffer (bf16), the RNG key (uint32[2]) or
+  ``None``.  Checkpoint/resume across modes goes through :func:`adapt_state`.
 """
 
 from __future__ import annotations
@@ -72,6 +90,8 @@ import os
 
 import jax
 import jax.numpy as jnp
+
+from net import master_dtype as master_dtype_mod
 
 # Newton-Schulz order-5 coefficients (Muon).
 NS_COEFFS = (3.4445, -4.7750, 2.0315)
@@ -243,14 +263,98 @@ def per_head_newtonschulz5(
     return out.transpose(1, 0, 2).reshape(dim_in, heads * dim_head)
 
 
-def init_state(params, *, legacy_muon_all_2d: bool = False):
+def _state_arity(group: str, *, bf16: bool) -> int:
+    """Число листьев состояния на один лист параметров этой группы.
+
+    fp32-режим — прежняя раскладка: Muon ``m`` (1), AdamW ``(m, v)`` (2).
+    bf16-режим добавляет каждому листу **слот компенсации** (Am.13): Muon
+    ``(m, extra)`` (2), AdamW ``(m, v, extra)`` (3).  Слот есть и у плеча
+    ``none`` (там он пустой, ``None``) — раскладка одна на все плечи, поэтому
+    адаптер состояния и групповой обход не ветвятся по плечу ещё раз.
+    """
+    if group in _MUON_GROUPS:
+        return 2 if bf16 else 1
+    return 3 if bf16 else 2
+
+
+def state_leaf_counts(params, *, master_dtype: str | None = None,
+                      legacy_muon_all_2d: bool = False) -> list[int]:
+    """Число листьев состояния на каждый лист параметров, в порядке дерева.
+
+    Контракт раскладки состояния: сумма — полное число листьев состояния, а
+    пара с :func:`adapt_state` позволяет перенести состояние между режимами
+    мастера (``net/train_loop.py``, resume).  Классификация — та же
+    (:func:`classify_leaf`, fail-closed на неизвестном 2-D имени).
+    """
+    dtype = master_dtype_mod.master_dtype_mode(master_dtype)
+    bf16 = dtype == master_dtype_mod.BF16
+    counts: list[int] = []
+    for path, leaf in jax.tree_util.tree_flatten_with_path(params)[0]:
+        group = classify_leaf(leaf_name(path[-1]) if path else "", leaf.ndim,
+                              legacy=legacy_muon_all_2d)
+        if group == GROUP_UNCLASSIFIED:
+            raise UnclassifiedMatrixError(
+                f"2-D параметр {leaf_name(path[-1]) if path else ''!r} "
+                f"({jax.tree_util.keystr(path)}) вне классификации ADR-048: "
+                "дополни MUON_MATRIX_LEAVES или ADAMW_MATRIX_LEAVES, либо "
+                "включи legacy_muon_all_2d"
+            )
+        counts.append(_state_arity(group, bf16=bf16))
+    return counts
+
+
+def _fresh_extra(leaf, comp: str, base_key, counter: int):
+    """Свежий слот компенсации листа: буфер (kahan), ключ (sr) или ``None``."""
+    if comp == master_dtype_mod.KAHAN:
+        return jnp.zeros(leaf.shape, dtype=jnp.bfloat16)
+    if comp == master_dtype_mod.SR:
+        return jax.random.fold_in(base_key, counter)
+    return None
+
+
+def _leaf_state(group: str, leaf, *, bf16: bool, comp: str, base_key, counter: int):
+    """Начальное состояние одного листа в раскладке режима."""
+    if bf16:
+        # Моменты — всегда fp32 (Am.13): bf16 живёт только в мастере и в
+        # буфере компенсации; dtype листа параметров состояние не задаёт.
+        if group in _MUON_GROUPS:
+            return (jnp.zeros(leaf.shape, dtype=jnp.float32),
+                    _fresh_extra(leaf, comp, base_key, counter))
+        return (jnp.zeros(leaf.shape, dtype=jnp.float32),
+                jnp.zeros(leaf.shape, dtype=jnp.float32),
+                _fresh_extra(leaf, comp, base_key, counter))
+    if group in _ADAMW_GROUPS:
+        return (jnp.zeros_like(leaf), jnp.zeros_like(leaf))
+    return jnp.zeros_like(leaf)
+
+
+def init_state(params, *, legacy_muon_all_2d: bool = False,
+               master_dtype: str | None = None, master_comp: str | None = None,
+               key_seed: int = 0):
     """Momentum (Muon groups) / AdamW m,v (Adam groups) state tree over ``params``.
 
     The group of every leaf comes from :func:`classify_leaf`, so the state
     mirrors the optimizer branch that will actually run: an embedding moved to
     AdamW gets an ``(m, v)`` pair instead of a single momentum buffer.
+
+    ADR-054 Am.13 (цикл-5): при ``AXIOM_MASTER_DTYPE=bf16`` моментам задаётся
+    fp32 **независимо от dtype листа параметров** (мастер bf16, моменты —
+    хранилище точности), а каждому листу добавляется слот компенсации
+    (:func:`_leaf_state`): буфер ``comp`` (bf16, kahan) или RNG-ключ (sr),
+    у ``none`` — пустой.  ``key_seed`` заводит поток ключей sr: он же —
+    «сид» воспроизводимости плеча (ключи едут в состоянии, поэтому resume
+    продолжает поток, а не начинает его заново).
     """
+    dtype = master_dtype_mod.master_dtype_mode(master_dtype)
+    comp = master_dtype_mod.master_comp_mode(master_comp, master_dtype=dtype)
+    bf16 = dtype == master_dtype_mod.BF16
+    base_key = jax.random.PRNGKey(int(key_seed))
+    counter = 0
+
     def _init(path, leaf):
+        nonlocal counter
+        index = counter
+        counter += 1
         group = classify_leaf(leaf_name(path[-1]), leaf.ndim, legacy=legacy_muon_all_2d)
         if group == GROUP_UNCLASSIFIED:
             raise UnclassifiedMatrixError(
@@ -258,10 +362,76 @@ def init_state(params, *, legacy_muon_all_2d: bool = False):
                 "вне классификации ADR-048: дополни MUON_MATRIX_LEAVES или "
                 "ADAMW_MATRIX_LEAVES, либо включи legacy_muon_all_2d"
             )
-        if group in _ADAMW_GROUPS:
-            return (jnp.zeros_like(leaf), jnp.zeros_like(leaf))
-        return jnp.zeros_like(leaf)
+        return _leaf_state(group, leaf, bf16=bf16, comp=comp, base_key=base_key,
+                           counter=index)
+
     return jax.tree_util.tree_map_with_path(_init, params)
+
+
+def adapt_state(saved_state, params, *, saved_master_dtype: str | None = None,
+                saved_master_comp: str | None = None,
+                master_dtype: str | None = None, master_comp: str | None = None,
+                legacy_muon_all_2d: bool = False, key_seed: int = 0):
+    """Привести восстановленное состояние к раскладке текущего режима мастера.
+
+    Контракт resume (ADR-054 Am.13 п.3): чекпойнт fp32-режима, продолженный в
+    bf16-режиме, даёт «разовый каст + нулевой comp»: моменты у обоих режимов
+    fp32, поэтому переносятся как есть, а слот компенсации заводится свежим
+    (нулевой буфер / новый ключ).  Обратно (bf16 → fp32) слот компенсации
+    отбрасывается — апкаст мастера делает вызывающий
+    (``net/checkpoint.py``, читатель формата), а состояние здесь остаётся
+    в fp32-раскладке.
+
+    Раскладка восстановленного состояния определяется **режимом чекпойнта**
+    (``saved_*``, из манифеста), а не текущим: число листьев на параметр —
+    :func:`state_leaf_counts`.  Порядок листьев обоих деревьев — канонический
+    (обход дерева параметров), поэтому листья сопоставляются позиционно.
+    """
+    target_dtype = master_dtype_mod.master_dtype_mode(master_dtype)
+    target_comp = master_dtype_mod.master_comp_mode(master_comp, master_dtype=target_dtype)
+    target_bf16 = target_dtype == master_dtype_mod.BF16
+    saved_dtype = saved_master_dtype or master_dtype_mod.FP32
+    saved_counts = state_leaf_counts(params, master_dtype=saved_dtype,
+                                     legacy_muon_all_2d=legacy_muon_all_2d)
+    path_leaves, param_treedef = jax.tree_util.tree_flatten_with_path(params)
+    saved_leaves = jax.tree_util.tree_leaves(saved_state)
+    if len(saved_leaves) != sum(saved_counts):
+        raise ValueError(
+            f"состояние не соответствует раскладке {saved_dtype}-режима: "
+            f"листьев {len(saved_leaves)}, ожидалось {sum(saved_counts)} "
+            f"({len(saved_counts)} листьев параметров)"
+        )
+    base_key = jax.random.PRNGKey(int(key_seed))
+    cursor = 0
+    new_leaves: list = []
+    for index, ((path, leaf), count) in enumerate(zip(path_leaves, saved_counts)):
+        chunk = saved_leaves[cursor:cursor + count]
+        cursor += count
+        group = classify_leaf(leaf_name(path[-1]) if path else "", leaf.ndim,
+                              legacy=legacy_muon_all_2d)
+        if group == GROUP_UNCLASSIFIED:
+            raise UnclassifiedMatrixError(
+                f"2-D параметр {leaf_name(path[-1]) if path else ''!r} "
+                f"({jax.tree_util.keystr(path)}) вне классификации ADR-048"
+            )
+        if target_bf16:
+            extra = _fresh_extra(leaf, target_comp, base_key, index)
+            if group in _MUON_GROUPS:
+                new_leaves.append((chunk[0].astype(jnp.float32), extra))
+            else:
+                new_leaves.append((chunk[0].astype(jnp.float32),
+                                   chunk[1].astype(jnp.float32), extra))
+        elif group in _MUON_GROUPS:
+            new_leaves.append(chunk[0].astype(jnp.float32))
+        else:
+            new_leaves.append((chunk[0].astype(jnp.float32),
+                               chunk[1].astype(jnp.float32)))
+    return param_treedef.unflatten(new_leaves)
+
+
+def _state_signature(state) -> tuple:
+    """dtype-подпись листа состояния (ключ группировки NS5-батчинга)."""
+    return tuple(str(leaf.dtype) for leaf in jax.tree_util.tree_leaves(state))
 
 
 def make_step(
@@ -278,6 +448,8 @@ def make_step(
     donate: bool = False,
     work_dtype: str | None = None,
     opt_batch: str | None = None,
+    master_dtype: str | None = None,
+    master_comp: str | None = None,
 ):
     """Build the optimizer step — jitted, one walk over the parameter tree.
 
@@ -341,6 +513,25 @@ def make_step(
     проходит прежним leaf-вызовом (побитово прежнее), AdamW-группы и их
     momentum/Adam-цепочки батчинг не трогает.  ``single_pass=False`` (оракул
     паритета «один проход ↔ два») остаётся leaf-обходом и старше ``opt_batch``.
+
+    ADR-054 (цикл-5, Am.13): ``master_dtype`` (``None`` = ``AXIOM_MASTER_DTYPE``,
+    дефолт ``fp32``) и ``master_comp`` (``None`` = ``AXIOM_MASTER_COMP``,
+    дефолт ``kahan`` при bf16-мастере) — режим дерева параметров.  При
+    ``master_dtype="fp32"`` шаг **побитово прежний** (эта ветка кода не
+    менялась ни одним выражением: гейт-off — прежний граф, критерий Am.13).
+    При ``"bf16"``:
+
+    * ``params`` (мастер) — bf16, ``grads`` — bf16, моменты (Muon ``m``,
+      AdamW ``m/v``) — fp32; в bf16-графе градиент поднимается в fp32 до
+      арифметики листа (``g32``), чтобы момент считался в fp32, а не в bf16;
+    * обновление считается в fp32 из fp32-моментов: целевое значение —
+      ``target = p32·(1 − lr·wd) − lr·upd`` с прежним clip, ``update = target − p32``;
+    * ``update`` применяется к bf16-мастеру плечом ``master_comp``
+      (:mod:`net.master_dtype`): ``kahan`` — компенсационный буфер, ``sr`` —
+      стохастическое округление с ключом, ``none`` — контрольное RN-плечо;
+    * третий выход (``work_dtype``) упразднён: рабочая копия **есть** мастер
+      (``params is master``); передать оба аргумента — ошибка сборки, а не
+      тихий выбор одного из двух контрактов.
     """
     if int(ns_steps) < 1:
         raise ValueError(f"ns_steps must be >= 1, got {ns_steps!r}")
@@ -352,6 +543,16 @@ def make_step(
     # (формы статичны), тип графа от режима зависит.  Неизвестное значение флага
     # падает здесь, а не тихо выбирает путь.
     batch = opt_batch_mode(opt_batch)
+    # Цикл-5: режим мастера — тоже на сборке (dtype дерева/состояния — часть
+    # контракта графа).  fp32 — прежнее поведение по построению.
+    master = master_dtype_mod.master_dtype_mode(master_dtype)
+    comp = master_dtype_mod.master_comp_mode(master_comp, master_dtype=master)
+    bf16_master = master == master_dtype_mod.BF16
+    if bf16_master and work_dtype is not None:
+        raise ValueError(
+            "work_dtype задан при bf16-мастере: рабочая копия ЕСТЬ мастер "
+            "(params is master), третьего выхода в этом режиме нет"
+        )
 
     def _matrix_step(p, g, m, lr, per_head):
         m = muon_momentum * m + (1.0 - muon_momentum) * g
@@ -398,14 +599,108 @@ def make_step(
             return _matrix_step(p, g, m, lr, False)  # (new_p, momentum)
         return _batched_matrix_step(p, g, m, lr)  # (new_p, momentum)
 
-    def _muon_group_step(group, ps, gs, ms, lr):
+    # ------------------------------------------------------------------
+    # ADR-054 Am.13 (цикл-5): bf16-мастер — те же момент и NS5 в fp32,
+    # применение обновления — плечом компенсации к bf16-листу.
+    # ------------------------------------------------------------------
+
+    def _bf16_muon_leaf(group, p, g, st, lr):
+        """Muon листа bf16-мастера: ``(m, extra)`` → ``(new_p, (m, new_extra))``.
+
+        Момент и NS5 — прежняя арифметика (Am.13: «Muon-ортогонализация без
+        изменений»), отличие одно: считается в fp32 из fp32-момента (``g32``),
+        а результат применяется к bf16-мастеру компенсированно.
+        """
+        m, extra = st
+        g32 = g.astype(jnp.float32)
+        m = muon_momentum * m + (1.0 - muon_momentum) * g32
+        if group == GROUP_MUON_PER_HEAD:
+            upd = per_head_newtonschulz5(m, heads, ns_steps)
+        elif group == GROUP_MUON_MATRIX:
+            upd = newtonschulz5(m, ns_steps)
+        else:
+            flat = m.reshape(-1, *m.shape[-2:])
+            upd = jax.vmap(lambda x: newtonschulz5(x, ns_steps))(flat).reshape(m.shape)
+        p32 = p.astype(jnp.float32)
+        target = p32 * (1.0 - lr * wd) - lr * upd
+        if weight_clip is not None:
+            target = jnp.clip(target, -weight_clip, weight_clip)
+        new_p, new_extra = master_dtype_mod.apply_update(comp, p, target - p32, extra)
+        return new_p, (m, new_extra)
+
+    def _bf16_adamw_step(p, g, st, lr, *, clip: bool):
+        """AdamW листа bf16-мастера: ``(m, v, extra)`` → ``(new_p, (m, v, extra))``.
+
+        ``m/v`` — fp32 (в т.ч. ``g*g``: градиент поднимается в fp32 **до**
+        квадрата, иначе квадрат округлился бы в bf16); clip — прежний
+        (``adamw_embed`` — да, ``adamw_vector`` — нет), но применён к
+        fp32-цели: bf16-мастер ведёт ту же траекторию, что fp32-мастер.
+        """
+        m, v, extra = st
+        g32 = g.astype(jnp.float32)
+        m = adam_b1 * m + (1.0 - adam_b1) * g32
+        v = adam_b2 * v + (1.0 - adam_b2) * (g32 * g32)
+        mh = m / (1.0 - adam_b1)
+        vh = v / (1.0 - adam_b2)
+        p32 = p.astype(jnp.float32)
+        target = p32 * (1.0 - lr * wd) - lr * mh / (jnp.sqrt(vh) + 1e-8)
+        # ADR-048 Amendment п.4: ``weight_clip`` (1.0) also covers ``adamw_embed``,
+        # exactly as the Muon branch clipped it.  ``adamw_vector`` keeps the
+        # pre-Amendment behaviour (no clip): two properties are not changed at once.
+        if clip and weight_clip is not None:
+            target = jnp.clip(target, -weight_clip, weight_clip)
+        new_p, new_extra = master_dtype_mod.apply_update(comp, p, target - p32, extra)
+        return new_p, (m, v, new_extra)
+
+    def _bf16_group_apply(p_stack, update_stack, extra_stack):
+        """Применение плеча к стёку листьев одной группы (vmap по ведущей оси).
+
+        Арифметика — пофайлово та же, что у ``_bf16_muon_leaf`` (элементные
+        операции), поэтому grouped-путь bf16-режима побитово равен leaf-пути:
+        у NS5 переупорядочивание редукций возможно (Am.11), у применения
+        обновления — нет.
+        """
+        if comp == master_dtype_mod.KAHAN:
+            return jax.vmap(
+                lambda p, u, c: master_dtype_mod.kahan_apply(p, u, c)
+            )(p_stack, update_stack, extra_stack)
+        if comp == master_dtype_mod.SR:
+            # Batched-ключ (N, 2) split не принимает — vmap по строке ключа.
+            return jax.vmap(
+                lambda p, u, k: master_dtype_mod.sr_apply(p, u, k)
+            )(p_stack, update_stack, extra_stack)
+        return jax.vmap(
+            lambda p, u: master_dtype_mod.rn_apply(p, u)
+        )(p_stack, update_stack), extra_stack
+
+    def _muon_group_step(group, ps, gs, ss, lr):
         """Muon для стека листьев одной (группа, форма): ОДИН NS5 на группу.
 
         Тот же момент ``m``, тот же NS5 (vmap по стеку вместо разворачивания по
         листьям), тот же wd/clip: одно batched ``dot_general`` на итерацию вместо
         ``len(ps)`` отдельных.  Внутри — те же функции, что у leaf-пути
         (:func:`newtonschulz5` / :func:`per_head_newtonschulz5`).
+
+        bf16-мастер (Am.13): ``ss`` — стёк пар ``(m, extra)``; момент и NS5 те
+        же, применение обновления — :func:`_bf16_group_apply`.
         """
+        if bf16_master:
+            ms, extra = ss
+            g32 = gs.astype(jnp.float32)
+            m = muon_momentum * ms + (1.0 - muon_momentum) * g32
+            if group == GROUP_MUON_PER_HEAD:
+                upd = jax.vmap(lambda one: per_head_newtonschulz5(one, heads, ns_steps))(m)
+            elif group == GROUP_MUON_BATCHED:
+                flat = m.reshape(-1, *m.shape[-2:])
+                upd = jax.vmap(lambda one: newtonschulz5(one, ns_steps))(flat).reshape(m.shape)
+            else:
+                upd = jax.vmap(lambda one: newtonschulz5(one, ns_steps))(m)
+            p32 = ps.astype(jnp.float32)
+            target = p32 * (1.0 - lr * wd) - lr * upd
+            if weight_clip is not None:
+                target = jnp.clip(target, -weight_clip, weight_clip)
+            new_p, new_extra = _bf16_group_apply(ps, target - p32, extra)
+            return new_p, (m, new_extra)
         m = muon_momentum * ms + (1.0 - muon_momentum) * gs
         if group == GROUP_MUON_PER_HEAD:
             upd = jax.vmap(lambda one: per_head_newtonschulz5(one, heads, ns_steps))(m)
@@ -432,7 +727,12 @@ def make_step(
                 "ADAMW_MATRIX_LEAVES, либо включи legacy_muon_all_2d"
             )
         if group in _MUON_GROUPS:
+            if bf16_master:
+                return _bf16_muon_leaf(group, p, g, s, lr)
             return _muon_leaf(group, p, g, s, lr)
+        if bf16_master:
+            # ``adamw_embed`` — с clip, ``adamw_vector`` — без (Am.4 не переоткрыт).
+            return _bf16_adamw_step(p, g, s, lr, clip=group == GROUP_ADAMW_EMBED)
         if group == GROUP_ADAMW_EMBED:
             return _adamw_step(p, g, s, lr, clip=True)  # (new_p, (m, v))
         # ``adamw_vector`` — norms, biases, scalars.
@@ -499,35 +799,43 @@ def make_step(
             if group not in _MUON_GROUPS:
                 continue
             p = path_leaves[index][1]
-            key = (group, p.shape, p.dtype, grads_for[index].dtype, state_for[index].dtype)
+            key = (group, p.shape, p.dtype, grads_for[index].dtype,
+                   _state_signature(state_for[index]))
             buckets.setdefault(key, []).append(index)
 
         new_params: list = [None] * len(path_leaves)
         new_state: list = [None] * len(path_leaves)
         for key, indices in buckets.items():
             group = key[0]
+            leaf_call = _bf16_muon_leaf if bf16_master else _muon_leaf
             if len(indices) == 1:
                 # Одиночная группа (одна такая форма на всю модель): прежний
                 # leaf-вызов — побитово прежняя арифметика.
                 index = indices[0]
-                new_params[index], new_state[index] = _muon_leaf(
+                new_params[index], new_state[index] = leaf_call(
                     group, path_leaves[index][1], grads_for[index], state_for[index], lr
                 )
                 continue
-            p_stack, m_stack = _muon_group_step(
+            p_stack, state_stack = _muon_group_step(
                 group,
                 jnp.stack([path_leaves[i][1] for i in indices]),
                 jnp.stack([grads_for[i] for i in indices]),
-                jnp.stack([state_for[i] for i in indices]),
+                # Лист состояния — либо момент (fp32-режим), либо пара
+                # (момент, слот компенсации): стёк строится по дереву, поэтому
+                # работает в обоих режимах одной строкой.
+                jax.tree_util.tree_map(
+                    lambda *xs: jnp.stack(list(xs)), *[state_for[i] for i in indices]
+                ),
                 lr,
             )
             for k, index in enumerate(indices):
                 new_params[index] = p_stack[k]
-                new_state[index] = m_stack[k]
+                new_state[index] = jax.tree_util.tree_map(lambda x, k=k: x[k], state_stack)
+        adam_call = _bf16_adamw_step if bf16_master else _adamw_step
         for index, group in enumerate(leaf_groups):
             if group in _MUON_GROUPS:
                 continue
-            new_params[index], new_state[index] = _adamw_step(
+            new_params[index], new_state[index] = adam_call(
                 path_leaves[index][1], grads_for[index], state_for[index], lr,
                 clip=group == GROUP_ADAMW_EMBED,
             )
@@ -555,6 +863,16 @@ def make_step(
         return new_params, new_state
 
     def step(params, grads, state, lr):
+        if bf16_master:
+            # Fail-closed на вход: режим объявлен bf16-мастером, и fp32-дерево на
+            # входе — ошибка вызывающего, а не «тихо другой режим» (иначе
+            # применение плеча округлило бы fp32-дерево в bf16 без объявления).
+            leaves = jax.tree_util.tree_leaves(params)
+            if leaves and jnp.asarray(leaves[0]).dtype != jnp.bfloat16:
+                raise ValueError(
+                    "bf16-мастер (AXIOM_MASTER_DTYPE=bf16) получил не-bf16 дерево "
+                    f"параметров: {jnp.asarray(leaves[0]).dtype}"
+                )
         if not single_pass:
             # Пре-Amendment обход — оракул паритета «один проход ↔ два»; он
             # старше режима батчинга: grouped-путь — это и есть новый один проход.
@@ -564,7 +882,10 @@ def make_step(
         else:
             walk = _walk_once
         new_params, new_state = walk(params, grads, state, lr)
-        if work_dtype is None:
+        if work_dtype is None or bf16_master:
+            # bf16-мастер: рабочая копия ЕСТЬ мастер (``params is master``) —
+            # третьего выхода нет по построению (Am.13; ``work_dtype`` при
+            # bf16-мастере отвергается на сборке).
             return new_params, new_state
         # ADR-054 (цикл-4): рабочая копия — часть того же графа; при donate=True
         # new_params — возврат шага (не донированный вход), каст легален.

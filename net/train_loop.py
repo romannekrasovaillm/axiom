@@ -1703,12 +1703,20 @@ CURSOR_MANIFEST_NAME = "cursor.json"
 
 @dataclass(frozen=True)
 class CheckpointRecord:
-    """Запись о чекпойнте: шаг, каталог, tree_hash и курсор данных."""
+    """Запись о чекпойнте: шаг, каталог, tree_hash и курсор данных.
+
+    ADR-054 Am.13: запись несёт ещё и формат мастера (``master_dtype``,
+    ``master_comp``) — по нему resume решает, нужен ли разовый каст и
+    адаптация состояния (``net/optimizer.adapt_state``).  Поля опциональны:
+    курсоры прежних ревизий их не несут и читаются как ``fp32``/``none``.
+    """
 
     step: int
     path: Path
     tree_hash: str
     cursor: dict
+    master_dtype: str = "fp32"
+    master_comp: str = "none"
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -1716,6 +1724,8 @@ class CheckpointRecord:
             "path": self.path.name,
             "tree_hash": self.tree_hash,
             "cursor": self.cursor,
+            "master_dtype": self.master_dtype,
+            "master_comp": self.master_comp,
         }
 
     @classmethod
@@ -1725,6 +1735,8 @@ class CheckpointRecord:
             path=directory / str(data["path"]),
             tree_hash=str(data["tree_hash"]),
             cursor=dict(data.get("cursor") or {}),
+            master_dtype=str(data.get("master_dtype") or "fp32"),
+            master_comp=str(data.get("master_comp") or "none"),
         )
 
 
@@ -1761,6 +1773,8 @@ class CheckpointManager:
         params: Any,
         optimizer_state: Any,
         cursor: Mapping[str, Any],
+        master_dtype: str | None = None,
+        master_comp: str | None = None,
     ) -> dict[str, Any]:
         """Сохранить чекпойнт, обновить курсор-манифест и применить ретенцию.
 
@@ -1769,24 +1783,38 @@ class CheckpointManager:
         ``tree_hash`` записи — это хеш дерева параметров, той же формы и той же
         функцией, что в стадии SFT, и хеши стадий сопоставимы.  Хеш словаря с
         путями ``['params', ...]`` дал бы другое число для тех же весов.
+
+        ``master_dtype``/``master_comp`` (ADR-054 Am.13) — формат мастера этого
+        чекпойнта: едет и в манифест орбакса-дерева, и в ``meta.json`` записи,
+        и в курсор.  Без них resume не смог бы отличить bf16-чекпойнт от fp32
+        и адаптировать состояние (``net/optimizer.adapt_state``).
         """
         from net import checkpoint as checkpoint_mod
 
         target = self.step_dir(step)
         target.mkdir(parents=True, exist_ok=True)
-        digest = checkpoint_mod.save_checkpoint(params, target / "params")
-        state_digest = checkpoint_mod.save_checkpoint(optimizer_state, target / "opt_state")
+        digest = checkpoint_mod.save_checkpoint(
+            params, target / "params", master_dtype=master_dtype
+        )
+        state_digest = checkpoint_mod.save_checkpoint(
+            optimizer_state, target / "opt_state", master_dtype=master_dtype
+        )
         meta = {
             "step": int(step),
             "tree_hash": digest,
             "optimizer_state_hash": state_digest,
             "format": "orbax",
+            "master_dtype": checkpoint_mod.checkpoint_master_dtype(
+                {"master_dtype": master_dtype}
+            ),
+            "master_comp": str(master_comp or "none"),
         }
         (target / "meta.json").write_text(
             json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8"
         )
         record = CheckpointRecord(
-            step=int(step), path=target, tree_hash=digest, cursor=dict(cursor)
+            step=int(step), path=target, tree_hash=digest, cursor=dict(cursor),
+            master_dtype=meta["master_dtype"], master_comp=meta["master_comp"],
         )
         self._write_cursor(record)
         self.prune()
@@ -1795,7 +1823,32 @@ class CheckpointManager:
             "path": str(record.path),
             "tree_hash": digest,
             "optimizer_state_hash": state_digest,
+            "master_dtype": meta["master_dtype"],
+            "master_comp": meta["master_comp"],
         }
+
+    def stored_master_mode(self, directory: str | Path | None = None) -> tuple[str, str]:
+        """Формат мастера хранимого чекпойнта: ``(master_dtype, master_comp)``.
+
+        Читается из ``meta.json`` записи (по умолчанию — последней по курсору);
+        отсутствие полей = чекпойнт прежней ревизии: ``("fp32", "none")``.
+        """
+        from net import checkpoint as checkpoint_mod
+
+        if directory is None:
+            latest = self.latest()
+            if latest is None:
+                return checkpoint_mod.MASTER_DTYPE_FP32, "none"
+            directory = Path(latest["path"])
+        meta_path = Path(directory) / "meta.json"
+        payload: dict[str, Any] = {}
+        if meta_path.is_file():
+            try:
+                payload = json.loads(meta_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                payload = {}
+        dtype = checkpoint_mod.checkpoint_master_dtype(payload)
+        return dtype, str(payload.get("master_comp") or "none")
 
     def _write_cursor(self, record: CheckpointRecord) -> None:
         payload = {"schema": CURSOR_SCHEMA, **record.to_json()}
@@ -2784,6 +2837,7 @@ def train(
     import jax.numpy as jnp
 
     from net import checkpoint as checkpoint_mod
+    from net import master_dtype as master_dtype_mod
     from net import model, optimizer
 
     # Повторный гейт внутри цикла: лимит уже мог быть выдан смоук-режимом
@@ -2805,17 +2859,32 @@ def train(
             f"accum_tokens must be >= 0 (0 = off), got {train_config.accum_tokens!r}"
         )
 
+    # ADR-054 Am.13 (цикл-5): режим мастера — условие прогона, а не деталь кода.
+    # Дефолты (fp32 / none) побитово прежние: гейт-off не меняет ни дерево, ни
+    # состояние, ни граф.  Читается здесь один раз и передаётся вниз явно —
+    # чтобы train, состояние и шаг не разошлись при смене env в середине сборки.
+    master_mode = master_dtype_mod.master_dtype_mode()
+    comp_mode = master_dtype_mod.master_comp_mode(master_dtype=master_mode)
+    use_bf16_master = master_mode == master_dtype_mod.BF16
+
     manager = resume_from
     start_step = 0
     total_steps = train_config.total_steps or train_config.steps
     cursor_data: dict[str, Any] = {}
 
     master = model.init_params(jax.random.PRNGKey(train_config.seed), cfg)
+    if use_bf16_master:
+        # Разовый каст инициализации: мастер — единственное представление
+        # дерева (bf16).  Рабочей копии нет: params ЕСТЬ мастер (Am.13).
+        master = checkpoint_mod.cast_tree(master, master_mode)
     # ADR-048: классификация параметров по именам листьев — состояние и шаг
     # строятся по одному и тому же предикату (иначе форма состояния разошлась бы
-    # с веткой обновления).
+    # с веткой обновления).  Am.13: в bf16-режиме состояния — fp32-моменты плюс
+    # слот компенсации (буфер kahan / RNG-ключ sr); ключи сидятся сидом прогона.
     state = optimizer.init_state(
-        master, legacy_muon_all_2d=train_config.legacy_muon_all_2d
+        master, legacy_muon_all_2d=train_config.legacy_muon_all_2d,
+        master_dtype=master_mode, master_comp=comp_mode,
+        key_seed=train_config.seed,
     )
     if manager is not None:
         latest = manager.latest()
@@ -2823,7 +2892,37 @@ def train(
             raise PretrainDataError(
                 f"resume: чекпойнтов нет в {manager.directory} — нечего продолжать"
             )
-        master, state, cursor_data = manager.resume(target_params=master, target_state=state)
+        saved_dtype, saved_comp = manager.stored_master_mode()
+        if (saved_dtype, saved_comp) == (master_mode, comp_mode):
+            master, state, cursor_data = manager.resume(
+                target_params=master, target_state=state
+            )
+        else:
+            # Кросс-режимный resume (Am.13 п.3): чекпойнт восстанавливается в
+            # ХРАНИМОМ формате (шаблоны — под сохранённый режим; хеш-проверка
+            # round-trip остаётся осмысленной), затем — разовая адаптация:
+            # fp32→bf16 «каст + нулевой comp», bf16→fp32 «апкаст с
+            # предупреждением».  Моменты у обоих режимов fp32 — переносятся как
+            # есть (adapt_state), comp-буфер не восстанавливается по построению.
+            saved_params = checkpoint_mod.cast_tree(master, saved_dtype)
+            saved_state = optimizer.init_state(
+                master, legacy_muon_all_2d=train_config.legacy_muon_all_2d,
+                master_dtype=saved_dtype, master_comp=saved_comp,
+                key_seed=train_config.seed,
+            )
+            master, state, cursor_data = manager.resume(
+                target_params=saved_params, target_state=saved_state
+            )
+            master = checkpoint_mod.cast_tree(
+                master, master_mode, warn_on_upcast=True
+            )
+            state = optimizer.adapt_state(
+                state, master, saved_master_dtype=saved_dtype,
+                saved_master_comp=saved_comp, master_dtype=master_mode,
+                master_comp=comp_mode,
+                legacy_muon_all_2d=train_config.legacy_muon_all_2d,
+                key_seed=train_config.seed,
+            )
         # Абсолютный шаг берётся из записи чекпойнта, а не из полезной нагрузки
         # курсора: без загрузчика данных в курсоре нет поля ``step``, и нога
         # молча поехала бы с нуля по расписанию.
@@ -2882,7 +2981,11 @@ def train(
     # вызов.  В accum-ветке (``len(group) > 1``) ``grad_fn`` зовётся на каждом
     # микробатче с теми же ``params`` — donate там запрещён, ветка его не берёт.
     grad_fn_donated = jax.jit(jax.value_and_grad(loss_fn), donate_argnums=(0,))
-    use_bf16 = train_config.param_dtype == "bfloat16"
+    # ``use_bf16`` — прежний режим «fp32-мастер + bf16-рабочая копия» (цикл-4).
+    # В bf16-мастере (Am.13) рабочей копии нет вовсе: params ЕСТЬ мастер, третий
+    # выход шага упразднён, поэтому прежний флаг здесь выключён — иначе цикл
+    # ждал бы третьего выхода у двухвыходного шага.
+    use_bf16 = train_config.param_dtype == "bfloat16" and not use_bf16_master
     step_fn = optimizer.make_step(
         cfg,
         ns_steps=train_config.ns_steps,
@@ -2890,18 +2993,27 @@ def train(
         # ADR-054: при живом профайлере grads читается после step_fn
         # (profiler.measure, :3037) — donate запрещён; без профайлера буферы
         # master/grads/state мертвы после вызова (возврат шага — их владелец).
+        # Am.13: в bf16-мастере donate (0,1,2) легален во всех ветках режима —
+        # params/мастер — один и тот же буфер, и его читает только сам шаг.
         donate=not train_config.phase_profile,
         # ADR-054 (цикл-4, Am.10 п.1): bf16-рабочая копия — третий выход того же
         # jitted-шага; отдельного ``jit(convert_element_type)`` на лист дерева
-        # (~330 модулей/шаг) в цикле больше нет.
+        # (~330 модулей/шаг) в цикле больше нет.  В bf16-мастере его нет по
+        # построению (work_dtype + bf16-мастер — ошибка сборки, Am.13).
         work_dtype="bfloat16" if use_bf16 else None,
+        master_dtype=master_mode,
+        master_comp=comp_mode,
     )
 
-    def working_params(fp32_params):
-        # Только каст шага-0 (до первого ``step_fn``) и fp32-тождество: начиная
-        # с цикла-4 bf16-копия на шагах — третий выход самого шага (ADR-054
-        # Am.10 п.1), а не tree_map astype по ~330 листьям вне jit.
-        return jax.tree_util.tree_map(lambda leaf: leaf.astype(jnp.bfloat16), fp32_params) if use_bf16 else fp32_params
+    def working_params(current_master):
+        # bf16-мастер: рабочая копия ЕСТЬ мастер (``params is master``, Am.13) —
+        # ни каста, ни нового дерева.  Прежний режим: каст шага-0 (до первого
+        # ``step_fn``) и fp32-тождество; начиная с цикла-4 bf16-копия на шагах —
+        # третий выход самого шага (ADR-054 Am.10 п.1), а не tree_map astype по
+        # ~330 листьям вне jit.
+        if use_bf16_master:
+            return current_master
+        return jax.tree_util.tree_map(lambda leaf: leaf.astype(jnp.bfloat16), current_master) if use_bf16 else current_master
 
     params = working_params(master)
     active_params = model.active_param_count(cfg)
@@ -2995,12 +3107,15 @@ def train(
         if len(group) == 1:
             # No accumulation happened: identical to the pre-delta step.
             # ADR-054: donate-ветка включается только там, где буфер мёртв после
-            # вызова.  В bf16 ``params`` — своё дерево (каст шага-0, :2906; дальше
-            # третий выход шага): после вызова его не читает никто (шаг читает
-            # ``master``, :3032), поэтому буфер можно отдать.  В fp32
+            # вызова.  В прежнем bf16 ``params`` — своё дерево (каст шага-0, :2906;
+            # дальше третий выход шага): после вызова его не читает никто (шаг
+            # читает ``master``, :3032), поэтому буфер можно отдать.  В fp32
             # ``working_params`` возвращает сам мастер (``params is master``), и
             # тот же буфер читает ``step_fn(master, ...)`` — donate запрещён,
             # остаётся недонированный ``grad_fn``.
+            # Am.13: в bf16-мастере ``params IS master`` — буфер градиентного
+            # вызова читает следом ``step_fn``, donate градиента запрещён (и это
+            # не edge-case, а построение режима: рабочей копии нет).
             if use_bf16:
                 loss, grads = grad_fn_donated(params, group[0])
             else:
@@ -3024,7 +3139,12 @@ def train(
                 )
             grads = jax.tree_util.tree_map(lambda leaf: leaf / total, grads)
             loss_value = loss_acc / total
-        if use_bf16:
+        if use_bf16_master:
+            # Am.13: grads — bf16, рабочей копии нет, второго выхода шага тоже
+            # (каст-в-шаг цикл-4 в этом режиме упразднён: params и есть мастер).
+            master, state = step_fn(master, grads, state, lr_at(absolute - 1))
+            params = master
+        elif use_bf16:
             grads = jax.tree_util.tree_map(lambda leaf: leaf.astype(jnp.float32), grads)
             # ADR-054 (цикл-4, Am.10 п.1): bf16-рабочая копия — третий выход
             # того же jitted-шага (каст в его графе); отдельного
@@ -3094,6 +3214,12 @@ def train(
                 "mfu_params_only": True,
                 "gpu_hours": gpu_hours,
                 "optimizer_classification": classification,
+                # ADR-054 Am.13 (процессная рекомендация бюллетеня): маркировка
+                # активных режимов в КАЖДОЙ строке журнала — A/B-ноги и плечи
+                # компенсации различаются по журналу, а не по памяти исполнителя.
+                "opt_batch": optimizer.opt_batch_mode(),
+                "master_dtype": master_mode,
+                "master_comp": comp_mode,
             }
             # Поля фаз — только на профильных (kpi-интервальных) шагах: дефолтная
             # запись остаётся ровно прежней.
@@ -3377,7 +3503,14 @@ def _save_checkpoint(
     — контракт resume: CLI сверяет по нему seed/ratios/горизонт/режим классификации
     оптимизатора с argv (H4), а ``train`` дочитывает из него базу счётчиков, чтобы
     нога не «обнуляла» смету.
+
+    ADR-054 Am.13: в запись кладётся формат мастера (``master_dtype`` +
+    ``master_comp``) — режим прогона неизменен с его начала (env читается на
+    сборке), поэтому источник тот же гейт, что у ``train``; по этим полям
+    resume отличает bf16-чекпойнт от fp32 и адаптирует состояние.
     """
+    from net import master_dtype as master_dtype_mod
+
     cursor: dict[str, Any] = {}
     if loader is not None:
         cursor = loader.cursor(step=step).to_json()
@@ -3387,6 +3520,8 @@ def _save_checkpoint(
         step=step,
         params=master,
         optimizer_state=state,
+        master_dtype=master_dtype_mod.master_dtype_mode(),
+        master_comp=master_dtype_mod.master_comp_mode(),
         cursor={
             **cursor,
             "run": {
@@ -3405,6 +3540,12 @@ def _save_checkpoint(
                 "optimizer_classification": optimizer_classification(
                     train_config.legacy_muon_all_2d
                 ),
+                # ADR-054 Am.13: формат мастера — тоже условие траектории.
+                # Резерв чтения для resume (основной источник — meta.json):
+                # чекпойнт bf16-режима, продолженный fp32-режимом, обязан быть
+                # виден по курсору, а не определяться по dtype наугад.
+                "master_dtype": master_dtype_mod.master_dtype_mode(),
+                "master_comp": master_dtype_mod.master_comp_mode(),
                 "tokens_seen_total": int(tokens_seen),
                 "gpu_hours_total": round(float(gpu_hours), 6),
                 "stop_file": str(train_config.stop_file) if train_config.stop_file else None,

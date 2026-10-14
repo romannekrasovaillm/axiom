@@ -1,0 +1,34 @@
+SHELL=/bin/bash
+XLA_PYTHON_CLIENT_MEM_FRACTION=0.96
+PWD=/home/roman/axiom
+LOGNAME=roman
+XDG_SESSION_TYPE=tty
+XLA_PYTHON_CLIENT_PREALLOCATE=false
+HOME=/home/roman
+LANG=ru_RU.utf8
+AXIOM_KDA_CC_IMPL=persistent
+SSH_CONNECTION=10.55.0.1 55622 10.55.0.2 22
+JAX_COMPILATION_CACHE_DIR=/home/roman/.cache/jax_cc_0112_c5_bf16-sr
+AXIOM_MLA_DENSE_FLASH=1
+XDG_SESSION_CLASS=user
+USER=roman
+XLA_FLAGS=--xla_gpu_autotune_level=2
+SHLVL=1
+XDG_SESSION_ID=4884
+XDG_RUNTIME_DIR=/run/user/1000
+SSH_CLIENT=10.55.0.1 55622 22
+TF_GPU_ALLOCATOR=cuda_malloc_async
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin
+DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
+AXIOM_KDA_SOLVE=jax
+OLDPWD=/home/roman
+_=/usr/bin/env
+AXIOM_MASTER_DTYPE=bf16
+AXIOM_MASTER_COMP=sr
+[jax-preflight] XLA_PYTHON_CLIENT_MEM_FRACTION=0.96 (source: env)
+[jax-preflight] XLA_PYTHON_CLIENT_MEM_FRACTION=0.96 (source: env)
+[pretrain] ВНИМАНИЕ: детерминизм XLA не запиннен (NET_GATE_PROFILE=1) — побитовая воспроизводимость между процессами на GPU не гарантируется (ADR-013); запись в журнале это фиксирует
+[pretrain] l3-full: vocab=160000, T=8192, B=2 (micro=2, accum=off), шагов 10, grad-checkpointing=True, remat=none, токенизатор=16e4a5325f38df9d…
+/home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax/_src/ops/scatter.py:105: FutureWarning: scatter inputs have incompatible types: cannot safely cast value from dtype=float32 to dtype=bfloat16 with jax_numpy_dtype_promotion=standard. In future JAX releases this will result in an error.
+  warnings.warn(
+[pretrain] шагов 10, токенов 163840, loss 13.537995338439941 → 12.289942741394043, tree_hash=1b66c8c7c271d7f9…, остановка: по плану

@@ -192,7 +192,7 @@ def test_pool_off_leaves_the_adr009_path_untouched(cfg):
     assert 5 not in counts, dict(counts)
 
 
-def test_pinned_config_pool_layout_at_skeleton_scale():
+def test_pinned_config_pool_layout_at_skeleton_scale(tmp_path, monkeypatch):
     """The pinned 1B config runs one pool build and one selection per MLA layer.
 
     Traced abstractly (``eval_shape``, no allocation) with the dense oracle
@@ -200,15 +200,42 @@ def test_pinned_config_pool_layout_at_skeleton_scale():
     (16) and the selection width (512) are distinct from each other and from the
     LatentMoE router's ``moe_top_k`` (2), so the counts are unambiguous: one
     level-1 pool ``top_k`` for the whole forward, six level-2 selections.
+
+    Block merging is switched off locally for the trace: the declared pin has
+    ``mla_block_merge`` enabled (flag_on by the 30.09.2026 verdict) and a
+    merged layer publishes no pool — it runs its own full-prefix selection
+    over the merged blocks instead — so the pool layout this test pins is
+    reachable with the mechanism off only.  The trace is still driven by the
+    declared fields (``mla_pool_block``/``mla_pool_size``/``mla_top_k``, the
+    layer modes); the merged path itself is exercised by test_23's
+    declared-flag tests.
     """
     import json
     from pathlib import Path
 
+    from net import config as net_config
     from net.config import load_config, validate_config
 
-    data = json.loads((Path(__file__).resolve().parent.parent / "config.json").read_text(encoding="utf-8"))
-    cfg = dataclasses.replace(load_config(Path(__file__).resolve().parent.parent / "config.json"),
-                              attn_dense_reference=False)
+    # The declared KDA body is ``chunked_cc``; the campaign default
+    # (``AXIOM_KDA_CC_IMPL=persistent``, ADR-054 Am.7) is a GB10 kernel that
+    # refuses a GPU-less host by contract, so the committed XLA body is
+    # selected explicitly — the suite-wide pattern since f7c1488.
+    monkeypatch.setenv("AXIOM_KDA_CC_IMPL", "jax")
+
+    config_path = Path(__file__).resolve().parent.parent / "config.json"
+    data = json.loads(config_path.read_text(encoding="utf-8"))
+
+    # The flag-off leg of the pin: a copy of the declared config with the
+    # mechanism off — the declarative reader is the switch, so the copy is
+    # installed as ``CONFIG_PATH`` for the duration of the trace (the schema
+    # field alone never reaches ``sparse_union_attention``).
+    off = dict(data)
+    off["mla_block_merge"] = {"enabled": False, "block": 16}
+    off_path = tmp_path / "config-flag-off.json"
+    off_path.write_text(json.dumps(off, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(net_config, "CONFIG_PATH", off_path)
+
+    cfg = dataclasses.replace(load_config(off_path), attn_dense_reference=False)
     validate_config(cfg)
 
     assert len(data["mla_layer_modes"]) == data["num_mla_layers"]

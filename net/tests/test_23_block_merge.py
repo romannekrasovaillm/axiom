@@ -112,13 +112,18 @@ def _declared_swap(tmp_path: Path, monkeypatch, payload: dict) -> Path:
 # ---------------------------------------------------------------------------
 
 
-def test_t_m1_flag_off_is_bit_identical_to_the_unmerged_path(cfg):
+def test_t_m1_flag_off_is_bit_identical_to_the_unmerged_path(cfg, tmp_path, monkeypatch):
     """``block_merge = 0`` and the declared default (off) agree exactly.
 
-    The declared case config does not enable the mechanism, so the primitive's
-    default (``None`` ⇒ read the declaration) and an explicit ``0`` must both be
-    the unmerged path — the rollback gate of the delta.
+    The primitive's default (``None`` ⇒ read the declaration) and an explicit
+    ``0`` must both be the unmerged path — the rollback gate of the delta.  The
+    reader is pointed at a declaration that keeps the mechanism off: the case
+    config's own pin is ``flag_on`` since the 30.09.2026 verdict, and this test
+    is about the *off* leg.
     """
+    _declared_swap(
+        tmp_path, monkeypatch, {"mla_block_merge": {"enabled": False, "block": 16}}
+    )
     assert net_config.declared_block_merge() == 0
     inputs = _primitive_inputs(cfg, T=300)
     declared, _ = _run(inputs, block_merge=None)
@@ -356,9 +361,9 @@ def test_t_m2_declared_flag_switches_the_live_layer(cfg, tmp_path, monkeypatch):
     """The declaration — not a code edit — turns the mechanism on in ``mla.apply``.
 
     ``net/mla.py`` is untouched by the delta, so the only way the mechanism can
-    reach the live layer is the declared config; pointing the reader at a
-    fixture that enables it must change the layer output, while the case's own
-    declaration (off) leaves it alone.
+    reach the live layer is the declared config: with the reader pointed at a
+    declaration that keeps it off the layer runs the unmerged path, and flipping
+    the reader to a declaration that enables it must change the output.
     """
     sparse_cfg = dataclasses.replace(
         cfg, attn_dense_reference=False, swa_window=64, mla_top_k=8
@@ -366,6 +371,9 @@ def test_t_m2_declared_flag_switches_the_live_layer(cfg, tmp_path, monkeypatch):
     params = mla.init_mla(jr.PRNGKey(0), sparse_cfg)
     x = jr.normal(jr.PRNGKey(1), (1, 256, cfg.hidden))
 
+    _declared_swap(
+        tmp_path, monkeypatch, {"mla_block_merge": {"enabled": False, "block": 16}}
+    )
     off = mla.apply(params, sparse_cfg, x)
     _declared_swap(tmp_path, monkeypatch, {"mla_block_merge": {"enabled": True, "block": 16}})
     on = mla.apply(params, sparse_cfg, x)
@@ -428,12 +436,17 @@ def test_t_m2_config_requires_the_window_to_cover_the_block():
 # ---------------------------------------------------------------------------
 
 
-def test_t_m3_config_without_the_field_keeps_the_unmerged_path(tmp_path, cfg):
+def test_t_m3_config_without_the_field_keeps_the_unmerged_path(tmp_path, cfg, monkeypatch):
     """Backward compatibility: no field ⇒ off, in the schema and in the reader."""
     declared = json.loads(CONFIG.read_text(encoding="utf-8"))
     declared.pop("mla_block_merge")
     path = tmp_path / "config-without-the-field.json"
     path.write_text(json.dumps(declared, ensure_ascii=False), encoding="utf-8")
+    # The run-level leg below reads the *declaration* (``block_merge=None``);
+    # point the declarative reader at the field-less fixture — reading the live
+    # case config instead would pick up the flag_on pin (30.09.2026), while this
+    # test is about a config that never declared the mechanism.
+    monkeypatch.setattr(net_config, "CONFIG_PATH", path)
 
     assert net_config.declared_block_merge(path) == 0
     legacy = load_config(path)
@@ -475,12 +488,23 @@ def test_t_m3_reader_defaults_to_off_and_never_guesses_a_width(tmp_path):
 
 
 def test_t_m4_flag_is_pinned_off_in_the_declared_config(cfg):
-    """ADR-018 p. 3: off until the 64K gap measurement is green (criteria 1-7)."""
+    """ADR-018: the declared state, now the *measured* pin — flag_on since 30.09.2026.
+
+    T-m4 was written when ADR-018 p. 3 expected ``off`` ("off until the 64K gap
+    measurement is green", criteria 1-7 of ADR-009).  The measurement came back
+    green (ADR-018 amendment, 30.09.2026: cost off→on 1.928→0.773 s p50, i.e.
+    2.49× cheaper, condition <0.95× met with margin; recall on ≥ off on all 9
+    probes) and the pin flipped **on** in ``net/config.json``.  What this test
+    still guards unchanged: the declared state is an explicit ``{enabled,
+    block}`` object (no guessed width), the code-built schema default stays
+    ``off`` (the pre-decision path for tests and smokes), and the declaration —
+    not a code edit — is what the reader reports.
+    """
     declared = json.loads(CONFIG.read_text(encoding="utf-8"))
-    assert declared["mla_block_merge"] == {"enabled": False, "block": 16}
+    assert declared["mla_block_merge"] == {"enabled": True, "block": 16}
     assert ModelConfig().mla_block_merge == BlockMergeConfig(enabled=False, block=16)
-    assert net_config.declared_block_merge() == 0
-    assert load_config(CONFIG).mla_block_merge.enabled is False
+    assert net_config.declared_block_merge() == 16
+    assert load_config(CONFIG).mla_block_merge.enabled is True
 
 
 def test_t_m4_deviation_line_names_adr_018_and_the_source():

@@ -91,6 +91,21 @@ def _remat_config(**overrides):
     return dataclasses.replace(small_config(), **base)
 
 
+@pytest.fixture(autouse=True)
+def _committed_jax_body(monkeypatch):
+    """Тело ``chunked_cc`` для этого CPU-файла: эталонный XLA-скан, выбранный явно.
+
+    Кампанийный дефолт ``AXIOM_KDA_CC_IMPL=persistent`` (с 2026-10-12,
+    ADR-054 Am.7) — GB10-кернел, который по контракту отказывает CPU-узлу
+    («тихого отката нет»).  Тесты remat-границ обязаны гонять KDA-тело на
+    CPU, а выбор тела ортогонален проверяемой политике ``remat_policy``,
+    поэтому тело выбирается явно — тот же приём, что у ``_committed_jax_body``
+    в ``test_kda_chunked_cc.py`` (f7c1488 перевёл дефолт, но не перевёл на
+    явный выбор эти паритетные тесты).
+    """
+    monkeypatch.setenv("AXIOM_KDA_CC_IMPL", "jax")
+
+
 def _problem(cfg, remat_policy=None):
     """(params, loss-функция) — один сид, детерминированные входы."""
     key = jr.PRNGKey(0)

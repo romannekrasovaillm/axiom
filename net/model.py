@@ -48,21 +48,32 @@ _log = logging.getLogger(__name__)
 #: is why the boundary has to be per layer.
 #:
 #: ``per_layer_block`` (ADR-054 Am.18, milestone-8) narrows the boundary scope from
-#: the whole layer *transition* to the KDA/MLA+MoE *block*: the AttnRes
-#: depth-mixing correction stays outside ``jax.checkpoint``.  Rationale — the
-#: group-scan carry: under ``per_layer`` every sub-layer boundary saves the
-#: whole ``sources`` buffer (``num_layers + 1`` slots of ``(B, T, hidden)``,
-#: built for AttnRes) as one of its inputs, and the differentiated
-#: ``lax.scan`` collects those per-boundary saves into a stacked array *per
-#: sub-layer position*: 4 stacked copies of ``(units, L+1, B, T, hidden)`` at
-#: the pinned ``[K,K,K,M]`` layout (measured in the campaign HLO dump, ~47 GiB
-#: of the ~109 GiB B=4 floor).  The boundary exists to bound the (B, H, T, T)
-#: score transients, and those stay inside the block — the AttnRes carry does
-#: not belong to it.  With the boundary around the block only, the carry is read
-#: (and recomputed) outside the boundary and the same measured graph state holds
-#: one stacked copy (pinned by ``net/tests/test_37_per_layer_block.py``).  The
-#: arithmetic is unchanged (same ops, same order) — only *where* the backward
-#: recomputes.
+#: the whole layer *transition* to the KDA/MLA+MoE *block* (the AttnRes carry
+#: itself stays outside).  Rationale — the group-scan carry: under
+#: ``per_layer`` every sub-layer boundary saves the whole ``sources`` buffer
+#: (``num_layers + 1`` slots of ``(B, T, hidden)``, built for AttnRes) as one
+#: of its inputs, and the differentiated ``lax.scan`` collects those
+#: per-boundary saves into a stacked array *per sub-layer position*: 4
+#: stacked copies of ``(units, L+1, B, T, hidden)`` at the pinned ``[K,K,K,M]``
+#: layout (measured in the campaign HLO dump, ~47 GiB of the ~109 GiB B=4
+#: floor).  The boundary exists to bound the (B, H, T, T) score transients,
+#: and those stay inside the block — the AttnRes carry does not belong to it.
+#:
+#: Just moving the block-only boundary in and reading the carry outside it
+#: does **not** cut the request: the masked read's softmax residuals (its
+#: input plus the per-slot statistics) are then saved per sub-layer position,
+#: 3 stacked copies per position = 12 in the measured loop state — worse than
+#: ``per_layer``'s 4.  The boundary therefore also covers the AttnRes read,
+#: but over a *rebuilt view*: its big input is the **unit-entry** carry — the
+#: same tensor for all four sub-layer boundaries of a unit, hence a single
+#: stacked save — and the mid-unit view is re-applied inside the boundary
+#: from the unit's deltas (``.at`` data movement only, slot-for-slot the
+#: carried buffer's values).  The correction add and the carry update stay
+#: outside.  Measured on the scanned small-model reproduction (HLO loop
+#: state, pinned by ``net/tests/test_37_per_layer_block.py``): 4 stacked
+#: copies under ``per_layer`` → **1** under ``per_layer_block``.  The
+#: arithmetic is unchanged (same values, same order at every arithmetic op)
+#: — only *where* the backward recomputes.
 GRAD_CKPT_POLICIES = ("none", "per_layer", "per_layer_block")
 
 from .config import ModelConfig, validate_config
@@ -364,7 +375,11 @@ def _layer_transition(
     ``block_remat_policy`` (``None`` = no boundary here) puts the
     :func:`net.remat.remat_checkpoint` boundary around the KDA/MLA+MoE *block*
     only, leaving the AttnRes correction outside — the ``per_layer_block``
-    granularity (see :data:`GRAD_CKPT_POLICIES`).  Callers that ask for this
+    granularity (see :data:`GRAD_CKPT_POLICIES`) as composed by the unrolled
+    path and by the scan's unrolled prefix.  The scanned backbone composes the
+    same policy in :func:`_forward_group_scan`, where the boundary additionally
+    covers the AttnRes read over the rebuilt view (that is what collapses the
+    scan's stacked carry saves to one; see there).  Callers that ask for this
     must not wrap the whole transition again; with ``None`` the composition is
     the pre-delta one, bit-for-bit.
     """
@@ -420,10 +435,13 @@ def forward(
     ``per_layer`` wraps each layer's transition in ``jax.checkpoint``; its live
     set is the layer input ``h``, the candidate-pool carry and the layer's own
     intermediates, so the backward pass recomputes the layer instead of
-    retaining it.  ``per_layer_block`` puts the same boundary around the
-    KDA/MLA+MoE block only and leaves the AttnRes correction (and the big
-    ``sources`` carry it reads) outside; see ``GRAD_CKPT_POLICIES``.  With
-    ``none`` the graph is built exactly as before (bit-for-bit).
+    retaining it.  ``per_layer_block`` narrows the scope to the KDA/MLA+MoE
+    block: in the unrolled path the boundary wraps the block alone (the AttnRes
+    correction stays outside); in the scanned backbone it wraps the block
+    together with the AttnRes read over a view rebuilt from the shared
+    unit-entry carry, so the differentiated scan keeps one stacked copy of the
+    carry instead of one per sub-layer position; see ``GRAD_CKPT_POLICIES``.
+    With ``none`` the graph is built exactly as before (bit-for-bit).
 
     ``remat_policy`` (``none`` | ``dots_saveable`` |
     ``dots_with_no_batch_dims_saveable``, ADR-049) selects *what stays saved*
@@ -590,10 +608,13 @@ def _forward_group_scan(
 
     ``remat``/``block_only`` compose the boundary of every sub-layer: ``remat``
     alone wraps the sub-layer transition (``per_layer``); ``block_only`` (with
-    ``remat``) wraps the KDA/MLA+MoE block inside the transition and leaves the
-    ``sources`` read outside — the ``per_layer_block`` granularity, which is
-    what keeps the differentiated scan from collecting one stacked copy of the
-    ``sources`` carry per sub-layer position (see ``GRAD_CKPT_POLICIES``).
+    ``remat``) wraps the KDA/MLA+MoE block *together with the AttnRes read over
+    a rebuilt view* — the ``per_layer_block`` granularity.  Each sub-layer
+    boundary of a unit takes the same **unit-entry carry** as its big input
+    (``src_in``) and re-applies the unit's deltas inside the boundary, so the
+    differentiated scan collects **one** stacked copy of the ``sources``
+    carry instead of one per sub-layer position; the correction add and the
+    carry update stay outside (see ``GRAD_CKPT_POLICIES``).
     """
     n_units = int(cfg.num_layers) // _LAYERS_PER_UNIT
     units = list(range(first_unit, n_units))
@@ -659,6 +680,12 @@ def _forward_group_scan(
         (
             norm_attn, norm_mlp, attn0, attn1, attn2, attn_mla, mlp, u,
         ) = unit
+        # ``per_layer_block``: the unit-entry carry — the *same* buffer for all
+        # sub-layer boundaries of this unit, hence a single save for the
+        # differentiated scan (see ``GRAD_CKPT_POLICIES``).  Each boundary
+        # rebuilds its mid-unit view from it plus the unit's deltas below.
+        src_in = sources
+        unit_deltas: list[jnp.ndarray] = []
         for s, attn_p in enumerate((attn0, attn1, attn2, attn_mla)):
             is_kda = s != _LAYERS_PER_UNIT - 1
             index = u * _LAYERS_PER_UNIT + s
@@ -668,9 +695,25 @@ def _forward_group_scan(
             )
 
             def sub(
-                block, attnres_w, h, pool, sources,
+                block, attnres_w, h, pool, sources, deltas_u,
                 _is_kda=is_kda, _index=index, _mode="full" if is_kda else mode,
             ):
+                # ``per_layer_block`` (``block_only``): the boundary wraps the
+                # block *and* the AttnRes read, but over a view rebuilt from
+                # the shared unit-entry buffer ``src_in`` and the unit's
+                # deltas — slot-for-slot the carried buffer's values, so the
+                # arithmetic is unchanged, while the boundary's big input is
+                # one loop-invariant buffer rather than a per-sub-layer version
+                # of it.  The differentiated scan then keeps one stacked copy
+                # of the carry, not one per sub-layer position (see
+                # ``GRAD_CKPT_POLICIES``).  With ``per_layer``/``none``
+                # ``deltas_u`` is empty and ``sources`` is the live carry:
+                # the transition is wrapped (``remat``) or not, exactly as
+                # before — never both boundaries at once.
+                if block_only and use_attnres:
+                    first_slot = _index - len(deltas_u) + 1
+                    for k, delta_k in enumerate(deltas_u):
+                        sources = sources.at[first_slot + k].set(delta_k)
                 delta, qb, pool_out = _block_delta(
                     block, _is_kda, cfg, h, chunk_size, collect_qb, _mode, pool
                 )
@@ -687,8 +730,17 @@ def _forward_group_scan(
             attnres_w = (
                 jnp.take(params.attnres.w, index, axis=0) if use_attnres else None
             )
-            h, delta, qb, pool = sub(block, attnres_w, h, pool, sources)
+            carried = src_in if block_only else sources
+            # the deltas argument exists for the ``per_layer_block`` rebuild
+            # only; passing it under ``per_layer``/``none`` would add unused
+            # operands to the wrapped function and move the pre-delta graph
+            # (empty tuple = no pytree leaves = no operands).
+            deltas_arg = tuple(unit_deltas) if block_only else ()
+            h, delta, qb, pool = sub(
+                block, attnres_w, h, pool, carried, deltas_arg
+            )
             sources = sources.at[index + 1].set(delta)
+            unit_deltas.append(delta)
             if collect_qb and qb is not None:
                 qb_sum = qb_sum + qb
         return (h, pool, sources, qb_sum), None

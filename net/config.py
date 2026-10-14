@@ -222,10 +222,19 @@ class ModelConfig:
     # backward pass recomputes the layer from its inputs instead of keeping its
     # attention/MoE intermediates (the coarse wrap of the whole ``compute_loss``
     # in ``net/train_loop.py`` does not cut the request — D-8, 972 GiB at
-    # T=8192).  Declared in ``net/config.json`` as ``grad_ckpt_policy``; the
-    # pretrain preset ``l3-full`` carries ``per_layer``.  Read by ``net/model.py``
+    # T=8192).  ``per_layer_block`` (ADR-054 Am.18) narrows the boundary around
+    # the KDA/MLA+MoE block (in the scanned backbone: together with the AttnRes
+    # read over a view rebuilt from the shared unit-entry carry) — see
+    # ``net.model.GRAD_CKPT_POLICIES`` for the measured rationale: the stacked
+    # ``sources`` saves of the differentiated group-scan drop from one per
+    # sub-layer position (4) to a single shared copy.  Declared in
+    # ``net/config.json`` as ``grad_ckpt_policy``; the pretrain preset
+    # ``l3-full`` carries ``per_layer``.  Read by ``net/model.py``
     # (``compute_loss`` -> ``forward``); the schema default stays ``none`` so a
-    # config built in code (tests, smokes) keeps the pre-D-8 graph.
+    # config built in code (tests, smokes) keeps the pre-D-8 graph.  The list of
+    # implemented values is duplicated here by necessity (``net/model.py``
+    # imports this module, so it cannot be imported back); the two lists are
+    # pinned equal by ``net/tests/test_37_per_layer_block.py``.
     grad_ckpt_policy: str = "none"
 
     # --- rematerialisation policy inside ``jax.checkpoint`` (ADR-049) --------
@@ -392,9 +401,12 @@ def validate_config(cfg: ModelConfig) -> None:
 
     # Grad-checkpointing granularity (D-8): the declared policy has to be one
     # the backbone loop implements — an unknown value would silently fall back
-    # to no remat, which is exactly the OOM the field exists to prevent.
-    assert cfg.grad_ckpt_policy in ("none", "per_layer"), (
-        "grad_ckpt_policy must be none|per_layer, got "
+    # to no remat, which is exactly the OOM the field exists to prevent.  The
+    # list mirrors ``net.model.GRAD_CKPT_POLICIES`` (see the field comment;
+    # ``net/model.py`` imports this module, so the import cannot go the other
+    # way) and the two are pinned equal by test_37.
+    assert cfg.grad_ckpt_policy in ("none", "per_layer", "per_layer_block"), (
+        "grad_ckpt_policy must be none|per_layer|per_layer_block, got "
         f"{cfg.grad_ckpt_policy!r}"
     )
 

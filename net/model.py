@@ -46,7 +46,24 @@ _log = logging.getLogger(__name__)
 #: request (XLA then keeps the whole graph's intermediates on the recompute
 #: boundary — D-8: 972 GiB at T=8192 even with ``--grad-checkpointing``), which
 #: is why the boundary has to be per layer.
-GRAD_CKPT_POLICIES = ("none", "per_layer")
+#:
+#: ``per_layer_block`` (ADR-054 Am.18, milestone-8) narrows the boundary scope from
+#: the whole layer *transition* to the KDA/MLA+MoE *block*: the AttnRes
+#: depth-mixing correction stays outside ``jax.checkpoint``.  Rationale — the
+#: group-scan carry: under ``per_layer`` every sub-layer boundary saves the
+#: whole ``sources`` buffer (``num_layers + 1`` slots of ``(B, T, hidden)``,
+#: built for AttnRes) as one of its inputs, and the differentiated
+#: ``lax.scan`` collects those per-boundary saves into a stacked array *per
+#: sub-layer position*: 4 stacked copies of ``(units, L+1, B, T, hidden)`` at
+#: the pinned ``[K,K,K,M]`` layout (measured in the campaign HLO dump, ~47 GiB
+#: of the ~109 GiB B=4 floor).  The boundary exists to bound the (B, H, T, T)
+#: score transients, and those stay inside the block — the AttnRes carry does
+#: not belong to it.  With the boundary around the block only, the carry is read
+#: (and recomputed) outside the boundary and the same measured graph state holds
+#: one stacked copy (pinned by ``net/tests/test_37_per_layer_block.py``).  The
+#: arithmetic is unchanged (same ops, same order) — only *where* the backward
+#: recomputes.
+GRAD_CKPT_POLICIES = ("none", "per_layer", "per_layer_block")
 
 from .config import ModelConfig, validate_config
 from .remat import remat_checkpoint, validate_remat_policy
@@ -333,6 +350,7 @@ def _layer_transition(
     is_kda: bool,
     mode: str,
     dense_standard: bool = False,
+    block_remat_policy: str | None = None,
 ):
     """One backbone layer's transition, factored out of :func:`forward`.
 
@@ -342,10 +360,28 @@ def _layer_transition(
     ``(h_next, delta, qb, pool_next)``; ``qb`` is None unless the layer is a
     LatentMoE block and ``collect_qb`` is set.  ``dense_standard`` selects the
     diagnostic VERIFICATION-LEG block (see :func:`_block_delta`).
+
+    ``block_remat_policy`` (``None`` = no boundary here) puts the
+    :func:`net.remat.remat_checkpoint` boundary around the KDA/MLA+MoE *block*
+    only, leaving the AttnRes correction outside — the ``per_layer_block``
+    granularity (see :data:`GRAD_CKPT_POLICIES`).  Callers that ask for this
+    must not wrap the whole transition again; with ``None`` the composition is
+    the pre-delta one, bit-for-bit.
     """
-    delta, qb, pool_out = _block_delta(
-        block, is_kda, cfg, h, chunk_size, collect_qb, mode, pool, dense_standard
-    )
+    if block_remat_policy is None:
+        delta, qb, pool_out = _block_delta(
+            block, is_kda, cfg, h, chunk_size, collect_qb, mode, pool, dense_standard
+        )
+    else:
+        def _block(block_, h_, pool_):
+            return _block_delta(
+                block_, is_kda, cfg, h_, chunk_size, collect_qb, mode, pool_,
+                dense_standard,
+            )
+
+        delta, qb, pool_out = remat_checkpoint(_block, block_remat_policy)(
+            block, h, pool
+        )
     if use_attnres and index > 0:
         sources = jnp.stack([embed_src, *prior_deltas], axis=0)  # (N, B, T, hidden)
         corr = attnres_mod.apply_layer(attnres_w, sources)
@@ -379,11 +415,14 @@ def forward(
     ``(B, T, vocab)`` tensor is never materialised (D-8 remainder).  The
     default ``True`` keeps the projection exactly as before (bit-for-bit).
 
-    ``grad_ckpt_policy`` (``none`` | ``per_layer``, see ``GRAD_CKPT_POLICIES``)
-    selects the remat granularity of the backbone loop.  ``per_layer`` wraps
-    each layer's transition in ``jax.checkpoint``; its live set is the layer
-    input ``h``, the candidate-pool carry and the layer's own intermediates,
-    so the backward pass recomputes the layer instead of retaining it.  With
+    ``grad_ckpt_policy`` (``none`` | ``per_layer`` | ``per_layer_block``, see
+    ``GRAD_CKPT_POLICIES``) selects the remat granularity of the backbone loop.
+    ``per_layer`` wraps each layer's transition in ``jax.checkpoint``; its live
+    set is the layer input ``h``, the candidate-pool carry and the layer's own
+    intermediates, so the backward pass recomputes the layer instead of
+    retaining it.  ``per_layer_block`` puts the same boundary around the
+    KDA/MLA+MoE block only and leaves the AttnRes correction (and the big
+    ``sources`` carry it reads) outside; see ``GRAD_CKPT_POLICIES``.  With
     ``none`` the graph is built exactly as before (bit-for-bit).
 
     ``remat_policy`` (``none`` | ``dots_saveable`` |
@@ -400,7 +439,10 @@ def forward(
             f"неизвестная политика grad-checkpointing: {grad_ckpt_policy!r}; "
             f"ожидается одна из {GRAD_CKPT_POLICIES}"
         )
-    remat = grad_ckpt_policy == "per_layer"
+    remat = grad_ckpt_policy in ("per_layer", "per_layer_block")
+    # ``per_layer_block``: the boundary sits inside ``_layer_transition``
+    # (around the block), so the callers below must not wrap the transition.
+    block_only = grad_ckpt_policy == "per_layer_block"
     remat_policy = cfg.remat_policy if remat_policy is None else remat_policy
     validate_remat_policy(remat_policy)  # fail-closed before any tracing
 
@@ -420,6 +462,7 @@ def forward(
             return_hidden=return_hidden,
             collect_qb=collect_qb,
             remat=remat,
+            block_only=block_only,
             remat_policy=remat_policy,
             emit_logits=emit_logits,
             first_unit=plan[0],
@@ -445,6 +488,7 @@ def forward(
         is_kda: bool,
         mode: str,
         dense_standard: bool,
+        block_remat_policy: str | None,
     ):
         """One backbone layer's transition — the remat unit.
 
@@ -452,13 +496,14 @@ def forward(
         carry, the previous deltas that AttnRes mixes) and returns the next
         ``h``, this layer's delta, its QB term and the updated pool.
         ``index``/``is_kda``/``mode``/``dense_standard`` are static and captured
-        by the caller.
+        by the caller; ``block_remat_policy`` non-None moves the boundary
+        inside :func:`_layer_transition` (the ``per_layer_block`` policy).
         """
         return _layer_transition(
             block, attnres_w, h, pool, prior_deltas, embed_src,
             cfg=cfg, chunk_size=chunk_size, collect_qb=collect_qb,
             use_attnres=use_attnres, index=index, is_kda=is_kda, mode=mode,
-            dense_standard=dense_standard,
+            dense_standard=dense_standard, block_remat_policy=block_remat_policy,
         )
 
     for i, block in enumerate(params.layers):
@@ -476,13 +521,15 @@ def forward(
         def step(
             block, attnres_w, h, pool, prior_deltas, embed_src,
             _i=i, _is_kda=is_kda, _mode=mode, _dense=dense_standard,
+            _blk=remat_policy if block_only else None,
         ):
             return _layer_step(
                 block, attnres_w, h, pool, prior_deltas, embed_src,
                 index=_i, is_kda=_is_kda, mode=_mode, dense_standard=_dense,
+                block_remat_policy=_blk,
             )
 
-        if remat:
+        if remat and not block_only:
             step = remat_checkpoint(step, remat_policy)
         attnres_w = params.attnres.w[i] if use_attnres else None
         h, delta, qb, pool = step(
@@ -513,6 +560,7 @@ def _forward_group_scan(
     return_hidden: bool,
     collect_qb: bool,
     remat: bool,
+    block_only: bool,
     remat_policy: str,
     emit_logits: bool,
     first_unit: int,
@@ -539,6 +587,13 @@ def _forward_group_scan(
     with :func:`net.attnres.apply_layer_masked`, which pushes the not-yet-written
     slots to ``-inf`` before the softmax — bit-for-bit the variable-length
     :func:`net.attnres.apply_layer` over the same prefix.
+
+    ``remat``/``block_only`` compose the boundary of every sub-layer: ``remat``
+    alone wraps the sub-layer transition (``per_layer``); ``block_only`` (with
+    ``remat``) wraps the KDA/MLA+MoE block inside the transition and leaves the
+    ``sources`` read outside — the ``per_layer_block`` granularity, which is
+    what keeps the differentiated scan from collecting one stacked copy of the
+    ``sources`` carry per sub-layer position (see ``GRAD_CKPT_POLICIES``).
     """
     n_units = int(cfg.num_layers) // _LAYERS_PER_UNIT
     units = list(range(first_unit, n_units))
@@ -561,14 +616,16 @@ def _forward_group_scan(
         def step(
             block, attnres_w, h, pool, prior_deltas, embed_src,
             _i=i, _is_kda=is_kda, _mode=lm,
+            _blk=remat_policy if block_only else None,
         ):
             return _layer_transition(
                 block, attnres_w, h, pool, prior_deltas, embed_src,
                 cfg=cfg, chunk_size=chunk_size, collect_qb=collect_qb,
                 use_attnres=use_attnres, index=_i, is_kda=_is_kda, mode=_mode,
+                block_remat_policy=_blk,
             )
 
-        if remat:
+        if remat and not block_only:
             step = remat_checkpoint(step, remat_policy)
         attnres_w = params.attnres.w[i] if use_attnres else None
         h, delta, qb, pool = step(

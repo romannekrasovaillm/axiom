@@ -1,0 +1,1036 @@
+HloModule jit_loss, is_scheduled=true, entry_computation_layout={(f32[5,4,32,32]{3,2,1,0})->f32[5,4,32,32]{3,2,1,0}}, allow_spmd_sharding_propagation_to_parameters={true}, allow_spmd_sharding_propagation_to_output={true}
+
+FileNames
+1 "/home/roman/.arch-ml/worktrees/axiom-43e236d789188868/theseus-20261014113809/.scratch/micro_scan3.py"
+
+FunctionNames
+1 "run.<locals>.loss"
+2 "<module>"
+3 "run"
+4 "run.<locals>.body"
+5 "run.<locals>.sub_fn"
+
+FileLocations
+1 {file_name_id=1 function_name_id=1 line=48 end_line=48 column=23 end_column=56}
+2 {file_name_id=1 function_name_id=2 line=82 end_line=82 column=4 end_column=26}
+3 {file_name_id=1 function_name_id=3 line=51 end_line=51 column=10 end_column=43}
+4 {file_name_id=1 function_name_id=4 line=41 end_line=41 column=40 end_column=44}
+5 {file_name_id=1 function_name_id=4 line=41 end_line=41 column=25 end_column=48}
+6 {file_name_id=1 function_name_id=5 line=27 end_line=27 column=23 end_column=29}
+7 {file_name_id=1 function_name_id=5 line=27 end_line=27 column=14 end_column=30}
+8 {file_name_id=1 function_name_id=5 line=28 end_line=28 column=22 end_column=29}
+9 {file_name_id=1 function_name_id=5 line=28 end_line=28 column=13 end_column=30}
+10 {file_name_id=1 function_name_id=5 line=29 end_line=29 column=29 end_column=38}
+11 {file_name_id=1 function_name_id=5 line=29 end_line=29 column=15 end_column=39}
+12 {file_name_id=1 function_name_id=4 line=42 end_line=42 column=25 end_column=32}
+13 {file_name_id=1 function_name_id=1 line=49 end_line=49 column=25 end_column=34}
+
+StackFrames
+1 {file_location_id=1 parent_frame_id=1}
+2 {file_location_id=2 parent_frame_id=1}
+3 {file_location_id=3 parent_frame_id=3}
+4 {file_location_id=1 parent_frame_id=4}
+5 {file_location_id=1 parent_frame_id=5}
+6 {file_location_id=1 parent_frame_id=6}
+7 {file_location_id=4 parent_frame_id=7}
+8 {file_location_id=5 parent_frame_id=7}
+9 {file_location_id=6 parent_frame_id=9}
+10 {file_location_id=7 parent_frame_id=9}
+11 {file_location_id=8 parent_frame_id=9}
+12 {file_location_id=9 parent_frame_id=9}
+13 {file_location_id=10 parent_frame_id=9}
+14 {file_location_id=11 parent_frame_id=9}
+15 {file_location_id=5 parent_frame_id=11}
+16 {file_location_id=7 parent_frame_id=16}
+17 {file_location_id=5 parent_frame_id=13}
+18 {file_location_id=7 parent_frame_id=18}
+19 {file_location_id=12 parent_frame_id=7}
+20 {file_location_id=5 parent_frame_id=15}
+21 {file_location_id=11 parent_frame_id=21}
+22 {file_location_id=13 parent_frame_id=4}
+23 {file_location_id=1 parent_frame_id=7}
+
+
+%fused_computation (param_0: f32[128,32], param_1: f32[32,32]) -> f32[128,32] {
+  %param_0 = f32[128,32]{1,0} parameter(0)
+  %param_1 = f32[32,32]{1,0} parameter(1)
+  ROOT %dot.72 = f32[128,32]{1,0} dot(%param_0, %param_1), lhs_contracting_dims={1}, rhs_contracting_dims={0}, metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/dot_general" stack_frame_id=11}
+}
+
+%fused_computation.1 (param_0.1: f32[128,32], param_1.1: f32[32,32]) -> f32[128,32] {
+  %param_0.1 = f32[128,32]{1,0} parameter(0)
+  %param_1.1 = f32[32,32]{1,0} parameter(1)
+  ROOT %dot.73 = f32[128,32]{1,0} dot(%param_0.1, %param_1.1), lhs_contracting_dims={1}, rhs_contracting_dims={0}, metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/dot_general" stack_frame_id=11}
+}
+
+%fused_computation.2 (param_0.2: f32[128,32], param_1.2: f32[32,32]) -> f32[128,32] {
+  %param_0.2 = f32[128,32]{1,0} parameter(0)
+  %param_1.2 = f32[32,32]{1,0} parameter(1)
+  ROOT %dot.74 = f32[128,32]{1,0} dot(%param_0.2, %param_1.2), lhs_contracting_dims={1}, rhs_contracting_dims={0}, metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/dot_general" stack_frame_id=11}
+}
+
+%fused_computation.3 (param_0.3: f32[128,32], param_1.3: f32[32,32]) -> f32[128,32] {
+  %param_0.3 = f32[128,32]{1,0} parameter(0)
+  %param_1.3 = f32[32,32]{1,0} parameter(1)
+  ROOT %dot.75 = f32[128,32]{1,0} dot(%param_0.3, %param_1.3), lhs_contracting_dims={1}, rhs_contracting_dims={0}, metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/dot_general" stack_frame_id=11}
+}
+
+%fused_computation.12 (param_0.12: f32[5,25,2,64,32], param_1.13: s32[], param_2.2: f32[25,2,64,32]) -> f32[5,25,2,64,32] {
+  %param_0.12 = f32[5,25,2,64,32]{4,3,2,1,0} parameter(0)
+  %param_2.2 = f32[25,2,64,32]{3,2,1,0} parameter(2)
+  %bitcast.75 = f32[1,25,2,64,32]{4,3,2,1,0} bitcast(%param_2.2), metadata={op_name="jit(loss)/jvp()/while/body/jit(dynamic_update_index_in_dim)/broadcast_in_dim" stack_frame_id=23}
+  %param_1.13 = s32[] parameter(1)
+  %constant.561 = s32[] constant(0), metadata={op_name="jit(loss)/jvp()/while/body/jit(dynamic_index_in_dim)" stack_frame_id=6}
+  ROOT %dynamic_update_slice.10 = f32[5,25,2,64,32]{4,3,2,1,0} dynamic-update-slice(%param_0.12, %bitcast.75, %param_1.13, %constant.561, %constant.561, /*index=5*/%constant.561, %constant.561), metadata={op_name="jit(loss)/jvp()/while/body/jit(dynamic_update_index_in_dim)/dynamic_update_slice" stack_frame_id=23}
+}
+
+%fused_computation.13 (param_0.13: f32[5,2,64,32], param_1.15: s32[], param_2.5: f32[2,64,32]) -> f32[5,2,64,32] {
+  %param_0.13 = f32[5,2,64,32]{3,2,1,0} parameter(0)
+  %param_2.5 = f32[2,64,32]{2,1,0} parameter(2)
+  %bitcast.76 = f32[1,2,64,32]{3,2,1,0} bitcast(%param_2.5), metadata={op_name="jit(loss)/jvp()/while/body/jit(dynamic_update_index_in_dim)/broadcast_in_dim" stack_frame_id=23}
+  %param_1.15 = s32[] parameter(1)
+  %constant.562 = s32[] constant(0), metadata={op_name="jit(loss)/jvp()/while/body/jit(dynamic_index_in_dim)" stack_frame_id=6}
+  ROOT %dynamic_update_slice.11 = f32[5,2,64,32]{3,2,1,0} dynamic-update-slice(%param_0.13, %bitcast.76, %param_1.15, %constant.562, %constant.562, /*index=5*/%constant.562), metadata={op_name="jit(loss)/jvp()/while/body/jit(dynamic_update_index_in_dim)/dynamic_update_slice" stack_frame_id=23}
+}
+
+%fused_computation.14 (param_0.14: f32[25,2,64,32], param_1.19: f32[2,64,32]) -> f32[25,2,64,32] {
+  %param_0.14 = f32[25,2,64,32]{3,2,1,0} parameter(0)
+  %param_1.19 = f32[2,64,32]{2,1,0} parameter(1)
+  %constant.564 = f32[] constant(0.01)
+  %broadcast.351 = f32[2,64,32]{2,1,0} broadcast(%constant.564), dimensions={}
+  %mul.223 = f32[2,64,32]{2,1,0} multiply(%param_1.19, %broadcast.351), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/mul" stack_frame_id=13}
+  %bitcast.77 = f32[1,2,64,32]{3,2,1,0} bitcast(%mul.223), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/mul" stack_frame_id=13}
+  %constant.563 = s32[] constant(3), metadata={stack_frame_id=14}
+  %constant.565 = s32[] constant(0), metadata={op_name="jit(loss)/jvp()/while/body/jit(dynamic_index_in_dim)" stack_frame_id=6}
+  ROOT %dynamic-update-slice.55 = f32[25,2,64,32]{3,2,1,0} dynamic-update-slice(%param_0.14, %bitcast.77, %constant.563, %constant.565, %constant.565, /*index=5*/%constant.565), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/scatter" stack_frame_id=14}
+}
+
+%fused_computation.15 (param_0.17: f32[25,2,64,32], param_1.25: f32[2,64,32], param_2.16: f32[128,32]) -> f32[2,64,32] {
+  %param_2.16 = f32[128,32]{1,0} parameter(2)
+  %tanh.65 = f32[128,32]{1,0} tanh(%param_2.16), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/tanh" stack_frame_id=12}
+  %constant.567 = f32[] constant(0.5)
+  %broadcast.353 = f32[128,32]{1,0} broadcast(%constant.567), dimensions={}
+  %mul.225 = f32[128,32]{1,0} multiply(%tanh.65, %broadcast.353), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/mul" stack_frame_id=12}
+  %bitcast.79 = f32[2,64,32]{2,1,0} bitcast(%mul.225), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/mul" stack_frame_id=12}
+  %param_1.25 = f32[2,64,32]{2,1,0} parameter(1)
+  %add.142 = f32[2,64,32]{2,1,0} add(%bitcast.79, %param_1.25), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/add" stack_frame_id=12}
+  %param_0.17 = f32[25,2,64,32]{3,2,1,0} parameter(0)
+  %slice.217 = f32[1,2,64,32]{3,2,1,0} slice(%param_0.17), slice={[0:1], [0:2], [0:64], [0:32]}, metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/slice" stack_frame_id=9}
+  %tanh.64 = f32[1,2,64,32]{3,2,1,0} tanh(%slice.217), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/tanh" stack_frame_id=10}
+  %constant.566 = f32[] constant(0.1)
+  %broadcast.352 = f32[1,2,64,32]{3,2,1,0} broadcast(%constant.566), dimensions={}
+  %mul.224 = f32[1,2,64,32]{3,2,1,0} multiply(%tanh.64, %broadcast.352), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/mul" stack_frame_id=10}
+  %bitcast.78 = f32[2,64,32]{2,1,0} bitcast(%mul.224), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/mul" stack_frame_id=10}
+  ROOT %add.141 = f32[2,64,32]{2,1,0} add(%add.142, %bitcast.78), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/add" stack_frame_id=12}
+}
+
+%fused_computation.16 (param_0.18: f32[25,2,64,32], param_1.29: f32[2,64,32]) -> f32[25,2,64,32] {
+  %param_0.18 = f32[25,2,64,32]{3,2,1,0} parameter(0)
+  %param_1.29 = f32[2,64,32]{2,1,0} parameter(1)
+  %constant.569 = f32[] constant(0.01)
+  %broadcast.354 = f32[2,64,32]{2,1,0} broadcast(%constant.569), dimensions={}
+  %mul.226 = f32[2,64,32]{2,1,0} multiply(%param_1.29, %broadcast.354), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/mul" stack_frame_id=13}
+  %bitcast.80 = f32[1,2,64,32]{3,2,1,0} bitcast(%mul.226), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/mul" stack_frame_id=13}
+  %constant.568 = s32[] constant(2), metadata={stack_frame_id=14}
+  %constant.570 = s32[] constant(0), metadata={op_name="jit(loss)/jvp()/while/body/jit(dynamic_index_in_dim)" stack_frame_id=6}
+  ROOT %dynamic-update-slice.56 = f32[25,2,64,32]{3,2,1,0} dynamic-update-slice(%param_0.18, %bitcast.80, %constant.568, %constant.570, %constant.570, /*index=5*/%constant.570), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/scatter" stack_frame_id=14}
+}
+
+%fused_computation.17 (param_0.21: f32[5,4,32,32], param_1.30: s32[]) -> f32[32,32] {
+  %param_0.21 = f32[5,4,32,32]{3,2,1,0} parameter(0)
+  %param_1.30 = s32[] parameter(1)
+  %constant.571 = s32[] constant(0), metadata={op_name="jit(loss)/jvp()/while/body/jit(dynamic_index_in_dim)" stack_frame_id=6}
+  %dynamic_slice.22 = f32[1,4,32,32]{3,2,1,0} dynamic-slice(%param_0.21, %param_1.30, %constant.571, %constant.571, %constant.571), dynamic_slice_sizes={1,4,32,32}, metadata={op_name="jit(loss)/jvp()/while/body/jit(dynamic_index_in_dim)/dynamic_slice" stack_frame_id=23}
+  %slice.218 = f32[1,1,32,32]{3,2,1,0} slice(%dynamic_slice.22), slice={[0:1], [3:4], [0:32], [0:32]}, metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/slice" stack_frame_id=7}
+  ROOT %bitcast.81 = f32[32,32]{1,0} bitcast(%slice.218), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/slice" stack_frame_id=7}
+}
+
+%fused_computation.18 (param_0.24: f32[25,2,64,32], param_1.36: f32[2,64,32], param_2.28: f32[128,32]) -> f32[2,64,32] {
+  %param_2.28 = f32[128,32]{1,0} parameter(2)
+  %tanh.67 = f32[128,32]{1,0} tanh(%param_2.28), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/tanh" stack_frame_id=12}
+  %constant.573 = f32[] constant(0.5)
+  %broadcast.356 = f32[128,32]{1,0} broadcast(%constant.573), dimensions={}
+  %mul.228 = f32[128,32]{1,0} multiply(%tanh.67, %broadcast.356), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/mul" stack_frame_id=12}
+  %bitcast.83 = f32[2,64,32]{2,1,0} bitcast(%mul.228), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/mul" stack_frame_id=12}
+  %param_1.36 = f32[2,64,32]{2,1,0} parameter(1)
+  %add.144 = f32[2,64,32]{2,1,0} add(%bitcast.83, %param_1.36), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/add" stack_frame_id=12}
+  %param_0.24 = f32[25,2,64,32]{3,2,1,0} parameter(0)
+  %slice.219 = f32[1,2,64,32]{3,2,1,0} slice(%param_0.24), slice={[0:1], [0:2], [0:64], [0:32]}, metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/slice" stack_frame_id=9}
+  %tanh.66 = f32[1,2,64,32]{3,2,1,0} tanh(%slice.219), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/tanh" stack_frame_id=10}
+  %constant.572 = f32[] constant(0.1)
+  %broadcast.355 = f32[1,2,64,32]{3,2,1,0} broadcast(%constant.572), dimensions={}
+  %mul.227 = f32[1,2,64,32]{3,2,1,0} multiply(%tanh.66, %broadcast.355), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/mul" stack_frame_id=10}
+  %bitcast.82 = f32[2,64,32]{2,1,0} bitcast(%mul.227), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/mul" stack_frame_id=10}
+  ROOT %add.143 = f32[2,64,32]{2,1,0} add(%add.144, %bitcast.82), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/add" stack_frame_id=12}
+}
+
+%fused_computation.19 (param_0.25: f32[25,2,64,32], param_1.39: f32[2,64,32]) -> f32[25,2,64,32] {
+  %param_0.25 = f32[25,2,64,32]{3,2,1,0} parameter(0)
+  %param_1.39 = f32[2,64,32]{2,1,0} parameter(1)
+  %constant.574 = f32[] constant(0.01)
+  %broadcast.357 = f32[2,64,32]{2,1,0} broadcast(%constant.574), dimensions={}
+  %mul.229 = f32[2,64,32]{2,1,0} multiply(%param_1.39, %broadcast.357), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/mul" stack_frame_id=13}
+  %bitcast.84 = f32[1,2,64,32]{3,2,1,0} bitcast(%mul.229), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/mul" stack_frame_id=13}
+  %constant.576 = s32[] constant(1)
+  %constant.575 = s32[] constant(0), metadata={op_name="jit(loss)/jvp()/while/body/jit(dynamic_index_in_dim)" stack_frame_id=6}
+  ROOT %dynamic-update-slice.57 = f32[25,2,64,32]{3,2,1,0} dynamic-update-slice(%param_0.25, %bitcast.84, %constant.576, %constant.575, %constant.575, /*index=5*/%constant.575), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/scatter" stack_frame_id=14}
+}
+
+%fused_computation.20 (param_0.26: f32[25,2,64,32], param_1.42: f32[2,64,32]) -> f32[25,2,64,32] {
+  %param_0.26 = f32[25,2,64,32]{3,2,1,0} parameter(0)
+  %param_1.42 = f32[2,64,32]{2,1,0} parameter(1)
+  %constant.577 = f32[] constant(0.01)
+  %broadcast.358 = f32[2,64,32]{2,1,0} broadcast(%constant.577), dimensions={}
+  %mul.230 = f32[2,64,32]{2,1,0} multiply(%param_1.42, %broadcast.358), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/mul" stack_frame_id=13}
+  %bitcast.85 = f32[1,2,64,32]{3,2,1,0} bitcast(%mul.230), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/mul" stack_frame_id=13}
+  %constant.578 = s32[] constant(0), metadata={op_name="jit(loss)/jvp()/while/body/jit(dynamic_index_in_dim)" stack_frame_id=6}
+  ROOT %dynamic-update-slice.58 = f32[25,2,64,32]{3,2,1,0} dynamic-update-slice(%param_0.26, %bitcast.85, %constant.578, %constant.578, %constant.578, /*index=5*/%constant.578), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/scatter" stack_frame_id=14}
+}
+
+%fused_computation.21 (param_0.29: f32[5,4,32,32], param_1.43: s32[]) -> f32[32,32] {
+  %param_0.29 = f32[5,4,32,32]{3,2,1,0} parameter(0)
+  %param_1.43 = s32[] parameter(1)
+  %constant.579 = s32[] constant(0), metadata={op_name="jit(loss)/jvp()/while/body/jit(dynamic_index_in_dim)" stack_frame_id=6}
+  %dynamic_slice.23 = f32[1,4,32,32]{3,2,1,0} dynamic-slice(%param_0.29, %param_1.43, %constant.579, %constant.579, %constant.579), dynamic_slice_sizes={1,4,32,32}, metadata={op_name="jit(loss)/jvp()/while/body/jit(dynamic_index_in_dim)/dynamic_slice" stack_frame_id=23}
+  %slice.220 = f32[1,1,32,32]{3,2,1,0} slice(%dynamic_slice.23), slice={[0:1], [2:3], [0:32], [0:32]}, metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/slice" stack_frame_id=7}
+  ROOT %bitcast.86 = f32[32,32]{1,0} bitcast(%slice.220), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/slice" stack_frame_id=7}
+}
+
+%fused_computation.22 (param_0.32: f32[2,64,32], param_1.50: f32[128,32]) -> f32[2,64,32] {
+  %param_1.50 = f32[128,32]{1,0} parameter(1)
+  %tanh.69 = f32[128,32]{1,0} tanh(%param_1.50), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/tanh" stack_frame_id=12}
+  %constant.582 = f32[] constant(0.5)
+  %broadcast.361 = f32[128,32]{1,0} broadcast(%constant.582), dimensions={}
+  %mul.233 = f32[128,32]{1,0} multiply(%tanh.69, %broadcast.361), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/mul" stack_frame_id=12}
+  %bitcast.89 = f32[2,64,32]{2,1,0} bitcast(%mul.233), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/mul" stack_frame_id=12}
+  %param_0.32 = f32[2,64,32]{2,1,0} parameter(0)
+  %add.146 = f32[2,64,32]{2,1,0} add(%bitcast.89, %param_0.32), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/add" stack_frame_id=12}
+  %constant.580 = f32[] constant(0.01)
+  %broadcast.359 = f32[2,64,32]{2,1,0} broadcast(%constant.580), dimensions={}
+  %mul.232 = f32[2,64,32]{2,1,0} multiply(%param_0.32, %broadcast.359), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/mul" stack_frame_id=13}
+  %bitcast.88 = f32[1,2,64,32]{3,2,1,0} bitcast(%mul.232), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/mul" stack_frame_id=13}
+  %tanh.68 = f32[1,2,64,32]{3,2,1,0} tanh(%bitcast.88), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/tanh" stack_frame_id=10}
+  %constant.581 = f32[] constant(0.1)
+  %broadcast.360 = f32[1,2,64,32]{3,2,1,0} broadcast(%constant.581), dimensions={}
+  %mul.231 = f32[1,2,64,32]{3,2,1,0} multiply(%tanh.68, %broadcast.360), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/mul" stack_frame_id=10}
+  %bitcast.87 = f32[2,64,32]{2,1,0} bitcast(%mul.231), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/mul" stack_frame_id=10}
+  ROOT %add.145 = f32[2,64,32]{2,1,0} add(%add.146, %bitcast.87), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/add" stack_frame_id=12}
+}
+
+%fused_computation.23 (param_0.35: f32[5,4,32,32], param_1.51: s32[]) -> f32[32,32] {
+  %param_0.35 = f32[5,4,32,32]{3,2,1,0} parameter(0)
+  %param_1.51 = s32[] parameter(1)
+  %constant.583 = s32[] constant(0), metadata={op_name="jit(loss)/jvp()/while/body/jit(dynamic_index_in_dim)" stack_frame_id=6}
+  %dynamic_slice.24 = f32[1,4,32,32]{3,2,1,0} dynamic-slice(%param_0.35, %param_1.51, %constant.583, %constant.583, %constant.583), dynamic_slice_sizes={1,4,32,32}, metadata={op_name="jit(loss)/jvp()/while/body/jit(dynamic_index_in_dim)/dynamic_slice" stack_frame_id=23}
+  %slice.221 = f32[1,1,32,32]{3,2,1,0} slice(%dynamic_slice.24), slice={[0:1], [1:2], [0:32], [0:32]}, metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/slice" stack_frame_id=7}
+  ROOT %bitcast.90 = f32[32,32]{1,0} bitcast(%slice.221), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/slice" stack_frame_id=7}
+}
+
+%fused_computation.24 (param_0.37: f32[25,2,64,32], param_1.58: f32[2,64,32], param_2.52: f32[128,32]) -> f32[2,64,32] {
+  %param_2.52 = f32[128,32]{1,0} parameter(2)
+  %tanh.71 = f32[128,32]{1,0} tanh(%param_2.52), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/tanh" stack_frame_id=12}
+  %constant.585 = f32[] constant(0.5)
+  %broadcast.363 = f32[128,32]{1,0} broadcast(%constant.585), dimensions={}
+  %mul.235 = f32[128,32]{1,0} multiply(%tanh.71, %broadcast.363), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/mul" stack_frame_id=12}
+  %bitcast.92 = f32[2,64,32]{2,1,0} bitcast(%mul.235), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/mul" stack_frame_id=12}
+  %param_1.58 = f32[2,64,32]{2,1,0} parameter(1)
+  %add.148 = f32[2,64,32]{2,1,0} add(%bitcast.92, %param_1.58), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/add" stack_frame_id=12}
+  %param_0.37 = f32[25,2,64,32]{3,2,1,0} parameter(0)
+  %slice.222 = f32[1,2,64,32]{3,2,1,0} slice(%param_0.37), slice={[0:1], [0:2], [0:64], [0:32]}, metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/slice" stack_frame_id=9}
+  %tanh.70 = f32[1,2,64,32]{3,2,1,0} tanh(%slice.222), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/tanh" stack_frame_id=10}
+  %constant.584 = f32[] constant(0.1)
+  %broadcast.362 = f32[1,2,64,32]{3,2,1,0} broadcast(%constant.584), dimensions={}
+  %mul.234 = f32[1,2,64,32]{3,2,1,0} multiply(%tanh.70, %broadcast.362), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/mul" stack_frame_id=10}
+  %bitcast.91 = f32[2,64,32]{2,1,0} bitcast(%mul.234), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/mul" stack_frame_id=10}
+  ROOT %add.147 = f32[2,64,32]{2,1,0} add(%add.148, %bitcast.91), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/add" stack_frame_id=12}
+}
+
+%fused_computation.25 (param_0.40: f32[5,4,32,32], param_1.59: s32[]) -> f32[32,32] {
+  %param_0.40 = f32[5,4,32,32]{3,2,1,0} parameter(0)
+  %param_1.59 = s32[] parameter(1)
+  %constant.586 = s32[] constant(0), metadata={op_name="jit(loss)/jvp()/while/body/jit(dynamic_index_in_dim)" stack_frame_id=6}
+  %dynamic_slice.25 = f32[1,4,32,32]{3,2,1,0} dynamic-slice(%param_0.40, %param_1.59, %constant.586, %constant.586, %constant.586), dynamic_slice_sizes={1,4,32,32}, metadata={op_name="jit(loss)/jvp()/while/body/jit(dynamic_index_in_dim)/dynamic_slice" stack_frame_id=23}
+  %slice.223 = f32[1,1,32,32]{3,2,1,0} slice(%dynamic_slice.25), slice={[0:1], [0:1], [0:32], [0:32]}, metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/slice" stack_frame_id=7}
+  ROOT %bitcast.93 = f32[32,32]{1,0} bitcast(%slice.223), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/slice" stack_frame_id=7}
+}
+
+%wrapped_add_computation (param_0.150: s32[], param_1.208: s32[]) -> s32[] {
+  %param_0.150 = s32[] parameter(0)
+  %param_1.208 = s32[] parameter(1)
+  ROOT %add.169 = s32[] add(%param_0.150, %param_1.208), metadata={op_name="jit(loss)/jvp()/while/body/add" stack_frame_id=6}
+}
+
+%region_0.8 (arg_tuple.1: (s32[], f32[2,64,32], f32[25,2,64,32], f32[5,2,64,32], f32[5,25,2,64,32], /*index=5*/f32[5,4,32,32])) -> (s32[], f32[2,64,32], f32[25,2,64,32], f32[5,2,64,32], f32[5,25,2,64,32], /*index=5*/f32[5,4,32,32]) {
+  %arg_tuple.1 = (s32[], f32[2,64,32]{2,1,0}, f32[25,2,64,32]{3,2,1,0}, f32[5,2,64,32]{3,2,1,0}, f32[5,25,2,64,32]{4,3,2,1,0}, /*index=5*/f32[5,4,32,32]{3,2,1,0}) parameter(0)
+  %constant.22 = s32[] constant(1)
+  %get-tuple-element.392 = f32[5,4,32,32]{3,2,1,0} get-tuple-element(%arg_tuple.1), index=5
+  %get-tuple-element.385 = f32[5,25,2,64,32]{4,3,2,1,0} get-tuple-element(%arg_tuple.1), index=4
+  %get-tuple-element.384 = f32[5,2,64,32]{3,2,1,0} get-tuple-element(%arg_tuple.1), index=3
+  %get-tuple-element.383 = f32[25,2,64,32]{3,2,1,0} get-tuple-element(%arg_tuple.1), index=2
+  %get-tuple-element.382 = f32[2,64,32]{2,1,0} get-tuple-element(%arg_tuple.1), index=1
+  %get-tuple-element.381 = s32[] get-tuple-element(%arg_tuple.1), index=0
+  %copy.25 = f32[25,2,64,32]{3,2,1,0} copy(%get-tuple-element.383)
+  %copy.24 = f32[2,64,32]{2,1,0} copy(%get-tuple-element.382)
+  %copy.23 = s32[] copy(%get-tuple-element.381)
+  %copy.8 = f32[25,2,64,32]{3,2,1,0} copy(%copy.25)
+  %bitcast = f32[128,32]{1,0} bitcast(%copy.24)
+  %slice_bitcast_fusion.2 = f32[32,32]{1,0} fusion(%get-tuple-element.392, %copy.23), kind=kLoop, calls=%fused_computation.23, metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/slice" stack_frame_id=7}
+  %wrapped_add = s32[] fusion(%copy.23, %constant.22), kind=kLoop, calls=%wrapped_add_computation, metadata={op_name="jit(loss)/jvp()/while/body/add" stack_frame_id=6}
+  %slice_bitcast_fusion.3 = f32[32,32]{1,0} fusion(%get-tuple-element.392, %copy.23), kind=kLoop, calls=%fused_computation.25, metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/slice" stack_frame_id=7}
+  %bitcast_dynamic-update-slice_fusion.1 = f32[5,2,64,32]{3,2,1,0} fusion(%get-tuple-element.384, %copy.23, %copy.24), kind=kLoop, calls=%fused_computation.13, metadata={op_name="jit(loss)/jvp()/while/body/jit(dynamic_update_index_in_dim)/dynamic_update_slice" stack_frame_id=23}
+  %bitcast_dynamic-update-slice_fusion = f32[5,25,2,64,32]{4,3,2,1,0} fusion(%get-tuple-element.385, %copy.23, %copy.25), kind=kLoop, calls=%fused_computation.12, metadata={op_name="jit(loss)/jvp()/while/body/jit(dynamic_update_index_in_dim)/dynamic_update_slice" stack_frame_id=23}
+  %slice_bitcast_fusion = f32[32,32]{1,0} fusion(%get-tuple-element.392, %copy.23), kind=kLoop, calls=%fused_computation.17, metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/slice" stack_frame_id=7}
+  %slice_bitcast_fusion.1 = f32[32,32]{1,0} fusion(%get-tuple-element.392, %copy.23), kind=kLoop, calls=%fused_computation.21, metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/slice" stack_frame_id=7}
+  %ynn_fusion.3 = f32[128,32]{1,0} fusion(%bitcast, %slice_bitcast_fusion.3), kind=kCustom, calls=%fused_computation.3, metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/dot_general" stack_frame_id=11}, backend_config={"fusion_config":{"kind":"__ynn_fusion"},"outer_dimension_partitions":[]}
+  %bitcast_add_fusion.3 = f32[2,64,32]{2,1,0} fusion(%copy.25, %copy.24, %ynn_fusion.3), kind=kLoop, calls=%fused_computation.24, metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/add" stack_frame_id=12}
+  %bitcast.4 = f32[128,32]{1,0} bitcast(%bitcast_add_fusion.3), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/add" stack_frame_id=12}
+  %bitcast_dynamic-update-slice_fusion.5 = f32[25,2,64,32]{3,2,1,0} fusion(%copy.8, %bitcast_add_fusion.3), kind=kLoop, calls=%fused_computation.20, metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/scatter" stack_frame_id=14}
+  %ynn_fusion.2 = f32[128,32]{1,0} fusion(%bitcast.4, %slice_bitcast_fusion.2), kind=kCustom, calls=%fused_computation.2, metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/dot_general" stack_frame_id=11}, backend_config={"fusion_config":{"kind":"__ynn_fusion"},"outer_dimension_partitions":[]}
+  %bitcast_add_fusion.2 = f32[2,64,32]{2,1,0} fusion(%bitcast_add_fusion.3, %ynn_fusion.2), kind=kLoop, calls=%fused_computation.22, metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/add" stack_frame_id=12}
+  %bitcast.9 = f32[128,32]{1,0} bitcast(%bitcast_add_fusion.2), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/add" stack_frame_id=12}
+  %bitcast_dynamic-update-slice_fusion.4 = f32[25,2,64,32]{3,2,1,0} fusion(%bitcast_dynamic-update-slice_fusion.5, %bitcast_add_fusion.2), kind=kLoop, calls=%fused_computation.19, metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/scatter" stack_frame_id=14}
+  %ynn_fusion.1 = f32[128,32]{1,0} fusion(%bitcast.9, %slice_bitcast_fusion.1), kind=kCustom, calls=%fused_computation.1, metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/dot_general" stack_frame_id=11}, backend_config={"fusion_config":{"kind":"__ynn_fusion"},"outer_dimension_partitions":[]}
+  %bitcast_add_fusion.1 = f32[2,64,32]{2,1,0} fusion(%bitcast_dynamic-update-slice_fusion.4, %bitcast_add_fusion.2, %ynn_fusion.1), kind=kLoop, calls=%fused_computation.18, metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/add" stack_frame_id=12}
+  %bitcast.14 = f32[128,32]{1,0} bitcast(%bitcast_add_fusion.1), metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/add" stack_frame_id=12}
+  %bitcast_dynamic-update-slice_fusion.3 = f32[25,2,64,32]{3,2,1,0} fusion(%bitcast_dynamic-update-slice_fusion.4, %bitcast_add_fusion.1), kind=kLoop, calls=%fused_computation.16, metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/scatter" stack_frame_id=14}
+  %ynn_fusion = f32[128,32]{1,0} fusion(%bitcast.14, %slice_bitcast_fusion), kind=kCustom, calls=%fused_computation, metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/dot_general" stack_frame_id=11}, backend_config={"fusion_config":{"kind":"__ynn_fusion"},"outer_dimension_partitions":[]}
+  %bitcast_add_fusion = f32[2,64,32]{2,1,0} fusion(%bitcast_dynamic-update-slice_fusion.3, %bitcast_add_fusion.1, %ynn_fusion), kind=kLoop, calls=%fused_computation.15, metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/add" stack_frame_id=12}
+  %bitcast_dynamic-update-slice_fusion.2 = f32[25,2,64,32]{3,2,1,0} fusion(%bitcast_dynamic-update-slice_fusion.3, %bitcast_add_fusion), kind=kLoop, calls=%fused_computation.14, metadata={op_name="jit(loss)/jvp()/while/body/eval_jaxpr/scatter" stack_frame_id=14}
+  ROOT %tuple.106 = (s32[], f32[2,64,32]{2,1,0}, f32[25,2,64,32]{3,2,1,0}, f32[5,2,64,32]{3,2,1,0}, f32[5,25,2,64,32]{4,3,2,1,0}, /*index=5*/f32[5,4,32,32]{3,2,1,0}) tuple(%wrapped_add, %bitcast_add_fusion, %bitcast_dynamic-update-slice_fusion.2, %bitcast_dynamic-update-slice_fusion.1, %bitcast_dynamic-update-slice_fusion, /*index=5*/%get-tuple-element.392)
+}
+
+%wrapped_compare_computation (param_0.151: s32[], param_1.209: s32[]) -> pred[] {
+  %param_0.151 = s32[] parameter(0)
+  %param_1.209 = s32[] parameter(1)
+  ROOT %lt.6 = pred[] compare(%param_0.151, %param_1.209), direction=LT, metadata={op_name="jit(loss)/jvp()/while/cond/lt" stack_frame_id=6}
+}
+
+%region_5.9 (arg_tuple.3: (s32[], f32[2,64,32], f32[25,2,64,32], f32[5,2,64,32], f32[5,25,2,64,32], /*index=5*/f32[5,4,32,32])) -> pred[] {
+  %arg_tuple.3 = (s32[], f32[2,64,32]{2,1,0}, f32[25,2,64,32]{3,2,1,0}, f32[5,2,64,32]{3,2,1,0}, f32[5,25,2,64,32]{4,3,2,1,0}, /*index=5*/f32[5,4,32,32]{3,2,1,0}) parameter(0)
+  %constant.31 = s32[] constant(5)
+  %get-tuple-element.18 = s32[] get-tuple-element(%arg_tuple.3), index=0
+  ROOT %wrapped_compare = pred[] fusion(%get-tuple-element.18, %constant.31), kind=kLoop, calls=%wrapped_compare_computation, metadata={op_name="jit(loss)/jvp()/while/cond/lt" stack_frame_id=6}
+}
+
+%fused_computation.4 (param_0.4: f32[128,32], param_1.4: f32[32,32]) -> f32[128,32] {
+  %param_0.4 = f32[128,32]{1,0} parameter(0)
+  %param_1.4 = f32[32,32]{1,0} parameter(1)
+  ROOT %dot.76 = f32[128,32]{1,0} dot(%param_0.4, %param_1.4), lhs_contracting_dims={1}, rhs_contracting_dims={1}, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/dot_general" stack_frame_id=11}
+}
+
+%fused_computation.5 (param_0.5: f32[128,32], param_1.5: f32[32,32]) -> f32[128,32] {
+  %param_0.5 = f32[128,32]{1,0} parameter(0)
+  %param_1.5 = f32[32,32]{1,0} parameter(1)
+  ROOT %dot.77 = f32[128,32]{1,0} dot(%param_0.5, %param_1.5), lhs_contracting_dims={1}, rhs_contracting_dims={1}, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/dot_general" stack_frame_id=11}
+}
+
+%fused_computation.6 (param_0.6: f32[128,32], param_1.6: f32[32,32]) -> f32[128,32] {
+  %param_0.6 = f32[128,32]{1,0} parameter(0)
+  %param_1.6 = f32[32,32]{1,0} parameter(1)
+  ROOT %dot.78 = f32[128,32]{1,0} dot(%param_0.6, %param_1.6), lhs_contracting_dims={1}, rhs_contracting_dims={1}, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/dot_general" stack_frame_id=11}
+}
+
+%fused_computation.7 (param_0.7: f32[128,32], param_1.7: f32[32,32]) -> f32[128,32] {
+  %param_0.7 = f32[128,32]{1,0} parameter(0)
+  %param_1.7 = f32[32,32]{1,0} parameter(1)
+  ROOT %dot.79 = f32[128,32]{1,0} dot(%param_0.7, %param_1.7), lhs_contracting_dims={1}, rhs_contracting_dims={1}, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/dot_general" stack_frame_id=11}
+}
+
+%fused_computation.8 (param_0.8: f32[128,32], param_1.8: f32[32,32]) -> f32[128,32] {
+  %param_0.8 = f32[128,32]{1,0} parameter(0)
+  %param_1.8 = f32[32,32]{1,0} parameter(1)
+  ROOT %dot.80 = f32[128,32]{1,0} dot(%param_0.8, %param_1.8), lhs_contracting_dims={1}, rhs_contracting_dims={0}, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/dot_general" stack_frame_id=11}
+}
+
+%fused_computation.9 (param_0.9: f32[128,32], param_1.9: f32[32,32]) -> f32[128,32] {
+  %param_0.9 = f32[128,32]{1,0} parameter(0)
+  %param_1.9 = f32[32,32]{1,0} parameter(1)
+  ROOT %dot.81 = f32[128,32]{1,0} dot(%param_0.9, %param_1.9), lhs_contracting_dims={1}, rhs_contracting_dims={0}, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/dot_general" stack_frame_id=11}
+}
+
+%fused_computation.10 (param_0.10: f32[128,32], param_1.10: f32[32,32]) -> f32[128,32] {
+  %param_0.10 = f32[128,32]{1,0} parameter(0)
+  %param_1.10 = f32[32,32]{1,0} parameter(1)
+  ROOT %dot.82 = f32[128,32]{1,0} dot(%param_0.10, %param_1.10), lhs_contracting_dims={1}, rhs_contracting_dims={0}, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/dot_general" stack_frame_id=11}
+}
+
+%fused_computation.11 (param_0.11: f32[128,32], param_1.11: f32[32,32]) -> f32[128,32] {
+  %param_0.11 = f32[128,32]{1,0} parameter(0)
+  %param_1.11 = f32[32,32]{1,0} parameter(1)
+  ROOT %dot.83 = f32[128,32]{1,0} dot(%param_0.11, %param_1.11), lhs_contracting_dims={1}, rhs_contracting_dims={0}, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/dot_general" stack_frame_id=11}
+}
+
+%fused_computation.26 (param_0.41: f32[5,4,32,32], param_1.62: f32[32,32], param_2.57: f32[32,32], param_3.42: f32[32,32], param_4.14: f32[32,32], param_5.7: s32[]) -> f32[5,4,32,32] {
+  %param_0.41 = f32[5,4,32,32]{3,2,1,0} parameter(0)
+  %param_4.14 = f32[32,32]{1,0} parameter(4)
+  %bitcast.98 = f32[1,32,32]{2,1,0} bitcast(%param_4.14), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/transpose" stack_frame_id=11}
+  %constant.587 = f32[] constant(0)
+  %pad.54 = f32[4,32,32]{2,1,0} pad(%bitcast.98, %constant.587), padding=3_0x0_0x0_0, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/pad" stack_frame_id=7}
+  %param_3.42 = f32[32,32]{1,0} parameter(3)
+  %bitcast.97 = f32[1,32,32]{2,1,0} bitcast(%param_3.42), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/transpose" stack_frame_id=11}
+  %pad.53 = f32[4,32,32]{2,1,0} pad(%bitcast.97, %constant.587), padding=2_1x0_0x0_0, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/pad" stack_frame_id=7}
+  %add_any.82 = f32[4,32,32]{2,1,0} add(%pad.54, %pad.53), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/add_any" stack_frame_id=7}
+  %param_2.57 = f32[32,32]{1,0} parameter(2)
+  %bitcast.96 = f32[1,32,32]{2,1,0} bitcast(%param_2.57), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/transpose" stack_frame_id=11}
+  %pad.52 = f32[4,32,32]{2,1,0} pad(%bitcast.96, %constant.587), padding=1_2x0_0x0_0, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/pad" stack_frame_id=7}
+  %add_any.81 = f32[4,32,32]{2,1,0} add(%add_any.82, %pad.52), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/add_any" stack_frame_id=7}
+  %param_1.62 = f32[32,32]{1,0} parameter(1)
+  %bitcast.95 = f32[1,32,32]{2,1,0} bitcast(%param_1.62), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/transpose" stack_frame_id=11}
+  %pad.51 = f32[4,32,32]{2,1,0} pad(%bitcast.95, %constant.587), padding=0_3x0_0x0_0, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/pad" stack_frame_id=7}
+  %add_any.80 = f32[4,32,32]{2,1,0} add(%add_any.81, %pad.51), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/add_any" stack_frame_id=7}
+  %bitcast.94 = f32[1,4,32,32]{3,2,1,0} bitcast(%add_any.80), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/add_any" stack_frame_id=7}
+  %constant.103.clone.4 = s32[] constant(4)
+  %param_5.7 = s32[] parameter(5)
+  %subtract.4 = s32[] subtract(%constant.103.clone.4, %param_5.7), metadata={op_name="jit(loss)/transpose(jvp())/while/body/sub" stack_frame_id=6}
+  %constant.588 = s32[] constant(0), metadata={op_name="jit(loss)/transpose(jvp())/while/body/jit(dynamic_index_in_dim)" stack_frame_id=6}
+  ROOT %dynamic_update_slice.12 = f32[5,4,32,32]{3,2,1,0} dynamic-update-slice(%param_0.41, %bitcast.94, %subtract.4, %constant.588, %constant.588, /*index=5*/%constant.588), metadata={op_name="jit(loss)/transpose(jvp())/while/body/jit(dynamic_update_index_in_dim)/dynamic_update_slice" stack_frame_id=23}
+}
+
+%fused_computation.27 (param_0.47: f32[128,32], param_1.68: f32[2,64,32]) -> f32[32,128] {
+  %param_1.68 = f32[2,64,32]{2,1,0} parameter(1)
+  %constant.589 = f32[] constant(0.5)
+  %broadcast.365 = f32[2,64,32]{2,1,0} broadcast(%constant.589), dimensions={}
+  %mul.238 = f32[2,64,32]{2,1,0} multiply(%param_1.68, %broadcast.365), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=12}
+  %param_0.47 = f32[128,32]{1,0} parameter(0)
+  %constant.590 = f32[] constant(1), metadata={op_name="jit(loss)/transpose(jvp())/while/body/jit(dynamic_index_in_dim)/squeeze" stack_frame_id=23}
+  %broadcast.364 = f32[128,32]{1,0} broadcast(%constant.590), dimensions={}
+  %add.149 = f32[128,32]{1,0} add(%param_0.47, %broadcast.364), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/add" stack_frame_id=18}
+  %sub.51 = f32[128,32]{1,0} subtract(%broadcast.364, %param_0.47), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/sub" stack_frame_id=18}
+  %mul.237 = f32[128,32]{1,0} multiply(%add.149, %sub.51), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/mul" stack_frame_id=18}
+  %bitcast.100 = f32[2,64,32]{2,1,0} bitcast(%mul.237), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/mul" stack_frame_id=18}
+  %mul.236 = f32[2,64,32]{2,1,0} multiply(%mul.238, %bitcast.100), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=12}
+  %transpose.79 = f32[32,2,64]{0,2,1} transpose(%mul.236), dimensions={2,0,1}, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=12}
+  %copy.4 = f32[32,2,64]{2,1,0} copy(%transpose.79), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=12}
+  ROOT %bitcast.99 = f32[32,128]{1,0} bitcast(%copy.4), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=12}
+}
+
+%fused_computation.28 (param_0.53: f32[128,32], param_1.74: f32[2,64,32]) -> f32[32,128] {
+  %param_1.74 = f32[2,64,32]{2,1,0} parameter(1)
+  %constant.591 = f32[] constant(0.5)
+  %broadcast.367 = f32[2,64,32]{2,1,0} broadcast(%constant.591), dimensions={}
+  %mul.241 = f32[2,64,32]{2,1,0} multiply(%param_1.74, %broadcast.367), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=12}
+  %param_0.53 = f32[128,32]{1,0} parameter(0)
+  %constant.592 = f32[] constant(1), metadata={op_name="jit(loss)/transpose(jvp())/while/body/jit(dynamic_index_in_dim)/squeeze" stack_frame_id=23}
+  %broadcast.366 = f32[128,32]{1,0} broadcast(%constant.592), dimensions={}
+  %add.150 = f32[128,32]{1,0} add(%param_0.53, %broadcast.366), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/add" stack_frame_id=18}
+  %sub.52 = f32[128,32]{1,0} subtract(%broadcast.366, %param_0.53), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/sub" stack_frame_id=18}
+  %mul.240 = f32[128,32]{1,0} multiply(%add.150, %sub.52), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/mul" stack_frame_id=18}
+  %bitcast.102 = f32[2,64,32]{2,1,0} bitcast(%mul.240), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/mul" stack_frame_id=18}
+  %mul.239 = f32[2,64,32]{2,1,0} multiply(%mul.241, %bitcast.102), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=12}
+  %transpose.80 = f32[32,2,64]{0,2,1} transpose(%mul.239), dimensions={2,0,1}, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=12}
+  %copy.5 = f32[32,2,64]{2,1,0} copy(%transpose.80), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=12}
+  ROOT %bitcast.101 = f32[32,128]{1,0} bitcast(%copy.5), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=12}
+}
+
+%fused_computation.29 (param_0.59: f32[128,32], param_1.80: f32[2,64,32]) -> f32[32,128] {
+  %param_1.80 = f32[2,64,32]{2,1,0} parameter(1)
+  %constant.593 = f32[] constant(0.5)
+  %broadcast.369 = f32[2,64,32]{2,1,0} broadcast(%constant.593), dimensions={}
+  %mul.244 = f32[2,64,32]{2,1,0} multiply(%param_1.80, %broadcast.369), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=12}
+  %param_0.59 = f32[128,32]{1,0} parameter(0)
+  %constant.594 = f32[] constant(1), metadata={op_name="jit(loss)/transpose(jvp())/while/body/jit(dynamic_index_in_dim)/squeeze" stack_frame_id=23}
+  %broadcast.368 = f32[128,32]{1,0} broadcast(%constant.594), dimensions={}
+  %add.151 = f32[128,32]{1,0} add(%param_0.59, %broadcast.368), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/add" stack_frame_id=18}
+  %sub.53 = f32[128,32]{1,0} subtract(%broadcast.368, %param_0.59), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/sub" stack_frame_id=18}
+  %mul.243 = f32[128,32]{1,0} multiply(%add.151, %sub.53), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/mul" stack_frame_id=18}
+  %bitcast.104 = f32[2,64,32]{2,1,0} bitcast(%mul.243), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/mul" stack_frame_id=18}
+  %mul.242 = f32[2,64,32]{2,1,0} multiply(%mul.244, %bitcast.104), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=12}
+  %transpose.81 = f32[32,2,64]{0,2,1} transpose(%mul.242), dimensions={2,0,1}, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=12}
+  %copy.6 = f32[32,2,64]{2,1,0} copy(%transpose.81), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=12}
+  ROOT %bitcast.103 = f32[32,128]{1,0} bitcast(%copy.6), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=12}
+}
+
+%fused_computation.30 (param_0.64: f32[128,32], param_1.87: f32[2,64,32]) -> f32[32,128] {
+  %param_1.87 = f32[2,64,32]{2,1,0} parameter(1)
+  %constant.595 = f32[] constant(0.5)
+  %broadcast.371 = f32[2,64,32]{2,1,0} broadcast(%constant.595), dimensions={}
+  %mul.247 = f32[2,64,32]{2,1,0} multiply(%param_1.87, %broadcast.371), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=12}
+  %param_0.64 = f32[128,32]{1,0} parameter(0)
+  %constant.596 = f32[] constant(1), metadata={op_name="jit(loss)/transpose(jvp())/while/body/jit(dynamic_index_in_dim)/squeeze" stack_frame_id=23}
+  %broadcast.370 = f32[128,32]{1,0} broadcast(%constant.596), dimensions={}
+  %add.152 = f32[128,32]{1,0} add(%param_0.64, %broadcast.370), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/add" stack_frame_id=18}
+  %sub.54 = f32[128,32]{1,0} subtract(%broadcast.370, %param_0.64), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/sub" stack_frame_id=18}
+  %mul.246 = f32[128,32]{1,0} multiply(%add.152, %sub.54), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/mul" stack_frame_id=18}
+  %bitcast.106 = f32[2,64,32]{2,1,0} bitcast(%mul.246), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/mul" stack_frame_id=18}
+  %mul.245 = f32[2,64,32]{2,1,0} multiply(%mul.247, %bitcast.106), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=12}
+  %transpose.82 = f32[32,2,64]{0,2,1} transpose(%mul.245), dimensions={2,0,1}, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=12}
+  %copy.7 = f32[32,2,64]{2,1,0} copy(%transpose.82), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=12}
+  ROOT %bitcast.105 = f32[32,128]{1,0} bitcast(%copy.7), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=12}
+}
+
+%fused_computation.31 (param_0.67: f32[1,2,64,32], param_1.93: f32[2,64,32], param_2.88: f32[25,2,64,32], param_3.68: f32[25,2,64,32]) -> f32[25,2,64,32] {
+  %param_2.88 = f32[25,2,64,32]{3,2,1,0} parameter(2)
+  %param_3.68 = f32[25,2,64,32]{3,2,1,0} parameter(3)
+  %add_any.84 = f32[25,2,64,32]{3,2,1,0} add(%param_2.88, %param_3.68), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/add_any" stack_frame_id=9}
+  %constant.597 = f32[] constant(0)
+  %broadcast.374 = f32[1,2,64,32]{3,2,1,0} broadcast(%constant.597), dimensions={}
+  %constant.600 = s32[] constant(0), metadata={op_name="jit(loss)/transpose(jvp())/while/body/jit(dynamic_index_in_dim)" stack_frame_id=6}
+  %dynamic-update-slice.59 = f32[25,2,64,32]{3,2,1,0} dynamic-update-slice(%add_any.84, %broadcast.374, %constant.600, %constant.600, %constant.600, /*index=5*/%constant.600), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/scatter" stack_frame_id=14}
+  %param_1.93 = f32[2,64,32]{2,1,0} parameter(1)
+  %constant.598 = f32[] constant(0.1)
+  %broadcast.373 = f32[2,64,32]{2,1,0} broadcast(%constant.598), dimensions={}
+  %mul.250 = f32[2,64,32]{2,1,0} multiply(%param_1.93, %broadcast.373), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=10}
+  %param_0.67 = f32[1,2,64,32]{3,2,1,0} parameter(0)
+  %constant.599 = f32[] constant(1), metadata={op_name="jit(loss)/transpose(jvp())/while/body/jit(dynamic_index_in_dim)/squeeze" stack_frame_id=23}
+  %broadcast.372 = f32[1,2,64,32]{3,2,1,0} broadcast(%constant.599), dimensions={}
+  %add.153 = f32[1,2,64,32]{3,2,1,0} add(%param_0.67, %broadcast.372), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/add" stack_frame_id=16}
+  %sub.55 = f32[1,2,64,32]{3,2,1,0} subtract(%broadcast.372, %param_0.67), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/sub" stack_frame_id=16}
+  %mul.249 = f32[1,2,64,32]{3,2,1,0} multiply(%add.153, %sub.55), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/mul" stack_frame_id=16}
+  %bitcast.108 = f32[2,64,32]{2,1,0} bitcast(%mul.249), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/mul" stack_frame_id=16}
+  %mul.248 = f32[2,64,32]{2,1,0} multiply(%mul.250, %bitcast.108), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=10}
+  %bitcast.107 = f32[1,2,64,32]{3,2,1,0} bitcast(%mul.248), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=10}
+  %pad.55 = f32[25,2,64,32]{3,2,1,0} pad(%bitcast.107, %constant.597), padding=0_24x0_0x0_0x0_0, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/pad" stack_frame_id=9}
+  ROOT %add_any.83 = f32[25,2,64,32]{3,2,1,0} add(%dynamic-update-slice.59, %pad.55), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/add_any" stack_frame_id=9}
+}
+
+%fused_computation.32 (param_0.68: f32[2,64,32], param_1.95: f32[128,32]) -> f32[2,64,32] {
+  %param_0.68 = f32[2,64,32]{2,1,0} parameter(0)
+  %param_1.95 = f32[128,32]{1,0} parameter(1)
+  %bitcast.109 = f32[2,64,32]{2,1,0} bitcast(%param_1.95), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/dot_general" stack_frame_id=11}
+  ROOT %add_any.85 = f32[2,64,32]{2,1,0} add(%param_0.68, %bitcast.109), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/add_any" stack_frame_id=11}
+}
+
+%fused_computation.33 (param_0.72: f32[128,32], param_1.101: f32[2,64,32]) -> f32[128,32] {
+  %param_1.101 = f32[2,64,32]{2,1,0} parameter(1)
+  %constant.601 = f32[] constant(0.5)
+  %broadcast.376 = f32[2,64,32]{2,1,0} broadcast(%constant.601), dimensions={}
+  %mul.253 = f32[2,64,32]{2,1,0} multiply(%param_1.101, %broadcast.376), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=12}
+  %param_0.72 = f32[128,32]{1,0} parameter(0)
+  %constant.602 = f32[] constant(1), metadata={op_name="jit(loss)/transpose(jvp())/while/body/jit(dynamic_index_in_dim)/squeeze" stack_frame_id=23}
+  %broadcast.375 = f32[128,32]{1,0} broadcast(%constant.602), dimensions={}
+  %add.154 = f32[128,32]{1,0} add(%param_0.72, %broadcast.375), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/add" stack_frame_id=18}
+  %sub.56 = f32[128,32]{1,0} subtract(%broadcast.375, %param_0.72), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/sub" stack_frame_id=18}
+  %mul.252 = f32[128,32]{1,0} multiply(%add.154, %sub.56), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/mul" stack_frame_id=18}
+  %bitcast.111 = f32[2,64,32]{2,1,0} bitcast(%mul.252), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/mul" stack_frame_id=18}
+  %mul.251 = f32[2,64,32]{2,1,0} multiply(%mul.253, %bitcast.111), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=12}
+  ROOT %bitcast.110 = f32[128,32]{1,0} bitcast(%mul.251), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=12}
+}
+
+%fused_computation.34 (param_0.75: f32[25,2,64,32], param_1.107: f32[25,2,64,32], param_2.99: f32[2,64,32], param_3.75: f32[128,32]) -> f32[2,64,32] {
+  %param_2.99 = f32[2,64,32]{2,1,0} parameter(2)
+  %param_3.75 = f32[128,32]{1,0} parameter(3)
+  %bitcast.113 = f32[2,64,32]{2,1,0} bitcast(%param_3.75), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/dot_general" stack_frame_id=11}
+  %add_any.88 = f32[2,64,32]{2,1,0} add(%param_2.99, %bitcast.113), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/add_any" stack_frame_id=11}
+  %param_0.75 = f32[25,2,64,32]{3,2,1,0} parameter(0)
+  %param_1.107 = f32[25,2,64,32]{3,2,1,0} parameter(1)
+  %add_any.87 = f32[25,2,64,32]{3,2,1,0} add(%param_0.75, %param_1.107), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/add_any" stack_frame_id=9}
+  %gather.28 = f32[1,2,64,32]{3,2,1,0} slice(%add_any.87), slice={[0:1], [0:2], [0:64], [0:32]}, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/gather" stack_frame_id=21}
+  %constant.603 = f32[] constant(0.01)
+  %broadcast.377 = f32[1,2,64,32]{3,2,1,0} broadcast(%constant.603), dimensions={}
+  %mul.254 = f32[1,2,64,32]{3,2,1,0} multiply(%gather.28, %broadcast.377), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=13}
+  %bitcast.112 = f32[2,64,32]{2,1,0} bitcast(%mul.254), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=13}
+  ROOT %add_any.86 = f32[2,64,32]{2,1,0} add(%add_any.88, %bitcast.112), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/add_any" stack_frame_id=13}
+}
+
+%fused_computation.35 (param_0.78: f32[1,2,64,32], param_1.113: f32[2,64,32]) -> f32[25,2,64,32] {
+  %param_1.113 = f32[2,64,32]{2,1,0} parameter(1)
+  %constant.605 = f32[] constant(0.1)
+  %broadcast.379 = f32[2,64,32]{2,1,0} broadcast(%constant.605), dimensions={}
+  %mul.257 = f32[2,64,32]{2,1,0} multiply(%param_1.113, %broadcast.379), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=10}
+  %param_0.78 = f32[1,2,64,32]{3,2,1,0} parameter(0)
+  %constant.606 = f32[] constant(1), metadata={op_name="jit(loss)/transpose(jvp())/while/body/jit(dynamic_index_in_dim)/squeeze" stack_frame_id=23}
+  %broadcast.378 = f32[1,2,64,32]{3,2,1,0} broadcast(%constant.606), dimensions={}
+  %add.155 = f32[1,2,64,32]{3,2,1,0} add(%param_0.78, %broadcast.378), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/add" stack_frame_id=16}
+  %sub.57 = f32[1,2,64,32]{3,2,1,0} subtract(%broadcast.378, %param_0.78), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/sub" stack_frame_id=16}
+  %mul.256 = f32[1,2,64,32]{3,2,1,0} multiply(%add.155, %sub.57), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/mul" stack_frame_id=16}
+  %bitcast.115 = f32[2,64,32]{2,1,0} bitcast(%mul.256), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/mul" stack_frame_id=16}
+  %mul.255 = f32[2,64,32]{2,1,0} multiply(%mul.257, %bitcast.115), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=10}
+  %bitcast.114 = f32[1,2,64,32]{3,2,1,0} bitcast(%mul.255), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=10}
+  %constant.604 = f32[] constant(0)
+  ROOT %pad.56 = f32[25,2,64,32]{3,2,1,0} pad(%bitcast.114, %constant.604), padding=0_24x0_0x0_0x0_0, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/pad" stack_frame_id=9}
+}
+
+%fused_computation.36 (param_0.82: f32[25,2,64,32], param_1.118: f32[25,2,64,32]) -> f32[25,2,64,32] {
+  %param_0.82 = f32[25,2,64,32]{3,2,1,0} parameter(0)
+  %param_1.118 = f32[25,2,64,32]{3,2,1,0} parameter(1)
+  %add_any.89 = f32[25,2,64,32]{3,2,1,0} add(%param_0.82, %param_1.118), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/add_any" stack_frame_id=9}
+  %constant.607 = f32[] constant(0)
+  %broadcast.380 = f32[1,2,64,32]{3,2,1,0} broadcast(%constant.607), dimensions={}
+  %constant.609 = s32[] constant(1)
+  %constant.608 = s32[] constant(0), metadata={op_name="jit(loss)/transpose(jvp())/while/body/jit(dynamic_index_in_dim)" stack_frame_id=6}
+  ROOT %dynamic-update-slice.60 = f32[25,2,64,32]{3,2,1,0} dynamic-update-slice(%add_any.89, %broadcast.380, %constant.609, %constant.608, %constant.608, /*index=5*/%constant.608), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/scatter" stack_frame_id=14}
+}
+
+%fused_computation.37 (param_0.86: f32[128,32], param_1.124: f32[2,64,32]) -> f32[128,32] {
+  %param_1.124 = f32[2,64,32]{2,1,0} parameter(1)
+  %constant.610 = f32[] constant(0.5)
+  %broadcast.382 = f32[2,64,32]{2,1,0} broadcast(%constant.610), dimensions={}
+  %mul.260 = f32[2,64,32]{2,1,0} multiply(%param_1.124, %broadcast.382), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=12}
+  %param_0.86 = f32[128,32]{1,0} parameter(0)
+  %constant.611 = f32[] constant(1), metadata={op_name="jit(loss)/transpose(jvp())/while/body/jit(dynamic_index_in_dim)/squeeze" stack_frame_id=23}
+  %broadcast.381 = f32[128,32]{1,0} broadcast(%constant.611), dimensions={}
+  %add.156 = f32[128,32]{1,0} add(%param_0.86, %broadcast.381), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/add" stack_frame_id=18}
+  %sub.58 = f32[128,32]{1,0} subtract(%broadcast.381, %param_0.86), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/sub" stack_frame_id=18}
+  %mul.259 = f32[128,32]{1,0} multiply(%add.156, %sub.58), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/mul" stack_frame_id=18}
+  %bitcast.117 = f32[2,64,32]{2,1,0} bitcast(%mul.259), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/mul" stack_frame_id=18}
+  %mul.258 = f32[2,64,32]{2,1,0} multiply(%mul.260, %bitcast.117), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=12}
+  ROOT %bitcast.116 = f32[128,32]{1,0} bitcast(%mul.258), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=12}
+}
+
+%fused_computation.38 (param_0.89: f32[25,2,64,32], param_1.130: f32[25,2,64,32], param_2.121: f32[2,64,32], param_3.92: f32[128,32]) -> f32[2,64,32] {
+  %param_2.121 = f32[2,64,32]{2,1,0} parameter(2)
+  %param_3.92 = f32[128,32]{1,0} parameter(3)
+  %bitcast.119 = f32[2,64,32]{2,1,0} bitcast(%param_3.92), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/dot_general" stack_frame_id=11}
+  %add_any.92 = f32[2,64,32]{2,1,0} add(%param_2.121, %bitcast.119), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/add_any" stack_frame_id=11}
+  %param_0.89 = f32[25,2,64,32]{3,2,1,0} parameter(0)
+  %param_1.130 = f32[25,2,64,32]{3,2,1,0} parameter(1)
+  %add_any.91 = f32[25,2,64,32]{3,2,1,0} add(%param_0.89, %param_1.130), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/add_any" stack_frame_id=9}
+  %gather.29 = f32[1,2,64,32]{3,2,1,0} slice(%add_any.91), slice={[1:2], [0:2], [0:64], [0:32]}, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/gather" stack_frame_id=21}
+  %constant.612 = f32[] constant(0.01)
+  %broadcast.383 = f32[1,2,64,32]{3,2,1,0} broadcast(%constant.612), dimensions={}
+  %mul.261 = f32[1,2,64,32]{3,2,1,0} multiply(%gather.29, %broadcast.383), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=13}
+  %bitcast.118 = f32[2,64,32]{2,1,0} bitcast(%mul.261), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=13}
+  ROOT %add_any.90 = f32[2,64,32]{2,1,0} add(%add_any.92, %bitcast.118), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/add_any" stack_frame_id=13}
+}
+
+%fused_computation.39 (param_0.92: f32[1,2,64,32], param_1.136: f32[2,64,32]) -> f32[25,2,64,32] {
+  %param_1.136 = f32[2,64,32]{2,1,0} parameter(1)
+  %constant.614 = f32[] constant(0.1)
+  %broadcast.385 = f32[2,64,32]{2,1,0} broadcast(%constant.614), dimensions={}
+  %mul.264 = f32[2,64,32]{2,1,0} multiply(%param_1.136, %broadcast.385), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=10}
+  %param_0.92 = f32[1,2,64,32]{3,2,1,0} parameter(0)
+  %constant.615 = f32[] constant(1), metadata={op_name="jit(loss)/transpose(jvp())/while/body/jit(dynamic_index_in_dim)/squeeze" stack_frame_id=23}
+  %broadcast.384 = f32[1,2,64,32]{3,2,1,0} broadcast(%constant.615), dimensions={}
+  %add.157 = f32[1,2,64,32]{3,2,1,0} add(%param_0.92, %broadcast.384), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/add" stack_frame_id=16}
+  %sub.59 = f32[1,2,64,32]{3,2,1,0} subtract(%broadcast.384, %param_0.92), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/sub" stack_frame_id=16}
+  %mul.263 = f32[1,2,64,32]{3,2,1,0} multiply(%add.157, %sub.59), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/mul" stack_frame_id=16}
+  %bitcast.121 = f32[2,64,32]{2,1,0} bitcast(%mul.263), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/mul" stack_frame_id=16}
+  %mul.262 = f32[2,64,32]{2,1,0} multiply(%mul.264, %bitcast.121), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=10}
+  %bitcast.120 = f32[1,2,64,32]{3,2,1,0} bitcast(%mul.262), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=10}
+  %constant.613 = f32[] constant(0)
+  ROOT %pad.57 = f32[25,2,64,32]{3,2,1,0} pad(%bitcast.120, %constant.613), padding=0_24x0_0x0_0x0_0, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/pad" stack_frame_id=9}
+}
+
+%fused_computation.40 (param_0.96: f32[25,2,64,32], param_1.141: f32[25,2,64,32]) -> f32[25,2,64,32] {
+  %param_0.96 = f32[25,2,64,32]{3,2,1,0} parameter(0)
+  %param_1.141 = f32[25,2,64,32]{3,2,1,0} parameter(1)
+  %add_any.93 = f32[25,2,64,32]{3,2,1,0} add(%param_0.96, %param_1.141), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/add_any" stack_frame_id=9}
+  %constant.617 = f32[] constant(0)
+  %broadcast.386 = f32[1,2,64,32]{3,2,1,0} broadcast(%constant.617), dimensions={}
+  %constant.616 = s32[] constant(2), metadata={stack_frame_id=14}
+  %constant.618 = s32[] constant(0), metadata={op_name="jit(loss)/transpose(jvp())/while/body/jit(dynamic_index_in_dim)" stack_frame_id=6}
+  ROOT %dynamic-update-slice.61 = f32[25,2,64,32]{3,2,1,0} dynamic-update-slice(%add_any.93, %broadcast.386, %constant.616, %constant.618, %constant.618, /*index=5*/%constant.618), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/scatter" stack_frame_id=14}
+}
+
+%fused_computation.41 (param_0.100: f32[128,32], param_1.147: f32[2,64,32]) -> f32[128,32] {
+  %param_1.147 = f32[2,64,32]{2,1,0} parameter(1)
+  %constant.619 = f32[] constant(0.5)
+  %broadcast.388 = f32[2,64,32]{2,1,0} broadcast(%constant.619), dimensions={}
+  %mul.267 = f32[2,64,32]{2,1,0} multiply(%param_1.147, %broadcast.388), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=12}
+  %param_0.100 = f32[128,32]{1,0} parameter(0)
+  %constant.620 = f32[] constant(1), metadata={op_name="jit(loss)/transpose(jvp())/while/body/jit(dynamic_index_in_dim)/squeeze" stack_frame_id=23}
+  %broadcast.387 = f32[128,32]{1,0} broadcast(%constant.620), dimensions={}
+  %add.158 = f32[128,32]{1,0} add(%param_0.100, %broadcast.387), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/add" stack_frame_id=18}
+  %sub.60 = f32[128,32]{1,0} subtract(%broadcast.387, %param_0.100), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/sub" stack_frame_id=18}
+  %mul.266 = f32[128,32]{1,0} multiply(%add.158, %sub.60), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/mul" stack_frame_id=18}
+  %bitcast.123 = f32[2,64,32]{2,1,0} bitcast(%mul.266), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/mul" stack_frame_id=18}
+  %mul.265 = f32[2,64,32]{2,1,0} multiply(%mul.267, %bitcast.123), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=12}
+  ROOT %bitcast.122 = f32[128,32]{1,0} bitcast(%mul.265), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=12}
+}
+
+%fused_computation.42 (param_0.103: f32[25,2,64,32], param_1.153: f32[25,2,64,32], param_2.143: f32[2,64,32], param_3.110: f32[128,32]) -> f32[2,64,32] {
+  %param_2.143 = f32[2,64,32]{2,1,0} parameter(2)
+  %param_3.110 = f32[128,32]{1,0} parameter(3)
+  %bitcast.125 = f32[2,64,32]{2,1,0} bitcast(%param_3.110), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/dot_general" stack_frame_id=11}
+  %add_any.96 = f32[2,64,32]{2,1,0} add(%param_2.143, %bitcast.125), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/add_any" stack_frame_id=11}
+  %param_0.103 = f32[25,2,64,32]{3,2,1,0} parameter(0)
+  %param_1.153 = f32[25,2,64,32]{3,2,1,0} parameter(1)
+  %add_any.95 = f32[25,2,64,32]{3,2,1,0} add(%param_0.103, %param_1.153), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/add_any" stack_frame_id=9}
+  %gather.30 = f32[1,2,64,32]{3,2,1,0} slice(%add_any.95), slice={[2:3], [0:2], [0:64], [0:32]}, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/gather" stack_frame_id=21}
+  %constant.621 = f32[] constant(0.01)
+  %broadcast.389 = f32[1,2,64,32]{3,2,1,0} broadcast(%constant.621), dimensions={}
+  %mul.268 = f32[1,2,64,32]{3,2,1,0} multiply(%gather.30, %broadcast.389), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=13}
+  %bitcast.124 = f32[2,64,32]{2,1,0} bitcast(%mul.268), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=13}
+  ROOT %add_any.94 = f32[2,64,32]{2,1,0} add(%add_any.96, %bitcast.124), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/add_any" stack_frame_id=13}
+}
+
+%fused_computation.43 (param_0.107: f32[25,2,64,32], param_1.160: f32[2,64,32], param_2.153: f32[1,2,64,32], param_3.123: f32[2,64,32], param_4.53: f32[128,32]) -> f32[25,2,64,32] {
+  %param_1.160 = f32[2,64,32]{2,1,0} parameter(1)
+  %constant.624 = f32[] constant(0.1)
+  %broadcast.391 = f32[2,64,32]{2,1,0} broadcast(%constant.624), dimensions={}
+  %mul.272 = f32[2,64,32]{2,1,0} multiply(%param_1.160, %broadcast.391), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=10}
+  %param_0.107 = f32[25,2,64,32]{3,2,1,0} parameter(0)
+  %param_4.53 = f32[128,32]{1,0} parameter(4)
+  %constant.625 = f32[] constant(0.5)
+  %broadcast.394 = f32[128,32]{1,0} broadcast(%constant.625), dimensions={}
+  %mul.274 = f32[128,32]{1,0} multiply(%param_4.53, %broadcast.394), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/mul" stack_frame_id=12}
+  %bitcast.130 = f32[2,64,32]{2,1,0} bitcast(%mul.274), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/mul" stack_frame_id=12}
+  %param_3.123 = f32[2,64,32]{2,1,0} parameter(3)
+  %add.161 = f32[2,64,32]{2,1,0} add(%bitcast.130, %param_3.123), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/add" stack_frame_id=12}
+  %param_2.153 = f32[1,2,64,32]{3,2,1,0} parameter(2)
+  %broadcast.393 = f32[1,2,64,32]{3,2,1,0} broadcast(%constant.624), dimensions={}
+  %mul.273 = f32[1,2,64,32]{3,2,1,0} multiply(%param_2.153, %broadcast.393), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/mul" stack_frame_id=10}
+  %bitcast.129 = f32[2,64,32]{2,1,0} bitcast(%mul.273), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/mul" stack_frame_id=10}
+  %add.160 = f32[2,64,32]{2,1,0} add(%add.161, %bitcast.129), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/add" stack_frame_id=12}
+  %constant.626 = f32[] constant(0.01)
+  %broadcast.392 = f32[2,64,32]{2,1,0} broadcast(%constant.626), dimensions={}
+  %mul.271 = f32[2,64,32]{2,1,0} multiply(%add.160, %broadcast.392), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/mul" stack_frame_id=13}
+  %bitcast.128 = f32[1,2,64,32]{3,2,1,0} bitcast(%mul.271), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/mul" stack_frame_id=13}
+  %constant.622 = s32[] constant(2), metadata={stack_frame_id=14}
+  %constant.628 = s32[] constant(0), metadata={op_name="jit(loss)/transpose(jvp())/while/body/jit(dynamic_index_in_dim)" stack_frame_id=6}
+  %dynamic-update-slice.62 = f32[25,2,64,32]{3,2,1,0} dynamic-update-slice(%param_0.107, %bitcast.128, %constant.622, %constant.628, %constant.628, /*index=5*/%constant.628), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/scatter" stack_frame_id=14}
+  %slice.224 = f32[1,2,64,32]{3,2,1,0} slice(%dynamic-update-slice.62), slice={[0:1], [0:2], [0:64], [0:32]}, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/slice" stack_frame_id=9}
+  %tanh.72 = f32[1,2,64,32]{3,2,1,0} tanh(%slice.224), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/tanh" stack_frame_id=10}
+  %constant.627 = f32[] constant(1), metadata={op_name="jit(loss)/transpose(jvp())/while/body/jit(dynamic_index_in_dim)/squeeze" stack_frame_id=23}
+  %broadcast.390 = f32[1,2,64,32]{3,2,1,0} broadcast(%constant.627), dimensions={}
+  %add.159 = f32[1,2,64,32]{3,2,1,0} add(%tanh.72, %broadcast.390), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/add" stack_frame_id=16}
+  %sub.61 = f32[1,2,64,32]{3,2,1,0} subtract(%broadcast.390, %tanh.72), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/sub" stack_frame_id=16}
+  %mul.270 = f32[1,2,64,32]{3,2,1,0} multiply(%add.159, %sub.61), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/mul" stack_frame_id=16}
+  %bitcast.127 = f32[2,64,32]{2,1,0} bitcast(%mul.270), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/mul" stack_frame_id=16}
+  %mul.269 = f32[2,64,32]{2,1,0} multiply(%mul.272, %bitcast.127), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=10}
+  %bitcast.126 = f32[1,2,64,32]{3,2,1,0} bitcast(%mul.269), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=10}
+  %constant.623 = f32[] constant(0)
+  ROOT %pad.58 = f32[25,2,64,32]{3,2,1,0} pad(%bitcast.126, %constant.623), padding=0_24x0_0x0_0x0_0, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/pad" stack_frame_id=9}
+}
+
+%fused_computation.44 (param_0.108: f32[25,2,64,32]) -> f32[25,2,64,32] {
+  %param_0.108 = f32[25,2,64,32]{3,2,1,0} parameter(0)
+  %constant.630 = f32[] constant(0)
+  %broadcast.395 = f32[1,2,64,32]{3,2,1,0} broadcast(%constant.630), dimensions={}
+  %constant.629 = s32[] constant(3), metadata={stack_frame_id=14}
+  %constant.631 = s32[] constant(0), metadata={op_name="jit(loss)/transpose(jvp())/while/body/jit(dynamic_index_in_dim)" stack_frame_id=6}
+  ROOT %dynamic-update-slice.63 = f32[25,2,64,32]{3,2,1,0} dynamic-update-slice(%param_0.108, %broadcast.395, %constant.629, %constant.631, %constant.631, /*index=5*/%constant.631), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/scatter" stack_frame_id=14}
+}
+
+%fused_computation.45 (param_0.111: f32[128,32], param_1.170: f32[2,64,32]) -> f32[128,32] {
+  %param_1.170 = f32[2,64,32]{2,1,0} parameter(1)
+  %constant.632 = f32[] constant(0.5)
+  %broadcast.397 = f32[2,64,32]{2,1,0} broadcast(%constant.632), dimensions={}
+  %mul.277 = f32[2,64,32]{2,1,0} multiply(%param_1.170, %broadcast.397), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=12}
+  %param_0.111 = f32[128,32]{1,0} parameter(0)
+  %constant.633 = f32[] constant(1), metadata={op_name="jit(loss)/transpose(jvp())/while/body/jit(dynamic_index_in_dim)/squeeze" stack_frame_id=23}
+  %broadcast.396 = f32[128,32]{1,0} broadcast(%constant.633), dimensions={}
+  %add.162 = f32[128,32]{1,0} add(%param_0.111, %broadcast.396), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/add" stack_frame_id=18}
+  %sub.62 = f32[128,32]{1,0} subtract(%broadcast.396, %param_0.111), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/sub" stack_frame_id=18}
+  %mul.276 = f32[128,32]{1,0} multiply(%add.162, %sub.62), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/mul" stack_frame_id=18}
+  %bitcast.132 = f32[2,64,32]{2,1,0} bitcast(%mul.276), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/mul" stack_frame_id=18}
+  %mul.275 = f32[2,64,32]{2,1,0} multiply(%mul.277, %bitcast.132), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=12}
+  ROOT %bitcast.131 = f32[128,32]{1,0} bitcast(%mul.275), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=12}
+}
+
+%fused_computation.46 (param_0.113: f32[4,32,32]) -> f32[32,32] {
+  %param_0.113 = f32[4,32,32]{2,1,0} parameter(0)
+  %slice.225 = f32[1,32,32]{2,1,0} slice(%param_0.113), slice={[3:4], [0:32], [0:32]}, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/slice" stack_frame_id=7}
+  ROOT %bitcast.133 = f32[32,32]{1,0} bitcast(%slice.225), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/slice" stack_frame_id=7}
+}
+
+%fused_computation.47 (param_0.116: f32[1,2,64,32], param_1.175: f32[2,64,32], param_2.165: f32[128,32]) -> f32[128,32] {
+  %param_2.165 = f32[128,32]{1,0} parameter(2)
+  %constant.635 = f32[] constant(0.5)
+  %broadcast.399 = f32[128,32]{1,0} broadcast(%constant.635), dimensions={}
+  %mul.279 = f32[128,32]{1,0} multiply(%param_2.165, %broadcast.399), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/mul" stack_frame_id=12}
+  %bitcast.136 = f32[2,64,32]{2,1,0} bitcast(%mul.279), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/mul" stack_frame_id=12}
+  %param_1.175 = f32[2,64,32]{2,1,0} parameter(1)
+  %add.164 = f32[2,64,32]{2,1,0} add(%bitcast.136, %param_1.175), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/add" stack_frame_id=12}
+  %param_0.116 = f32[1,2,64,32]{3,2,1,0} parameter(0)
+  %constant.634 = f32[] constant(0.1)
+  %broadcast.398 = f32[1,2,64,32]{3,2,1,0} broadcast(%constant.634), dimensions={}
+  %mul.278 = f32[1,2,64,32]{3,2,1,0} multiply(%param_0.116, %broadcast.398), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/mul" stack_frame_id=10}
+  %bitcast.135 = f32[2,64,32]{2,1,0} bitcast(%mul.278), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/mul" stack_frame_id=10}
+  %add.163 = f32[2,64,32]{2,1,0} add(%add.164, %bitcast.135), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/add" stack_frame_id=12}
+  ROOT %bitcast.134 = f32[128,32]{1,0} bitcast(%add.163), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/add" stack_frame_id=12}
+}
+
+%fused_computation.48 (param_0.118: f32[25,2,64,32]) -> f32[1,2,64,32] {
+  %param_0.118 = f32[25,2,64,32]{3,2,1,0} parameter(0)
+  %slice.226 = f32[1,2,64,32]{3,2,1,0} slice(%param_0.118), slice={[0:1], [0:2], [0:64], [0:32]}, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/slice" stack_frame_id=9}
+  ROOT %tanh.73 = f32[1,2,64,32]{3,2,1,0} tanh(%slice.226), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/tanh" stack_frame_id=10}
+}
+
+%fused_computation.49 (param_0.119: f32[25,2,64,32], param_1.178: f32[2,64,32]) -> f32[25,2,64,32] {
+  %param_0.119 = f32[25,2,64,32]{3,2,1,0} parameter(0)
+  %param_1.178 = f32[2,64,32]{2,1,0} parameter(1)
+  %constant.636 = f32[] constant(0.01)
+  %broadcast.400 = f32[2,64,32]{2,1,0} broadcast(%constant.636), dimensions={}
+  %mul.280 = f32[2,64,32]{2,1,0} multiply(%param_1.178, %broadcast.400), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/mul" stack_frame_id=13}
+  %bitcast.137 = f32[1,2,64,32]{3,2,1,0} bitcast(%mul.280), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/mul" stack_frame_id=13}
+  %constant.638 = s32[] constant(1)
+  %constant.637 = s32[] constant(0), metadata={op_name="jit(loss)/transpose(jvp())/while/body/jit(dynamic_index_in_dim)" stack_frame_id=6}
+  ROOT %dynamic-update-slice.64 = f32[25,2,64,32]{3,2,1,0} dynamic-update-slice(%param_0.119, %bitcast.137, %constant.638, %constant.637, %constant.637, /*index=5*/%constant.637), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/scatter" stack_frame_id=14}
+}
+
+%fused_computation.50 (param_0.120: f32[25,2,64,32], param_1.181: f32[2,64,32]) -> f32[25,2,64,32] {
+  %param_0.120 = f32[25,2,64,32]{3,2,1,0} parameter(0)
+  %param_1.181 = f32[2,64,32]{2,1,0} parameter(1)
+  %constant.639 = f32[] constant(0.01)
+  %broadcast.401 = f32[2,64,32]{2,1,0} broadcast(%constant.639), dimensions={}
+  %mul.281 = f32[2,64,32]{2,1,0} multiply(%param_1.181, %broadcast.401), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/mul" stack_frame_id=13}
+  %bitcast.138 = f32[1,2,64,32]{3,2,1,0} bitcast(%mul.281), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/mul" stack_frame_id=13}
+  %constant.640 = s32[] constant(0), metadata={op_name="jit(loss)/transpose(jvp())/while/body/jit(dynamic_index_in_dim)" stack_frame_id=6}
+  ROOT %dynamic-update-slice.65 = f32[25,2,64,32]{3,2,1,0} dynamic-update-slice(%param_0.120, %bitcast.138, %constant.640, %constant.640, %constant.640, /*index=5*/%constant.640), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/scatter" stack_frame_id=14}
+}
+
+%fused_computation.51 (param_0.122: f32[4,32,32]) -> f32[32,32] {
+  %param_0.122 = f32[4,32,32]{2,1,0} parameter(0)
+  %slice.227 = f32[1,32,32]{2,1,0} slice(%param_0.122), slice={[2:3], [0:32], [0:32]}, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/slice" stack_frame_id=7}
+  ROOT %bitcast.139 = f32[32,32]{1,0} bitcast(%slice.227), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/slice" stack_frame_id=7}
+}
+
+%fused_computation.52 (param_0.124: f32[1,2,64,32], param_1.186: f32[2,64,32], param_2.175: f32[128,32]) -> f32[2,64,32] {
+  %param_2.175 = f32[128,32]{1,0} parameter(2)
+  %constant.642 = f32[] constant(0.5)
+  %broadcast.403 = f32[128,32]{1,0} broadcast(%constant.642), dimensions={}
+  %mul.283 = f32[128,32]{1,0} multiply(%param_2.175, %broadcast.403), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/mul" stack_frame_id=12}
+  %bitcast.141 = f32[2,64,32]{2,1,0} bitcast(%mul.283), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/mul" stack_frame_id=12}
+  %param_1.186 = f32[2,64,32]{2,1,0} parameter(1)
+  %add.166 = f32[2,64,32]{2,1,0} add(%bitcast.141, %param_1.186), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/add" stack_frame_id=12}
+  %param_0.124 = f32[1,2,64,32]{3,2,1,0} parameter(0)
+  %constant.641 = f32[] constant(0.1)
+  %broadcast.402 = f32[1,2,64,32]{3,2,1,0} broadcast(%constant.641), dimensions={}
+  %mul.282 = f32[1,2,64,32]{3,2,1,0} multiply(%param_0.124, %broadcast.402), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/mul" stack_frame_id=10}
+  %bitcast.140 = f32[2,64,32]{2,1,0} bitcast(%mul.282), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/mul" stack_frame_id=10}
+  ROOT %add.165 = f32[2,64,32]{2,1,0} add(%add.166, %bitcast.140), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/add" stack_frame_id=12}
+}
+
+%fused_computation.53 (param_0.127: f32[2,64,32]) -> f32[1,2,64,32] {
+  %param_0.127 = f32[2,64,32]{2,1,0} parameter(0)
+  %constant.643 = f32[] constant(0.01)
+  %broadcast.404 = f32[2,64,32]{2,1,0} broadcast(%constant.643), dimensions={}
+  %mul.284 = f32[2,64,32]{2,1,0} multiply(%param_0.127, %broadcast.404), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/mul" stack_frame_id=13}
+  %bitcast.142 = f32[1,2,64,32]{3,2,1,0} bitcast(%mul.284), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/mul" stack_frame_id=13}
+  ROOT %tanh.74 = f32[1,2,64,32]{3,2,1,0} tanh(%bitcast.142), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/tanh" stack_frame_id=10}
+}
+
+%fused_computation.54 (param_0.129: f32[4,32,32]) -> f32[32,32] {
+  %param_0.129 = f32[4,32,32]{2,1,0} parameter(0)
+  %slice.228 = f32[1,32,32]{2,1,0} slice(%param_0.129), slice={[1:2], [0:32], [0:32]}, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/slice" stack_frame_id=7}
+  ROOT %bitcast.143 = f32[32,32]{1,0} bitcast(%slice.228), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/slice" stack_frame_id=7}
+}
+
+%fused_computation.55 (param_0.131: f32[1,2,64,32], param_1.193: f32[2,64,32], param_2.180: f32[128,32]) -> f32[2,64,32] {
+  %param_2.180 = f32[128,32]{1,0} parameter(2)
+  %constant.645 = f32[] constant(0.5)
+  %broadcast.406 = f32[128,32]{1,0} broadcast(%constant.645), dimensions={}
+  %mul.286 = f32[128,32]{1,0} multiply(%param_2.180, %broadcast.406), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/mul" stack_frame_id=12}
+  %bitcast.145 = f32[2,64,32]{2,1,0} bitcast(%mul.286), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/mul" stack_frame_id=12}
+  %param_1.193 = f32[2,64,32]{2,1,0} parameter(1)
+  %add.168 = f32[2,64,32]{2,1,0} add(%bitcast.145, %param_1.193), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/add" stack_frame_id=12}
+  %param_0.131 = f32[1,2,64,32]{3,2,1,0} parameter(0)
+  %constant.644 = f32[] constant(0.1)
+  %broadcast.405 = f32[1,2,64,32]{3,2,1,0} broadcast(%constant.644), dimensions={}
+  %mul.285 = f32[1,2,64,32]{3,2,1,0} multiply(%param_0.131, %broadcast.405), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/mul" stack_frame_id=10}
+  %bitcast.144 = f32[2,64,32]{2,1,0} bitcast(%mul.285), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/mul" stack_frame_id=10}
+  ROOT %add.167 = f32[2,64,32]{2,1,0} add(%add.168, %bitcast.144), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/add" stack_frame_id=12}
+}
+
+%fused_computation.56 (param_0.133: f32[25,2,64,32]) -> f32[1,2,64,32] {
+  %param_0.133 = f32[25,2,64,32]{3,2,1,0} parameter(0)
+  %slice.229 = f32[1,2,64,32]{3,2,1,0} slice(%param_0.133), slice={[0:1], [0:2], [0:64], [0:32]}, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/slice" stack_frame_id=9}
+  ROOT %tanh.75 = f32[1,2,64,32]{3,2,1,0} tanh(%slice.229), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/tanh" stack_frame_id=10}
+}
+
+%fused_computation.57 (param_0.135: f32[4,32,32]) -> f32[32,32] {
+  %param_0.135 = f32[4,32,32]{2,1,0} parameter(0)
+  %slice.230 = f32[1,32,32]{2,1,0} slice(%param_0.135), slice={[0:1], [0:32], [0:32]}, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/slice" stack_frame_id=7}
+  ROOT %bitcast.146 = f32[32,32]{1,0} bitcast(%slice.230), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/slice" stack_frame_id=7}
+}
+
+%fused_computation.58 (param_0.137: f32[25,2,64,32], param_1.198: f32[2,64,32], param_2.184: f32[]) -> f32[2,64,32] {
+  %param_1.198 = f32[2,64,32]{2,1,0} parameter(1)
+  %param_2.184 = f32[] parameter(2)
+  %broadcast_in_dim.59 = f32[2,64,32]{2,1,0} broadcast(%param_2.184), dimensions={}, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/broadcast_in_dim" stack_frame_id=19}
+  %add_any.98 = f32[2,64,32]{2,1,0} add(%param_1.198, %broadcast_in_dim.59), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/add_any" stack_frame_id=19}
+  %param_0.137 = f32[25,2,64,32]{3,2,1,0} parameter(0)
+  %gather.31 = f32[1,2,64,32]{3,2,1,0} slice(%param_0.137), slice={[3:4], [0:2], [0:64], [0:32]}, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/gather" stack_frame_id=21}
+  %constant.646 = f32[] constant(0.01)
+  %broadcast.407 = f32[1,2,64,32]{3,2,1,0} broadcast(%constant.646), dimensions={}
+  %mul.287 = f32[1,2,64,32]{3,2,1,0} multiply(%gather.31, %broadcast.407), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=13}
+  %bitcast.147 = f32[2,64,32]{2,1,0} bitcast(%mul.287), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=13}
+  ROOT %add_any.97 = f32[2,64,32]{2,1,0} add(%add_any.98, %bitcast.147), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/add_any" stack_frame_id=13}
+}
+
+%fused_computation.59 (param_0.139: f32[5,4,32,32], param_1.201: s32[]) -> f32[4,32,32] {
+  %param_0.139 = f32[5,4,32,32]{3,2,1,0} parameter(0)
+  %constant.103.clone.5 = s32[] constant(4)
+  %param_1.201 = s32[] parameter(1)
+  %subtract.5 = s32[] subtract(%constant.103.clone.5, %param_1.201), metadata={op_name="jit(loss)/transpose(jvp())/while/body/sub" stack_frame_id=6}
+  %constant.647 = s32[] constant(0), metadata={op_name="jit(loss)/transpose(jvp())/while/body/jit(dynamic_index_in_dim)" stack_frame_id=6}
+  %dynamic_slice.26 = f32[1,4,32,32]{3,2,1,0} dynamic-slice(%param_0.139, %subtract.5, %constant.647, %constant.647, %constant.647), dynamic_slice_sizes={1,4,32,32}, metadata={op_name="jit(loss)/transpose(jvp())/while/body/jit(dynamic_index_in_dim)/dynamic_slice" stack_frame_id=23}
+  ROOT %bitcast.148 = f32[4,32,32]{2,1,0} bitcast(%dynamic_slice.26), metadata={op_name="jit(loss)/transpose(jvp())/while/body/jit(dynamic_index_in_dim)/dynamic_slice" stack_frame_id=23}
+}
+
+%fused_computation.60 (param_0.141: f32[5,25,2,64,32], param_1.204: s32[]) -> f32[25,2,64,32] {
+  %param_0.141 = f32[5,25,2,64,32]{4,3,2,1,0} parameter(0)
+  %constant.103.clone.6 = s32[] constant(4)
+  %param_1.204 = s32[] parameter(1)
+  %subtract.6 = s32[] subtract(%constant.103.clone.6, %param_1.204), metadata={op_name="jit(loss)/transpose(jvp())/while/body/sub" stack_frame_id=6}
+  %constant.648 = s32[] constant(0), metadata={op_name="jit(loss)/transpose(jvp())/while/body/jit(dynamic_index_in_dim)" stack_frame_id=6}
+  %dynamic_slice.27 = f32[1,25,2,64,32]{4,3,2,1,0} dynamic-slice(%param_0.141, %subtract.6, %constant.648, %constant.648, %constant.648, /*index=5*/%constant.648), dynamic_slice_sizes={1,25,2,64,32}, metadata={op_name="jit(loss)/transpose(jvp())/while/body/jit(dynamic_index_in_dim)/dynamic_slice" stack_frame_id=23}
+  ROOT %bitcast.149 = f32[25,2,64,32]{3,2,1,0} bitcast(%dynamic_slice.27), metadata={op_name="jit(loss)/transpose(jvp())/while/body/jit(dynamic_index_in_dim)/dynamic_slice" stack_frame_id=23}
+}
+
+%fused_computation.61 (param_0.143: f32[5,2,64,32], param_1.207: s32[]) -> f32[2,64,32] {
+  %param_0.143 = f32[5,2,64,32]{3,2,1,0} parameter(0)
+  %constant.103.clone.7 = s32[] constant(4)
+  %param_1.207 = s32[] parameter(1)
+  %subtract.7 = s32[] subtract(%constant.103.clone.7, %param_1.207), metadata={op_name="jit(loss)/transpose(jvp())/while/body/sub" stack_frame_id=6}
+  %constant.649 = s32[] constant(0), metadata={op_name="jit(loss)/transpose(jvp())/while/body/jit(dynamic_index_in_dim)" stack_frame_id=6}
+  %dynamic_slice.28 = f32[1,2,64,32]{3,2,1,0} dynamic-slice(%param_0.143, %subtract.7, %constant.649, %constant.649, %constant.649), dynamic_slice_sizes={1,2,64,32}, metadata={op_name="jit(loss)/transpose(jvp())/while/body/jit(dynamic_index_in_dim)/dynamic_slice" stack_frame_id=23}
+  ROOT %bitcast.150 = f32[2,64,32]{2,1,0} bitcast(%dynamic_slice.28), metadata={op_name="jit(loss)/transpose(jvp())/while/body/jit(dynamic_index_in_dim)/dynamic_slice" stack_frame_id=23}
+}
+
+%wrapped_add_computation.1 (param_0.152: s32[], param_1.210: s32[]) -> s32[] {
+  %param_0.152 = s32[] parameter(0)
+  %param_1.210 = s32[] parameter(1)
+  ROOT %add.170 = s32[] add(%param_0.152, %param_1.210), metadata={op_name="jit(loss)/transpose(jvp())/while/body/add" stack_frame_id=6}
+}
+
+%wrapped_tanh_computation (param_0.153: f32[128,32]) -> f32[128,32] {
+  %param_0.153 = f32[128,32]{1,0} parameter(0)
+  ROOT %tanh.76 = f32[128,32]{1,0} tanh(%param_0.153), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/tanh" stack_frame_id=12}
+}
+
+%wrapped_tanh_computation.1 (param_0.154: f32[128,32]) -> f32[128,32] {
+  %param_0.154 = f32[128,32]{1,0} parameter(0)
+  ROOT %tanh.77 = f32[128,32]{1,0} tanh(%param_0.154), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/tanh" stack_frame_id=12}
+}
+
+%wrapped_tanh_computation.2 (param_0.155: f32[128,32]) -> f32[128,32] {
+  %param_0.155 = f32[128,32]{1,0} parameter(0)
+  ROOT %tanh.78 = f32[128,32]{1,0} tanh(%param_0.155), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/tanh" stack_frame_id=12}
+}
+
+%wrapped_tanh_computation.3 (param_0.156: f32[128,32]) -> f32[128,32] {
+  %param_0.156 = f32[128,32]{1,0} parameter(0)
+  ROOT %tanh.79 = f32[128,32]{1,0} tanh(%param_0.156), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/tanh" stack_frame_id=12}
+}
+
+%wide.wide.region_6.21.clone.clone (wide.wide.arg_tuple.3: (s32[], f32[2,64,32], f32[25,2,64,32], f32[5,4,32,32], f32[5,2,64,32], /*index=5*/f32[5,25,2,64,32], f32[5,4,32,32])) -> (s32[], f32[2,64,32], f32[25,2,64,32], f32[5,4,32,32], f32[5,2,64,32], /*index=5*/f32[5,25,2,64,32], f32[5,4,32,32]) {
+  %wide.wide.arg_tuple.3 = (s32[], f32[2,64,32]{2,1,0}, f32[25,2,64,32]{3,2,1,0}, f32[5,4,32,32]{3,2,1,0}, f32[5,2,64,32]{3,2,1,0}, /*index=5*/f32[5,25,2,64,32]{4,3,2,1,0}, f32[5,4,32,32]{3,2,1,0}) parameter(0)
+  %constant.105 = s32[] constant(1)
+  %constant.109 = f32[] constant(1), metadata={op_name="jit(loss)/transpose(jvp())/while/body/jit(dynamic_index_in_dim)/squeeze" stack_frame_id=23}
+  %get-tuple-element.413 = f32[5,4,32,32]{3,2,1,0} get-tuple-element(%wide.wide.arg_tuple.3), index=6
+  %get-tuple-element.412 = f32[5,25,2,64,32]{4,3,2,1,0} get-tuple-element(%wide.wide.arg_tuple.3), index=5
+  %get-tuple-element.411 = f32[5,2,64,32]{3,2,1,0} get-tuple-element(%wide.wide.arg_tuple.3), index=4
+  %get-tuple-element.403 = f32[5,4,32,32]{3,2,1,0} get-tuple-element(%wide.wide.arg_tuple.3), index=3
+  %get-tuple-element.361 = f32[25,2,64,32]{3,2,1,0} get-tuple-element(%wide.wide.arg_tuple.3), index=2, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/remat2" stack_frame_id=6}
+  %remat2.34 = f32[2,64,32]{2,1,0} get-tuple-element(%wide.wide.arg_tuple.3), index=1, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/remat2" stack_frame_id=6}
+  %get-tuple-element.400 = s32[] get-tuple-element(%wide.wide.arg_tuple.3), index=0
+  %copy.37 = s32[] copy(%get-tuple-element.400)
+  %dynamic-slice_bitcast_fusion.1 = f32[25,2,64,32]{3,2,1,0} fusion(%get-tuple-element.412, %copy.37), kind=kLoop, calls=%fused_computation.60, metadata={op_name="jit(loss)/transpose(jvp())/while/body/jit(dynamic_index_in_dim)/dynamic_slice" stack_frame_id=23}, backend_config={"outer_dimension_partitions":["3"]}
+  %dynamic-slice_bitcast_fusion.2 = f32[2,64,32]{2,1,0} fusion(%get-tuple-element.411, %copy.37), kind=kLoop, calls=%fused_computation.61, metadata={op_name="jit(loss)/transpose(jvp())/while/body/jit(dynamic_index_in_dim)/dynamic_slice" stack_frame_id=23}
+  %wrapped_add.1 = s32[] fusion(%copy.37, %constant.105), kind=kLoop, calls=%wrapped_add_computation.1, metadata={op_name="jit(loss)/transpose(jvp())/while/body/add" stack_frame_id=6}
+  %dynamic-slice_bitcast_fusion = f32[4,32,32]{2,1,0} fusion(%get-tuple-element.413, %copy.37), kind=kLoop, calls=%fused_computation.59, metadata={op_name="jit(loss)/transpose(jvp())/while/body/jit(dynamic_index_in_dim)/dynamic_slice" stack_frame_id=23}
+  %bitcast_add_fusion.10 = f32[2,64,32]{2,1,0} fusion(%get-tuple-element.361, %remat2.34, %constant.109), kind=kLoop, calls=%fused_computation.58, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/add_any" stack_frame_id=13}
+  %copy.14 = f32[25,2,64,32]{3,2,1,0} copy(%get-tuple-element.361)
+  %bitcast.26 = f32[128,32]{1,0} bitcast(%dynamic-slice_bitcast_fusion.2), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/remat2" stack_frame_id=6}
+  %slice_bitcast_fusion.7 = f32[32,32]{1,0} fusion(%dynamic-slice_bitcast_fusion), kind=kLoop, calls=%fused_computation.57, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/slice" stack_frame_id=7}
+  %slice_bitcast_fusion.6 = f32[32,32]{1,0} fusion(%dynamic-slice_bitcast_fusion), kind=kLoop, calls=%fused_computation.54, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/slice" stack_frame_id=7}
+  %slice_bitcast_fusion.5 = f32[32,32]{1,0} fusion(%dynamic-slice_bitcast_fusion), kind=kLoop, calls=%fused_computation.51, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/slice" stack_frame_id=7}
+  %slice_bitcast_fusion.4 = f32[32,32]{1,0} fusion(%dynamic-slice_bitcast_fusion), kind=kLoop, calls=%fused_computation.46, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/slice" stack_frame_id=7}
+  %slice_tanh_fusion.1 = f32[1,2,64,32]{3,2,1,0} fusion(%dynamic-slice_bitcast_fusion.1), kind=kLoop, calls=%fused_computation.56, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/tanh" stack_frame_id=10}
+  %broadcast_dynamic-update-slice_fusion = f32[25,2,64,32]{3,2,1,0} fusion(%copy.14), kind=kLoop, calls=%fused_computation.44, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/scatter" stack_frame_id=14}
+  %ynn_fusion.11 = f32[128,32]{1,0} fusion(%bitcast.26, %slice_bitcast_fusion.7), kind=kCustom, calls=%fused_computation.11, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/dot_general" stack_frame_id=11}, backend_config={"fusion_config":{"kind":"__ynn_fusion"},"outer_dimension_partitions":[]}
+  %wrapped_tanh = f32[128,32]{1,0} fusion(%ynn_fusion.11), kind=kLoop, calls=%wrapped_tanh_computation, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/tanh" stack_frame_id=12}
+  %bitcast_add_fusion.9 = f32[2,64,32]{2,1,0} fusion(%slice_tanh_fusion.1, %dynamic-slice_bitcast_fusion.2, %wrapped_tanh), kind=kLoop, calls=%fused_computation.55, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/add" stack_frame_id=12}
+  %bitcast.30 = f32[128,32]{1,0} bitcast(%bitcast_add_fusion.9), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/add" stack_frame_id=12}
+  %bitcast_tanh_fusion = f32[1,2,64,32]{3,2,1,0} fusion(%bitcast_add_fusion.9), kind=kLoop, calls=%fused_computation.53, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/tanh" stack_frame_id=10}
+  %bitcast_dynamic-update-slice_fusion.8 = f32[25,2,64,32]{3,2,1,0} fusion(%dynamic-slice_bitcast_fusion.1, %bitcast_add_fusion.9), kind=kLoop, calls=%fused_computation.50, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/scatter" stack_frame_id=14}
+  %ynn_fusion.10 = f32[128,32]{1,0} fusion(%bitcast.30, %slice_bitcast_fusion.6), kind=kCustom, calls=%fused_computation.10, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/dot_general" stack_frame_id=11}, backend_config={"fusion_config":{"kind":"__ynn_fusion"},"outer_dimension_partitions":[]}
+  %wrapped_tanh.1 = f32[128,32]{1,0} fusion(%ynn_fusion.10), kind=kLoop, calls=%wrapped_tanh_computation.1, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/tanh" stack_frame_id=12}
+  %bitcast_add_fusion.8 = f32[2,64,32]{2,1,0} fusion(%bitcast_tanh_fusion, %bitcast_add_fusion.9, %wrapped_tanh.1), kind=kLoop, calls=%fused_computation.52, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/add" stack_frame_id=12}
+  %bitcast.35 = f32[128,32]{1,0} bitcast(%bitcast_add_fusion.8), metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/add" stack_frame_id=12}
+  %bitcast_dynamic-update-slice_fusion.7 = f32[25,2,64,32]{3,2,1,0} fusion(%bitcast_dynamic-update-slice_fusion.8, %bitcast_add_fusion.8), kind=kLoop, calls=%fused_computation.49, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/scatter" stack_frame_id=14}
+  %ynn_fusion.9 = f32[128,32]{1,0} fusion(%bitcast.35, %slice_bitcast_fusion.5), kind=kCustom, calls=%fused_computation.9, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/dot_general" stack_frame_id=11}, backend_config={"fusion_config":{"kind":"__ynn_fusion"},"outer_dimension_partitions":[]}
+  %slice_tanh_fusion = f32[1,2,64,32]{3,2,1,0} fusion(%bitcast_dynamic-update-slice_fusion.7), kind=kLoop, calls=%fused_computation.48, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/tanh" stack_frame_id=10}
+  %wrapped_tanh.2 = f32[128,32]{1,0} fusion(%ynn_fusion.9), kind=kLoop, calls=%wrapped_tanh_computation.2, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/tanh" stack_frame_id=12}
+  %add_bitcast_fusion = f32[128,32]{1,0} fusion(%slice_tanh_fusion, %bitcast_add_fusion.8, %wrapped_tanh.2), kind=kLoop, calls=%fused_computation.47, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/add" stack_frame_id=12}
+  %bitcast_pad_fusion.2 = f32[25,2,64,32]{3,2,1,0} fusion(%bitcast_dynamic-update-slice_fusion.7, %bitcast_add_fusion.10, %slice_tanh_fusion, %bitcast_add_fusion.8, %wrapped_tanh.2), kind=kLoop, calls=%fused_computation.43, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/pad" stack_frame_id=9}
+  %ynn_fusion.8 = f32[128,32]{1,0} fusion(%add_bitcast_fusion, %slice_bitcast_fusion.4), kind=kCustom, calls=%fused_computation.8, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/dot_general" stack_frame_id=11}, backend_config={"fusion_config":{"kind":"__ynn_fusion"},"outer_dimension_partitions":[]}
+  %add_dynamic-update-slice_fusion.1 = f32[25,2,64,32]{3,2,1,0} fusion(%broadcast_dynamic-update-slice_fusion, %bitcast_pad_fusion.2), kind=kLoop, calls=%fused_computation.40, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/scatter" stack_frame_id=14}, backend_config={"outer_dimension_partitions":["3"]}
+  %wrapped_tanh.3 = f32[128,32]{1,0} fusion(%ynn_fusion.8), kind=kLoop, calls=%wrapped_tanh_computation.3, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/rematted_computation/tanh" stack_frame_id=12}
+  %copy_bitcast_fusion.3 = f32[32,128]{1,0} fusion(%wrapped_tanh.3, %bitcast_add_fusion.10), kind=kLoop, calls=%fused_computation.30, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=12}
+  %multiply_bitcast_fusion.3 = f32[128,32]{1,0} fusion(%wrapped_tanh.3, %bitcast_add_fusion.10), kind=kLoop, calls=%fused_computation.45, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=12}
+  %dot.64 = f32[32,32]{1,0} dot(%add_bitcast_fusion, %copy_bitcast_fusion.3), lhs_contracting_dims={0}, rhs_contracting_dims={1}, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/transpose" stack_frame_id=11}
+  %ynn_fusion.7 = f32[128,32]{1,0} fusion(%multiply_bitcast_fusion.3, %slice_bitcast_fusion.4), kind=kCustom, calls=%fused_computation.7, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/dot_general" stack_frame_id=11}, backend_config={"fusion_config":{"kind":"__ynn_fusion"},"outer_dimension_partitions":[]}
+  %bitcast_add_fusion.7 = f32[2,64,32]{2,1,0} fusion(%broadcast_dynamic-update-slice_fusion, %bitcast_pad_fusion.2, %bitcast_add_fusion.10, %ynn_fusion.7), kind=kLoop, calls=%fused_computation.42, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/add_any" stack_frame_id=13}, backend_config={"outer_dimension_partitions":["2","1"]}
+  %multiply_bitcast_fusion.2 = f32[128,32]{1,0} fusion(%wrapped_tanh.2, %bitcast_add_fusion.7), kind=kLoop, calls=%fused_computation.41, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=12}
+  %bitcast_pad_fusion.1 = f32[25,2,64,32]{3,2,1,0} fusion(%slice_tanh_fusion, %bitcast_add_fusion.7), kind=kLoop, calls=%fused_computation.39, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/pad" stack_frame_id=9}
+  %copy_bitcast_fusion.2 = f32[32,128]{1,0} fusion(%wrapped_tanh.2, %bitcast_add_fusion.7), kind=kLoop, calls=%fused_computation.29, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=12}
+  %ynn_fusion.6 = f32[128,32]{1,0} fusion(%multiply_bitcast_fusion.2, %slice_bitcast_fusion.5), kind=kCustom, calls=%fused_computation.6, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/dot_general" stack_frame_id=11}, backend_config={"fusion_config":{"kind":"__ynn_fusion"},"outer_dimension_partitions":[]}
+  %add_dynamic-update-slice_fusion = f32[25,2,64,32]{3,2,1,0} fusion(%add_dynamic-update-slice_fusion.1, %bitcast_pad_fusion.1), kind=kLoop, calls=%fused_computation.36, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/scatter" stack_frame_id=14}, backend_config={"outer_dimension_partitions":["3"]}
+  %dot.65 = f32[32,32]{1,0} dot(%bitcast.35, %copy_bitcast_fusion.2), lhs_contracting_dims={0}, rhs_contracting_dims={1}, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/transpose" stack_frame_id=11}
+  %bitcast_add_fusion.6 = f32[2,64,32]{2,1,0} fusion(%add_dynamic-update-slice_fusion.1, %bitcast_pad_fusion.1, %bitcast_add_fusion.7, %ynn_fusion.6), kind=kLoop, calls=%fused_computation.38, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/add_any" stack_frame_id=13}, backend_config={"outer_dimension_partitions":["2","1"]}
+  %multiply_bitcast_fusion.1 = f32[128,32]{1,0} fusion(%wrapped_tanh.1, %bitcast_add_fusion.6), kind=kLoop, calls=%fused_computation.37, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=12}
+  %bitcast_pad_fusion = f32[25,2,64,32]{3,2,1,0} fusion(%bitcast_tanh_fusion, %bitcast_add_fusion.6), kind=kLoop, calls=%fused_computation.35, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/pad" stack_frame_id=9}
+  %copy_bitcast_fusion.1 = f32[32,128]{1,0} fusion(%wrapped_tanh.1, %bitcast_add_fusion.6), kind=kLoop, calls=%fused_computation.28, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=12}
+  %ynn_fusion.5 = f32[128,32]{1,0} fusion(%multiply_bitcast_fusion.1, %slice_bitcast_fusion.6), kind=kCustom, calls=%fused_computation.5, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/dot_general" stack_frame_id=11}, backend_config={"fusion_config":{"kind":"__ynn_fusion"},"outer_dimension_partitions":[]}
+  %dot.66 = f32[32,32]{1,0} dot(%bitcast.30, %copy_bitcast_fusion.1), lhs_contracting_dims={0}, rhs_contracting_dims={1}, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/transpose" stack_frame_id=11}
+  %bitcast_add_fusion.5 = f32[2,64,32]{2,1,0} fusion(%add_dynamic-update-slice_fusion, %bitcast_pad_fusion, %bitcast_add_fusion.6, %ynn_fusion.5), kind=kLoop, calls=%fused_computation.34, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/add_any" stack_frame_id=13}, backend_config={"outer_dimension_partitions":["2","1"]}
+  %multiply_bitcast_fusion = f32[128,32]{1,0} fusion(%wrapped_tanh, %bitcast_add_fusion.5), kind=kLoop, calls=%fused_computation.33, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=12}
+  %pad_add_fusion = f32[25,2,64,32]{3,2,1,0} fusion(%slice_tanh_fusion.1, %bitcast_add_fusion.5, %add_dynamic-update-slice_fusion, %bitcast_pad_fusion), kind=kLoop, calls=%fused_computation.31, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/add_any" stack_frame_id=9}, backend_config={"outer_dimension_partitions":["4"]}
+  %copy_bitcast_fusion = f32[32,128]{1,0} fusion(%wrapped_tanh, %bitcast_add_fusion.5), kind=kLoop, calls=%fused_computation.27, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/mul" stack_frame_id=12}
+  %ynn_fusion.4 = f32[128,32]{1,0} fusion(%multiply_bitcast_fusion, %slice_bitcast_fusion.7), kind=kCustom, calls=%fused_computation.4, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/dot_general" stack_frame_id=11}, backend_config={"fusion_config":{"kind":"__ynn_fusion"},"outer_dimension_partitions":[]}
+  %dot.67 = f32[32,32]{1,0} dot(%bitcast.26, %copy_bitcast_fusion), lhs_contracting_dims={0}, rhs_contracting_dims={1}, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/transpose" stack_frame_id=11}
+  %bitcast_add_fusion.4 = f32[2,64,32]{2,1,0} fusion(%bitcast_add_fusion.5, %ynn_fusion.4), kind=kLoop, calls=%fused_computation.32, metadata={op_name="jit(loss)/transpose(jvp())/while/body/eval_jaxpr/checkpoint/add_any" stack_frame_id=11}
+  %bitcast_dynamic-update-slice_fusion.6 = f32[5,4,32,32]{3,2,1,0} fusion(%get-tuple-element.403, %dot.67, %dot.66, %dot.65, %dot.64, /*index=5*/%copy.37), kind=kLoop, calls=%fused_computation.26, metadata={op_name="jit(loss)/transpose(jvp())/while/body/jit(dynamic_update_index_in_dim)/dynamic_update_slice" stack_frame_id=23}
+  ROOT %tuple.109 = (s32[], f32[2,64,32]{2,1,0}, f32[25,2,64,32]{3,2,1,0}, f32[5,4,32,32]{3,2,1,0}, f32[5,2,64,32]{3,2,1,0}, /*index=5*/f32[5,25,2,64,32]{4,3,2,1,0}, f32[5,4,32,32]{3,2,1,0}) tuple(%wrapped_add.1, %bitcast_add_fusion.4, %pad_add_fusion, %bitcast_dynamic-update-slice_fusion.6, %get-tuple-element.411, /*index=5*/%get-tuple-element.412, %get-tuple-element.413)
+}
+
+%wrapped_compare_computation.1 (param_0.157: s32[], param_1.211: s32[]) -> pred[] {
+  %param_0.157 = s32[] parameter(0)
+  %param_1.211 = s32[] parameter(1)
+  ROOT %lt.7 = pred[] compare(%param_0.157, %param_1.211), direction=LT, metadata={op_name="jit(loss)/transpose(jvp())/while/cond/lt" stack_frame_id=6}
+}
+
+%wide.wide.region_14.22.clone.clone (wide.wide.arg_tuple.2: (s32[], f32[2,64,32], f32[25,2,64,32], f32[5,4,32,32], f32[5,2,64,32], /*index=5*/f32[5,25,2,64,32], f32[5,4,32,32])) -> pred[] {
+  %wide.wide.arg_tuple.2 = (s32[], f32[2,64,32]{2,1,0}, f32[25,2,64,32]{3,2,1,0}, f32[5,4,32,32]{3,2,1,0}, f32[5,2,64,32]{3,2,1,0}, /*index=5*/f32[5,25,2,64,32]{4,3,2,1,0}, f32[5,4,32,32]{3,2,1,0}) parameter(0)
+  %constant.104 = s32[] constant(5)
+  %get-tuple-element.106 = s32[] get-tuple-element(%wide.wide.arg_tuple.2), index=0
+  ROOT %wrapped_compare.1 = pred[] fusion(%get-tuple-element.106, %constant.104), kind=kLoop, calls=%wrapped_compare_computation.1, metadata={op_name="jit(loss)/transpose(jvp())/while/cond/lt" stack_frame_id=6}
+}
+
+%wrapped_broadcast_computation (param_0.144: f32[]) -> f32[2,64,32] {
+  %param_0.144 = f32[] parameter(0)
+  ROOT %broadcast.408 = f32[2,64,32]{2,1,0} broadcast(%param_0.144), dimensions={}
+}
+
+%wrapped_broadcast_computation.1 (param_0.145: f32[]) -> f32[25,2,64,32] {
+  %param_0.145 = f32[] parameter(0)
+  ROOT %broadcast_in_dim.60 = f32[25,2,64,32]{3,2,1,0} broadcast(%param_0.145), dimensions={}, metadata={op_name="jit(loss)/transpose(jvp())/broadcast_in_dim" stack_frame_id=22}
+}
+
+%wrapped_broadcast_computation.2 (param_0.146: f32[]) -> f32[5,4,32,32] {
+  %param_0.146 = f32[] parameter(0)
+  ROOT %broadcast_in_dim.61 = f32[5,4,32,32]{3,2,1,0} broadcast(%param_0.146), dimensions={}, metadata={op_name="jit(loss)/transpose(jvp())/broadcast_in_dim" stack_frame_id=5}
+}
+
+%wrapped_broadcast_computation.3 (param_0.147: f32[]) -> f32[25,2,64,32] {
+  %param_0.147 = f32[] parameter(0)
+  ROOT %jit_loss_.0 = f32[25,2,64,32]{3,2,1,0} broadcast(%param_0.147), dimensions={}, metadata={op_name="jit(loss)" stack_frame_id=3}
+}
+
+%wrapped_broadcast_computation.4 (param_0.148: f32[]) -> f32[5,2,64,32] {
+  %param_0.148 = f32[] parameter(0)
+  ROOT %broadcast_in_dim.62 = f32[5,2,64,32]{3,2,1,0} broadcast(%param_0.148), dimensions={}, metadata={op_name="jit(loss)/jvp()/broadcast_in_dim" stack_frame_id=5}
+}
+
+%wrapped_broadcast_computation.5 (param_0.149: f32[]) -> f32[5,25,2,64,32] {
+  %param_0.149 = f32[] parameter(0)
+  ROOT %broadcast_in_dim.63 = f32[5,25,2,64,32]{4,3,2,1,0} broadcast(%param_0.149), dimensions={}, metadata={op_name="jit(loss)/jvp()/broadcast_in_dim" stack_frame_id=5}
+}
+
+ENTRY %main.23 (x.1: f32[5,4,32,32]) -> f32[5,4,32,32] {
+  %x.1 = f32[5,4,32,32]{3,2,1,0} parameter(0), metadata={op_name="x"}
+  %constant.66 = f32[] constant(0)
+  %constant.67 = f32[] constant(1)
+  %constant.69 = f32[2,64,32]{2,1,0} constant({...})
+  %constant.71 = s32[] constant(0)
+  %wrapped_broadcast.2 = f32[5,4,32,32]{3,2,1,0} fusion(%constant.66), kind=kLoop, calls=%wrapped_broadcast_computation.2, metadata={op_name="jit(loss)/transpose(jvp())/broadcast_in_dim" stack_frame_id=5}
+  %wrapped_broadcast.3 = f32[25,2,64,32]{3,2,1,0} fusion(%constant.66), kind=kLoop, calls=%wrapped_broadcast_computation.3, metadata={op_name="jit(loss)" stack_frame_id=3}
+  %wrapped_broadcast.4 = f32[5,2,64,32]{3,2,1,0} fusion(%constant.66), kind=kLoop, calls=%wrapped_broadcast_computation.4, metadata={op_name="jit(loss)/jvp()/broadcast_in_dim" stack_frame_id=5}
+  %wrapped_broadcast.5 = f32[5,25,2,64,32]{4,3,2,1,0} fusion(%constant.66), kind=kLoop, calls=%wrapped_broadcast_computation.5, metadata={op_name="jit(loss)/jvp()/broadcast_in_dim" stack_frame_id=5}, backend_config={"outer_dimension_partitions":["4"]}
+  %wrapped_broadcast = f32[2,64,32]{2,1,0} fusion(%constant.67), kind=kLoop, calls=%wrapped_broadcast_computation
+  %wrapped_broadcast.1 = f32[25,2,64,32]{3,2,1,0} fusion(%constant.67), kind=kLoop, calls=%wrapped_broadcast_computation.1, metadata={op_name="jit(loss)/transpose(jvp())/broadcast_in_dim" stack_frame_id=22}
+  %copy.45 = f32[2,64,32]{2,1,0} copy(%constant.69)
+  %copy.46 = s32[] copy(%constant.71)
+  %copy.18 = s32[] copy(%copy.46)
+  %tuple.104 = (s32[], f32[2,64,32]{2,1,0}, f32[25,2,64,32]{3,2,1,0}, f32[5,2,64,32]{3,2,1,0}, f32[5,25,2,64,32]{4,3,2,1,0}, /*index=5*/f32[5,4,32,32]{3,2,1,0}) tuple(%copy.18, %copy.45, %wrapped_broadcast.3, %wrapped_broadcast.4, %wrapped_broadcast.5, /*index=5*/%x.1)
+  %while.14 = (s32[], f32[2,64,32]{2,1,0}, f32[25,2,64,32]{3,2,1,0}, f32[5,2,64,32]{3,2,1,0}, f32[5,25,2,64,32]{4,3,2,1,0}, /*index=5*/f32[5,4,32,32]{3,2,1,0}) while(%tuple.104), condition=%region_5.9, body=%region_0.8, metadata={op_name="jit(loss)/jvp()/while" stack_frame_id=5}, backend_config={"dynamic_variables":[],"known_induction_variable":{"tuple_index":"0"},"known_init_step":{"init":"0","step":"1"},"known_trip_count":{"n":"5"}}
+  %get-tuple-element.398 = f32[5,25,2,64,32]{4,3,2,1,0} get-tuple-element(%while.14), index=4, metadata={op_name="jit(loss)/jvp()/while" stack_frame_id=5}
+  %get-tuple-element.397 = f32[5,2,64,32]{3,2,1,0} get-tuple-element(%while.14), index=3, metadata={op_name="jit(loss)/jvp()/while" stack_frame_id=5}
+  %tuple.107 = (s32[], f32[2,64,32]{2,1,0}, f32[25,2,64,32]{3,2,1,0}, f32[5,4,32,32]{3,2,1,0}, f32[5,2,64,32]{3,2,1,0}, /*index=5*/f32[5,25,2,64,32]{4,3,2,1,0}, f32[5,4,32,32]{3,2,1,0}) tuple(%copy.46, %wrapped_broadcast, %wrapped_broadcast.1, %wrapped_broadcast.2, %get-tuple-element.397, /*index=5*/%get-tuple-element.398, %x.1)
+  %while.3 = (s32[], f32[2,64,32]{2,1,0}, f32[25,2,64,32]{3,2,1,0}, f32[5,4,32,32]{3,2,1,0}, f32[5,2,64,32]{3,2,1,0}, /*index=5*/f32[5,25,2,64,32]{4,3,2,1,0}, f32[5,4,32,32]{3,2,1,0}) while(%tuple.107), condition=%wide.wide.region_14.22.clone.clone, body=%wide.wide.region_6.21.clone.clone, metadata={op_name="jit(loss)/transpose(jvp())/while" stack_frame_id=5}, backend_config={"dynamic_variables":[],"known_induction_variable":{"tuple_index":"0"},"known_init_step":{"init":"0","step":"1"},"known_trip_count":{"n":"5"}}
+  ROOT %while.25 = f32[5,4,32,32]{3,2,1,0} get-tuple-element(%while.3), index=3, metadata={op_name="jit(loss)/transpose(jvp())/while" stack_frame_id=5}
+}
+

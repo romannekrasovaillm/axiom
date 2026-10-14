@@ -2684,6 +2684,170 @@ class _PhaseProfiler:
 
 
 # ---------------------------------------------------------------------------
+# 9-тер. Jitted-аккумуляция микробатчей (ADR-054 Am.16)
+# ---------------------------------------------------------------------------
+
+#: Env-гейт jitted-аккумуляции (ADR-054 Am.16): ``0`` — прежний Python-путь
+#: накопления (дефолт, побитово прежнее поведение), ``1`` — один jit-вызов на
+#: оптимизаторский шаг из N микробатчей (Am.15: хост-машинерия на каждый
+#: ``grad_fn``-вызов + ``device_get`` — измеренная доминанта шага, и её делят
+#: на N, а не чинят поштучно).
+ACCUM_JIT_ENV = "AXIOM_ACCUM_JIT"
+
+#: Допустимые значения гейта; неизвестное — ошибка (fail-closed, форма
+#: ``AXIOM_OPT_BATCH``/``AXIOM_MASTER_DTYPE``), а не тихий откат в дефолт.
+ACCUM_JIT_VALUES = ("0", "1")
+ACCUM_JIT_OFF = "0"
+ACCUM_JIT_ON = "1"
+
+
+class AccumJitError(ValueError):
+    """Jitted-аккумуляция: неизвестное значение гейта / несовместимая упаковка.
+
+    Fail-closed по обоим фронтам: опечатка в ``AXIOM_ACCUM_JIT`` не должна тихо
+    оставить Python-путь (замер «jitted-ноги» стал бы замером прежнего пути), а
+    микробатчи разных форм не складываются в один пакет молча — рецепт
+    взвешивания для разной геометрии в одном стеке не определён.
+    """
+
+
+def accum_jit_mode(value: str | None = None) -> bool:
+    """Режим аккумуляции микробатчей: ``False`` (дефолт) | ``True``.
+
+    ``AXIOM_ACCUM_JIT`` читается на **сборке** шага (:func:`train`): режим
+    выбирает исполняемый путь оптимизаторского шага, в середине прогона он не
+    меняется — как и остальные режимы шага.  Пустая/незаданная переменная =
+    ``"0"`` (прежнее поведение); значения — только ``"0"``/``"1"``; неизвестное
+    значение — :class:`AccumJitError` (fail-closed).  Явный аргумент сильнее
+    окружения (форма остальных гейтов).
+    """
+    raw = value if value is not None else os.environ.get(ACCUM_JIT_ENV)
+    mode = (raw or "").strip().lower() or ACCUM_JIT_OFF
+    if mode not in ACCUM_JIT_VALUES:
+        raise AccumJitError(
+            f"{ACCUM_JIT_ENV}={mode!r}: ожидается одно из {list(ACCUM_JIT_VALUES)}"
+        )
+    return mode == ACCUM_JIT_ON
+
+
+def _micro_shape_signature(micro: Any) -> tuple:
+    """Формы листьев микробатча — подпись совместимости упаковки в стек."""
+    import jax
+
+    return tuple(np.shape(leaf) for leaf in jax.tree_util.tree_leaves(micro))
+
+
+def pack_microbatches(group: Sequence[Any]) -> tuple[Any, np.ndarray]:
+    """Упаковать группу микробатчей в один пакет с ведущей осью N.
+
+    Возврат — ``(packed, weights)``.  ``packed`` — pytree группы, у каждого
+    листа ведущая ось N (``jnp.stack`` по оси 0, затем явный ``device_put``:
+    пакет едет на устройство одним деревом), ``weights`` — токены каждого
+    микробатча (``prod(shape)`` — тот же счёт, что в Python-ветке цикла).
+    Формы микробатчей обязаны совпадать: стек строится только по одинаковым
+    листьям, разные формы — честный отказ (:class:`AccumJitError`), а не
+    упаковка «как получится»/склейка меньшинства молча.  Штатный поток
+    кампании (:func:`pack_batch` → фиксированный ``(micro_batch, seq_len)``)
+    такой отказ не встречает никогда.
+    """
+    import jax
+    import jax.numpy as jnp
+
+    if not group:  # pragma: no cover — цикл не зовёт упаковку на пустой группе
+        raise AccumJitError("пустая группа микробатчей: упаковывать нечего")
+    signatures = {_micro_shape_signature(micro) for micro in group}
+    if len(signatures) > 1:
+        raise AccumJitError(
+            "jitted-аккумуляция требует одинаковых форм микробатчей группы; "
+            f"получены формы листьев {sorted(signatures)!r} — это честный отказ "
+            "(разная геометрия в одном стеке не взвешивается), а не тихая "
+            "упаковка.  Отключите AXIOM_ACCUM_JIT или выровняйте микробатчи"
+        )
+
+    def _stack(*leaves):
+        return jax.device_put(jnp.stack(leaves, axis=0))
+
+    try:
+        packed = jax.tree_util.tree_map(_stack, *group)
+    except (TypeError, ValueError) as exc:
+        raise AccumJitError(
+            f"микробатчи группы не складываются в один pytree: {exc}"
+        ) from exc
+    weights = np.array(
+        [float(np.prod(np.shape(micro))) for micro in group], dtype=np.float32
+    )
+    return packed, weights
+
+
+def make_jitted_accum(loss_fn, *, donate: bool = False):
+    """Собрать jitted-аккумуляцию микробатчей — одна jit-функция на шаг.
+
+    Вход — ``params``, ``batch`` (pytree; у каждого листа ведущая ось N) и
+    ``weights`` (``(N,)`` — токены микробатчей).  Внутри — ``lax.scan`` по
+    ведущей оси: для микробатча вычисляется ``value_and_grad(loss_fn)`` против
+    **своего** среза, градиенты суммируются на устройстве с токен-весами,
+    loss — тоже: ``Σ L_i·w_i / Σ w_i`` и ``Σ G_i·w_i / Σ w_i``.  Формула — та
+    же, что в Python-ветке цикла (``len(group) > 1``); хост-эпизод один на N
+    микробатчей вместо одного на микробатч (Am.15).
+
+    Память: ``scan`` исполняет микробатчи **последовательно** — активационный
+    бюджет остаётся бюджетом одного B-микробатча (grad-checkpointing включён
+    моделью), стёк пакета материализует только данные (``device_put``), не
+    активации.  Осознанно не развёртка по N: unroll кладёт N копий fwd+bwd в
+    один jaxpr, и последовательность/время жизни тензоров перестаёт быть
+    свойством рецепта (риск HLO-пола вместо амортизации).  ``N`` статично
+    (длина скана — из формы пакета): 2–8 микробатчей — единицы исполняемых
+    графов, по одному на N.
+
+    Веса/контракт dtype: вес приводится к dtype листа (``g * w`` как
+    ``leaf * float(mt)`` в Python-ветке: слабая типизация не поднимает bf16-лист
+    в fp32), т.е. bf16-режимы накапливают градиенты в bf16 ровно как прежняя
+    ветка, fp32 — в fp32.
+
+    ``donate=True`` — ``donate_argnums=(0,)``: ``params`` мёртв после вызова,
+    буфер может быть переиспользован под выходы.  Вызывающий обязан не читать
+    ``params`` после (в цикле это верно там же, где у ``grad_fn_donated``:
+    bf16-рабочая копия мертва после градиента; в fp32 и bf16-мастере
+    ``params IS master``, и его читает ``step_fn`` — donate там запрещён).
+    """
+    import jax
+    import jax.numpy as jnp
+
+    value_and_grad = jax.value_and_grad(loss_fn)
+
+    def _weight_like(weight, leaf):
+        # Python-ветка умножает/делит на Python-float (слабая типизация): bf16-лист
+        # остаётся bf16.  Здесь вес — динамический float32; приведение к dtype
+        # листа воспроизводит ту же арифметику.
+        return weight.astype(leaf.dtype)
+
+    def accum(params, batch, weights):
+        def body(carry, inputs):
+            grads_acc, loss_acc = carry
+            micro, weight = inputs
+            loss, grads = value_and_grad(params, micro)
+            grads_acc = jax.tree_util.tree_map(
+                lambda acc, g: acc + g * _weight_like(weight, g), grads_acc, grads
+            )
+            loss_acc = loss_acc + loss * _weight_like(weight, loss)
+            return (grads_acc, loss_acc), None
+
+        grads0 = jax.tree_util.tree_map(jnp.zeros_like, params)
+        loss0 = jnp.zeros((), dtype=jnp.float32)
+        (grads_acc, loss_acc), _ = jax.lax.scan(
+            body, (grads0, loss0), (batch, weights)
+        )
+        total = jnp.sum(weights, dtype=jnp.float32)
+        loss_mean = loss_acc / _weight_like(total, loss_acc)
+        grads_mean = jax.tree_util.tree_map(
+            lambda g: g / _weight_like(total, g), grads_acc
+        )
+        return loss_mean, grads_mean
+
+    return jax.jit(accum, donate_argnums=(0,) if donate else ())
+
+
+# ---------------------------------------------------------------------------
 # 10. Цикл претрейна
 # ---------------------------------------------------------------------------
 
@@ -2866,6 +3030,10 @@ def train(
     master_mode = master_dtype_mod.master_dtype_mode()
     comp_mode = master_dtype_mod.master_comp_mode(master_dtype=master_mode)
     use_bf16_master = master_mode == master_dtype_mod.BF16
+    # ADR-054 Am.16 (цикл-7): гейт jitted-аккумуляции — тоже условие прогона,
+    # читается один раз на сборке (режим выбирает путь шага, не середину прогона).
+    # Дефолт 0 = прежний Python-путь, побитово.
+    accum_jit = accum_jit_mode()
 
     manager = resume_from
     start_step = 0
@@ -2986,6 +3154,20 @@ def train(
     # выход шага упразднён, поэтому прежний флаг здесь выключён — иначе цикл
     # ждал бы третьего выхода у двухвыходного шага.
     use_bf16 = train_config.param_dtype == "bfloat16" and not use_bf16_master
+    # ADR-054 Am.16 (цикл-7): jitted-аккумуляция строится только под гейтом —
+    # гейт-off не заводит ни одной новой jit-функции (критерий «дефолт — прежнее
+    # поведение» держится по построению, а не сравнением графов).  Donate-вариант
+    # включается по прежнему правилу мёртвого буфера (как у ``grad_fn_donated``:
+    # bf16-рабочая копия мертва после градиента; в fp32 и bf16-мастере
+    # ``params IS master`` — его читает ``step_fn``), с одной поправкой:
+    # при ``phase_profile`` профайлер читает ``params`` ПОСЛЕ градиента
+    # (``profiler.measure``, :3364) — буфер жив, донация запрещена (то же
+    # правило, что у ``step_fn``: ``donate=not phase_profile``).
+    accum_fn = accum_fn_donated = None
+    if accum_jit:
+        accum_fn = make_jitted_accum(loss_fn, donate=False)
+        if use_bf16 and not train_config.phase_profile:
+            accum_fn_donated = make_jitted_accum(loss_fn, donate=True)
     step_fn = optimizer.make_step(
         cfg,
         ns_steps=train_config.ns_steps,
@@ -3122,23 +3304,36 @@ def train(
                 loss, grads = grad_fn(params, group[0])
             loss_value = float(jax.device_get(loss))
         else:
-            # Token-weighted mean of the micro-batches' losses/gradients, so a
-            # curriculum phase change inside the group does not bias the step.
-            total = float(batch_tokens)
-            loss_acc = 0.0
-            grads = None
-            for m in group:
-                mt = float(np.prod(np.shape(m)))
-                micro_loss, micro_grads = grad_fn(params, m)
-                loss_acc += float(jax.device_get(micro_loss)) * mt
-                scaled = jax.tree_util.tree_map(lambda leaf: leaf * mt, micro_grads)
-                grads = (
-                    scaled
-                    if grads is None
-                    else jax.tree_util.tree_map(lambda a, b: a + b, grads, scaled)
-                )
-            grads = jax.tree_util.tree_map(lambda leaf: leaf / total, grads)
-            loss_value = loss_acc / total
+            # ADR-054 Am.16 (цикл-7): под гейтом — один jit-вызов на весь шаг.
+            # Микробатчи пакуются в пакет с ведущей осью N (device_put стеком),
+            # внутри jit обходятся последовательно (lax.scan), градиенты и loss
+            # усредняются на устройстве с токен-весами — формула та же, что в
+            # Python-ветке ниже, но хост-эпизодов на шаг N→1 (Am.15).
+            if accum_jit:
+                packed, micro_weights = pack_microbatches(group)
+                if use_bf16 and accum_fn_donated is not None:
+                    loss, grads = accum_fn_donated(params, packed, micro_weights)
+                else:
+                    loss, grads = accum_fn(params, packed, micro_weights)
+                loss_value = float(jax.device_get(loss))
+            else:
+                # Token-weighted mean of the micro-batches' losses/gradients, so a
+                # curriculum phase change inside the group does not bias the step.
+                total = float(batch_tokens)
+                loss_acc = 0.0
+                grads = None
+                for m in group:
+                    mt = float(np.prod(np.shape(m)))
+                    micro_loss, micro_grads = grad_fn(params, m)
+                    loss_acc += float(jax.device_get(micro_loss)) * mt
+                    scaled = jax.tree_util.tree_map(lambda leaf: leaf * mt, micro_grads)
+                    grads = (
+                        scaled
+                        if grads is None
+                        else jax.tree_util.tree_map(lambda a, b: a + b, grads, scaled)
+                    )
+                grads = jax.tree_util.tree_map(lambda leaf: leaf / total, grads)
+                loss_value = loss_acc / total
         if use_bf16_master:
             # Am.13: grads — bf16, рабочей копии нет, второго выхода шага тоже
             # (каст-в-шаг цикл-4 в этом режиме упразднён: params и есть мастер).
@@ -3220,6 +3415,12 @@ def train(
                 "opt_batch": optimizer.opt_batch_mode(),
                 "master_dtype": master_mode,
                 "master_comp": comp_mode,
+                # ADR-054 Am.16: маркер jitted-аккумуляции шага (1 — шаг шёл
+                # одним jit-вызовом на N микробатчей; 0 — нет накопления или
+                # прежний Python-путь) и число микробатчей группы — по этим
+                # двум полям A/B-ноги цикла-7 различимы в журнале без догадок.
+                "accum_jit": 1 if (accum_jit and len(group) > 1) else 0,
+                "microbatches": len(group),
             }
             # Поля фаз — только на профильных (kpi-интервальных) шагах: дефолтная
             # запись остаётся ровно прежней.
@@ -3558,6 +3759,8 @@ def _save_checkpoint(
 __all__ = [
     "ACCEPTANCE_CONFTEST",
     "ACCEPTANCE_PINNING",
+    "ACCUM_JIT_ENV",
+    "AccumJitError",
     "BACKEND_ENV",
     "BOS_ID",
     "CURSOR_MANIFEST_NAME",
@@ -3591,6 +3794,7 @@ __all__ = [
     "StreamCursor",
     "TrainConfig",
     "TrainResult",
+    "accum_jit_mode",
     "apply_declared_backend_pinning",
     "budget_breach",
     "declared_backend",
@@ -3600,9 +3804,11 @@ __all__ = [
     "load_budget",
     "load_packed_shard_set",
     "load_shard_set",
+    "make_jitted_accum",
     "mfu",
     "packed_manifest_path",
     "pack_batch",
+    "pack_microbatches",
     "require_budget",
     "step_flops",
     "tflops_achieved",

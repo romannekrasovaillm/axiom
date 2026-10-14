@@ -1,0 +1,60 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 20  of event 'armv8_pmuv3_0/cycles/P'
+# Event count (approx.): 541097
+#
+# Overhead  Command         Shared Object          Symbol                       
+# ........  ..............  .....................  .............................
+#
+    37.46%  cuda-EvtHandlr  libcuda.so.580.173.02  [.] 0x00000000001fe848
+            |
+            ---0xf36f9736e848
+               0xf36f9750cf1c
+               0xf36f9744d928
+               start_thread
+               thread_start
+
+    25.00%  python          [kernel.kallsyms]      [k] futex_wake_mark
+            |
+            ---futex_wake_mark
+               futex_wake
+               do_futex
+               __arm64_sys_futex
+               invoke_syscall
+               el0_svc_common.constprop.0
+               do_el0_svc
+               el0_svc
+               el0t_64_sync_handler
+               el0t_64_sync
+               syscall
+               absl::lts_20260526::synchronization_internal::FutexWaiter::Post()
+               absl::lts_20260526::Mutex::UnlockSlow(absl::lts_20260526::SynchWaitParams*)
+               absl::lts_20260526::Notification::Notify()
+               tsl::AsyncValue::EnqueueWaiter<jax::BlockUntilReadyWithCancel(tsl::Future<void>&)::$_0::operator()(tsl::AsyncValue*) const::{lambda()#1}>(jax::BlockUntilReadyWithCancel(tsl::Future<void>&)::$_0::operator()(tsl::AsyncValue*) const::{lambda()#1}&&, tsl::AsyncValue::WaitersAndState)::Node::RunWaiterAndDeleteWaiterNode()
+               void tsl::internal::PromiseBase<absl::lts_20260526::Status>::emplace<absl::lts_20260526::Status>(absl::lts_20260526::Status&&) const
+               tsl::AsyncValue::EnqueueWaiter<tsl::internal::FutureBase<absl::lts_20260526::StatusOr<jax::PyHostValue>, false>::GetReadyFuture() const::{lambda()#1}>(tsl::internal::FutureBase<absl::lts_20260526::StatusOr<jax::PyHostValue>, false>::GetReadyFuture() const::{lambda()#1}&&, tsl::AsyncValue::WaitersAndState)::Node::RunWaiterAndDeleteWaiterNode()
+               void tsl::internal::PromiseBase<absl::lts_20260526::StatusOr<jax::PyHostValue> >::emplace<absl::lts_20260526::StatusOr<jax::PyHostValue> >(absl::lts_20260526::StatusOr<jax::PyHostValue>&&) const
+               tsl::internal::FutureBase<absl::lts_20260526::Status, false>::AndThen<jax::PyArray::BatchedCopyToHostAsyncHelper(xla::ifrt::Client*, std::vector<jax::PyArray::CopyToHostState, std::allocator<jax::PyArray::CopyToHostState> >)::$_1>(jax::PyArray::BatchedCopyToHostAsyncHelper(xla::ifrt::Client*, std::vector<jax::PyArray::CopyToHostState, std::allocator<jax::PyArray::CopyToHostState> >)::$_1&&) const &::{lambda()#1}::operator()()
+               tsl::AsyncValue::EnqueueWaiter<tsl::internal::FutureBase<absl::lts_20260526::Status, false>::AndThen<jax::PyArray::BatchedCopyToHostAsyncHelper(xla::ifrt::Client*, std::vector<jax::PyArray::CopyToHostState, std::allocator<jax::PyArray::CopyToHostState> >)::$_1>(jax::PyArray::BatchedCopyToHostAsyncHelper(xla::ifrt::Client*, std::vector<jax::PyArray::CopyToHostState, std::allocator<jax::PyArray::CopyToHostState> >)::$_1&&) const &::{lambda()#1}>(jax::PyArray::BatchedCopyToHostAsyncHelper(xla::ifrt::Client*, std::vector<jax::PyArray::CopyToHostState, std::allocator<jax::PyArray::CopyToHostState> >)::$_1&&, tsl::AsyncValue::WaitersAndState)::Node::RunWaiterAndDeleteWaiterNode()
+               void tsl::internal::PromiseBase<absl::lts_20260526::Status>::emplace<absl::lts_20260526::Status>(absl::lts_20260526::Status&&) const
+               tsl::internal::FutureBase<absl::lts_20260526::Status, false>::AndThen<xla::ifrt::PjRtArray::CopyToHostBuffer(void*, std::optional<absl::lts_20260526::Span<long const> >, xla::ifrt::ArrayCopySemantics)::$_0>(xla::ifrt::PjRtArray::CopyToHostBuffer(void*, std::optional<absl::lts_20260526::Span<long const> >, xla::ifrt::ArrayCopySemantics)::$_0&&) &&::{lambda()#1}::operator()()
+               tsl::AsyncValue::EnqueueWaiter<tsl::internal::FutureBase<absl::lts_20260526::Status, false>::AndThen<xla::ifrt::PjRtArray::CopyToHostBuffer(void*, std::optional<absl::lts_20260526::Span<long const> >, xla::ifrt::ArrayCopySemantics)::$_0>(xla::ifrt::PjRtArray::CopyToHostBuffer(void*, std::optional<absl::lts_20260526::Span<long const> >, xla::ifrt::ArrayCopySemantics)::$_0&&) &&::{lambda()#1}>(xla::ifrt::PjRtArray::CopyToHostBuffer(void*, std::optional<absl::lts_20260526::Span<long const> >, xla::ifrt::ArrayCopySemantics)::$_0&&, tsl::AsyncValue::WaitersAndState)::Node::RunWaiterAndDeleteWaiterNode()
+               void tsl::internal::PromiseBase<absl::lts_20260526::Status>::emplace<absl::lts_20260526::Status>(absl::lts_20260526::Status&&) const
+               std::_Function_handler<void (PJRT_Error*), pjrt::ConvertCEventToCppFuture(PJRT_Event*, PJRT_Api const*)::$_0>::_M_invoke(std::_Any_data const&, PJRT_Error*&&)
+               pjrt::ConvertCEventToCppFuture(PJRT_Event*, PJRT_Api const*)::$_1::__invoke(PJRT_Error*, void*)
+               tsl::internal::FutureBase<absl::lts_20260526::Status, false>::AndThen<pjrt::PJRT_Event_OnReady(PJRT_Event_OnReady_Args*)::$_0&>(pjrt::PJRT_Event_OnReady(PJRT_Event_OnReady_Args*)::$_0&) const &::{lambda()#1}::operator()()
+               tsl::AsyncValue::EnqueueWaiter<tsl::internal::FutureBase<absl::lts_20260526::Status, false>::AndThen<pjrt::PJRT_Event_OnReady(PJRT_Event_OnReady_Args*)::$_0&>(pjrt::PJRT_Event_OnReady(PJRT_Event_OnReady_Args*)::$_0&) const &::{lambda()#1}>(pjrt::PJRT_Event_OnReady(PJRT_Event_OnReady_Args*)::$_0&, tsl::AsyncValue::WaitersAndState)::Node::RunWaiterAndDeleteWaiterNode()
+               void tsl::internal::PromiseBase<absl::lts_20260526::Status>::emplace<absl::lts_20260526::Status>(absl::lts_20260526::Status&&) const
+               void absl::lts_20260526::internal_any_invocable::LocalInvoker<false, void, xla::CommonPjRtBufferImpl::ToLiteralImpl(xla::MutableLiteralBase*, absl::lts_20260526::AnyInvocable<tsl::Future<xla::MutableLiteralBase*> () &&>)::$_0::operator()()::{lambda(absl::lts_20260526::StatusOr<xla::MutableLiteralBase*> const&)#1}::operator()(absl::lts_20260526::StatusOr<xla::MutableLiteralBase*> const&)::{lambda()#3}&&>(absl::lts_20260526::internal_any_invocable::TypeErasedState*)
+               std::_Function_handler<void (), xla::UnboundedAsyncWorkRunner::Execute(absl::lts_20260526::AnyInvocable<void () &&>)::$_0>::_M_invoke(std::_Any_data const&)
+               tsl::UnboundedWorkQueue::PooledThreadFunc()
+               tsl::(anonymous namespace)::PThread::ThreadFn(void*)
+               start_thread
+               thread_start
+
+    20.70%  python          libcuda.so.580.173.02  [.] pthread_mutex_lock@plt
+            |
+            ---pthread_mutex_lock@plt

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import os
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -50,6 +51,25 @@ REMAT_POLICIES = (
     "dots_with_no_batch_dims_saveable",
     "everything_saveable",
 )
+
+#: Реализованные политики grad-checkpointing (D-8; веха-8 добавила третью):
+#: *гранулярность* remat-границы, в отличие от ``REMAT_POLICIES`` (что остаётся
+#: сохранённым внутри границы).  ``none`` строит граф без границ, ``per_layer``
+#: оборачивает каждый backbone-слой, ``per_layer_block`` сужает границу до
+#: KDA/MLA+MoE блока внутри слоя (ADR-054 Am.18, ``net/model.py``).  Список
+#: объявлен здесь (схема — контракт значения): ``validate_config`` проверяет по
+#: нему, env-переопределение замеров (``AXIOM_GRAD_CKPT_POLICY``) читает его же.
+#: ``net/model.py`` несёт собственную копию по необходимости (импортирует схему,
+#: не наоборот); равенство копий пинует ``net/tests/test_37_per_layer_block.py``.
+GRAD_CKPT_POLICIES = ("none", "per_layer", "per_layer_block")
+
+#: Env-переопределение политики grad-checkpointing (ADR-054 Am.18, кампания
+#: MFU-55): пиннутый ``net/config.json`` не трогается, ручка окружения
+#: перекрывает ``grad_ckpt_policy`` **на сборке** для замеров (A/B «per_layer
+#: vs per_layer_block» на одном и том же пине).  Не задана/пустая — конфиг
+#: первичен, поведение побитово прежнее; неизвестное значение — ошибка сборки
+#: (:class:`GradCkptPolicyError`), а не тихий дефолт.
+GRAD_CKPT_POLICY_ENV = "AXIOM_GRAD_CKPT_POLICY"
 
 #: The case's declarative config — the file the reader below reads.  It is the
 #: *switch* (spine AD-9: "конфиг первичен"): turning a declared mechanism on is
@@ -402,10 +422,12 @@ def validate_config(cfg: ModelConfig) -> None:
     # Grad-checkpointing granularity (D-8): the declared policy has to be one
     # the backbone loop implements — an unknown value would silently fall back
     # to no remat, which is exactly the OOM the field exists to prevent.  The
-    # list mirrors ``net.model.GRAD_CKPT_POLICIES`` (see the field comment;
-    # ``net/model.py`` imports this module, so the import cannot go the other
-    # way) and the two are pinned equal by test_37.
-    assert cfg.grad_ckpt_policy in ("none", "per_layer", "per_layer_block"), (
+    # list lives at module level (``GRAD_CKPT_POLICIES``) so the same contract
+    # serves this check and the env override of the MFU-55 campaign; it mirrors
+    # ``net.model.GRAD_CKPT_POLICIES`` (see the field comment; ``net/model.py``
+    # imports this module, so the import cannot go the other way) and the two
+    # are pinned equal by test_37.
+    assert cfg.grad_ckpt_policy in GRAD_CKPT_POLICIES, (
         "grad_ckpt_policy must be none|per_layer|per_layer_block, got "
         f"{cfg.grad_ckpt_policy!r}"
     )
@@ -493,6 +515,41 @@ def validate_config(cfg: ModelConfig) -> None:
             f"mla_block_merge: swa_window={cfg.swa_window} must cover the block "
             f"({merge.block}) — the intra-block tail is the window's job (ADR-018)"
         )
+
+
+class GradCkptPolicyError(ValueError):
+    """Неизвестное значение ``AXIOM_GRAD_CKPT_POLICY`` — отказ сборки.
+
+    Fail-closed по образцу ``AccumJitError``/режимов мастера: опечатка в
+    переменной не должна тихо оставить политику конфига — замер «per_layer_block»
+    стал бы замером ``per_layer`` под чужим именем в журнале.
+    """
+
+
+def grad_ckpt_policy_mode(value: str | None = None) -> str | None:
+    """Политика grad-checkpointing из окружения: значение | ``None`` (не задана).
+
+    ``AXIOM_GRAD_CKPT_POLICY`` — ручка **замеров** (ADR-054 Am.18, кампания
+    MFU-55): ``net/config.json`` остаётся пиннутым (AD-9), переменная перекрывает
+    ``cfg.grad_ckpt_policy`` на сборке ноги.  Возврат ``None`` означает «переменная
+    не задана/пуста» — вызывающий обязан оставить конфиг первичным (и не трогать
+    ничего сверх него: путь без переменной побитово прежний).
+
+    Чтение fail-closed, значения — только из ``GRAD_CKPT_POLICIES``; регистр и
+    окружающие пробелы нормализуются.  Явный аргумент сильнее окружения (форма
+    ``accum_jit_mode``/``master_dtype_mode``).
+    """
+    raw = value if value is not None else os.environ.get(GRAD_CKPT_POLICY_ENV)
+    policy = (raw or "").strip().lower()
+    if not policy:
+        return None
+    if policy not in GRAD_CKPT_POLICIES:
+        raise GradCkptPolicyError(
+            f"{GRAD_CKPT_POLICY_ENV}={policy!r}: ожидается одно из "
+            f"{list(GRAD_CKPT_POLICIES)} — опечатка не должна тихо померить "
+            "другую политику"
+        )
+    return policy
 
 
 @lru_cache(maxsize=8)
@@ -642,6 +699,17 @@ def load_config(path: str | Path = "config.json") -> ModelConfig:
     # The KDA/MLA counts of the same declaration are metadata, not schema
     # fields — they are checked against the fields the schema validates.
     _check_declared_composition(data, cfg)
+    # ADR-054 Am.18: env-ручка замеров перекрывает политику grad-checkpointing
+    # уже на ЗАГРУЗКЕ — тогда её несёт сам ``cfg`` (и журнал прогона раннера,
+    # читающий поле из cfg, и метрики, и граф — один носитель, как у
+    # ``remat_policy``).  Файл-пин не трогается; переменная не задана —
+    # возвращается ровно прежний cfg (ни замены, ни лишней валидации).
+    # Переопределённое значение проходит ТОТ ЖЕ ``validate_config`` — схема не
+    # обходится; неизвестное значение отвергает уже чтение (fail-closed).
+    policy_override = grad_ckpt_policy_mode()
+    if policy_override is not None:
+        cfg = dataclasses.replace(cfg, grad_ckpt_policy=policy_override)
+        validate_config(cfg)
     return cfg
 
 

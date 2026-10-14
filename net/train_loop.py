@@ -2997,10 +2997,13 @@ def train(
     от флага.  Без флага не строится ни одной jit-функции фазы и не заводится ни
     одного host-таймера — продакшн-ветка байт-в-байт прежняя.
     """
+    import dataclasses
+
     import jax
     import jax.numpy as jnp
 
     from net import checkpoint as checkpoint_mod
+    from net import config as config_mod
     from net import master_dtype as master_dtype_mod
     from net import model, optimizer
 
@@ -3034,6 +3037,19 @@ def train(
     # читается один раз на сборке (режим выбирает путь шага, не середину прогона).
     # Дефолт 0 = прежний Python-путь, побитово.
     accum_jit = accum_jit_mode()
+    # ADR-054 Am.18 (цикл-10, кампания MFU-55): env-переопределение политики
+    # grad-checkpointing для замеров.  Пин ``net/config.json`` не трогается:
+    # заданная ``AXIOM_GRAD_CKPT_POLICY`` перекрывает ``cfg.grad_ckpt_policy`` на
+    # сборке ноги (до ``init_params``/графа), незаданная — конфиг первичен,
+    # поведение побитово прежнее.  Переопределённое значение проходит ТОТ ЖЕ
+    # ``validate_config`` (схема не обходится), неизвестное — отказ сборки
+    # (fail-closed, форма ``accum_jit_mode``); фактическая политика едет
+    # маркером в каждую строку метрик (A/B «per_layer vs per_layer_block»
+    # различимы по журналу, как master_dtype/accum_jit).
+    policy_override = config_mod.grad_ckpt_policy_mode()
+    if policy_override is not None:
+        cfg = dataclasses.replace(cfg, grad_ckpt_policy=policy_override)
+        config_mod.validate_config(cfg)
 
     manager = resume_from
     start_step = 0
@@ -3421,6 +3437,11 @@ def train(
                 # двум полям A/B-ноги цикла-7 различимы в журнале без догадок.
                 "accum_jit": 1 if (accum_jit and len(group) > 1) else 0,
                 "microbatches": len(group),
+                # ADR-054 Am.18: ФАКТИЧЕСКАЯ политика grad-checkpointing шага
+                # (после env-переопределения) — как master_dtype/master_comp,
+                # условие прогона в каждой строке журнала: без поля A/B-ноги
+                # «per_layer vs per_layer_block» неотличимы от смены чего-то ещё.
+                "grad_ckpt_policy": cfg.grad_ckpt_policy,
             }
             # Поля фаз — только на профильных (kpi-интервальных) шагах: дефолтная
             # запись остаётся ровно прежней.

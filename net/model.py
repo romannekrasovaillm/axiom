@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 from typing import NamedTuple
 
 import jax
@@ -772,6 +773,117 @@ def _cross_entropy(logits: jnp.ndarray, targets: jnp.ndarray) -> jnp.ndarray:
     return -nll.mean()
 
 
+# --------------------------------------------------------------------------- #
+# Веха-9 (ADR-054 Am.20, кампания MFU-55): bf16-хранение логитов CE в backward.
+#
+# Пол B=4 по HLO-дампу включает fp32-логиты чанка CE (4,4096,160000) — 9.77
+# ГиБ × 71 вхождение в графе.  Гейт хранит логиты чанка для backward в bf16
+# (каст при сохранении), арифметика logits→logsumexp/softmax остаётся fp32
+# (апкаст при чтении).  Чтение fail-closed (форма ``AXIOM_ACCUM_JIT``/
+# ``AXIOM_MASTER_DTYPE``): опечатка не должна тихо оставить fp32.
+# --------------------------------------------------------------------------- #
+
+#: Env-гейт bf16-хранения логитов чанкованного CE в backward (``0`` — дефолт).
+CE_BF16_ENV = "AXIOM_CE_BF16"
+
+#: Допустимые значения; неизвестное — ошибка (fail-closed, без догадок).
+CE_BF16_VALUES = ("0", "1")
+CE_BF16_OFF = "0"
+CE_BF16_ON = "1"
+
+
+class CeBf16Error(ValueError):
+    """Неизвестное значение ``AXIOM_CE_BF16`` (fail-closed, без догадок)."""
+
+
+def ce_bf16_mode(value: str | None = None) -> bool:
+    """Хранение логитов CE-чанка в backward: ``False`` (дефолт) | ``True``.
+
+    ``AXIOM_CE_BF16=1`` включает ветку :func:`_chunk_sum_bf16` в
+    :func:`_chunked_cross_entropy`: логиты чанка, нужные backward, хранятся
+    в bf16 (каст при сохранении), backward читает их с апкастом в fp32
+    (softmax-арифметика fp32); forward-числа ветка не меняет.  Пустая/
+    незаданная переменная = ``"0"``; значения — только ``"0"``/``"1"``;
+    неизвестное — :class:`CeBf16Error`.  Явный аргумент сильнее окружения
+    (форма ``accum_jit_mode``/``master_dtype_mode``).  Гейт читается на
+    трейсе; вне чанкованного CE (``ce_chunk_tokens=0``) он инертен.
+    """
+    raw = value if value is not None else os.environ.get(CE_BF16_ENV)
+    mode = (raw or "").strip().lower() or CE_BF16_OFF
+    if mode not in CE_BF16_VALUES:
+        raise CeBf16Error(
+            f"{CE_BF16_ENV}={mode!r}: ожидается одно из {list(CE_BF16_VALUES)}"
+        )
+    return mode == CE_BF16_ON
+
+
+@jax.custom_vjp
+def _chunk_sum_bf16(
+    f: jnp.ndarray,
+    t: jnp.ndarray,
+    emb: jnp.ndarray,
+    mask: jnp.ndarray | None,
+):
+    """Один CE-чанк с bf16-хранением логитов для backward (веха-9).
+
+    Forward — ровно выражения прежнего ``chunk_sum`` (:func:`_chunked_cross_entropy`):
+    logits → ``log_softmax`` → gather NLL → глобальные sum/count; числа
+    побитово те же.  Гейт ``AXIOM_CE_BF16=1`` включается только в backward:
+    остаток — bf16-копия логитов (B,chunk,V); backward читает её с апкастом
+    в fp32 и считает softmax-формулу ``grad_logits = (softmax(logits) −
+    onehot(t))·g_sum`` (стандартная форма VJP log-softmax+gather) в fp32.
+
+    Почему custom_vjp, а не каст в forward.  ``logits.astype(bf16).astype(f32)``
+    в forward не срезает пол: transpose-правила ``log_softmax``/gather держат
+    живыми fp32-копии (B,chunk,V) (трассировка backward-остатков показывает
+    полный fp32-логит и до, и после каста).  Явный backward фиксирует состав
+    остатков: ровно ``(bf16 logits, t, emb, f, mask)`` — 9.77→4.9 ГиБ на
+    живой тензор чанка.
+
+    Котангент счётчика: в числитель/знаменатель он входит только через
+    ``mask``; маска — данные (паддинг), не параметр, и её котангент здесь
+    объявлен нулевым (``None``), как и у ``t`` — форма остальных
+    non-differentiable входов.
+    """
+    logits = compute_dtype.gemm(f, emb.T)
+    logp = jax.nn.log_softmax(logits, axis=-1)
+    nll = -jnp.take_along_axis(logp, t[..., None], axis=-1)[..., 0]
+    if mask is None:
+        return jnp.sum(nll), jnp.array(nll.size, jnp.float32)
+    m = mask.astype(nll.dtype)
+    return jnp.sum(nll * m), jnp.sum(m)
+
+
+def _chunk_sum_bf16_fwd(f, t, emb, mask):
+    logits = compute_dtype.gemm(f, emb.T)
+    logp = jax.nn.log_softmax(logits, axis=-1)
+    nll = -jnp.take_along_axis(logp, t[..., None], axis=-1)[..., 0]
+    if mask is None:
+        out = (jnp.sum(nll), jnp.array(nll.size, jnp.float32))
+    else:
+        m = mask.astype(nll.dtype)
+        out = (jnp.sum(nll * m), jnp.sum(m))
+    # Сохраняемый остаток — bf16-копия логитов (и мелкие t/emb/f/mask).
+    return out, (logits.astype(jnp.bfloat16), t, emb, f, mask)
+
+
+def _chunk_sum_bf16_bwd(res, g):
+    logits_stored, t, emb, f, mask = res
+    g_sum, _g_count = g
+    logits = logits_stored.astype(jnp.float32)  # апкаст при чтении; дальше fp32
+    p = jax.nn.softmax(logits, axis=-1)
+    onehot = jax.nn.one_hot(t, logits.shape[-1], dtype=jnp.float32)
+    grad_logits = (p - onehot) * g_sum
+    if mask is not None:
+        grad_logits = grad_logits * mask[..., None].astype(jnp.float32)
+    grad_f = compute_dtype.gemm(grad_logits, emb)
+    grad_emb = compute_dtype.gemm_einsum("btv,bth->vh", grad_logits, f)
+    return grad_f, None, grad_emb, None
+
+
+_chunk_sum_bf16.defvjp(_chunk_sum_bf16_fwd, _chunk_sum_bf16_bwd)
+
+
 def _chunked_cross_entropy(
     features: jnp.ndarray,
     targets: jnp.ndarray,
@@ -800,6 +912,11 @@ def _chunked_cross_entropy(
     (its sum is the global count of non-pad tokens); ``None`` counts every row,
     matching the unmasked naive path.
 
+    Веха-9 (ADR-054 Am.20): гейт ``AXIOM_CE_BF16=1`` (:func:`ce_bf16_mode`)
+    подменяет тело чанка на :func:`_chunk_sum_bf16` — forward-числа те же,
+    но логиты, сохраняемые для backward, хранятся в bf16 (9.77→4.9 ГиБ на
+    живой тензор чанка).  Дефолт 0 — путь ниже побитово прежний.
+
     This checkpoint is *not* one of the ADR-049 remat boundaries and keeps
     ``jax.checkpoint`` without a policy on purpose: it is a chunking mechanism
     whose whole point is to avoid retaining the vocabulary-sized matmul output
@@ -825,13 +942,17 @@ def _chunked_cross_entropy(
         m = mask.astype(nll.dtype)
         return jnp.sum(nll * m), jnp.sum(m)
 
+    # Веха-9: гейт выбирает тело чанка (bf16-хранение логитов для backward);
+    # дефолт 0 оставляет прежнее тело побитово.
+    chunk_body = _chunk_sum_bf16 if ce_bf16_mode() else chunk_sum
+
     total_sum = jnp.zeros(())
     total_count = jnp.zeros(())
     for c in range(n_chunks):
         start = c * ce_chunk_tokens
         end = min(start + ce_chunk_tokens, total_rows)
         mask = None if loss_mask is None else loss_mask[:, start:end]
-        part_sum, part_count = jax.checkpoint(chunk_sum)(
+        part_sum, part_count = jax.checkpoint(chunk_body)(
             features[:, start:end], targets[:, start:end], embedding, mask
         )
         total_sum = total_sum + part_sum

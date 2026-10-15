@@ -60,6 +60,115 @@ def _flash_dense() -> bool:
     return os.environ.get("AXIOM_MLA_DENSE_FLASH", "0") == "1"
 
 
+# --------------------------------------------------------------------------- #
+# Веха-9 (ADR-054 Am.20, кампания MFU-55): bf16-хранение скоров в backward.
+#
+# Пол B=4 по HLO-дампу — fp32 attention-scores (B,12,8192,8192) в backward
+# (12 ГиБ × множество живых тензоров); flash лечит только forward.  Гейт
+# хранит для backward bf16-копию softmax-выхода dense-пути, вычисления
+# остаются fp32.  Чтение fail-closed (форма ``AXIOM_ACCUM_JIT``/
+# ``AXIOM_MASTER_DTYPE``): опечатка не должна тихо оставить fp32 — замер ноги
+# «bf16-хранение» стал бы замером прежнего пути.
+# --------------------------------------------------------------------------- #
+
+#: Env-гейт bf16-хранения скоров в backward (``0`` — дефолт, прежний путь).
+MLA_BWD_BF16_ENV = "AXIOM_MLA_BWD_BF16"
+
+#: Допустимые значения; неизвестное — ошибка (fail-closed, без догадок).
+MLA_BWD_BF16_VALUES = ("0", "1")
+MLA_BWD_BF16_OFF = "0"
+MLA_BWD_BF16_ON = "1"
+
+
+class MlaBwdBf16Error(ValueError):
+    """Неизвестное значение ``AXIOM_MLA_BWD_BF16`` (fail-closed, без догадок)."""
+
+
+def bwd_bf16_mode(value: str | None = None) -> bool:
+    """Хранение скоров dense-пути в backward: ``False`` (дефолт) | ``True``.
+
+    ``AXIOM_MLA_BWD_BF16=1`` включает ветку :func:`_attn_out_bf16stored`:
+    softmax-выход (B,H,T,T), нужный backward, сохраняется в bf16 (каст при
+    сохранении), сами softmax/матмулы и накопление идут в fp32, как раньше —
+    forward-числа ветка не меняет (см. докстринг хелпера).  Пустая/незаданная
+    переменная = ``"0"``; значения — только ``"0"``/``"1"``; неизвестное —
+    :class:`MlaBwdBf16Error`.  Явный аргумент сильнее окружения (форма
+    ``accum_jit_mode``/``master_dtype_mode``).  Читается на трейсе (как
+    flash-переключатель), чтобы тест мог переключить гейт в процессе.
+    """
+    raw = value if value is not None else os.environ.get(MLA_BWD_BF16_ENV)
+    mode = (raw or "").strip().lower() or MLA_BWD_BF16_OFF
+    if mode not in MLA_BWD_BF16_VALUES:
+        raise MlaBwdBf16Error(
+            f"{MLA_BWD_BF16_ENV}={mode!r}: ожидается одно из "
+            f"{list(MLA_BWD_BF16_VALUES)}"
+        )
+    return mode == MLA_BWD_BF16_ON
+
+
+@jax.custom_vjp
+def _attn_out_bf16stored(
+    scores: jnp.ndarray, v: jnp.ndarray, mask: jnp.ndarray
+) -> jnp.ndarray:
+    """``softmax(where(mask, scores, −inf)) @ v`` с bf16-хранением для backward.
+
+    Гейт ``AXIOM_MLA_BWD_BF16=1`` (веха-9, ADR-054 Am.20): тензор
+    (B,H,T,T), который backward держит живым, — тот же самый softmax-выход,
+    но в bf16.  Вычисления не меняются: маскирование, softmax и контракция
+    идут в fp32 (``compute_dtype.gemm_einsum``), forward-значения побитово
+    совпадают с прежним путём, backward читает bf16-копию с апкастом в fp32.
+
+    Маска — аргумент (а не ``where`` снаружи) намеренно: transpose-правило
+    ``select_n`` захватывает оба своих float-примитива как остатки, т.е.
+    ``where(mask, scores, −inf)`` снаружи оставлял бы в графе лишний fp32
+    (B,H,T,T) — тот же, что гейт призван срезать (измерено: pullback-константы
+    несут fp32-скоры, потребитель — транспонированный ``_where``, в теле
+    которого этот вход не используется).  Внутри custom-вызова маскирование
+    живёт в моей формуле backward: ``grad_scores = where(mask, attn ⊙
+    (grad_attn − rowsum), 0)``.
+
+    Почему custom_vjp, а не каст в forward.  ``attn.astype(bf16).astype(f32)``
+    в forward не срезает пол: transpose-правила внутренних примитивов
+    softmax (числитель деления, выход exp, argmax-путь reduce_max) и самой
+    контракции держат живыми **fp32**-тензоры (B,H,T,T) — трассировка
+    линейного отображения показывает три fp32-копии и до, и после каста;
+    bf16-каст добавляет лишнюю копию, ничего не убирая.  Явный backward
+    фиксирует состав остатков: ровно ``(bf16 attn, v, mask)`` — 12→6 ГиБ на
+    живой тензор и без остальных fp32-копий.
+
+    Формула backward — стандартная для softmax (и совпадает с формулой,
+    которую разворачивает autodiff):
+    ``grad_scores = attn ⊙ (grad_attn − rowsum(grad_attn ⊙ attn))``, поверх —
+    та же маска, что применялась к scores в forward.
+    """
+    masked = jnp.where(mask, scores, jnp.finfo(jnp.float32).min)
+    attn = jax.nn.softmax(masked, axis=-1)
+    return compute_dtype.gemm_einsum("bhts,bshd->bthd", attn, v)
+
+
+def _attn_out_bf16stored_fwd(scores, v, mask):
+    masked = jnp.where(mask, scores, jnp.finfo(jnp.float32).min)
+    attn = jax.nn.softmax(masked, axis=-1)
+    o = compute_dtype.gemm_einsum("bhts,bshd->bthd", attn, v)
+    # Сохраняемый тензор — только bf16-копия softmax-выхода (и v, (B,T,H,dq);
+    # mask — bool (B,H,T,T), байт на элемент).
+    return o, (attn.astype(jnp.bfloat16), v, mask)
+
+
+def _attn_out_bf16stored_bwd(res, g):
+    attn_stored, v, mask = res
+    attn = attn_stored.astype(jnp.float32)  # апкаст при чтении; дальше — fp32
+    grad_attn = compute_dtype.gemm_einsum("bthd,bshd->bhts", g, v)
+    rowsum = jnp.sum(grad_attn * attn, axis=-1, keepdims=True)
+    grad_scores = attn * (grad_attn - rowsum)
+    grad_scores = jnp.where(mask, grad_scores, 0.0)  # маска forward'а (transpose where)
+    grad_v = compute_dtype.gemm_einsum("bhts,bthd->bshd", attn, g)
+    return grad_scores, grad_v, None
+
+
+_attn_out_bf16stored.defvjp(_attn_out_bf16stored_fwd, _attn_out_bf16stored_bwd)
+
+
 def _rand(key, shape, scale: float) -> jnp.ndarray:
     return jax.random.normal(key, shape) * scale
 
@@ -161,9 +270,17 @@ def _dense_apply(params: MLAParams, cfg: ModelConfig, x: jnp.ndarray, mask: jnp.
         scores = compute_dtype.gemm_einsum("bthd,bshd->bhts", q, k) * scale  # (B, H, T, T)
         if mask is None:
             mask = _causal_mask(x.shape[-2])
-        scores = jnp.where(mask, scores, jnp.finfo(jnp.float32).min)
-        attn = jax.nn.softmax(scores, axis=-1)  # (B, H, T, T)
-        o = compute_dtype.gemm_einsum("bhts,bshd->bthd", attn, v)  # (B, T, H, dq)
+        if bwd_bf16_mode():
+            # Веха-9 (ADR-054 Am.20): softmax-выход хранится для backward в
+            # bf16 — forward-числа побитово те же (маскирование живёт внутри,
+            # чтобы transpose `where` не оставлял лишний fp32-остаток), а
+            # backward читает bf16-копию (см. _attn_out_bf16stored).
+            # Ветка не трогает flash-путь выше.
+            o = _attn_out_bf16stored(scores, v, mask)
+        else:
+            scores = jnp.where(mask, scores, jnp.finfo(jnp.float32).min)
+            attn = jax.nn.softmax(scores, axis=-1)  # (B, H, T, T)
+            o = compute_dtype.gemm_einsum("bhts,bshd->bthd", attn, v)  # (B, T, H, dq)
     o = o.reshape(*x.shape[:-1], H * dq)
 
     gate = jax.nn.sigmoid(compute_dtype.gemm(x32, params.W_g.astype(jnp.float32)))

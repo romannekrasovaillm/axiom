@@ -3005,6 +3005,7 @@ def train(
     from net import checkpoint as checkpoint_mod
     from net import config as config_mod
     from net import master_dtype as master_dtype_mod
+    from net import mla as mla_mod
     from net import model, optimizer
 
     # Повторный гейт внутри цикла: лимит уже мог быть выдан смоук-режимом
@@ -3037,6 +3038,15 @@ def train(
     # читается один раз на сборке (режим выбирает путь шага, не середину прогона).
     # Дефолт 0 = прежний Python-путь, побитово.
     accum_jit = accum_jit_mode()
+    # Веха-9 (ADR-054 Am.20, цикл-11): гейты хранения bf16 в backward — такое же
+    # условие прогона: выбирают исполняемый путь графа (dense-MLA / чанк CE),
+    # читаются один раз на сборке до ``init_params`` и компиляции.  Чтение
+    # fail-closed (форма ``accum_jit_mode``): опечатка падает сборкой, а не тихо
+    # оставляет fp32-путь — замер ноги «bf16-хранение» стал бы замером прежнего
+    # пути.  Фактические значения едут маркерами в каждую строку метрик
+    # (``mla_bwd_bf16``/``ce_bf16``, как master_dtype/accum_jit).
+    mla_bwd_bf16 = mla_mod.bwd_bf16_mode()
+    ce_bf16 = model.ce_bf16_mode()
     # ADR-054 Am.18 (цикл-10, кампания MFU-55): env-переопределение политики
     # grad-checkpointing для замеров.  Пин ``net/config.json`` не трогается:
     # заданная ``AXIOM_GRAD_CKPT_POLICY`` перекрывает ``cfg.grad_ckpt_policy`` на
@@ -3442,6 +3452,12 @@ def train(
                 # условие прогона в каждой строке журнала: без поля A/B-ноги
                 # «per_layer vs per_layer_block» неотличимы от смены чего-то ещё.
                 "grad_ckpt_policy": cfg.grad_ckpt_policy,
+                # ADR-054 Am.20 (веха-9): ФАКТИЧЕСКИЕ значения гейтов хранения
+                # bf16 в backward (dense-MLA-скоры / логиты CE-чанка) — маркеры
+                # A/B-ног цикла-11 в формате master_dtype/accum_jit: без полей
+                # «fp32 vs bf16-хранилище» неотличимы от смены чего-то ещё.
+                "mla_bwd_bf16": 1 if mla_bwd_bf16 else 0,
+                "ce_bf16": 1 if ce_bf16 else 0,
             }
             # Поля фаз — только на профильных (kpi-интервальных) шагах: дефолтная
             # запись остаётся ровно прежней.

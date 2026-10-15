@@ -163,6 +163,10 @@ def _attn_out_bf16stored_bwd(res, g):
     grad_scores = attn * (grad_attn - rowsum)
     grad_scores = jnp.where(mask, grad_scores, 0.0)  # маска forward'а (transpose where)
     grad_v = compute_dtype.gemm_einsum("bhts,bthd->bshd", attn, g)
+    # Контракт dtype (фикс-раунд вехи-9, форма CE-фикса): котангенты несут dtype
+    # прималов.  Здесь оба примала границы — fp32 всегда: ``scores`` —
+    # выход ``gemm_einsum`` (fp32-аккумулятор), ``v`` — выход ``_project``
+    # (gemm-граница, fp32); bf16 живёт только в остатке ``attn_stored``.
     return grad_scores, grad_v, None
 
 

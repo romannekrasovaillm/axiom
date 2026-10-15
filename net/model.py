@@ -844,6 +844,11 @@ def _chunk_sum_bf16(
     ``mask``; маска — данные (паддинг), не параметр, и её котангент здесь
     объявлен нулевым (``None``), как и у ``t`` — форма остальных
     non-differentiable входов.
+
+    Контракт backward по dtype (фикс-раунд вехи-9): возвращаемые котангенты
+    несут dtype своих прималов (``f``/``emb``) — тот же результат, что даёт
+    autodiff прежнего пути; при ``param_dtype=bfloat16`` это bf16-градиент
+    эмбеддинга (не fp32), см. :func:`_chunk_sum_bf16_bwd`.
     """
     logits = compute_dtype.gemm(f, emb.T)
     logp = jax.nn.log_softmax(logits, axis=-1)
@@ -878,7 +883,15 @@ def _chunk_sum_bf16_bwd(res, g):
         grad_logits = grad_logits * mask[..., None].astype(jnp.float32)
     grad_f = compute_dtype.gemm(grad_logits, emb)
     grad_emb = compute_dtype.gemm_einsum("btv,bth->vh", grad_logits, f)
-    return grad_f, None, grad_emb, None
+    # Контракт backward (стенд GB10, фикс-раунд вехи-9): котангент обязан нести
+    # dtype примала — ровно то, что даёт autodiff прежнего пути (сверено:
+    # gate-off grad эмбеддинга bf16 — bf16).  Арифметика выше всегда fp32
+    # (апкаст при чтении), но gemm_einsum градиента не знает о dtype emb, и без
+    # каста при param_dtype=bfloat16 (рабочая копия bf16, fp32-мастер — режим
+    # кампании) котангент emb шёл fp32 и падал при сложении со котангентом
+    # второго потребителя того же тензора (``params.embedding[ids]`` в MTP,
+    # bf16) в ``add_any``: AssertionError (float32[V,H], bfloat16[V,H]).
+    return grad_f.astype(f.dtype), None, grad_emb.astype(emb.dtype), None
 
 
 _chunk_sum_bf16.defvjp(_chunk_sum_bf16_fwd, _chunk_sum_bf16_bwd)

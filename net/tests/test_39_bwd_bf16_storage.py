@@ -35,7 +35,13 @@
   усиливает шум — измерено 1.6e-3, документировано в комментарии);
 * маркировка: оба фактических значения в каждой строке метрик (0/0, 1/0, 0/1,
   1/1) — форма master_dtype/accum_jit — и связка с ``per_layer_block`` (Am.18)
-  не ломается.
+  не ломается;
+* (г) фикс-раунд (стенд GB10: l3-full, B=4, ``param_dtype=bfloat16``,
+  per_layer_block, ce-chunk 2048): котангенты custom-bwd несут dtype прималов —
+  bf16-градиент эмбеддинга при bf16-примале, как у autodiff прежнего пути;
+  связка «CE-гейт × grad-checkpointing × tied embedding» (второй потребитель
+  эмбеддинга — gather MTP) собирается и шагает; дефолты (оба гейта off) при
+  bf16-параметрах побитово прежние (ревизия до дельты, форма fp32-ноги ниже).
 
 Не пинуется здесь: стенд B=4 (номер приёмки кампании) и HLO-пол — дельта лишь
 делает его достижимым; числа стенда — отдельная нога.
@@ -158,6 +164,7 @@ def _train_leg(
     batches=None,
     metrics_path=None,
     accum_tokens: int = 0,
+    param_dtype: str = "float32",
 ):
     """Нога ``train``; env гейтов выставляют тесты явно через :func:`gate_env`."""
     return tl.train(
@@ -165,7 +172,7 @@ def _train_leg(
         iter(batches if batches is not None else _batches(cfg, steps)),
         train_config=tl.TrainConfig(
             steps=steps, lr=lr, seed=seed, schedule="cosine",
-            param_dtype="float32", micro_batch=1, accum_tokens=accum_tokens,
+            param_dtype=param_dtype, micro_batch=1, accum_tokens=accum_tokens,
             metrics_path=metrics_path, log_every=0, kpi_every=20,
         ),
         budget=_budget(),
@@ -579,6 +586,125 @@ def test_ce_grads_parity_with_documented_tolerance():
 
 
 # --------------------------------------------------------------------------- #
+# (г) Фикс-раунд вехи-9 (стенд GB10, l3-full B=4, param_dtype=bfloat16):
+# контракт dtype котангентов custom-bwd и сборка боевой связки
+# --------------------------------------------------------------------------- #
+
+
+def test_ce_bwd_cotangents_carry_primal_dtypes():
+    """Контракт backward по dtype: котангент несут dtype примала (оба пути).
+
+    Дефект стенда: ``_chunk_sum_bf16_bwd`` возвращал fp32-градиент эмбеддинга
+    при bf16-примале (``param_dtype=bfloat16``) — autodiff прежнего пути даёт
+    dtype примала (сверено ниже), а ``add_any`` в backward требует одинаковых
+    dtype у складываемых котангентов одного тензора (второй потребитель
+    ``params.embedding`` — gather MTP).  Здесь пиннуются dtypes обоих путей.
+    """
+    cfg, feats, targets, emb = _ce_case()
+
+    def emb_grad(emb_in, gate: str | None):
+        with gate_env(None, gate):
+            return jax.grad(
+                lambda e_: model._chunked_cross_entropy(feats, targets, e_, 8)
+            )(emb_in)
+
+    def feat_grad(gate: str | None):
+        with gate_env(None, gate):
+            return jax.grad(
+                lambda f_: model._chunked_cross_entropy(f_, targets, emb, 8), argnums=0
+            )(feats)
+
+    for dt in (jnp.float32, jnp.bfloat16):
+        emb_in = emb.astype(dt)
+        g_on, g_off = emb_grad(emb_in, "1"), emb_grad(emb_in, None)
+        assert g_on.dtype == dt, f"гейт: котангент {g_on.dtype} при примале {dt}"
+        assert g_off.dtype == dt, f"прежний путь: {g_off.dtype} при примале {dt}"
+    assert feat_grad("1").dtype == jnp.float32
+    assert feat_grad(None).dtype == jnp.float32
+
+
+def test_tied_embedding_with_bf16_params_and_both_gates_builds():
+    """Регрессия стенда: tied embedding × оба гейта × bf16-параметры.
+
+    Копия боевого дефекта: ``params.embedding`` (bf16-рабочая копия кампании)
+    потребляется дважды — CE-чанком (custom bwd) и gather'ом MTP; до фикса
+    сложение их котангентов в backward падало ``AssertionError:
+    (ShapedArray(float32[V,H]), ShapedArray(bfloat16[V,H]))``.  Связка обязана
+    собраться, дать bf16-градиент эмбеддинга (dtype примала) и конечный лосс.
+    """
+    cfg = tiny_config(ce_chunk_tokens=8)
+    params = jax.tree_util.tree_map(
+        lambda leaf: leaf.astype(jnp.bfloat16),
+        model.init_params(jr.PRNGKey(0), cfg),
+    )
+    ids = jr.randint(jr.PRNGKey(2), (2, 16), 1, cfg.vocab_size)
+
+    def loss(p_):
+        return model.compute_loss(p_, cfg, ids, 16, grad_ckpt_policy="per_layer_block")
+
+    with gate_env("1", "1"):
+        value, grads = jax.value_and_grad(loss)(params)
+    assert jnp.isfinite(value)
+    assert grads.embedding.dtype == jnp.bfloat16, (
+        f"градиент эмбеддинга {grads.embedding.dtype} — обязан нести dtype примала"
+    )
+
+
+def test_mla_gate_with_bf16_params_grads_carry_primal_dtypes():
+    """MLA-гейт × bf16-параметры: градиенты несут dtype прималов (без конфликта).
+
+    Тот же класс, что у CE: котангенты custom-bwd обязаны совпадать по dtype с
+    прималами.  У MLA-ветки прималы границ (scores, v) — всегда fp32-выходы
+    ``gemm_einsum``/``_project`` (bf16 живёт только в остатке attn), поэтому
+    гейт чист; здесь это пиннуется на градиенте модели с bf16-параметрами.
+    :func:`mla._dense_apply` принимает :class:`mla.MLAParams` — из дерева
+    модели блок достаётся как ``params.layers[i].attn`` (слой вида ``mla``);
+    ``ModelParams`` целиком аргументом быть не может.
+    """
+    cfg = small_config()
+    params = jax.tree_util.tree_map(
+        lambda leaf: leaf.astype(jnp.bfloat16),
+        model.init_params(jr.PRNGKey(0), cfg),
+    )
+    mla_index = next(
+        i for i, kind in enumerate(model.layer_kinds(cfg)) if kind == "mla"
+    )
+    x = jr.normal(jr.PRNGKey(1), (2, 12, cfg.hidden))
+
+    def loss(p_):
+        return jnp.sum(mla._dense_apply(p_.layers[mla_index].attn, cfg, x) ** 2)
+
+    with gate_env("1", None):
+        grads = jax.grad(loss)(params)
+    leaves = jax.tree_util.tree_leaves(grads)
+    assert leaves and all(leaf.dtype == jnp.bfloat16 for leaf in leaves), (
+        f"градиенты MLA обязаны нести dtype прималов (bf16): "
+        f"{sorted({str(leaf.dtype) for leaf in leaves})}"
+    )
+
+
+def test_train_with_bf16_params_both_gates_and_grad_ckpt(tmp_path):
+    """Сборка/шаг ноги кампании: bf16-параметры + оба гейта + per_layer_block.
+
+    Тот же класс, что упал на стенде (l3-full, B=4): сборка шага с bf16-рабочей
+    копией и гейтами хранения.  Пиннуется и маркировка строк журнала.
+    """
+    cfg = tiny_config(ce_chunk_tokens=8, grad_ckpt_policy="per_layer_block")
+    metrics = tmp_path / "bf16-both.jsonl"
+    with gate_env("1", "1", policy="per_layer_block"):
+        result = _train_leg(
+            cfg, 2, batches=_batches(cfg, 2), param_dtype="bfloat16",
+            metrics_path=metrics,
+        )
+    assert result.steps_done == 2
+    assert all(np.isfinite(x) for x in result.losses)
+    assert result.params.embedding.dtype == jnp.bfloat16
+    rows = tl.MetricsWriter.read(metrics)
+    assert rows and all(r["ce_bf16"] == 1 and r["mla_bwd_bf16"] == 1 for r in rows)
+    assert all(r["grad_ckpt_policy"] == "per_layer_block" for r in rows)
+
+
+# --------------------------------------------------------------------------- #
 # 10-шаговые ноги: Δloss, маркеры метрик, связка с Am.18
 # --------------------------------------------------------------------------- #
 
@@ -672,9 +798,11 @@ def test_campaign_bundle_with_per_layer_block_still_works(parity_legs):
 
 #: Проба дефолтного пути: двухшаговая нога с накоплением на конфиге с
 #: чанкованным CE (задевает оба изменённых пути — MLA dense + CE-чанк);
-#: печатает JSON последней строкой (форма test_38).
+#: печатает JSON последней строкой (форма test_38).  ``PROBE_PARAM_DTYPE``
+#: выбирает точность рабочей копии параметров (fp32 по умолчанию; фикс-раунд
+#: вехи-9 пиннует тем же пробником и bf16-ветку кампании).
 _PROBE = r'''
-import json, sys
+import json, os, sys
 from pathlib import Path
 sys.path.insert(0, "net/tests")
 import conftest  # noqa: F401 — пины ADR-010 до import jax
@@ -688,7 +816,8 @@ batches = [rng.integers(0, cfg.vocab_size, size=(1, 16), dtype=np.int32) for _ i
 result = tl.train(
     cfg, iter(batches),
     train_config=tl.TrainConfig(steps=2, lr=1e-2, seed=7, schedule="cosine",
-                                param_dtype="float32", accum_tokens=32,
+                                param_dtype=os.environ.get("PROBE_PARAM_DTYPE", "float32"),
+                                accum_tokens=32,
                                 micro_batch=1, log_every=0),
     budget=tl.Budget(run_ref="veha9-off", path=Path("/dev/null"), present=True),
 )
@@ -757,6 +886,24 @@ def test_gates_off_are_bit_identical_to_baseline_revision(tmp_path):
     current_out = _run_probe(CASE_DIR)
     assert current_out == base_out, (
         "дефолтный путь разошёлся с базовой ревизией: "
+        f"current={current_out!r} baseline={base_out!r}"
+    )
+
+
+def test_bf16_params_gates_off_are_bit_identical_to_baseline_revision(tmp_path):
+    """То же с ``param_dtype=bfloat16`` — режим кампании (фикс-раунд вехи-9).
+
+    Нога стенда идёт bf16-рабочей копией параметров; фикс котангентов не имел
+    права тронуть дефолтный путь — сверка тем же пробником байт-в-байт:
+    loss-репризы и хеши деревьев (params — bf16, master — fp32) совпадают с
+    ревизией до дельты.
+    """
+    env = {"PROBE_PARAM_DTYPE": "bfloat16"}
+    baseline = _extract_baseline(tmp_path)
+    base_out = _run_probe(baseline, script=baseline / "probe.py", extra_env=env)
+    current_out = _run_probe(CASE_DIR, extra_env=env)
+    assert current_out == base_out, (
+        "bf16-дефолтный путь разошёлся с базовой ревизией: "
         f"current={current_out!r} baseline={base_out!r}"
     )
 

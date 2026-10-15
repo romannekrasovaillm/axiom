@@ -1,0 +1,5 @@
+[jax-preflight] XLA_PYTHON_CLIENT_MEM_FRACTION=0.96 (source: env)
+[jax-preflight] XLA_PYTHON_CLIENT_MEM_FRACTION=0.96 (source: env)
+[pretrain] ВНИМАНИЕ: детерминизм XLA не запиннен (NET_GATE_PROFILE=1) — побитовая воспроизводимость между процессами на GPU не гарантируется (ADR-013); запись в журнале это фиксирует
+[pretrain] l3-full: vocab=160000, T=8192, B=4 (micro=4, accum=65536), шагов 10, grad-checkpointing=True, remat=none, токенизатор=16e4a5325f38df9d…
+[pretrain] ОШИБКА цикла: persistent kernel: configuration (C=64, H=12, dk=128, dv=128, dtype=bfloat16) is not among the live cases of the sieve (mma tiling rules and the GB10 SMEM floor -- see valid_config); no silent fallback

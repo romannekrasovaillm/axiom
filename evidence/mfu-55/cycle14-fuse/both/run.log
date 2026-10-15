@@ -1,0 +1,9 @@
+[jax-preflight] XLA_PYTHON_CLIENT_MEM_FRACTION=0.96 (source: env)
+[jax-preflight] XLA_PYTHON_CLIENT_MEM_FRACTION=0.96 (source: env)
+[pretrain] ВНИМАНИЕ: детерминизм XLA не запиннен (NET_GATE_PROFILE=1) — побитовая воспроизводимость между процессами на GPU не гарантируется (ADR-013); запись в журнале это фиксирует
+[pretrain] l3-full: vocab=160000, T=8192, B=2 (micro=2, accum=off), шагов 10, grad-checkpointing=True, remat=none, токенизатор=16e4a5325f38df9d…
+/home/roman/axiom/net/train_loop.py:3189: UserWarning: AXIOM_OPT_FUSE=1 при AXIOM_MASTER_DTYPE='fp32': фьюзинг применения осмыслен только при bf16-мастере (fp32-путь кастов fp32↔bf16 в применении не делает) — значение игнорируется, путь побитово прежний
+  opt_fuse = optimizer.opt_fuse_mode(master_dtype=master_mode)
+/home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax/_src/ops/scatter.py:105: FutureWarning: scatter inputs have incompatible types: cannot safely cast value from dtype=float32 to dtype=bfloat16 with jax_numpy_dtype_promotion=standard. In future JAX releases this will result in an error.
+  warnings.warn(
+[pretrain] шагов 10, токенов 163840, loss 13.537995338439941 → 12.264034271240234, tree_hash=2ac56009642fd501…, остановка: по плану

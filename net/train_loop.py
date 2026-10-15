@@ -2848,6 +2848,135 @@ def make_jitted_accum(loss_fn, *, donate: bool = False):
 
 
 # ---------------------------------------------------------------------------
+# 9-кватер. Асинхронные метрики шага (ADR-054 Am.21, очередь цикла-12, веха-10)
+# ---------------------------------------------------------------------------
+#
+# Перф-зонд цикла-8 показал futex/absl-цепочки вокруг ``jax
+# BlockUntilReadyWithCancel ← PyArray BatchedCopyToHostAsyncHelper``:
+# синхронные копии на хост каждого шага (loss) — ~25% сэмплов, и на host-bound
+# шаге (Am.15) это чистый минус — GPU простаивает, пока хост ждёт копию.
+# Дельта: per-step loss НЕ копируется каждый шаг.  ``loss`` — единственная
+# per-step метрика, копируемая с устройства (все остальные поля строки метрик —
+# host-арифметика шага), поэтому дельта снимает именно её.
+#
+# Схема: значения окна собираются на устройстве (ссылки на device-скаляры —
+# ровно те значения, что вернул jit; никакой арифметики над ними), а хост
+# получает их ОДНИМ ``device_get`` раз в K шагов (K = ``log_every`` или 10 —
+# существующая каденсу логирования; последний шаг ноги — принудительный
+# сброс).  Скалярный аккумулятор суммы на устройстве не годится: критерий
+# дельты — значения на границах сброса совпадают с синхронным путём **точно**
+# (нулевой допуск), а сумма/среднее на устройстве — другая арифметика и другие
+# числа (порядок fp32-редукций против host-f64 в Python-ветке взвешивания);
+# буфер значений возвращает исходные числа бит-в-бит.  Цена — K скаляров
+# памяти устройства (K ≤ ~100), это не измеримо.
+#
+# Строки метрик формируются каждый шаг (KPI-носитель сохраняет пошаговую
+# гранулярность и точные значения), на диск пишутся на границе сброса, когда
+# известны значения окна: файл остаётся построчным (schema
+# ``pretrain-metrics/v1`` не меняется, добавляется аддитивный маркер
+# ``async_metrics``), потеря при аварии — хвост ≤K шагов, это и есть цена
+# снятия синхронизаций.
+#
+# nan-контроль.  Раньше границы сброса host не может реагировать на nan без
+# ``device_get`` — реагировать нечем (любая проверка на хосте требует копии);
+# это фиксируется здесь как свойство режима.  Контрол живёт на устройстве:
+# значения окна — device-side след шагов, и на границе сброса окно
+# проверяется на неконечные значения с номером первого шага; без гейта
+# синхронный путь nan не проверяет вовсе, так что гейт не ослабляет контроль,
+# а добавляет его.  Пойманный nan — падение (:class:`PretrainNanError`) ПОСЛЕ
+# записи строк окна: журнал сохраняет nan-значения для разбора, прогон не
+# продолжается с отравленным состоянием молча.
+
+#: Env-гейт асинхронных метрик (ADR-054 Am.21): ``0`` — прежний путь
+#: (побитово; ``device_get`` loss на каждом шаге), ``1`` — окно на устройстве.
+ASYNC_METRICS_ENV = "AXIOM_ASYNC_METRICS"
+
+#: Допустимые значения гейта; неизвестное — ошибка (fail-closed, форма
+#: ``AXIOM_ACCUM_JIT``/``AXIOM_MASTER_DTYPE``), а не тихий откат в дефолт.
+ASYNC_METRICS_VALUES = ("0", "1")
+ASYNC_METRICS_OFF = "0"
+ASYNC_METRICS_ON = "1"
+
+#: Каденс сброса без явного ``log_every`` — существующая каденсу логирования
+#: (``log_every`` или, если он выключен, десять шагов).
+ASYNC_METRICS_DEFAULT_EVERY = 10
+
+
+class AsyncMetricsError(ValueError):
+    """Асинхронные метрики: неизвестное значение гейта (fail-closed).
+
+    Опечатка в ``AXIOM_ASYNC_METRICS`` не должна тихо оставить синхронный путь
+    (замер «async-ноги» стал бы замером прежнего пути) — та же форма отказа,
+    что у :class:`AccumJitError`.
+    """
+
+
+class PretrainNanError(RuntimeError):
+    """nan/inf в окне метрик: граница сброса — первая точка, где host видит nan.
+
+    Без посэмпловой синхронизации реакция на nan раньше сброса невозможна
+    (реагировать значит читать); гейт делает границу сброса честной точкой
+    падения, а не «тихим пропуском» отравленного шага.  Падение — после записи
+    строк окна в журнал: nan-значения сохраняются для разбора.
+    """
+
+
+def async_metrics_mode(value: str | None = None) -> bool:
+    """Режим метрик шага: ``False`` (дефолт) | ``True``.
+
+    ``AXIOM_ASYNC_METRICS`` читается на **сборке** ноги (:func:`train`): режим
+    выбирает путь метрик шага, в середине прогона он не меняется.  Пустая/
+    незаданная переменная = ``"0"`` (прежнее поведение); значения — только
+    ``"0"``/``"1"``; неизвестное значение — :class:`AsyncMetricsError`
+    (fail-closed).  Явный аргумент сильнее окружения (форма
+    :func:`accum_jit_mode`).
+    """
+    raw = value if value is not None else os.environ.get(ASYNC_METRICS_ENV)
+    mode = (raw or "").strip().lower() or ASYNC_METRICS_OFF
+    if mode not in ASYNC_METRICS_VALUES:
+        raise AsyncMetricsError(
+            f"{ASYNC_METRICS_ENV}={mode!r}: ожидается одно из {list(ASYNC_METRICS_VALUES)}"
+        )
+    return mode == ASYNC_METRICS_ON
+
+
+def _as_fp32_sample(sample: Any) -> Any:
+    """Значение loss для окна: единственное приведение — точное расширение bf16/f16.
+
+    Стек окна обязан быть однородным (``jnp.stack`` не смешивает dtype), а
+    значения — бит-в-бит теми, что вернул граф: bf16/f16 ⊂ fp32, расширение
+    точное и числа не меняет; fp32 и всё прочее возвращаются как есть (сужать
+    нельзя — потеря битов сделала бы нулевой допуск невыполнимым).
+    """
+    dtype = getattr(sample, "dtype", None)
+    if dtype is not None and str(dtype) in ("bfloat16", "float16"):
+        return sample.astype("float32")
+    return sample
+
+
+@dataclass
+class _PendingMetricsStep:
+    """Шаг окна асинхронных метрик (Am.21): device-значения + host-поля строки.
+
+    ``samples`` — device-скаляры loss шага (один — одиночный микробатч и
+    jitted-аккумуляция; по одному на микробатч — Python-ветка накопления).
+    ``weights``/``total`` заполнены только Python-веткой: взвешивание
+    воспроизводится на хосте в том же f64-порядке, что и в синхронном пути,
+    поэтому значения совпадают точно.  ``row`` — строка
+    ``pretrain-metrics/v1`` с незаполненным ``loss`` (``None`` — журнала нет),
+    ``lr``/``elapsed`` — для строки печати на границе сброса.
+    """
+
+    absolute: int
+    row: dict[str, Any] | None
+    lr: float
+    elapsed: float
+    samples: list[Any]
+    weights: list[float] | None = None
+    total: float | None = None
+
+
+# ---------------------------------------------------------------------------
 # 10. Цикл претрейна
 # ---------------------------------------------------------------------------
 
@@ -2996,6 +3125,22 @@ def train(
     ``jax.jit(value_and_grad(loss_fn))``), поэтому веса и ``tree_hash`` не зависят
     от флага.  Без флага не строится ни одной jit-функции фазы и не заводится ни
     одного host-таймера — продакшн-ветка байт-в-байт прежняя.
+
+    **Асинхронные метрики** (``AXIOM_ASYNC_METRICS=1``, ADR-054 Am.21).  Значения
+    loss окна собираются на устройстве (ссылки на device-скаляры шагов), а хост
+    получает их ОДНИМ ``device_get`` раз в K шагов (K = ``log_every`` или 10;
+    последний шаг ноги — принудительный сброс), а не каждым шагом: на host-bound
+    шаге (Am.15) посэмпловая копия — измеренная доминанта (futex-цепочка
+    ``BlockUntilReady``, ~25% сэмплов зонда цикла-8).  Значения окна — те же
+    числа, что у синхронного пути (нулевой допуск: буфер хранит ровно значения
+    jit, Python-ветка взвешивания повторяется на хосте в том же f64-порядке).
+    Строки ``pretrain-metrics/v1`` формируются каждый шаг и пишутся на границах
+    сброса (потеря при аварии ≤K шагов) с маркером ``async_metrics``.
+    nan-контроль — на устройстве: окно само является следом шагов, на границе
+    сброса оно проверяется на неконечные значения, и пойманный nan падает
+    :class:`PretrainNanError` после записи строк окна (раньше границы сброса host
+    не видит nan без копии — это цена режима).  Дефолт (``0``) не заводит окна и
+    остаётся побитово прежним путём.
     """
     import dataclasses
 
@@ -3038,6 +3183,13 @@ def train(
     # читается один раз на сборке (режим выбирает путь шага, не середину прогона).
     # Дефолт 0 = прежний Python-путь, побитово.
     accum_jit = accum_jit_mode()
+    # ADR-054 Am.21 (цикл-12, веха-10): гейт асинхронных метрик — такое же
+    # условие прогона: выбирает путь метрик шага (окно на устройстве против
+    # посэмплового device_get).  Чтение fail-closed (форма accum_jit_mode):
+    # опечатка падает сборкой, а не тихо оставляет синхронный путь — замер
+    # ноги «async-метрики» стал бы замером прежнего пути.  Дефолт 0 —
+    # побитово прежний путь: гейт-off не заводит ни окна, ни новых веток.
+    async_metrics = async_metrics_mode()
     # Веха-9 (ADR-054 Am.20, цикл-11): гейты хранения bf16 в backward — такое же
     # условие прогона: выбирают исполняемый путь графа (dense-MLA / чанк CE),
     # читаются один раз на сборке до ``init_params`` и компиляции.  Чтение
@@ -3274,6 +3426,93 @@ def train(
     micro_batch = max(1, int(train_config.micro_batch))
     accum_tokens = int(train_config.accum_tokens)
 
+    # Am.21: окно асинхронных метрик (device-значения шагов) и его сброс.  Под
+    # гейтом-off окно пусто, а сброс — no-op host-вызов: дефолтный путь не
+    # строит ни устройства памяти, ни jit-функций.
+    metric_window: list[_PendingMetricsStep] = []
+    #: Каденс сброса — существующая каденция логирования: ``log_every``, если он
+    #: задан, иначе ``ASYNC_METRICS_DEFAULT_EVERY``; границы — по абсолютному
+    #: номеру шага, как у печати ``log_every``-строки.
+    flush_every = (
+        int(train_config.log_every)
+        if int(train_config.log_every) > 0
+        else ASYNC_METRICS_DEFAULT_EVERY
+    )
+
+    def _flush_metrics_window() -> None:
+        """Сброс окна: один ``device_get`` на K шагов, точные значения, nan-контроль.
+
+        Порядок важен: значения окна → строки журнала (loss известен) → печать
+        → nan-проверка.  Пойманный nan падает уже ПОСЛЕ записи строк окна:
+        журнал сохраняет nan-значения для разбора, а прогон не продолжается с
+        отравленным состоянием молча (Am.21).
+        """
+        if not metric_window:
+            return
+        # Один стек + один ``device_get``: K шагов (и N микробатчей Python-ветки)
+        # стоят одной синхронизации.  Значения — бит-в-бит те, что вернул jit:
+        # стек — копия, не арифметика.
+        samples = [sample for step in metric_window for sample in step.samples]
+        values = np.asarray(jax.device_get(jnp.stack(samples)))
+        window_values: list[float] = []
+        cursor = 0
+        for step in metric_window:
+            count = len(step.samples)
+            if step.weights is None:
+                # Одиночный микробатч / jitted-аккумуляция: значение шага — ровно
+                # то, что вернул граф (float() — точное расширение fp32→f64, как
+                # ``float(jax.device_get(loss))`` синхронного пути).
+                window_values.append(float(values[cursor]))
+            else:
+                # Python-ветка взвешивания — один-в-один: sum(f64(L_i)·w_i) в том
+                # же порядке слагаемых и f64-разделение, что в синхронном пути.
+                acc = 0.0
+                for sample, weight in zip(values[cursor : cursor + count], step.weights):
+                    acc += float(sample) * weight
+                window_values.append(acc / step.total)
+            cursor += count
+        losses.extend(window_values)
+        for step, value in zip(metric_window, window_values):
+            if step.row is not None:
+                step.row["loss"] = value
+                metrics.log(step.row)
+        if train_config.log_every:
+            try:
+                # fsum отказывается (-inf + +inf): для строки диагностики —
+                # nan, а решение о падении принимает nan-проверка ниже, а не
+                # ValueError печати.
+                window_mean = math.fsum(window_values) / len(window_values)
+            except ValueError:
+                window_mean = float("nan")
+            print(
+                f"[pretrain] шаг {metric_window[-1].absolute}: "
+                f"loss={window_values[-1]:.4f} (async-окно "
+                f"{metric_window[0].absolute}..{metric_window[-1].absolute}: "
+                f"{len(window_values)} шагов, среднее окна "
+                f"{window_mean:.4f}) "
+                f"lr={metric_window[-1].lr:.3e} "
+                f"{metric_window[-1].elapsed:.2f} с/шаг",
+                flush=True,
+            )
+        nan_step = next(
+            (
+                step.absolute
+                for step, value in zip(metric_window, window_values)
+                if not math.isfinite(value)
+            ),
+            None,
+        )
+        first_absolute = metric_window[0].absolute
+        last_absolute = metric_window[-1].absolute
+        metric_window.clear()
+        if nan_step is not None:
+            raise PretrainNanError(
+                f"nan/inf в loss шага {nan_step} (окно {first_absolute}..{last_absolute}, "
+                f"K={flush_every}): без посэмпловой синхронизации граница сброса — "
+                "первая точка, где host видит nan (Am.21); строки окна записаны в "
+                "журнал, прогон дальше не ведётся — шаг с nan не выдаётся за чистый"
+            )
+
     for index in range(train_config.steps):
         absolute = start_step + index + 1
         # Delta B: pull the micro-batches of one optimizer step.  ``accum_tokens
@@ -3312,6 +3551,12 @@ def train(
         )
         batch_tokens = sum(int(np.prod(np.shape(m))) for m in group)
         tick = time.time()
+        # Am.21: под гейтом значения шага собираются на устройстве и копируются
+        # на границе сброса; переменные заполняет ветка шага ниже (single/accum —
+        # одно значение, Python-ветка — по значению на микробатч).
+        loss_samples: list[Any] = []
+        loss_weights: list[float] | None = None
+        loss_total: float | None = None
         if len(group) == 1:
             # No accumulation happened: identical to the pre-delta step.
             # ADR-054: donate-ветка включается только там, где буфер мёртв после
@@ -3328,7 +3573,11 @@ def train(
                 loss, grads = grad_fn_donated(params, group[0])
             else:
                 loss, grads = grad_fn(params, group[0])
-            loss_value = float(jax.device_get(loss))
+            if async_metrics:
+                # Am.21: значение шага остаётся на устройстве до границы сброса.
+                loss_samples = [_as_fp32_sample(loss)]
+            else:
+                loss_value = float(jax.device_get(loss))
         else:
             # ADR-054 Am.16 (цикл-7): под гейтом — один jit-вызов на весь шаг.
             # Микробатчи пакуются в пакет с ведущей осью N (device_put стеком),
@@ -3341,17 +3590,30 @@ def train(
                     loss, grads = accum_fn_donated(params, packed, micro_weights)
                 else:
                     loss, grads = accum_fn(params, packed, micro_weights)
-                loss_value = float(jax.device_get(loss))
+                if async_metrics:
+                    # Am.21: значение шага остаётся на устройстве до границы сброса.
+                    loss_samples = [_as_fp32_sample(loss)]
+                else:
+                    loss_value = float(jax.device_get(loss))
             else:
                 # Token-weighted mean of the micro-batches' losses/gradients, so a
                 # curriculum phase change inside the group does not bias the step.
                 total = float(batch_tokens)
                 loss_acc = 0.0
                 grads = None
+                if async_metrics:
+                    # Am.21: без посэмпловой синхронизации — сами micro-loss' едут
+                    # в окно, взвешивание повторится на хосте в f64 и том же
+                    # порядке слагаемых (значения совпадут точно).
+                    loss_samples, loss_weights = [], []
                 for m in group:
                     mt = float(np.prod(np.shape(m)))
                     micro_loss, micro_grads = grad_fn(params, m)
-                    loss_acc += float(jax.device_get(micro_loss)) * mt
+                    if async_metrics:
+                        loss_samples.append(_as_fp32_sample(micro_loss))
+                        loss_weights.append(mt)
+                    else:
+                        loss_acc += float(jax.device_get(micro_loss)) * mt
                     scaled = jax.tree_util.tree_map(lambda leaf: leaf * mt, micro_grads)
                     grads = (
                         scaled
@@ -3359,7 +3621,10 @@ def train(
                         else jax.tree_util.tree_map(lambda a, b: a + b, grads, scaled)
                     )
                 grads = jax.tree_util.tree_map(lambda leaf: leaf / total, grads)
-                loss_value = loss_acc / total
+                if async_metrics:
+                    loss_total = total
+                else:
+                    loss_value = loss_acc / total
         if use_bf16_master:
             # Am.13: grads — bf16, рабочей копии нет, второго выхода шага тоже
             # (каст-в-шаг цикл-4 в этом режиме упразднён: params и есть мастер).
@@ -3399,7 +3664,8 @@ def train(
                 loader_seconds=loader_seconds,
             )
 
-        losses.append(loss_value)
+        if not async_metrics:
+            losses.append(loss_value)
         lr_history.append(lr_at(absolute - 1))
         step_seconds.append(elapsed)
         step_tokens_per_sec.append(batch_tokens / elapsed if elapsed > 0 else 0.0)
@@ -3417,7 +3683,10 @@ def train(
         if metrics is not None:
             record: dict[str, Any] = {
                 "step": absolute,
-                "loss": loss_value,
+                # Am.21: под гейтом loss заполняется на границе сброса окна —
+                # то же число jit, только копия едет раз в K шагов; заглушка до
+                # диска не доходит: строка пишется там же, где заполняется.
+                "loss": None if async_metrics else loss_value,
                 "lr": lr_history[-1],
                 "phase": phase,
                 "tokens": batch_tokens,
@@ -3458,14 +3727,42 @@ def train(
                 # «fp32 vs bf16-хранилище» неотличимы от смены чего-то ещё.
                 "mla_bwd_bf16": 1 if mla_bwd_bf16 else 0,
                 "ce_bf16": 1 if ce_bf16 else 0,
+                # ADR-054 Am.21 (веха-10): маркер асинхронных метрик (1 — loss
+                # копировался раз в K шагов, 0 — прежний посэмпловый путь) —
+                # в формате master_dtype/accum_jit: без поля A/B-ноги цикла-12
+                # «sync vs async-метрики» неотличимы от смены чего-то ещё.
+                "async_metrics": 1 if async_metrics else 0,
             }
             # Поля фаз — только на профильных (kpi-интервальных) шагах: дефолтная
             # запись остаётся ровно прежней.
             if phase_record is not None:
                 record["phase_profile"] = True
                 record.update(phase_record)
-            metrics.log(record)
-        if train_config.log_every and (
+            if not async_metrics:
+                metrics.log(record)
+        else:
+            record = None
+        if async_metrics:
+            # Am.21: шаг становится в окно; строку пишет сброс, когда известны
+            # значения окна.  KPI-носитель сохраняет пошаговую гранулярность
+            # (schema не меняется), на диск строки ложатся на границе сброса —
+            # потеря при аварии ≤K шагов, это и есть цена снятия синхронизаций.
+            metric_window.append(
+                _PendingMetricsStep(
+                    absolute=absolute,
+                    row=record,
+                    lr=lr_at(absolute - 1),
+                    elapsed=elapsed,
+                    samples=loss_samples,
+                    weights=loss_weights,
+                    total=loss_total,
+                )
+            )
+            if absolute % flush_every == 0:
+                # Сброс — вне ``elapsed`` (как профиль фаз): шаг меряет горячий
+                # путь без посэмпловой копии, стоимость сброса — на границе.
+                _flush_metrics_window()
+        elif train_config.log_every and (
             index == 0 or absolute % train_config.log_every == 0
         ):
             print(
@@ -3641,6 +3938,11 @@ def train(
             )
             break
 
+    # Am.21: принудительный сброс на выходе ноги — последний шаг и любой break
+    # (стоп-файл / бюджет / данные) отдают остаток окна, чтобы loss-траектория
+    # и число строк не потеряли хвост.  Под гейтом-off окно пусто (no-op).
+    _flush_metrics_window()
+
     if (
         manager is not None
         and stop_reason is not None
@@ -3798,6 +4100,9 @@ __all__ = [
     "ACCEPTANCE_PINNING",
     "ACCUM_JIT_ENV",
     "AccumJitError",
+    "ASYNC_METRICS_DEFAULT_EVERY",
+    "ASYNC_METRICS_ENV",
+    "AsyncMetricsError",
     "BACKEND_ENV",
     "BOS_ID",
     "CURSOR_MANIFEST_NAME",
@@ -3824,6 +4129,7 @@ __all__ = [
     "PretrainBudgetError",
     "PretrainDataError",
     "PretrainMixLoader",
+    "PretrainNanError",
     "SHARD_NAMES",
     "ShardDocStream",
     "ShardEntry",
@@ -3833,6 +4139,7 @@ __all__ = [
     "TrainResult",
     "accum_jit_mode",
     "apply_declared_backend_pinning",
+    "async_metrics_mode",
     "budget_breach",
     "declared_backend",
     "decay_start_step",

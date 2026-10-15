@@ -99,11 +99,47 @@ bf16-хранилище микро-сдвиг обновления (после `
 неотличимо от тихой расходимости.  До отдельного решения архитектора связка
 не живёт молча (Am.13): шаг строится только как ``leaf`` × fp32-in-bf16-tree
 или ``grouped`` × fp32-мастер.
+
+Фьюзинг применения в leaf-режиме (ADR-054 Am.23, веха-11)
+----------------------------------------------------------
+
+Стоимость bf16-шага — не арифметика, а **цепочка конверсий fp32↔bf16 на каждый
+лист** (апкаст градиента/мастера, применение плеча компенсации, запись мастера
+и буфера компенсации): на геометрии l3-full это 6507 ``convert_element_type``
+в трассированном графе, а в профиле — доминирующий по количеству класс ядер
+``wrapped_convert`` при копеечном GPU-времени (Am.23).  Дельта вехи-11 —
+``AXIOM_OPT_FUSE=1`` (дефолт 0): применение обновления исполняется на
+**виртуальных shape-группах** (группа ADR-048, форма, dtypes, подпись
+состояния) — момент обновляется одной элементной операцией на группу, апкасты
+градиента/мастера и запись мастера/буфера — единым кастом на группу
+(``vmap``-применение той же функции плеча), AdamW-цепочки — так же
+поэлементно.  На l3-full это 6507 → 279 конверсий (×23) при **неизменном**
+числе ``dot_general``: NS5 остаётся листовым (``_muon_update`` на срез стека),
+и переупорядочивания редукций, запрещённого для bf16 фикс-раундом вехи-6,
+фьюзинг не вносит.
+
+Выбор (а)/(б) вехи-11 — измерением.  Путь (а) («снять запрет ``bf16`` ×
+``grouped``») в своей сути оставляет batched NS5 поверх bf16-хранилища: дельта
+обновления ~2e-5 отн. на **каждом** элементе и шаге (Am.11), в хранилище — шаг
+сетки bf16 (пин диагноза — ``net/tests/test_35_bf16_master.py``), а критерий
+«не больше одного округления хранилища» для него веха-6 объявила невыразимым —
+доказательства симметрии нет и не появилось.  Путь (б) (этот: листовой NS5 +
+фьюзированное применение) арифметически тождественен leaf-пути (eager побитов,
+в т.ч. в динамике 3 шагов — ``net/tests/test_41_optimizer_fuse.py``); под jit
+расхождения — класса lowered-решений XLA (контракции/фьюжн объединённого
+графа): на tiny-геометрии master/моменты побитовы (за 5 шагов × 3 сида),
+хвосты ≤2.4e-7; на small-геометрии — редкие единичные «щелчки хранилища»
+(доли процента элементов; ≤1.22e-4 абс. на мастерах за 3 шага, худшие сиды;
+лоссы ≤4.8e-7) → малый каскад через градиент и NS5.  Источник щелчков —
+микро-различие ниже середины округления (fp32-ulp), а не систематический сдвиг
+обновления: выбор — (б); запрет ``grouped`` × ``bf16`` сохранён без изменений
+(его причина — batched NS5 — фьюзингом не снимается).
 """
 
 from __future__ import annotations
 
 import os
+import warnings
 
 import jax
 import jax.numpy as jnp
@@ -209,6 +245,67 @@ def opt_batch_mode(value: str | None = None) -> str:
         raise ValueError(
             f"{OPT_BATCH_ENV}={mode!r}: ожидается одно из {OPT_BATCH_MODES}")
     return mode
+
+
+# ---------------------------------------------------------------------------
+# ADR-054 (цикл-14, веха-11) — фьюзинг применения обновления (виртуальные группы)
+# ---------------------------------------------------------------------------
+
+#: Env-гейт фьюзинга применения: ``0`` (дефолт — побитово прежние пути) | ``1``
+#: (bf16-мастер: единый каст/плечо компенсации на shape-группу вместо цепочки
+#: конверсий на лист).
+OPT_FUSE_ENV = "AXIOM_OPT_FUSE"
+
+#: Допустимые значения ``AXIOM_OPT_FUSE``; неизвестное — ошибка (fail-closed,
+#: форма ``AXIOM_ACCUM_JIT``), а не тихий откат в дефолт.
+OPT_FUSE_VALUES = ("0", "1")
+OPT_FUSE_OFF = "0"
+OPT_FUSE_ON = "1"
+
+
+def opt_fuse_mode(value: str | bool | None = None, *,
+                  master_dtype: str | None = None) -> bool:
+    """Фьюзинг применения обновления: ``False`` (дефолт) | ``True``.
+
+    ``AXIOM_OPT_FUSE`` читается на **сборке шага** (:func:`make_step`): режим
+    выбирает путь применения обновления к мастеру (единый каст на shape-группу
+    против цепочки конверсий на лист), в середине прогона он не меняется — как
+    остальные режимы шага.  Пустая/незаданная переменная = ``"0"`` (побитово
+    прежнее поведение); значения — только ``"0"``/``"1"``; неизвестное значение
+    — :class:`ValueError` (fail-closed).  Явный аргумент (bool или строка)
+    сильнее окружения — форма ``opt_batch_mode``/``accum_jit_mode``.
+
+    Фьюзинг осмыслен только при ``bf16``-мастере (Am.23: фьюзить нечего, если
+    каст fp32↔bf16 в применении не участвует): при ``master_dtype``, отличном
+    от ``bf16``, включённое значение **игнорируется с предупреждением**
+    (возврат ``False``) — форма ``master_comp_mode``.  Предупреждение называет
+    источник; неуказанный ``master_dtype`` — значение возвращается как есть
+    (вызывающий сам знает режим; так его читает маркировка метрик).
+    """
+    if isinstance(value, bool):
+        enabled = value
+    else:
+        raw = value if value is not None else os.environ.get(OPT_FUSE_ENV)
+        mode = (raw or "").strip().lower() or OPT_FUSE_OFF
+        if mode not in OPT_FUSE_VALUES:
+            raise ValueError(
+                f"{OPT_FUSE_ENV}={mode!r}: ожидается одно из {list(OPT_FUSE_VALUES)}")
+        enabled = mode == OPT_FUSE_ON
+    if master_dtype is not None and enabled:
+        dtype = master_dtype_mod.master_dtype_mode(master_dtype)
+        if dtype != master_dtype_mod.BF16:
+            # Источник называем честно (форма master_comp_mode): env — только
+            # когда значение не задано аргументом.
+            source = OPT_FUSE_ENV if value is None else "opt_fuse"
+            warnings.warn(
+                f"{source}=1 при {master_dtype_mod.MASTER_DTYPE_ENV}={dtype!r}: "
+                "фьюзинг применения осмыслен только при bf16-мастере (fp32-путь "
+                "кастов fp32↔bf16 в применении не делает) — значение "
+                "игнорируется, путь побитово прежний",
+                stacklevel=2,
+            )
+            return False
+    return enabled
 
 
 class UnclassifiedMatrixError(ValueError):
@@ -481,6 +578,7 @@ def make_step(
     opt_batch: str | None = None,
     master_dtype: str | None = None,
     master_comp: str | None = None,
+    fuse: str | bool | None = None,
 ):
     """Build the optimizer step — jitted, one walk over the parameter tree.
 
@@ -591,6 +689,10 @@ def make_step(
     master = master_dtype_mod.master_dtype_mode(master_dtype)
     comp = master_dtype_mod.master_comp_mode(master_comp, master_dtype=master)
     bf16_master = master == master_dtype_mod.BF16
+    # Веха-11 (Am.23): фьюзинг применения — тоже режим сборки; при fp32-мастере
+    # значение игнорируется с предупреждением (фьюзить нечего — кастов нет),
+    # путь остаётся побитово прежним (форма master_comp_mode).
+    fuse_effective = opt_fuse_mode(fuse, master_dtype=master)
     if bf16_master and work_dtype is not None:
         raise ValueError(
             "work_dtype задан при bf16-мастере: рабочая копия ЕСТЬ мастер "
@@ -615,7 +717,9 @@ def make_step(
             "(7 бит манты: шаг до 2x больше |y|·2^-8), т.е. «одно округление "
             "хранилища» не отличимо от тихой расходимости. Выбери "
             f"{OPT_BATCH_ENV}=leaf (дефолт) или "
-            f"{master_dtype_mod.MASTER_DTYPE_ENV}=fp32."
+            f"{master_dtype_mod.MASTER_DTYPE_ENV}=fp32. Фьюзинг применения без "
+            "переупорядочивания NS5 (виртуальные группы, веха-11) доступен "
+            f"отдельно: {OPT_BATCH_ENV}=leaf + {OPT_FUSE_ENV}=1."
         )
 
     def _matrix_step(p, g, m, lr, per_head):
@@ -668,6 +772,21 @@ def make_step(
     # применение обновления — плечом компенсации к bf16-листу.
     # ------------------------------------------------------------------
 
+    def _muon_update(group, m):
+        """NS5 одного листа по его группе — единая диспетчеризация (Am.11/Am.23).
+
+        Веха-11 вынесла ту же логику, что была инлайн в ``_bf16_muon_leaf``:
+        фьюзинг применения считает NS5 **листовым** вызовом на срез стека — это
+        и есть гарантия, что арифметика подмены не терпит (batched NS5 заперт
+        баном ``grouped``×bf16, фикс-раунд вехи-6).
+        """
+        if group == GROUP_MUON_PER_HEAD:
+            return per_head_newtonschulz5(m, heads, ns_steps)
+        if group == GROUP_MUON_MATRIX:
+            return newtonschulz5(m, ns_steps)
+        flat = m.reshape(-1, *m.shape[-2:])
+        return jax.vmap(lambda x: newtonschulz5(x, ns_steps))(flat).reshape(m.shape)
+
     def _bf16_muon_leaf(group, p, g, st, lr):
         """Muon листа bf16-мастера: ``(m, extra)`` → ``(new_p, (m, new_extra))``.
 
@@ -678,13 +797,7 @@ def make_step(
         m, extra = st
         g32 = g.astype(jnp.float32)
         m = muon_momentum * m + (1.0 - muon_momentum) * g32
-        if group == GROUP_MUON_PER_HEAD:
-            upd = per_head_newtonschulz5(m, heads, ns_steps)
-        elif group == GROUP_MUON_MATRIX:
-            upd = newtonschulz5(m, ns_steps)
-        else:
-            flat = m.reshape(-1, *m.shape[-2:])
-            upd = jax.vmap(lambda x: newtonschulz5(x, ns_steps))(flat).reshape(m.shape)
+        upd = _muon_update(group, m)
         p32 = p.astype(jnp.float32)
         target = p32 * (1.0 - lr * wd) - lr * upd
         if weight_clip is not None:
@@ -884,6 +997,123 @@ def make_step(
             ),
         )
 
+    def _apply_grouped(comp_kind, masters, updates, extras):
+        """Одно плечо применения (RN/kahan/sr) на стёк листьев — виртуальная группа.
+
+        ``vmap`` — поэлементное применение **той же** функции, что в leaf-пути
+        (:mod:`net.master_dtype`), не переупорядочивание: каждый элемент стека
+        считается теми же операциями с теми же значениями, поэтому на группу
+        приходится по одному экземпляру каждой конверсии/плеча вместо цепочки
+        на лист (Am.23), а результат повторим побитово.
+        """
+        if comp_kind == master_dtype_mod.NONE:
+            # Плечо none слот компенсации не использует (extra — None у всей группы).
+            return jax.vmap(master_dtype_mod.rn_apply)(masters, updates), None
+        return jax.vmap(
+            lambda m, u, e: master_dtype_mod.apply_update(comp_kind, m, u, e)
+        )(masters, updates, extras)
+
+    def _walk_fused_bf16(params, grads, state, lr):
+        """Один проход bf16-мастера: применение фьюзится на виртуальные shape-группы.
+
+        Веха-11 (ADR-054 Am.23).  Цена bf16-шага — цепочка конверсий fp32↔bf16
+        **на каждый лист** (апкаст градиента/мастера, применение плеча
+        компенсации, запись мастера и буфера): на реальной геометрии это сотни
+        отдельных операций драйвера на шаг при копеечном GPU-времени.  Здесь
+        листья одной (группы, формы, подписи состояния) обрабатываются стёком:
+        момент обновляется одной элементной операцией на группу, апкасты
+        градиента/мастера и запись мастера/буфера — единым кастом на группу
+        (``vmap``-плечо), AdamW-цепочки — так же поэлементно.
+
+        NS5 остаётся **листовым** (:func:`_muon_update` на срез стека — та же
+        форма и значения, что у ``_bf16_muon_leaf``): batched NS5
+        переупорядочивает редукции (Am.11) и в bf16-хранилище даёт шаг сетки
+        (фикс-раунд вехи-6) — эта дорога закрыта баном ``grouped``×bf16, и
+        фьюзинг трогает только ту часть, где переупорядочивания нет.  Следствие
+        — арифметическая тождественность leaf-пути: eager-путь побитов (в т.ч.
+        в динамике 3 шагов), под jit остаются только lowered-различия XLA
+        (редкие «щелчки хранилища», см. блок (а)/(б)/(в) в
+        ``net/tests/test_41_optimizer_fuse.py``).
+
+        Группировка строится **на трассировке** (формы статичны) — под ``jit``
+        она выполняется один раз, в графе остаются только операции над стёками.
+        Классификация листьев — прежняя (fail-closed на неизвестном 2-D имени).
+        """
+        path_leaves, param_treedef = jax.tree_util.tree_flatten_with_path(params)
+        grads_for = param_treedef.flatten_up_to(grads)
+        state_for = param_treedef.flatten_up_to(state)
+        leaf_groups: list[str] = []
+        for path, p in path_leaves:
+            name = leaf_name(path[-1]) if path else ""
+            group = classify_leaf(name, p.ndim, legacy=legacy_muon_all_2d)
+            if group == GROUP_UNCLASSIFIED:
+                raise UnclassifiedMatrixError(
+                    f"2-D параметр {name!r} ({jax.tree_util.keystr(path)}) вне "
+                    "классификации ADR-048: дополни MUON_MATRIX_LEAVES или "
+                    "ADAMW_MATRIX_LEAVES, либо включи legacy_muon_all_2d"
+                )
+            leaf_groups.append(group)
+        # (группа, форма, dtypes, подпись состояния) -> индексы плоских листьев.
+        buckets: dict[tuple, list[int]] = {}
+        for index, group in enumerate(leaf_groups):
+            p = path_leaves[index][1]
+            key = (group, p.shape, p.dtype, grads_for[index].dtype,
+                   _state_signature(state_for[index]))
+            buckets.setdefault(key, []).append(index)
+
+        new_params: list = [None] * len(path_leaves)
+        new_state: list = [None] * len(path_leaves)
+        for key, indices in buckets.items():
+            group = key[0]
+            p_stack = jnp.stack([path_leaves[i][1] for i in indices])
+            g_stack = jnp.stack([grads_for[i] for i in indices])
+            state_stack = jax.tree_util.tree_map(
+                lambda *xs: jnp.stack(list(xs)), *[state_for[i] for i in indices]
+            )
+            g32 = g_stack.astype(jnp.float32)  # единый апкаст градиента на группу
+            if group in _MUON_GROUPS:
+                m_stack, extra_stack = state_stack
+                m_stack = muon_momentum * m_stack + (1.0 - muon_momentum) * g32
+                # NS5 — листовой вызов на срез стека: форма и значения те же,
+                # что у листа, редукции не переупорядочиваются.
+                upd_stack = jnp.stack(
+                    [_muon_update(group, m_stack[k]) for k in range(len(indices))]
+                )
+                p32 = p_stack.astype(jnp.float32)  # единый апкаст мастера на группу
+                target = p32 * (1.0 - lr * wd) - lr * upd_stack
+                if weight_clip is not None:
+                    target = jnp.clip(target, -weight_clip, weight_clip)
+                new_p_stack, new_extra_stack = _apply_grouped(
+                    comp, p_stack, target - p32, extra_stack
+                )
+                new_state_stack = (m_stack, new_extra_stack)
+            else:
+                m_stack, v_stack, extra_stack = state_stack
+                m_stack = adam_b1 * m_stack + (1.0 - adam_b1) * g32
+                v_stack = adam_b2 * v_stack + (1.0 - adam_b2) * (g32 * g32)
+                mh = m_stack / (1.0 - adam_b1)
+                vh = v_stack / (1.0 - adam_b2)
+                p32 = p_stack.astype(jnp.float32)
+                target = p32 * (1.0 - lr * wd) - lr * mh / (jnp.sqrt(vh) + 1e-8)
+                # ``adamw_embed`` — с clip, ``adamw_vector`` — без (Am.4 не переоткрыт).
+                if group == GROUP_ADAMW_EMBED and weight_clip is not None:
+                    target = jnp.clip(target, -weight_clip, weight_clip)
+                new_p_stack, new_extra_stack = _apply_grouped(
+                    comp, p_stack, target - p32, extra_stack
+                )
+                new_state_stack = (m_stack, v_stack, new_extra_stack)
+            for k, index in enumerate(indices):
+                new_params[index] = new_p_stack[k]
+                new_state[index] = jax.tree_util.tree_map(
+                    lambda x, k=k: x[k], new_state_stack
+                )
+        return (
+            param_treedef.unflatten(new_params),
+            jax.tree_util.tree_structure(state).unflatten(
+                [leaf for ns in new_state for leaf in jax.tree_util.tree_leaves(ns)]
+            ),
+        )
+
     def _walk_twice(params, grads, state, lr):
         """Pre-Amendment traversal (the parity oracle): two walks, twice the work.
 
@@ -915,6 +1145,13 @@ def make_step(
             # Пре-Amendment обход — оракул паритета «один проход ↔ два»; он
             # старше режима батчинга: grouped-путь — это и есть новый один проход.
             walk = _walk_twice
+        elif bf16_master and fuse_effective:
+            # Веха-11: виртуальные shape-группы применения в leaf-режиме —
+            # NS5 остаётся листовым (побитовая симметрия достижима), фьюзится
+            # применение (единый каст/плечо на группу).  Доступно только у
+            # bf16-мастера (у fp32 кастов нет — режим игнорируется на сборке),
+            # а связка с grouped сюда не доходит: она отвергнута выше.
+            walk = _walk_fused_bf16
         elif batch == OPT_BATCH_GROUPED:
             walk = _walk_grouped
         else:

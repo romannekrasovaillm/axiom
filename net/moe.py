@@ -40,6 +40,19 @@ The auxiliary loss below (``qb_aux_loss``) is our monitoring load-balancing
 term (the paper's QB is auxiliary-free); its gradient is stopped when it is
 integrated into the training loss — recorded as our decision in ``config.json``
 ``deviations``.
+
+Counting-sort группировки (ADR-054 Am.23, веха-11)
+--------------------------------------------------
+
+``AXIOM_MOE_COUNTING=1`` (дефолт 0, fail-closed, читается на каждом вызове —
+форма ``AXIOM_MOE_DISPATCH``) заменяет ``jnp.argsort(expert_of,
+stable=True)`` в :func:`_routed_experts_grouped` на counting-sort
+(:func:`_counting_sort_positions`: ``bincount`` + ``cumsum`` +
+``scatter``/``gather``).  Стабильный порядок внутри эксперта — порядок
+появления — тот же, что даёт stable argsort, поэтому раскладка (и выход MoE)
+совпадает с прежней **побитово**, а CUB radix-sort (на GB10 —
+``DeviceRadixSort`` с ``CopyOffsets``-эпизодом host-копии offsets, Am.2/Am.23)
+не вызывается: детерминизм — по построению, семантика топ-2 не меняется.
 """
 
 from __future__ import annotations
@@ -370,6 +383,58 @@ def dispatch_mode() -> str:
     return mode
 
 
+#: Env-гейт способа группировки назначений по экспертам: ``0`` (дефолт —
+#: прежний ``argsort``) | ``1`` (counting-sort: bincount + cumsum + scatter).
+COUNTING_MODE_ENV = "AXIOM_MOE_COUNTING"
+
+#: Допустимые значения гейта; неизвестное — ошибка (fail-closed, форма
+#: ``AXIOM_ACCUM_JIT``), а не тихий откат в дефолт.
+COUNTING_MODES = ("0", "1")
+
+
+def counting_sort_mode(value: str | None = None) -> bool:
+    """Способ группировки маршрутизации: ``False`` (argsort, дефолт) | ``True``.
+
+    ``AXIOM_MOE_COUNTING`` читается **на каждом вызове** (форма
+    ``AXIOM_MOE_DISPATCH`` — флаг отката доступен без перезапуска).  Дефолт 0:
+    прежний путь ``jnp.argsort(expert_of, stable=True)`` — побитово прежнее
+    поведение.  Значение 1 включает counting-sort (bincount + cumsum +
+    scatter): на GB10 ``argsort`` по малому числу различных ключей понижается в
+    CUB radix-sort (``DeviceRadixSort`` + pageable-копии offsets), чей
+    host-эпизод — измеренная цена шага (Am.23: CUB 270 ядер/шаг); counting-sort
+    эмитит только elementwise/scan/scatter-операции.  Раскладка counting-sort
+    **побитово совпадает** с прежней (стабильный порядок внутри эксперта =
+    порядок появления — тот же, что у stable argsort), поэтому семантика топ-2
+    маршрутизации не меняется, а детерминизм — по построению.  Неизвестное
+    значение — :class:`ValueError` (fail-closed).
+    """
+    raw = value if value is not None else os.environ.get(COUNTING_MODE_ENV)
+    mode = (raw or "").strip().lower() or "0"
+    if mode not in COUNTING_MODES:
+        raise ValueError(
+            f"{COUNTING_MODE_ENV}={mode!r}: ожидается одно из {list(COUNTING_MODES)}")
+    return mode == "1"
+
+
+def _counting_sort_positions(expert_of: jnp.ndarray, group_sizes: jnp.ndarray) -> jnp.ndarray:
+    """Стабильный counting-sort: позиция каждого назначения в порядке по экспертам.
+
+    ``pos[i] = offsets[expert_of[i]] + rank_i``, где ``rank_i`` — число более
+    ранних назначений того же эксперта, а ``offsets`` — начало блока эксперта
+    (``cumsum(group_sizes) - group_sizes``).  Внутри эксперта порядок — порядок
+    появления, то есть **тот же самый**, что у ``jnp.argsort(expert_of,
+    stable=True)``: ``pos`` есть обратная перестановка к стабильному argsort,
+    отсюда побитовое равенство раскладки (Am.23).  Никакого сорта/CUB:
+    только bincount + cumsum + gather.
+    """
+    n_routed = group_sizes.shape[0]
+    offsets = jnp.cumsum(group_sizes) - group_sizes  # (n,) начало блока эксперта
+    one_hot = jax.nn.one_hot(expert_of, n_routed, dtype=jnp.int32)  # (N*k, n)
+    ranks = jnp.cumsum(one_hot, axis=0) - 1  # ранг «по появлению» по каждому эксперту
+    rank_of = jnp.take_along_axis(ranks, expert_of[:, None], axis=1)[:, 0]  # (N*k,)
+    return offsets[expert_of] + rank_of  # (N*k,) позиция в упорядоченной раскладке
+
+
 def _routed_experts(params, cfg: ModelConfig, z, topk, sel_p):
     """Маршрутизированный микшер: групповая диспетчеризация top-k, либо dense по флагу."""
     if dispatch_mode() == "dense":
@@ -401,9 +466,19 @@ def _routed_experts_grouped(params, cfg: ModelConfig, z, topk, sel_p):
 
     expert_of = topk.reshape(-1)  # (N*k,) expert each assignment belongs to
     token_of = jnp.repeat(jnp.arange(n_tokens, dtype=expert_of.dtype), k)  # (N*k,)
-    order = jnp.argsort(expert_of, stable=True)  # group the assignments by expert
-    z_grouped = z[token_of[order]]  # (N*k, latent)
     group_sizes = jnp.bincount(expert_of, length=n_routed).astype(jnp.int32)
+    counting = counting_sort_mode()
+    if counting:
+        # Am.23: counting-sort вместо argsort — та же стабильная раскладка по
+        # экспертам (порядок внутри эксперта = порядок появления), но без
+        # CUB radix-sort: только bincount/cumsum/scatter.
+        pos = _counting_sort_positions(expert_of, group_sizes)
+        z_grouped = jnp.zeros((expert_of.shape[0], z.shape[-1]), dtype=z.dtype).at[pos].set(
+            z[token_of]
+        )  # (N*k, latent)
+    else:
+        order = jnp.argsort(expert_of, stable=True)  # group the assignments by expert
+        z_grouped = z[token_of[order]]  # (N*k, latent)
 
     h_g = _ragged_gemm(z_grouped, params.expert_g, group_sizes)
     h_u = _ragged_gemm(z_grouped, params.expert_u, group_sizes)
@@ -411,7 +486,12 @@ def _routed_experts_grouped(params, cfg: ModelConfig, z, topk, sel_p):
     e_grouped = _ragged_gemm(a, params.expert_d, group_sizes)  # (N*k, latent)
 
     # Undo the grouping and the token repeat, then mix over the k slots.
-    e = jnp.zeros_like(e_grouped).at[order].set(e_grouped).reshape(n_tokens, k, -1)
+    if counting:
+        # Обратная перестановка — gather по тем же позициям counting-sort: для
+        # назначения i результат лежит в e_grouped[pos[i]] (Am.23).
+        e = e_grouped[pos].reshape(n_tokens, k, -1)
+    else:
+        e = jnp.zeros_like(e_grouped).at[order].set(e_grouped).reshape(n_tokens, k, -1)
     return compute_dtype.gemm_einsum("nk,nkl->nl", sel_p, e)
 
 

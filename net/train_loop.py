@@ -3151,6 +3151,7 @@ def train(
     from net import config as config_mod
     from net import master_dtype as master_dtype_mod
     from net import mla as mla_mod
+    from net import moe as moe_mod
     from net import model, optimizer
 
     # Повторный гейт внутри цикла: лимит уже мог быть выдан смоук-режимом
@@ -3179,6 +3180,13 @@ def train(
     master_mode = master_dtype_mod.master_dtype_mode()
     comp_mode = master_dtype_mod.master_comp_mode(master_dtype=master_mode)
     use_bf16_master = master_mode == master_dtype_mod.BF16
+    # ADR-054 Am.23 (цикл-14, веха-11): гейт фьюзинга применения обновления —
+    # условие прогона: выбирает путь применения (единый каст на shape-группу
+    # вместо цепочки конверсий на лист).  Чтение fail-closed (форма
+    # accum_jit_mode), дефолт 0 — побитово прежний путь; при fp32-мастере
+    # значение игнорируется с предупреждением (фьюзить нечего).  Фактическое
+    # значение едет маркером в каждую строку метрик (opt_fuse).
+    opt_fuse = optimizer.opt_fuse_mode(master_dtype=master_mode)
     # ADR-054 Am.16 (цикл-7): гейт jitted-аккумуляции — тоже условие прогона,
     # читается один раз на сборке (режим выбирает путь шага, не середину прогона).
     # Дефолт 0 = прежний Python-путь, побитово.
@@ -3363,6 +3371,9 @@ def train(
         work_dtype="bfloat16" if use_bf16 else None,
         master_dtype=master_mode,
         master_comp=comp_mode,
+        # ADR-054 Am.23 (веха-11): фьюзинг применения — из прочитанного на
+        # сборке значения (одно чтение на ногу, как master_mode/comp_mode).
+        fuse=opt_fuse,
     )
 
     def working_params(current_master):
@@ -3732,6 +3743,12 @@ def train(
                 # в формате master_dtype/accum_jit: без поля A/B-ноги цикла-12
                 # «sync vs async-метрики» неотличимы от смены чего-то ещё.
                 "async_metrics": 1 if async_metrics else 0,
+                # ADR-054 Am.23 (цикл-14, веха-11): маркеры новых режимов шага
+                # — как master_dtype/accum_jit: без полей A/B-ноги цикла-14
+                # «фьюзинг включён/выключен» и «counting-sort vs argsort» в MoE
+                # неотличимы по журналу от смены чего-то ещё.
+                "opt_fuse": 1 if opt_fuse else 0,
+                "moe_counting": 1 if moe_mod.counting_sort_mode() else 0,
             }
             # Поля фаз — только на профильных (kpi-интервальных) шагах: дефолтная
             # запись остаётся ровно прежней.

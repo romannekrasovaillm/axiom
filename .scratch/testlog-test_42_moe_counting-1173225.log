@@ -1,0 +1,60 @@
+[ADR-010] policy: jax_default_matmul_precision=highest
+[ADR-010] backend: cpu (no CUDA device available) (NET_JAX_BACKEND=auto) jax.devices()=['CpuDevice(id=0)']
+[ADR-010] profile: local (NET_GATE_PROFILE=<unset>)
+[ADR-013] determinism: --xla_gpu_deterministic_ops=off (local profile: not pinned) XLA_FLAGS='<unset>'
+[ADR-010] preliminary run: no CUDA device and the local profile does not require one (the A4 gate profile does)
+............F                                                            [100%]
+=================================== FAILURES ===================================
+________________________ test_bf16_compute_dtype_parity ________________________
+
+cfg = ModelConfig(vocab_size=512, hidden=64, tie_embeddings=True, num_layers=4, num_kda_layers=3, num_mla_layers=1, num_head..._policy='none', ce_chunk_tokens=0, kda_chunked_backward=False, kda_impl='chunked', kda_wyut_chunk=64, scan_layers=True)
+
+    def test_bf16_compute_dtype_parity(cfg):
+        """В кампанийном bf16-режиме compute-dtype паритет остаётся побитовым."""
+        params = moe.init_moe(jr.PRNGKey(11), cfg)
+        x = _x(cfg, n=19, seed=12)
+        saved = os.environ.get(compute_dtype.MODE_ENV)
+        os.environ[compute_dtype.MODE_ENV] = compute_dtype.BF16
+        try:
+            with _with_gate("0"):
+                argsort_out = moe.apply(params, cfg, x)
+            with _with_gate("1"):
+                counting_out = moe.apply(params, cfg, x)
+        finally:
+            if saved is None:
+                os.environ.pop(compute_dtype.MODE_ENV, None)
+            else:
+                os.environ[compute_dtype.MODE_ENV] = saved
+>       assert np.array_equal(np.asarray(argsort_out), np.asarray(counting_out)), (
+                              ^^^^^^^^^^^^^^^^^^^^^^^
+            "bf16 compute-dtype: выходы режимов разошлись"
+        )
+
+net/tests/test_42_moe_counting.py:288: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/home/roman/venv-axiom/lib/python3.11/site-packages/jax/_src/array.py:414: in __array__
+    return np.asarray(self._value, dtype=dtype, **kwds)  # pyrefly: ignore[no-matching-overload]
+                      ^^^^^^^^^^^
+/home/roman/venv-axiom/lib/python3.11/site-packages/jax/_src/profiler.py:420: in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <[JaxRuntimeError('INTERNAL: Error dispatching computation: Error dispatching computation: Unsupported element type for DotThunk::Execute: BF16 x BF16 = F32') raised in repr()] ArrayImpl object at 0x609b06ab1da0>
+
+    @property
+    @functools.partial(profiler.annotate_function, name="np.asarray(jax.Array)")
+    def _value(self) -> np.ndarray:
+      self._check_if_deleted()
+    
+      if self._npy_value is None:
+        # addressable_device_list can be empty. If it's empty, we will error below
+        if self.is_fully_replicated and self.sharding.has_addressable_devices:
+>         npy_value, did_copy = self._single_device_array_to_np_array_did_copy()
+                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E         jax.errors.JaxRuntimeError: INTERNAL: Error dispatching computation: Error dispatching computation: Unsupported element type for DotThunk::Execute: BF16 x BF16 = F32
+
+/home/roman/venv-axiom/lib/python3.11/site-packages/jax/_src/array.py:623: JaxRuntimeError
+=========================== short test summary info ============================
+FAILED net/tests/test_42_moe_counting.py::test_bf16_compute_dtype_parity - ja...
+1 failed, 12 passed in 18.53s

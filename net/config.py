@@ -136,6 +136,12 @@ class ModelConfig:
     mla_top_k: int = 512               # sparse selection width (min(512, T))
     mla_index_heads: int = 1           # light indexer heads (scaled to 12 Q heads)
     mla_index_dim: int = 128           # light indexer head dim
+    # Веха-12 (ADR-054 Am.25, цикл-15): ширина T-тайла flash-backward MLA —
+    # читается только путём ``AXIOM_MLA_FLASH_BWD=1`` (forward не затронут).
+    # Память backward ∝ тайлу: живые скоры ≤ (B,H,tile,tile); SMEM-бюджет GB10
+    # 99 КиБ/блок — ориентир будущей Pallas-ступени, здесь только память графа.
+    # 1024 — дефолт; подбирается замером (форма секции test_43).
+    mla_flash_bwd_tile: int = 1024
 
     # --- long-context delta v1.5 (ADR-009: SWA window, sparse, FP4 latent) ---
     swa_window: int = 128              # local sliding-window size (V4.1-Flash 2.2)
@@ -418,6 +424,17 @@ def validate_config(cfg: ModelConfig) -> None:
     assert cfg.swa_window >= 0, "swa_window must be >= 0 (0 disables the window branch)"
     assert cfg.mla_top_k >= 1, "mla_top_k must be >= 1"
     assert cfg.mla_index_heads >= 1 and cfg.mla_index_dim > 0
+    # Веха-12 (ADR-054 Am.25): ширина T-тайла flash-backward MLA.  Ноль/отрицание
+    # не имеют смысла (цикл ``range(0, T, tile)`` выродился бы в пустой проход
+    # или ошибку в глубине графа) — отвергается здесь, как ce_chunk_tokens.
+    assert (
+        isinstance(cfg.mla_flash_bwd_tile, int)
+        and not isinstance(cfg.mla_flash_bwd_tile, bool)
+        and cfg.mla_flash_bwd_tile >= 1
+    ), (
+        "mla_flash_bwd_tile must be a positive integer (T-тайл flash-backward MLA), "
+        f"got {cfg.mla_flash_bwd_tile!r}"
+    )
 
     # Grad-checkpointing granularity (D-8): the declared policy has to be one
     # the backbone loop implements — an unknown value would silently fall back

@@ -36,6 +36,7 @@ the residual stream, the gate and the loss path stay fp32.
 
 from __future__ import annotations
 
+import functools
 import os
 from typing import NamedTuple
 
@@ -173,6 +174,183 @@ def _attn_out_bf16stored_bwd(res, g):
 _attn_out_bf16stored.defvjp(_attn_out_bf16stored_fwd, _attn_out_bf16stored_bwd)
 
 
+# --------------------------------------------------------------------------- #
+# Веха-12 (ADR-054 Am.25, цикл-15 кампании MFU-55): flash-backward MLA —
+# jax-ступень.  Тайловое переисчисление скоров в backward без хранения
+# полной (B,H,T,T)-матрицы.
+#
+# Пол B=4 (Am.20, HLO-разбор): fp32 attention-scores (B,12,8192,8192) по 12 ГиБ
+# живут в backward десятками вхождений (80+70+19); bf16-хранение (Am.20) срезает
+# dtype, не снимает пол (plain-B=4 OOM 78,95 ГиБ).  Здесь backward вообще не
+# хранит скоры: forward при обучении вычисляется плотно, как раньше (числа
+# побитово те же), но для backward остаются только ``q``, ``k``, ``v``, маска,
+# выход ``o`` и статистики softmax каждой строки (rowmax/rowsum, (B,H,T,1)) —
+# а QK^T переисчитывается в backward по тайлам, как в flash-attention backward:
+# внешний цикл по KV-тайлам, внутренний по Q-тайлам, живой скор-тайл ≤
+# (B,H,tile,tile).
+#
+# Граница custom_vjp — ``(q, k, v, mask) -> o``, а не ``(scores, v, mask) -> o``
+# (как у bf16-гейта Am.20): vjp границы обязан вернуть котангент формы входа, и
+# граница по ``scores`` вернула бы ровно ту полную (B,H,T,T), ради снятия
+# которой веха и делается.  Сдвинув границу за QK^T и softmax, backward отдаёт
+# сразу ``(grad_q, grad_k, grad_v)`` — все три формы малы ((B,T,H,dq)), полной
+# матрицы не существует ни в одном промежутке (пин — test_43: в jaxpr/StableHLO
+# backward нет ни одной float-переменной формы (B,H,T,T), все скор-операции
+# ≤ тайла).
+#
+# Формула backward — стандартная flash-attention: D_i = rowsum_s(do_i ⊙ o_i)
+# (равно rowsum(dp ⊙ p), но не требует второго прохода), для пары тайлов
+# p = exp(s_ij − rowmax_i)/rowsum_i (маска — 0), ds = p ⊙ (dp − D_i),
+# dp = do_i V_j^т, grad_s = ds·scale; вклады копятся тайловыми матмулами
+# (dq — по внешнему циклу, dk/dv — по внутреннему).  Чётность с прежним
+# backward — в допуске вехи (≤1e-3; измерено ~1e-6 отн. в fp32-режиме).
+#
+# Гейт ``AXIOM_MLA_FLASH_BWD=1`` подменяет ТОЛЬКО backward dense-пути; forward
+# не трогается (flash-fwd ``AXIOM_MLA_DENSE_FLASH`` — отдельная ветка, гейт
+# туда не читается).  Дефолт ``0`` — побитово прежний граф.  Ширина тайла —
+# конфиг ``ModelConfig.mla_flash_bwd_tile`` (дефолт 1024; память backward ∝
+# тайлу, SMEM-бюджет GB10 99 КиБ/блок — ориентир будущей Pallas-ступени).
+# Связка с ``AXIOM_MLA_BWD_BF16`` (Am.20): когда оба включены, исполняется
+# тайловый путь — он хранит меньше (bf16-копии полной attn не заводит вовсе);
+# bf16-гейт при этом остаётся фактическим значением в метрике, A/B-ноги
+# различимы по журналу.  Стендовые числа B=4/B=8 — отдельная нога кампании;
+# здесь пиннуется jax-уровень: числа, состав графа, паритет и nan-контроль.
+# --------------------------------------------------------------------------- #
+
+#: Env-гейт тайлового backward dense-внимания MLA (``0`` — дефолт, прежний путь).
+MLA_FLASH_BWD_ENV = "AXIOM_MLA_FLASH_BWD"
+
+#: Допустимые значения; неизвестное — ошибка (fail-closed, без догадок).
+MLA_FLASH_BWD_VALUES = ("0", "1")
+MLA_FLASH_BWD_OFF = "0"
+MLA_FLASH_BWD_ON = "1"
+
+
+class MlaFlashBwdError(ValueError):
+    """Неизвестное значение ``AXIOM_MLA_FLASH_BWD`` (fail-closed, без догадок)."""
+
+
+def flash_bwd_mode(value: str | None = None) -> bool:
+    """Тайловый backward dense-внимания: ``False`` (дефолт) | ``True``.
+
+    ``AXIOM_MLA_FLASH_BWD=1`` подменяет backward dense-пути на переисчисление
+    скоров по (KV,Q)-тайлам (:func:`_attn_out_flashbwd_bwd`); forward-числа
+    ветка не меняет (плотный forward дословно), граф backward теряет полную
+    (B,H,T,T).  Пустая/незаданная переменная = ``"0"``; значения — только
+    ``"0"``/``"1"``; неизвестное — :class:`MlaFlashBwdError` (fail-closed:
+    опечатка не должна тихо оставить прежний путь — замер ноги «flash-backward»
+    стал бы замером dense-backward).  Явный аргумент сильнее окружения (форма
+    ``bwd_bf16_mode``).  Читается на трейсе (как flash-переключатель), чтобы
+    тест мог переключить гейт в процессе.
+    """
+    raw = value if value is not None else os.environ.get(MLA_FLASH_BWD_ENV)
+    mode = (raw or "").strip().lower() or MLA_FLASH_BWD_OFF
+    if mode not in MLA_FLASH_BWD_VALUES:
+        raise MlaFlashBwdError(
+            f"{MLA_FLASH_BWD_ENV}={mode!r}: ожидается одно из "
+            f"{list(MLA_FLASH_BWD_VALUES)}"
+        )
+    return mode == MLA_FLASH_BWD_ON
+
+
+def _attn_scale(dq: int) -> jnp.ndarray:
+    """``1/sqrt(dq)`` — дословно то же выражение, что умножает скоры dense-пути.
+
+    Вычисляется от статического ``dq`` (Python int), поэтому значение и его
+    dtype (weak f32) в flash-ветке и в прежнем пути совпадают побитово.
+    """
+    return 1.0 / jnp.sqrt(dq)
+
+
+def _attn_out_flashbwd_fwd(q, k, v, mask, tile):
+    """Forward тайлового внимания: плотные числа дословно + статистики строк.
+
+    Операции — ровно те же, что у прежнего dense-пути (``gemm_einsum`` скор,
+    ``where``-маска, ``softmax``, ``gemm_einsum`` контракция), поэтому числа
+    побитово те же; сверх этого считаются rowmax/rowsum каждой строки (B,H,T,1)
+    — всё, что backward хранит о скорах.  ``tile`` — статическая ширина тайла
+    (нёс в замыкании фабрики :func:`_attn_out_flashbwd_op` в forward не нужен;
+    параметр — часть контракта fwd/bwd).
+    """
+    dh = q.shape[-1]
+    scale = _attn_scale(dh)
+    scores = compute_dtype.gemm_einsum("bthd,bshd->bhts", q, k) * scale  # (B,H,T,T)
+    masked = jnp.where(mask, scores, jnp.finfo(jnp.float32).min)
+    attn = jax.nn.softmax(masked, axis=-1)  # (B,H,T,T)
+    o = compute_dtype.gemm_einsum("bhts,bshd->bthd", attn, v)  # (B,T,H,dq)
+    rowmax = jnp.max(masked, axis=-1, keepdims=True)  # (B,H,T,1)
+    rowsum = jnp.sum(jnp.exp(masked - rowmax), axis=-1, keepdims=True)
+    return o, (q, k, v, mask, o, rowmax, rowsum)
+
+
+def _attn_out_flashbwd_bwd(res, g, tile):
+    """Backward по тайлам: скоры переисчисляются, полная (B,H,T,T) не живёт.
+
+    Внешний цикл — KV-тайлы, внутренний — Q-тайлы (порядок flash-attention
+    backward): для пары тайлов строится скор (B,H,ti,tj), восстанавливается
+    ``p`` по статистикам forward, считается ``ds`` и три вклада (dq/dk/dv)
+    тайловыми матмулами с теми же boundary-кастами ``compute_dtype``, что у
+    forward-контракций.  ``mask`` индексируется по последним двум осям, поэтому
+    принимаются и (T,S), и широковещательные формы.  Котангент маски — None.
+    """
+    q, k, v, mask, o, rowmax, rowsum = res
+    B, T, H, dh = q.shape
+    scale = _attn_scale(dh)
+    # D_i = rowsum_s(g_i ⊙ o_i) — поточечная свёртка, не тайловая: нужна до
+    # циклов (в flash-attention backward это замена rowsum(dp ⊙ p) без второго
+    # прохода по тайлам).
+    d = jnp.transpose(jnp.sum(g * o, axis=-1), (0, 2, 1))  # (B,H,T)
+    dq_acc = jnp.zeros_like(q)
+    dk_acc = jnp.zeros_like(k)
+    dv_acc = jnp.zeros_like(v)
+    for j0 in range(0, T, tile):  # внешний цикл: KV-тайлы
+        j1 = min(j0 + tile, T)
+        kj = k[:, j0:j1]
+        vj = v[:, j0:j1]
+        dk_j = jnp.zeros((B, j1 - j0, H, dh), jnp.float32)
+        dv_j = jnp.zeros((B, j1 - j0, H, dh), jnp.float32)
+        for i0 in range(0, T, tile):  # внутренний цикл: Q-тайлы
+            i1 = min(i0 + tile, T)
+            qi = q[:, i0:i1]
+            do_i = g[:, i0:i1]
+            # Переисчисление скора тайла (та же контракция и тот же scale).
+            s = compute_dtype.gemm_einsum("bthd,bshd->bhts", qi, kj) * scale
+            p = (
+                jnp.where(mask[..., i0:i1, j0:j1], jnp.exp(s - rowmax[:, :, i0:i1, :]), 0.0)
+                / rowsum[:, :, i0:i1, :]
+            )  # (B,H,ti,tj) — вероятности строк, восстановленные по статистикам
+            dp = compute_dtype.gemm_einsum("bthd,bshd->bhts", do_i, vj)
+            grad_s = p * (dp - d[:, :, i0:i1, None]) * scale
+            dq_acc = dq_acc.at[:, i0:i1, :, :].add(
+                compute_dtype.gemm_einsum("bhts,bshd->bthd", grad_s, kj)
+            )
+            dk_j = dk_j + compute_dtype.gemm_einsum("bhts,bthd->bshd", grad_s, qi)
+            dv_j = dv_j + compute_dtype.gemm_einsum("bhts,bthd->bshd", p, do_i)
+        dk_acc = dk_acc.at[:, j0:j1, :, :].add(dk_j)
+        dv_acc = dv_acc.at[:, j0:j1, :, :].add(dv_j)
+    return dq_acc, dk_acc, dv_acc, None
+
+
+@functools.lru_cache(maxsize=None)
+def _attn_out_flashbwd_op(tile: int):
+    """custom_vjp-внимание тайлового backward, по объекту на ширину тайла.
+
+    Кэш по ``tile`` — чтобы трейсы с одной шириной делили один объект (форма
+    стабильности для jit-кэшей), а разные ширины не переиспользовали чужой
+    замыкающий тайл.  ``tile`` — статический Python int конфига.
+    """
+
+    @jax.custom_vjp
+    def op(q, k, v, mask):
+        return _attn_out_flashbwd_fwd(q, k, v, mask, tile)[0]
+
+    op.defvjp(
+        lambda q, k, v, mask: _attn_out_flashbwd_fwd(q, k, v, mask, tile),
+        lambda res, g: _attn_out_flashbwd_bwd(res, g, tile),
+    )
+    return op
+
+
 def _rand(key, shape, scale: float) -> jnp.ndarray:
     return jax.random.normal(key, shape) * scale
 
@@ -271,17 +449,24 @@ def _dense_apply(params: MLAParams, cfg: ModelConfig, x: jnp.ndarray, mask: jnp.
         )
     else:
         scale = 1.0 / jnp.sqrt(dq)
-        scores = compute_dtype.gemm_einsum("bthd,bshd->bhts", q, k) * scale  # (B, H, T, T)
         if mask is None:
             mask = _causal_mask(x.shape[-2])
-        if bwd_bf16_mode():
+        if flash_bwd_mode():
+            # Веха-12 (ADR-054 Am.25): плотный forward (числа побитово те же —
+            # те же операции) + тайловый backward: скоры переисчитываются по
+            # (KV,Q)-тайлам, полная (B,H,T,T) в backward не живёт.  Приоритет
+            # над bf16-хранением: тайловый путь не хранит attn вовсе.
+            o = _attn_out_flashbwd_op(int(cfg.mla_flash_bwd_tile))(q, k, v, mask)
+        elif bwd_bf16_mode():
             # Веха-9 (ADR-054 Am.20): softmax-выход хранится для backward в
             # bf16 — forward-числа побитово те же (маскирование живёт внутри,
             # чтобы transpose `where` не оставлял лишний fp32-остаток), а
             # backward читает bf16-копию (см. _attn_out_bf16stored).
             # Ветка не трогает flash-путь выше.
+            scores = compute_dtype.gemm_einsum("bthd,bshd->bhts", q, k) * scale
             o = _attn_out_bf16stored(scores, v, mask)
         else:
+            scores = compute_dtype.gemm_einsum("bthd,bshd->bhts", q, k) * scale  # (B, H, T, T)
             scores = jnp.where(mask, scores, jnp.finfo(jnp.float32).min)
             attn = jax.nn.softmax(scores, axis=-1)  # (B, H, T, T)
             o = compute_dtype.gemm_einsum("bhts,bshd->bthd", attn, v)  # (B, T, H, dq)

@@ -3207,6 +3207,16 @@ def train(
     # (``mla_bwd_bf16``/``ce_bf16``, как master_dtype/accum_jit).
     mla_bwd_bf16 = mla_mod.bwd_bf16_mode()
     ce_bf16 = model.ce_bf16_mode()
+    # Веха-12 (ADR-054 Am.25, цикл-15): гейт тайлового backward MLA — такое же
+    # условие прогона: выбирает исполняемый путь графа (переисчисление скоров
+    # по тайлам вместо dense-backward), читается один раз на сборке до
+    # ``init_params`` и компиляции.  Чтение fail-closed (форма
+    # ``bwd_bf16_mode``): опечатка падает сборкой, а не тихо оставляет
+    # dense-backward — замер ноги «flash-backward» стал бы замером прежнего
+    # пути.  Фактическое значение едет маркером в каждую строку метрик
+    # (``mla_flash_bwd``); при связке с ``AXIOM_MLA_BWD_BF16`` исполняется
+    # тайловый путь, но оба маркера сообщают фактические значения гейтов.
+    mla_flash_bwd = mla_mod.flash_bwd_mode()
     # ADR-054 Am.18 (цикл-10, кампания MFU-55): env-переопределение политики
     # grad-checkpointing для замеров.  Пин ``net/config.json`` не трогается:
     # заданная ``AXIOM_GRAD_CKPT_POLICY`` перекрывает ``cfg.grad_ckpt_policy`` на
@@ -3738,6 +3748,13 @@ def train(
                 # «fp32 vs bf16-хранилище» неотличимы от смены чего-то ещё.
                 "mla_bwd_bf16": 1 if mla_bwd_bf16 else 0,
                 "ce_bf16": 1 if ce_bf16 else 0,
+                # Веха-12 (ADR-054 Am.25, цикл-15): маркер тайлового backward
+                # MLA — фактические значения гейтов в формате
+                # master_dtype/accum_jit: без поля A/B-ноги цикла-15
+                # «dense-backward vs flash-backward» неотличимы от смены
+                # чего-то ещё (связка с mla_bwd_bf16 — оба маркера несут
+                # фактические значения, исполняется тайловый путь).
+                "mla_flash_bwd": 1 if mla_flash_bwd else 0,
                 # ADR-054 Am.21 (веха-10): маркер асинхронных метрик (1 — loss
                 # копировался раз в K шагов, 0 — прежний посэмпловый путь) —
                 # в формате master_dtype/accum_jit: без поля A/B-ноги цикла-12

@@ -1,0 +1,56 @@
+########## net/tests/test_03_mla_parity.py ##########
+[ADR-010] preliminary run: no CUDA device and the local profile does not require one (the A4 gate profile does)
+...s
+3 passed, 1 skipped in 3.48s
+########## net/tests/test_03_mla_parity.py -> rc=0
+########## net/tests/test_29_compute_dtype.py ##########
+=========================== short test summary info ============================
+FAILED net/tests/test_29_compute_dtype.py::test_pilot_forward_and_loss_are_bitwise_the_baseline
+1 failed, 22 passed, 1 skipped, 1 warning in 27.01s
+########## net/tests/test_29_compute_dtype.py -> rc=1
+########## net/tests/test_30_mla_flash_parity.py ##########
+[ADR-010] preliminary run: no CUDA device and the local profile does not require one (the A4 gate profile does)
+....
+4 passed in 7.75s
+########## net/tests/test_30_mla_flash_parity.py -> rc=0
+########## net/tests/test_31_mla_dense_compute_dtype.py ##########
+[ADR-010] preliminary run: no CUDA device and the local profile does not require one (the A4 gate profile does)
+.....
+5 passed in 1.74s
+########## net/tests/test_31_mla_dense_compute_dtype.py -> rc=0
+########## net/tests/test_31_remat_policy.py ##########
+[ADR-010] preliminary run: no CUDA device and the local profile does not require one (the A4 gate profile does)
+...........................
+27 passed in 141.17s (0:02:21)
+########## net/tests/test_31_remat_policy.py -> rc=0
+########## net/tests/test_35_bf16_master.py ##########
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+24 passed, 471 warnings in 330.96s (0:05:30)
+########## net/tests/test_35_bf16_master.py -> rc=0
+########## net/tests/test_36_accum_jit.py ##########
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+14 passed, 5 warnings in 272.06s (0:04:32)
+########## net/tests/test_36_accum_jit.py -> rc=0
+########## net/tests/test_37_per_layer_block.py ##########
+[ADR-010] preliminary run: no CUDA device and the local profile does not require one (the A4 gate profile does)
+.............
+13 passed in 138.58s (0:02:18)
+########## net/tests/test_37_per_layer_block.py -> rc=0
+########## net/tests/test_38_grad_ckpt_env.py ##########
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+11 passed, 4 warnings in 96.73s (0:01:36)
+########## net/tests/test_38_grad_ckpt_env.py -> rc=0
+########## net/tests/test_39_bwd_bf16_storage.py ##########
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+25 passed, 3 warnings in 303.06s (0:05:03)
+########## net/tests/test_39_bwd_bf16_storage.py -> rc=0
+########## net/tests/test_24_grad_checkpoint.py ##########
+[ADR-010] preliminary run: no CUDA device and the local profile does not require one (the A4 gate profile does)
+...........s
+11 passed, 1 skipped in 92.74s (0:01:32)
+########## net/tests/test_24_grad_checkpoint.py -> rc=0
+== regression rc_all=1 ==

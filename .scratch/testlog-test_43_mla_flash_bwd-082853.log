@@ -1,0 +1,10 @@
+[ADR-010] policy: jax_default_matmul_precision=highest
+[ADR-010] backend: cpu (selected explicitly) (NET_JAX_BACKEND=cpu) jax.devices()=['CpuDevice(id=0)']
+[ADR-010] profile: local (NET_GATE_PROFILE=<unset>)
+[ADR-013] determinism: --xla_gpu_deterministic_ops=off (local profile: not pinned) XLA_FLAGS='<unset>'
+[ADR-010] preliminary run: no CUDA device and the local profile does not require one (the A4 gate profile does)
+[веха-12] flash-bwd: относительный |dgrad| = 3.308e-07
+.[веха-12] оператор vs autodiff: относительный |dgrad| = 2.141e-07
+.[веха-12] bf16-compute связка: относительный |dgrad| = 2.976e-03
+.
+3 passed, 19 deselected in 40.42s

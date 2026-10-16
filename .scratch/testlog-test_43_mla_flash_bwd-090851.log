@@ -1,0 +1,23 @@
+[ADR-010] policy: jax_default_matmul_precision=highest
+[ADR-010] backend: cpu (selected explicitly) (NET_JAX_BACKEND=cpu) jax.devices()=['CpuDevice(id=0)']
+[ADR-010] profile: local (NET_GATE_PROFILE=<unset>)
+[ADR-013] determinism: --xla_gpu_deterministic_ops=off (local profile: not pinned) XLA_FLAGS='<unset>'
+[ADR-010] preliminary run: no CUDA device and the local profile does not require one (the A4 gate profile does)
+.......[веха-12] flash-bwd: относительный |dgrad| = 3.308e-07
+.[веха-12] оператор vs autodiff: относительный |dgrad| = 2.141e-07
+.....[веха-12] 10 шагов, flash-bwd: max|dloss| = 0.000e+00
+....[веха-12] bf16-compute связка: относительный |dgrad| = 2.976e-03
+.....
+=============================== warnings summary ===============================
+net/tests/test_43_mla_flash_bwd.py::test_ten_step_delta_loss_flash_bwd
+  /home/roman/venv-axiom-0112cpu-py312/lib/python3.12/site-packages/jax/_src/interpreters/mlir.py:1453: UserWarning: Some donated buffers were not usable: float32[64,16], float32[16,16], float32[16,16], float32[16,16], float32[16,16], float32[16,16], float32[16,2], float32[16,8], float32[8,16], float32[4,16], float32[4,16], float32[4,16], float32[16,32], float32[32,16], float32[16,16], float32[16,16], float32[16,16], float32[16,16], float32[16,16], float32[16,2], float32[16,8], float32[8,16], float32[4,16], float32[4,16], float32[4,16], float32[16,8], float32[8,16], float32[4,8,16], float32[4,8,16], float32[4,16,8], float32[1,16,32], float32[1,16,32], float32[1,32,16], float32[16,4], float32[16,16], float32[16,16], float32[16,16], float32[16,16], float32[16,16], float32[16,2], float32[16,8], float32[8,16], float32[2], float32[2], float32[4,16], float32[4,16], float32[4,16], float32[], float32[16], float32[16,8], float32[8,16], float32[4,8,16], float32[4,8,16], float32[4,16,8], float32[1,16,32], float32[1,16,32], float32[1,32,16], float32[16,4], float32[4], float32[8], float32[16], float32[16], float32[16,16], float32[16,16], float32[16,16], float32[16,16], float32[16,16], float32[16,16], float32[16,16], float32[16,16], float32[16,128], float32[16,128], float32[], float32[], float32[16], float32[16], float32[16,8], float32[8,16], float32[4,8,16], float32[4,8,16], float32[4,16,8], float32[1,16,32], float32[1,16,32], float32[1,32,16], float32[16,4], float32[4], float32[4], float32[8], float32[8], float32[4,16], float32[16], float32[16], float32[32,16], float32[16], float32[16], float32[16,16], float32[16,16], float32[16,16], float32[16,16], float32[16,16], float32[16,2], float32[16,8], float32[8,16], float32[16], float32[16], float32[2], float32[2], float32[4,16], float32[4,16], float32[4,16], float32[], float32[], float32[16], float32[16], float32[16,32], float32[16,32], float32[32,16], float32[16], float32[16], float32[16], float32[16], float32[588,32], float32[16,32], float32[16,32], float32[32,64], float32[64,32], float32[32,32], float32[32,96], float32[32,64], float32[64,32], float32[32], float32[32], float32[32], float32[32,32], float32[32,96], float32[32,16], float32[32], float32[32].
+  See an explanation at https://docs.jax.dev/en/latest/faq.html#buffer-donation.
+    warnings.warn("Some donated buffers were not usable:"
+
+net/tests/test_43_mla_flash_bwd.py::test_gate_off_is_bit_identical_to_baseline_revision
+net/tests/test_43_mla_flash_bwd.py::test_gate_off_bf16_params_is_bit_identical_to_baseline_revision
+  /usr/lib/python3.12/tarfile.py:2301: DeprecationWarning: Python 3.14 will, by default, filter extracted tar archives and reject files or modify their metadata. Use the filter argument to control this behavior.
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+22 passed, 3 warnings in 258.46s (0:04:18)

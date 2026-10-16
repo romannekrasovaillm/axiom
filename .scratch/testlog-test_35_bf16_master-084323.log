@@ -1,0 +1,136 @@
+[ADR-010] policy: jax_default_matmul_precision=highest
+[ADR-010] backend: cpu (selected explicitly) (NET_JAX_BACKEND=cpu) jax.devices()=['CpuDevice(id=0)']
+[ADR-010] profile: local (NET_GATE_PROFILE=<unset>)
+[ADR-013] determinism: --xla_gpu_deterministic_ops=off (local profile: not pinned) XLA_FLAGS='<unset>'
+[ADR-010] preliminary run: no CUDA device and the local profile does not require one (the A4 gate profile does)
+[pretrain] KPI: медиана ток/с за последние 1 шагов = 1.5 (шаг 1, микробатч=1, накопление=off; first_step_excluded=False)
+[pretrain] KPI: медиана ток/с за последние 1 шагов = 1925.4 (шаг 2, микробатч=1, накопление=off; first_step_excluded=True)
+[pretrain] KPI: медиана ток/с за последние 2 шагов = 2150.9 (шаг 3, микробатч=1, накопление=off; first_step_excluded=True)
+......[pretrain] KPI: медиана ток/с за последние 1 шагов = 1.3 (шаг 1, микробатч=1, накопление=off; first_step_excluded=False)
+[pretrain] KPI: медиана ток/с за последние 1 шагов = 723.9 (шаг 2, микробатч=1, накопление=off; first_step_excluded=True)
+[pretrain] KPI: медиана ток/с за последние 2 шагов = 798.6 (шаг 3, микробатч=1, накопление=off; first_step_excluded=True)
+.[pretrain] KPI: медиана ток/с за последние 1 шагов = 1.5 (шаг 1, микробатч=1, накопление=off; first_step_excluded=False)
+[pretrain] KPI: медиана ток/с за последние 1 шагов = 1947.4 (шаг 2, микробатч=1, накопление=off; first_step_excluded=True)
+[pretrain] KPI: медиана ток/с за последние 2 шагов = 2138.8 (шаг 3, микробатч=1, накопление=off; first_step_excluded=True)
+[pretrain] KPI: медиана ток/с за последние 3 шагов = 2017.5 (шаг 4, микробатч=1, накопление=off; first_step_excluded=True)
+[pretrain] KPI: медиана ток/с за последние 4 шагов = 2173.9 (шаг 5, микробатч=1, накопление=off; first_step_excluded=True)
+[pretrain] KPI: медиана ток/с за последние 5 шагов = 2330.2 (шаг 6, микробатч=1, накопление=off; first_step_excluded=True)
+[pretrain] KPI: медиана ток/с за последние 6 шагов = 2283.3 (шаг 7, микробатч=1, накопление=off; first_step_excluded=True)
+[pretrain] KPI: медиана ток/с за последние 7 шагов = 2330.2 (шаг 8, микробатч=1, накопление=off; first_step_excluded=True)
+[pretrain] KPI: медиана ток/с за последние 8 шагов = 2334.3 (шаг 9, микробатч=1, накопление=off; first_step_excluded=True)
+[pretrain] KPI: медиана ток/с за последние 9 шагов = 2330.2 (шаг 10, микробатч=1, накопление=off; first_step_excluded=True)
+[pretrain] KPI: медиана ток/с за последние 1 шагов = 1.3 (шаг 1, микробатч=1, накопление=off; first_step_excluded=False)
+[pretrain] KPI: медиана ток/с за последние 1 шагов = 1702.0 (шаг 2, микробатч=1, накопление=off; first_step_excluded=True)
+[pretrain] KPI: медиана ток/с за последние 2 шагов = 1822.2 (шаг 3, микробатч=1, накопление=off; first_step_excluded=True)
+[pretrain] KPI: медиана ток/с за последние 3 шагов = 1942.4 (шаг 4, микробатч=1, накопление=off; first_step_excluded=True)
+[pretrain] KPI: медиана ток/с за последние 4 шагов = 1933.0 (шаг 5, микробатч=1, накопление=off; first_step_excluded=True)
+[pretrain] KPI: медиана ток/с за последние 5 шагов = 1942.4 (шаг 6, микробатч=1, накопление=off; first_step_excluded=True)
+[pretrain] KPI: медиана ток/с за последние 6 шагов = 1984.9 (шаг 7, микробатч=1, накопление=off; first_step_excluded=True)
+[pretrain] KPI: медиана ток/с за последние 7 шагов = 1942.4 (шаг 8, микробатч=1, накопление=off; first_step_excluded=True)
+[pretrain] KPI: медиана ток/с за последние 8 шагов = 1984.9 (шаг 9, микробатч=1, накопление=off; first_step_excluded=True)
+[pretrain] KPI: медиана ток/с за последние 9 шагов = 1942.4 (шаг 10, микробатч=1, накопление=off; first_step_excluded=True)
+[pretrain] KPI: медиана ток/с за последние 1 шагов = 1.3 (шаг 1, микробатч=1, накопление=off; first_step_excluded=False)
+[pretrain] KPI: медиана ток/с за последние 1 шагов = 1741.1 (шаг 2, микробатч=1, накопление=off; first_step_excluded=True)
+[pretrain] KPI: медиана ток/с за последние 2 шагов = 1910.5 (шаг 3, микробатч=1, накопление=off; first_step_excluded=True)
+[pretrain] KPI: медиана ток/с за последние 3 шагов = 1914.9 (шаг 4, микробатч=1, накопление=off; first_step_excluded=True)
+[pretrain] KPI: медиана ток/с за последние 4 шагов = 1997.4 (шаг 5, микробатч=1, накопление=off; first_step_excluded=True)
+[pretrain] KPI: медиана ток/с за последние 5 шагов = 1914.9 (шаг 6, микробатч=1, накопление=off; first_step_excluded=True)
+[pretrain] KPI: медиана ток/с за последние 6 шагов = 1997.4 (шаг 7, микробатч=1, накопление=off; first_step_excluded=True)
+[pretrain] KPI: медиана ток/с за последние 7 шагов = 2079.9 (шаг 8, микробатч=1, накопление=off; first_step_excluded=True)
+[pretrain] KPI: медиана ток/с за последние 8 шагов = 1997.4 (шаг 9, микробатч=1, накопление=off; first_step_excluded=True)
+[pretrain] KPI: медиана ток/с за последние 9 шагов = 2079.9 (шаг 10, микробатч=1, накопление=off; first_step_excluded=True)
+[pretrain] KPI: медиана ток/с за последние 1 шагов = 0.8 (шаг 1, микробатч=1, накопление=off; first_step_excluded=False)
+[pretrain] KPI: медиана ток/с за последние 1 шагов = 1829.5 (шаг 2, микробатч=1, накопление=off; first_step_excluded=True)
+[pretrain] KPI: медиана ток/с за последние 2 шагов = 1795.9 (шаг 3, микробатч=1, накопление=off; first_step_excluded=True)
+[pretrain] KPI: медиана ток/с за последние 3 шагов = 1829.5 (шаг 4, микробатч=1, накопление=off; first_step_excluded=True)
+[pretrain] KPI: медиана ток/с за последние 4 шагов = 1795.9 (шаг 5, микробатч=1, накопление=off; first_step_excluded=True)
+[pretrain] KPI: медиана ток/с за последние 5 шагов = 1829.5 (шаг 6, микробатч=1, накопление=off; first_step_excluded=True)
+[pretrain] KPI: медиана ток/с за последние 6 шагов = 1820.5 (шаг 7, микробатч=1, накопление=off; first_step_excluded=True)
+[pretrain] KPI: медиана ток/с за последние 7 шагов = 1829.5 (шаг 8, микробатч=1, накопление=off; first_step_excluded=True)
+[pretrain] KPI: медиана ток/с за последние 8 шагов = 1848.9 (шаг 9, микробатч=1, накопление=off; first_step_excluded=True)
+[pretrain] KPI: медиана ток/с за последние 9 шагов = 1868.2 (шаг 10, микробатч=1, накопление=off; first_step_excluded=True)
+[паритет] kahan vs fp32: max|dloss|=3.174e-03 |dloss_final|=7.548e-04 отн. |dparam|=1.806e-01
+.[контроль] loss-дрейф kahan=3.174e-03 none=4.665e-03; диагностика отн. |dparam| kahan=1.806e-01 none=1.907e-01
+...[pretrain] KPI: медиана ток/с за последние 1 шагов = 0.8 (шаг 1, микробатч=1, накопление=off; first_step_excluded=False)
+[pretrain] KPI: медиана ток/с за последние 1 шагов = 1522.2 (шаг 2, микробатч=1, накопление=off; first_step_excluded=True)
+[pretrain] KPI: медиана ток/с за последние 2 шагов = 1807.8 (шаг 3, микробатч=1, накопление=off; first_step_excluded=True)
+[pretrain] KPI: медиана ток/с за последние 3 шагов = 2007.7 (шаг 4, микробатч=1, накопление=off; first_step_excluded=True)
+[pretrain] KPI: медиана ток/с за последние 4 шагов = 2050.6 (шаг 5, микробатч=1, накопление=off; first_step_excluded=True)
+[pretrain] KPI: медиана ток/с за последние 5 шагов = 2093.4 (шаг 6, микробатч=1, накопление=off; first_step_excluded=True)
+[pretrain] KPI: медиана ток/с за последние 6 шагов = 2069.1 (шаг 7, микробатч=1, накопление=off; first_step_excluded=True)
+[pretrain] KPI: медиана ток/с за последние 7 шагов = 2044.9 (шаг 8, микробатч=1, накопление=off; first_step_excluded=True)
+[pretrain] KPI: медиана ток/с за последние 8 шагов = 2026.3 (шаг 9, микробатч=1, накопление=off; first_step_excluded=True)
+[pretrain] KPI: медиана ток/с за последние 9 шагов = 2007.7 (шаг 10, микробатч=1, накопление=off; first_step_excluded=True)
+.....[pretrain] KPI: медиана ток/с за последние 1 шагов = 1.5 (шаг 1, микробатч=1, накопление=off; first_step_excluded=False)
+[pretrain] KPI: медиана ток/с за последние 1 шагов = 1654.5 (шаг 2, микробатч=1, накопление=off; first_step_excluded=True)
+[pretrain] KPI: медиана ток/с за последние 1 шагов = 1.3 (шаг 3, микробатч=1, накопление=off; first_step_excluded=False)
+[pretrain] KPI: медиана ток/с за последние 1 шагов = 1.3 (шаг 1, микробатч=1, накопление=off; first_step_excluded=False)
+[pretrain] KPI: медиана ток/с за последние 1 шагов = 1614.5 (шаг 2, микробатч=1, накопление=off; first_step_excluded=True)
+[pretrain] KPI: медиана ток/с за последние 1 шагов = 1.5 (шаг 3, микробатч=1, накопление=off; first_step_excluded=False)
+.[pretrain] KPI: медиана ток/с за последние 1 шагов = 0.8 (шаг 1, микробатч=1, накопление=off; first_step_excluded=False)
+...[pretrain] KPI: медиана ток/с за последние 1 шагов = 1.2 (шаг 1, микробатч=1, накопление=off; first_step_excluded=False)
+[pretrain] KPI: медиана ток/с за последние 1 шагов = 814.2 (шаг 2, микробатч=1, накопление=off; first_step_excluded=True)
+[pretrain] KPI: медиана ток/с за последние 1 шагов = 1.3 (шаг 1, микробатч=1, накопление=32; first_step_excluded=False)
+.[pretrain] KPI: медиана ток/с за последние 1 шагов = 1.3 (шаг 1, микробатч=1, накопление=off; first_step_excluded=False)
+[pretrain] фазы, с (декомпозированный прогон, диагностика): sec_kda=0.003, sec_mla=0.000, sec_moe=0.001, sec_ce=0.001, sec_bwd_kda=0.009, sec_bwd_mla=0.001, sec_bwd_moe=0.002, sec_bwd_ce=0.004, sec_bwd_other=0.000, sec_backopt=0.004, sec_forward=0.004, sec_backward=0.010, sec_loader=0.000, sec_other=12.350
+[pretrain] сверка фаз: сумма ног (sec_forward + sec_backward + sec_backopt) = 0.018 с из шага 12.369 с (0.1%); sec_other=12.350 с — остаток (шаг − сумма ног), НЕ «прочее»; sec_loader=0.000 с (вне шага: меряется до tick)
+[pretrain] НАХОДКА: unexplained_share_high — измеренные ноги покрывают 0.1% шага (< 95%); остаток не растворяется в тишине (ADR-011)
+[pretrain] backward по компонентам, с (отдельные grad-проходы, диагностика): sec_bwd_kda=0.009, sec_bwd_mla=0.001, sec_bwd_moe=0.002, sec_bwd_ce=0.004, sec_bwd_other=0.000
+[pretrain] сверка backward: сумма ног = 0.016 с из sec_backward=0.010 с (156.5%) — ориентир, не партиция: ноги — отдельные grad-проходы по подмножествам; с полным backward у них общие активации (лукап эмбеддинга, остаточный поток), поэтому расхождение ожидаемо; sec_backward — разность времён
+[pretrain] НАХОДКА: backward_legs_diverge — сумма backward-ног ушла от полного прохода дальше ±20% (ориентир): видно, что ноги меряют не доли шага
+[pretrain] пиковая XLA-память ног: sec_kda=0.2МиБ, sec_mla=0.1МиБ, sec_moe=0.3МиБ, sec_ce=0.2МиБ, sec_bwd_kda=0.8МиБ, sec_bwd_mla=0.7МиБ, sec_bwd_moe=0.9МиБ, sec_bwd_ce=0.8МиБ, sec_bwd_other=0.7МиБ, sec_backopt=6.3МиБ, sec_forward=0.5МиБ, sec_backward=1.2МиБ, sec_loader=null, sec_other=null
+[pretrain] KPI: медиана ток/с за последние 1 шагов = 861.8 (шаг 2, микробатч=1, накопление=off; first_step_excluded=True)
+[pretrain] фазы, с (декомпозированный прогон, диагностика): sec_kda=0.003, sec_mla=0.000, sec_moe=0.001, sec_ce=0.001, sec_bwd_kda=0.011, sec_bwd_mla=0.001, sec_bwd_moe=0.002, sec_bwd_ce=0.005, sec_bwd_other=0.001, sec_backopt=0.005, sec_forward=0.004, sec_backward=0.011, sec_loader=0.000, sec_other=-0.001
+[pretrain] сверка фаз: сумма ног (sec_forward + sec_backward + sec_backopt) = 0.019 с из шага 0.019 с (103.1%); sec_other=-0.001 с — остаток (шаг − сумма ног), НЕ «прочее»; sec_loader=0.000 с (вне шага: меряется до tick)
+[pretrain] backward по компонентам, с (отдельные grad-проходы, диагностика): sec_bwd_kda=0.011, sec_bwd_mla=0.001, sec_bwd_moe=0.002, sec_bwd_ce=0.005, sec_bwd_other=0.001
+[pretrain] сверка backward: сумма ног = 0.020 с из sec_backward=0.011 с (179.0%) — ориентир, не партиция: ноги — отдельные grad-проходы по подмножествам; с полным backward у них общие активации (лукап эмбеддинга, остаточный поток), поэтому расхождение ожидаемо; sec_backward — разность времён
+[pretrain] НАХОДКА: backward_legs_diverge — сумма backward-ног ушла от полного прохода дальше ±20% (ориентир): видно, что ноги меряют не доли шага
+[pretrain] пиковая XLA-память ног: sec_kda=0.2МиБ, sec_mla=0.1МиБ, sec_moe=0.3МиБ, sec_ce=0.2МиБ, sec_bwd_kda=0.8МиБ, sec_bwd_mla=0.7МиБ, sec_bwd_moe=0.9МиБ, sec_bwd_ce=0.8МиБ, sec_bwd_other=0.7МиБ, sec_backopt=6.3МиБ, sec_forward=0.5МиБ, sec_backward=1.2МиБ, sec_loader=null, sec_other=null
+.[pretrain] KPI: медиана ток/с за последние 1 шагов = 0.7 (шаг 1, микробатч=1, накопление=off; first_step_excluded=False)
+[pretrain] KPI: медиана ток/с за последние 1 шагов = 843.8 (шаг 2, микробатч=1, накопление=off; first_step_excluded=True)
+[pretrain] KPI: медиана ток/с за последние 1 шагов = 1.5 (шаг 1, микробатч=1, накопление=off; first_step_excluded=False)
+..
+=============================== warnings summary ===============================
+net/tests/test_35_bf16_master.py::test_a_gate_off_is_bitwise_identical_to_baseline
+  /usr/lib/python3.12/tarfile.py:2301: DeprecationWarning: Python 3.14 will, by default, filter extracted tar archives and reject files or modify their metadata. Use the filter argument to control this behavior.
+    warnings.warn(
+
+net/tests/test_35_bf16_master.py::test_a_gate_off_is_bitwise_identical_to_baseline
+net/tests/test_35_bf16_master.py::test_b_ten_step_parity_kahan_against_fp32_master
+net/tests/test_35_bf16_master.py::test_e3_cross_resume_fp32_to_bf16_and_back
+net/tests/test_35_bf16_master.py::test_e3_cross_resume_fp32_to_bf16_and_back
+  /home/roman/venv-axiom-0112cpu-py312/lib/python3.12/site-packages/jax/_src/interpreters/mlir.py:1453: UserWarning: Some donated buffers were not usable: float32[64,16], float32[16,16], float32[16,16], float32[16,16], float32[16,16], float32[16,16], float32[16,2], float32[16,8], float32[8,16], float32[4,16], float32[4,16], float32[4,16], float32[16,32], float32[32,16], float32[16,16], float32[16,16], float32[16,16], float32[16,16], float32[16,16], float32[16,2], float32[16,8], float32[8,16], float32[4,16], float32[4,16], float32[4,16], float32[16,8], float32[8,16], float32[4,8,16], float32[4,8,16], float32[4,16,8], float32[1,16,32], float32[1,16,32], float32[1,32,16], float32[16,4], float32[16,16], float32[16,16], float32[16,16], float32[16,16], float32[16,16], float32[16,2], float32[16,8], float32[8,16], float32[2], float32[2], float32[4,16], float32[4,16], float32[4,16], float32[], float32[16], float32[16,8], float32[8,16], float32[4,8,16], float32[4,8,16], float32[4,16,8], float32[1,16,32], float32[1,16,32], float32[1,32,16], float32[16,4], float32[4], float32[8], float32[16], float32[16], float32[16,16], float32[16,16], float32[16,16], float32[16,16], float32[16,16], float32[16,16], float32[16,16], float32[16,16], float32[16,128], float32[16,128], float32[], float32[], float32[16], float32[16], float32[16,8], float32[8,16], float32[4,8,16], float32[4,8,16], float32[4,16,8], float32[1,16,32], float32[1,16,32], float32[1,32,16], float32[16,4], float32[4], float32[4], float32[8], float32[8], float32[4,16], float32[16], float32[16], float32[32,16], float32[16], float32[16], float32[16,16], float32[16,16], float32[16,16], float32[16,16], float32[16,16], float32[16,2], float32[16,8], float32[8,16], float32[16], float32[16], float32[2], float32[2], float32[4,16], float32[4,16], float32[4,16], float32[], float32[], float32[16], float32[16], float32[16,32], float32[16,32], float32[32,16], float32[16], float32[16], float32[16], float32[16], float32[588,32], float32[16,32], float32[16,32], float32[32,64], float32[64,32], float32[32,32], float32[32,96], float32[32,64], float32[64,32], float32[32], float32[32], float32[32], float32[32,32], float32[32,96], float32[32,16], float32[32], float32[32].
+  See an explanation at https://docs.jax.dev/en/latest/faq.html#buffer-donation.
+    warnings.warn("Some donated buffers were not usable:"
+
+net/tests/test_35_bf16_master.py::test_third_output_is_gone_and_work_copy_is_master
+net/tests/test_35_bf16_master.py::test_e4_stored_master_mode_reads_meta_and_defaults
+net/tests/test_35_bf16_master.py::test_f_step_donate_legal_in_bf16_master
+net/tests/test_35_bf16_master.py::test_f2_train_loop_donation_and_accum_branch
+net/tests/test_35_bf16_master.py::test_h_metrics_rows_carry_active_modes
+  /home/roman/venv-axiom-0112cpu-py312/lib/python3.12/site-packages/jax/_src/interpreters/mlir.py:1453: UserWarning: Some donated buffers were not usable: bfloat16[512,64], bfloat16[64], bfloat16[64,64], bfloat16[64,64], bfloat16[64,64], bfloat16[64,64], bfloat16[64,64], bfloat16[64,4], bfloat16[64,16], bfloat16[16,64], bfloat16[64], bfloat16[4], bfloat16[4,64], bfloat16[4,64], bfloat16[4,64], bfloat16[], bfloat16[64], bfloat16[64,128], bfloat16[64,128], bfloat16[128,64], bfloat16[64], bfloat16[64,64], bfloat16[64,64], bfloat16[64,64], bfloat16[64,64], bfloat16[64,64], bfloat16[64,4], bfloat16[64,16], bfloat16[16,64], bfloat16[64], bfloat16[4], bfloat16[4,64], bfloat16[4,64], bfloat16[4,64], bfloat16[], bfloat16[64], bfloat16[64,32], bfloat16[32,64], bfloat16[6,32,16], bfloat16[6,32,16], bfloat16[6,16,32], bfloat16[2,64,32], bfloat16[2,64,32], bfloat16[2,32,64], bfloat16[64,6], bfloat16[6], bfloat16[32], bfloat16[64], bfloat16[64,64], bfloat16[64,64], bfloat16[64,64], bfloat16[64,64], bfloat16[64,64], bfloat16[64,4], bfloat16[64,16], bfloat16[16,64], bfloat16[64], bfloat16[4], bfloat16[4,64], bfloat16[4,64], bfloat16[4,64], bfloat16[], bfloat16[64], bfloat16[64,32], bfloat16[32,64], bfloat16[6,32,16], bfloat16[6,32,16], bfloat16[6,16,32], bfloat16[2,64,32], bfloat16[2,64,32], bfloat16[2,32,64], bfloat16[64,6], bfloat16[6], bfloat16[32], bfloat16[64], bfloat16[64,32], bfloat16[64,64], bfloat16[32,64], bfloat16[32,64], bfloat16[64,64], bfloat16[64,64], bfloat16[64,64], bfloat16[64,64], bfloat16[64,128], bfloat16[32,128], bfloat16[], bfloat16[64], bfloat16[64,32], bfloat16[32,64], bfloat16[6,32,16], bfloat16[6,32,16], bfloat16[6,16,32], bfloat16[2,64,32], bfloat16[2,64,32], bfloat16[2,32,64], bfloat16[64,6], bfloat16[6], bfloat16[32], bfloat16[4,64], bfloat16[64], bfloat16[128,64], bfloat16[64], bfloat16[64,64], bfloat16[64,64], bfloat16[64,64], bfloat16[64,64], bfloat16[64,64], bfloat16[64,4], bfloat16[64,16], bfloat16[16,64], bfloat16[64], bfloat16[4], bfloat16[4,64], bfloat16[4,64], bfloat16[4,64], bfloat16[], bfloat16[64], bfloat16[64,128], bfloat16[64,128], bfloat16[128,64], bfloat16[64], bfloat16[64], bfloat16[588,32], bfloat16[16,32], bfloat16[32,64], bfloat16[64,32], bfloat16[32], bfloat16[32], bfloat16[32,32], bfloat16[32,96], bfloat16[32,64], bfloat16[64,32], bfloat16[32], bfloat16[32], bfloat16[32,32], bfloat16[32,96], bfloat16[32,64], bfloat16[32].
+  See an explanation at https://docs.jax.dev/en/latest/faq.html#buffer-donation.
+    warnings.warn("Some donated buffers were not usable:"
+
+net/tests/test_35_bf16_master.py::test_b_ten_step_parity_kahan_against_fp32_master
+net/tests/test_35_bf16_master.py::test_d_sr_is_reproducible_under_fixed_seed
+net/tests/test_35_bf16_master.py::test_e3_cross_resume_fp32_to_bf16_and_back
+  /home/roman/venv-axiom-0112cpu-py312/lib/python3.12/site-packages/jax/_src/interpreters/mlir.py:1453: UserWarning: Some donated buffers were not usable: bfloat16[64,16], bfloat16[16], bfloat16[16,16], bfloat16[16,16], bfloat16[16,16], bfloat16[16,16], bfloat16[16,16], bfloat16[16,2], bfloat16[16,8], bfloat16[8,16], bfloat16[16], bfloat16[2], bfloat16[4,16], bfloat16[4,16], bfloat16[4,16], bfloat16[], bfloat16[16], bfloat16[16,32], bfloat16[16,32], bfloat16[32,16], bfloat16[16], bfloat16[16,16], bfloat16[16,16], bfloat16[16,16], bfloat16[16,16], bfloat16[16,16], bfloat16[16,2], bfloat16[16,8], bfloat16[8,16], bfloat16[16], bfloat16[2], bfloat16[4,16], bfloat16[4,16], bfloat16[4,16], bfloat16[], bfloat16[16], bfloat16[16,8], bfloat16[8,16], bfloat16[4,8,16], bfloat16[4,8,16], bfloat16[4,16,8], bfloat16[1,16,32], bfloat16[1,16,32], bfloat16[1,32,16], bfloat16[16,4], bfloat16[4], bfloat16[8], bfloat16[16], bfloat16[16,16], bfloat16[16,16], bfloat16[16,16], bfloat16[16,16], bfloat16[16,16], bfloat16[16,2], bfloat16[16,8], bfloat16[8,16], bfloat16[16], bfloat16[2], bfloat16[4,16], bfloat16[4,16], bfloat16[4,16], bfloat16[], bfloat16[16], bfloat16[16,8], bfloat16[8,16], bfloat16[4,8,16], bfloat16[4,8,16], bfloat16[4,16,8], bfloat16[1,16,32], bfloat16[1,16,32], bfloat16[1,32,16], bfloat16[16,4], bfloat16[4], bfloat16[8], bfloat16[16], bfloat16[16,16], bfloat16[16,16], bfloat16[16,16], bfloat16[16,16], bfloat16[16,16], bfloat16[16,16], bfloat16[16,16], bfloat16[16,16], bfloat16[16,128], bfloat16[16,128], bfloat16[], bfloat16[16], bfloat16[16,8], bfloat16[8,16], bfloat16[4,8,16], bfloat16[4,8,16], bfloat16[4,16,8], bfloat16[1,16,32], bfloat16[1,16,32], bfloat16[1,32,16], bfloat16[16,4], bfloat16[4], bfloat16[8], bfloat16[4,16], bfloat16[16], bfloat16[32,16], bfloat16[16], bfloat16[16,16], bfloat16[16,16], bfloat16[16,16], bfloat16[16,16], bfloat16[16,16], bfloat16[16,2], bfloat16[16,8], bfloat16[8,16], bfloat16[16], bfloat16[2], bfloat16[4,16], bfloat16[4,16], bfloat16[4,16], bfloat16[], bfloat16[16], bfloat16[16,32], bfloat16[16,32], bfloat16[32,16], bfloat16[16], bfloat16[16], bfloat16[588,32], bfloat16[16,32], bfloat16[32,64], bfloat16[64,32], bfloat16[32], bfloat16[32], bfloat16[32,32], bfloat16[32,96], bfloat16[32,64], bfloat16[64,32], bfloat16[32], bfloat16[32], bfloat16[32,32], bfloat16[32,96], bfloat16[32,16], bfloat16[32].
+  See an explanation at https://docs.jax.dev/en/latest/faq.html#buffer-donation.
+    warnings.warn("Some donated buffers were not usable:"
+
+net/tests/test_35_bf16_master.py: 456 warnings
+  /home/roman/venv-axiom-0112cpu-py312/lib/python3.12/site-packages/orbax/checkpoint/_src/serialization/jax_array_handlers.py:1027: UserWarning: Sharding info not provided when restoring. Populating sharding info from sharding file. Please note restoration time will be slightly increased due to reading from file. Note also that this option is unsafe when restoring on a different topology than the checkpoint was saved with.
+    warnings.warn(
+
+net/tests/test_35_bf16_master.py::test_e2_roundtrip_both_formats_and_hash_is_of_stored_tree
+  /home/roman/.arch-ml/worktrees/axiom-43e236d789188868/theseus-20261016050103/net/checkpoint.py:184: UserWarning: resume: bf16-мастер апкастится в fp32 (bf16-хранилище уже потеряло мелкие обновления; comp-буфер не восстанавливается — эпоха bf16 продолжается как fp32-нога с тем же деревом)
+    return cast_tree(restored, master_dtype, warn_on_upcast=True)
+
+net/tests/test_35_bf16_master.py::test_h_metrics_rows_carry_active_modes
+  /home/roman/venv-axiom-0112cpu-py312/lib/python3.12/site-packages/jax/_src/interpreters/mlir.py:1453: UserWarning: Some donated buffers were not usable: float32[512,64], float32[64,64], float32[64,64], float32[64,64], float32[64,64], float32[64,64], float32[64,4], float32[64,16], float32[16,64], float32[4,64], float32[4,64], float32[4,64], float32[64,128], float32[64,128], float32[128,64], float32[64,64], float32[64,64], float32[64,64], float32[64,64], float32[64,64], float32[64,4], float32[64,16], float32[16,64], float32[4,64], float32[4,64], float32[4,64], float32[64,32], float32[32,64], float32[6,32,16], float32[6,32,16], float32[6,16,32], float32[2,64,32], float32[2,64,32], float32[2,32,64], float32[64,6], float32[64,64], float32[64,64], float32[64,64], float32[64,64], float32[64,64], float32[64,4], float32[64,16], float32[16,64], float32[4], float32[4], float32[4,64], float32[4,64], float32[4,64], float32[], float32[64], float32[64,32], float32[32,64], float32[6,32,16], float32[6,32,16], float32[6,16,32], float32[2,64,32], float32[2,64,32], float32[2,32,64], float32[64,6], float32[6], float32[64], float32[64], float32[64,32], float32[64,64], float32[32,64], float32[32,64], float32[64,64], float32[64,64], float32[64,64], float32[64,64], float32[64,128], float32[32,128], float32[], float32[], float32[64], float32[64], float32[64,32], float32[32,64], float32[6,32,16], float32[6,32,16], float32[6,16,32], float32[2,64,32], float32[2,64,32], float32[2,32,64], float32[64,6], float32[6], float32[6], float32[4,64], float32[64], float32[64], float32[128,64], float32[64], float32[64], float32[64,64], float32[64,64], float32[64,64], float32[64,64], float32[64,64], float32[64,4], float32[64,16], float32[16,64], float32[64], float32[64], float32[4], float32[4], float32[4,64], float32[4,64], float32[4,64], float32[], float32[], float32[64], float32[64], float32[64,128], float32[64,128], float32[128,64], float32[64], float32[64], float32[64], float32[64], float32[588,32], float32[16,32], float32[32,64], float32[64,32], float32[32], float32[32], float32[32,32], float32[32,96], float32[32,64], float32[64,32], float32[32], float32[32], float32[32], float32[32], float32[32,32], float32[32,96], float32[32,64], float32[32], float32[32].
+  See an explanation at https://docs.jax.dev/en/latest/faq.html#buffer-donation.
+    warnings.warn("Some donated buffers were not usable:"
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+24 passed, 471 warnings in 330.96s (0:05:30)

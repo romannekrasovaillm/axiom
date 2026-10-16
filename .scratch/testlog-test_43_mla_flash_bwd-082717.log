@@ -1,0 +1,110 @@
+[ADR-010] policy: jax_default_matmul_precision=highest
+[ADR-010] backend: cpu (selected explicitly) (NET_JAX_BACKEND=cpu) jax.devices()=['CpuDevice(id=0)']
+[ADR-010] profile: local (NET_GATE_PROFILE=<unset>)
+[ADR-013] determinism: --xla_gpu_deterministic_ops=off (local profile: not pinned) XLA_FLAGS='<unset>'
+[ADR-010] preliminary run: no CUDA device and the local profile does not require one (the A4 gate profile does)
+.......F[веха-12] оператор vs autodiff: относительный |dgrad| = 2.141e-07
+......F.
+=================================== FAILURES ===================================
+________ test_flash_bwd_loss_and_grads_parity_with_documented_tolerance ________
+
+    def test_flash_bwd_loss_and_grads_parity_with_documented_tolerance():
+        """Паритет loss/grads малого конфига; допуск ≤1e-3 (Am.25).
+    
+        Модельная нога (dense-оракул дефолтом, KDA не задета гейтом): лосс —
+        побитово (forward тот же), градиенты — в допуске; фактическое число
+        печатается (fp32-режим измерен ~2e-7 отн.).
+        """
+        cfg = small_config(mla_flash_bwd_tile=_PIN_TILE)
+        params = model.init_params(jr.PRNGKey(0), cfg)
+        ids = jr.randint(jr.PRNGKey(2), (2, SEQ_LEN), 1, cfg.vocab_size)
+    
+        def loss(p):
+            return model.compute_loss(p, cfg, ids, SEQ_LEN, grad_ckpt_policy="none")
+    
+        with gate_env(None):
+            v_off, g_off = jax.value_and_grad(loss)(params)
+        with gate_env("1"):
+            v_on, g_on = jax.value_and_grad(loss)(params)
+    
+        assert jnp.array_equal(v_off, v_on), "forward обязан быть побитово тем же"
+>       assert all(bool(jnp.isfinite(x)) for x in jax.tree_util.tree_leaves(g_on)), (
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+            "в градиентах гейта появились нефинитные значения"
+        )
+
+net/tests/test_43_mla_flash_bwd.py:408: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+net/tests/test_43_mla_flash_bwd.py:408: in <genexpr>
+    assert all(bool(jnp.isfinite(x)) for x in jax.tree_util.tree_leaves(g_on)), (
+               ^^^^^^^^^^^^^^^^^^^^^
+/home/roman/venv-axiom-0112cpu-py312/lib/python3.12/site-packages/jax/_src/array.py:290: in __bool__
+    core.check_bool_conversion(self)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+arr = Array([[ True,  True,  True, ...,  True,  True,  True],
+       [ True,  True,  True, ...,  True,  True,  True],
+      ...  [ True,  True,  True, ...,  True,  True,  True],
+       [ True,  True,  True, ...,  True,  True,  True]], dtype=bool)
+
+    def check_bool_conversion(arr: Array):
+      if arr.size == 0:
+        raise ValueError("The truth value of an empty array is ambiguous. Use"
+                         " `array.size > 0` to check that an array is not empty.")
+      if arr.size > 1:
+>       raise ValueError("The truth value of an array with more than one element"
+                         " is ambiguous. Use a.any() or a.all()")
+E       ValueError: The truth value of an array with more than one element is ambiguous. Use a.any() or a.all()
+
+/home/roman/venv-axiom-0112cpu-py312/lib/python3.12/site-packages/jax/_src/core.py:948: ValueError
+_________________ test_compute_dtype_bf16_combo_is_documented __________________
+
+    def test_compute_dtype_bf16_combo_is_documented():
+        """``AXIOM_COMPUTE_DTYPE=bf16`` (режим кампании) × гейт: лосс бит-в-бит.
+    
+        Градиенты: тайловый backward идёт через те же bf16-границы, что и
+        контракции forward (``compute_dtype.gemm_einsum``); сверка — против
+        autodiff того же bf16-пути, расхождение несёт округление границы и
+        документируется отдельным допуском (измерено ~3e-3, fp32-режим ~2e-7).
+        """
+        cfg, params, x = _mla_case()
+    
+        def loss(p):
+            return jnp.sum(mla._dense_apply(p, cfg, x) ** 2)
+    
+        with gate_env(None, compute="bf16"):
+            v_off, g_off = jax.value_and_grad(loss)(params)
+        with gate_env("1", compute="bf16"):
+            v_on, g_on = jax.value_and_grad(loss)(params)
+        assert jnp.array_equal(v_off, v_on), "forward bf16-режима обязан быть бит-в-бит"
+>       assert all(bool(jnp.isfinite(l)) for l in jax.tree_util.tree_leaves(g_on))
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+net/tests/test_43_mla_flash_bwd.py:710: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+net/tests/test_43_mla_flash_bwd.py:710: in <genexpr>
+    assert all(bool(jnp.isfinite(l)) for l in jax.tree_util.tree_leaves(g_on))
+               ^^^^^^^^^^^^^^^^^^^^^
+/home/roman/venv-axiom-0112cpu-py312/lib/python3.12/site-packages/jax/_src/array.py:290: in __bool__
+    core.check_bool_conversion(self)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+arr = Array([[ True,  True,  True, ...,  True,  True,  True],
+       [ True,  True,  True, ...,  True,  True,  True],
+      ...  [ True,  True,  True, ...,  True,  True,  True],
+       [ True,  True,  True, ...,  True,  True,  True]], dtype=bool)
+
+    def check_bool_conversion(arr: Array):
+      if arr.size == 0:
+        raise ValueError("The truth value of an empty array is ambiguous. Use"
+                         " `array.size > 0` to check that an array is not empty.")
+      if arr.size > 1:
+>       raise ValueError("The truth value of an array with more than one element"
+                         " is ambiguous. Use a.any() or a.all()")
+E       ValueError: The truth value of an array with more than one element is ambiguous. Use a.any() or a.all()
+
+/home/roman/venv-axiom-0112cpu-py312/lib/python3.12/site-packages/jax/_src/core.py:948: ValueError
+=========================== short test summary info ============================
+FAILED net/tests/test_43_mla_flash_bwd.py::test_flash_bwd_loss_and_grads_parity_with_documented_tolerance
+FAILED net/tests/test_43_mla_flash_bwd.py::test_compute_dtype_bf16_combo_is_documented
+2 failed, 14 passed, 6 deselected in 63.40s (0:01:03)

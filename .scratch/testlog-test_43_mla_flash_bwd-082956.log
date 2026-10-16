@@ -1,0 +1,31 @@
+[ADR-010] policy: jax_default_matmul_precision=highest
+[ADR-010] backend: cpu (selected explicitly) (NET_JAX_BACKEND=cpu) jax.devices()=['CpuDevice(id=0)']
+[ADR-010] profile: local (NET_GATE_PROFILE=<unset>)
+[ADR-013] determinism: --xla_gpu_deterministic_ops=off (local profile: not pinned) XLA_FLAGS='<unset>'
+[ADR-010] preliminary run: no CUDA device and the local profile does not require one (the A4 gate profile does)
+[веха-12] 10 шагов, flash-bwd: max|dloss| = 0.000e+00
+.F.
+=================================== FAILURES ===================================
+__________________ test_ten_step_nan_control_campaign_bundle ___________________
+
+parity_legs = (ModelConfig(vocab_size=64, hidden=16, tie_embeddings=True, num_layers=4, num_kda_layers=3, num_mla_layers=1, num_head...p_reason': 'data exhausted: поток батчей кончился на шаге 5 из 10'}, grad_checkpointing=False, param_dtype='float32')})
+
+    def test_ten_step_nan_control_campaign_bundle(parity_legs):
+        """Связка кампании, 10 шагов: ни одного нефинитного числа (прецедент 4b/4c)."""
+        _cfg, legs = parity_legs
+        combo = legs["combo"]
+>       assert combo.steps_done == _PARITY_STEPS
+E       AssertionError: assert 5 == 10
+E        +  where 5 = TrainResult(losses=[4.597621917724609, 4.5825347900390625, 4.6141767501831055, 4.594860076904297, 4.6147236824035645],...top_reason': 'data exhausted: поток батчей кончился на шаге 5 из 10'}, grad_checkpointing=False, param_dtype='float32').steps_done
+
+net/tests/test_43_mla_flash_bwd.py:641: AssertionError
+=============================== warnings summary ===============================
+net/tests/test_43_mla_flash_bwd.py::test_ten_step_delta_loss_flash_bwd
+  /home/roman/venv-axiom-0112cpu-py312/lib/python3.12/site-packages/jax/_src/interpreters/mlir.py:1453: UserWarning: Some donated buffers were not usable: float32[64,16], float32[16,16], float32[16,16], float32[16,16], float32[16,16], float32[16,16], float32[16,2], float32[16,8], float32[8,16], float32[4,16], float32[4,16], float32[4,16], float32[16,32], float32[32,16], float32[16,16], float32[16,16], float32[16,16], float32[16,16], float32[16,16], float32[16,2], float32[16,8], float32[8,16], float32[4,16], float32[4,16], float32[4,16], float32[16,8], float32[8,16], float32[4,8,16], float32[4,8,16], float32[4,16,8], float32[1,16,32], float32[1,16,32], float32[1,32,16], float32[16,4], float32[16,16], float32[16,16], float32[16,16], float32[16,16], float32[16,16], float32[16,2], float32[16,8], float32[8,16], float32[2], float32[2], float32[4,16], float32[4,16], float32[4,16], float32[], float32[16], float32[16,8], float32[8,16], float32[4,8,16], float32[4,8,16], float32[4,16,8], float32[1,16,32], float32[1,16,32], float32[1,32,16], float32[16,4], float32[4], float32[8], float32[16], float32[16], float32[16,16], float32[16,16], float32[16,16], float32[16,16], float32[16,16], float32[16,16], float32[16,16], float32[16,16], float32[16,128], float32[16,128], float32[], float32[], float32[16], float32[16], float32[16,8], float32[8,16], float32[4,8,16], float32[4,8,16], float32[4,16,8], float32[1,16,32], float32[1,16,32], float32[1,32,16], float32[16,4], float32[4], float32[4], float32[8], float32[8], float32[4,16], float32[16], float32[16], float32[32,16], float32[16], float32[16], float32[16,16], float32[16,16], float32[16,16], float32[16,16], float32[16,16], float32[16,2], float32[16,8], float32[8,16], float32[16], float32[16], float32[2], float32[2], float32[4,16], float32[4,16], float32[4,16], float32[], float32[], float32[16], float32[16], float32[16,32], float32[16,32], float32[32,16], float32[16], float32[16], float32[16], float32[16], float32[588,32], float32[16,32], float32[16,32], float32[32,64], float32[64,32], float32[32,32], float32[32,96], float32[32,64], float32[64,32], float32[32], float32[32], float32[32], float32[32,32], float32[32,96], float32[32,16], float32[32], float32[32].
+  See an explanation at https://docs.jax.dev/en/latest/faq.html#buffer-donation.
+    warnings.warn("Some donated buffers were not usable:"
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED net/tests/test_43_mla_flash_bwd.py::test_ten_step_nan_control_campaign_bundle
+1 failed, 2 passed, 19 deselected, 1 warning in 43.38s

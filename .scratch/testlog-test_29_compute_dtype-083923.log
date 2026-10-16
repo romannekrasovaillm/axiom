@@ -1,0 +1,42 @@
+[ADR-010] policy: jax_default_matmul_precision=highest
+[ADR-010] backend: cpu (selected explicitly) (NET_JAX_BACKEND=cpu) jax.devices()=['CpuDevice(id=0)']
+[ADR-010] profile: local (NET_GATE_PROFILE=<unset>)
+[ADR-013] determinism: --xla_gpu_deterministic_ops=off (local profile: not pinned) XLA_FLAGS='<unset>'
+[ADR-010] preliminary run: no CUDA device and the local profile does not require one (the A4 gate profile does)
+............F..........s
+=================================== FAILURES ===================================
+_____________ test_pilot_forward_and_loss_are_bitwise_the_baseline _____________
+
+baseline = namespace(config=<module 'baseline_net.config' from '/home/roman/.arch-ml/worktrees/axiom-43e236d789188868/theseus-202...roman/.arch-ml/worktrees/axiom-43e236d789188868/theseus-20261016050103/net/tests/.baseline-net/baseline_net/model.py'>)
+
+    def test_pilot_forward_and_loss_are_bitwise_the_baseline(baseline) -> None:
+        """The full token compute path: KDA + MLA + dense MLP + LatentMoE + AttnRes + head."""
+        cfg = _pilot_cfg(sys.modules["net.config"])
+        bcfg = _pilot_cfg(baseline.config)
+        key = jr.PRNGKey(0)
+        params = model.init_params(key, cfg)
+        bparams = baseline.model.init_params(key, bcfg)
+        ids = jr.randint(jr.PRNGKey(2), (2, 16), 0, cfg.vocab_size)
+    
+>       assert _bitwise_equal(
+            model.forward(params, cfg, ids, grad_ckpt_policy="none"),
+            baseline.model.forward(bparams, bcfg, ids, grad_ckpt_policy="none"),
+        )
+E       AssertionError: assert False
+E        +  where False = _bitwise_equal(Array([[[-0.1744901 ,  0.23192568,  0.22174686, ..., -0.06375359,\n          0.11870579,  0.43906298],\n        [-0.3366...\n        [-0.07818864,  0.0645475 ,  0.08531614, ...,  0.03322648,\n         -0.12486763, -0.23622255]]], dtype=float32), Array([[[-0.1744901 ,  0.23192568,  0.22174686, ..., -0.06375359,\n          0.11870579,  0.43906298],\n        [-0.3366...\n        [-0.07818862,  0.06454749,  0.08531614, ...,  0.03322648,\n         -0.12486766, -0.23622255]]], dtype=float32))
+E        +    where Array([[[-0.1744901 ,  0.23192568,  0.22174686, ..., -0.06375359,\n          0.11870579,  0.43906298],\n        [-0.3366...\n        [-0.07818864,  0.0645475 ,  0.08531614, ...,  0.03322648,\n         -0.12486763, -0.23622255]]], dtype=float32) = <function forward at 0x7e7d5a6a3740>(ModelParams(embedding=Array([[ 0.02008029, -0.01812674, -0.01496344, ...,  0.00810403,\n        -0.01241768,  0.0046078..., 1., 1., 1., 1., 1., 1., 1.,\n       1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1.],      dtype=float32))), ModelConfig(vocab_size=512, hidden=64, tie_embeddings=True, num_layers=4, num_kda_layers=3, num_mla_layers=1, num_head..._policy='none', ce_chunk_tokens=0, kda_chunked_backward=False, kda_impl='chunked', kda_wyut_chunk=64, scan_layers=True), Array([[ 79, 124, 329, 447,  73, 424,  44, 493, 460,  21,  50, 491, 174,\n        313, 136, 303],\n       [ 74,  74, 349, 142, 467, 180,  84, 141, 357,   1, 131, 497, 321,\n        452, 199, 249]], dtype=int32), grad_ckpt_policy='none')
+E        +      where <function forward at 0x7e7d5a6a3740> = model.forward
+E        +    and   Array([[[-0.1744901 ,  0.23192568,  0.22174686, ..., -0.06375359,\n          0.11870579,  0.43906298],\n        [-0.3366...\n        [-0.07818862,  0.06454749,  0.08531614, ...,  0.03322648,\n         -0.12486766, -0.23622255]]], dtype=float32) = <function forward at 0x7e7d51d0a5c0>(ModelParams(embedding=Array([[ 0.02008029, -0.01812674, -0.01496344, ...,  0.00810403,\n        -0.01241768,  0.0046078..., 1., 1., 1., 1., 1., 1., 1.,\n       1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1.],      dtype=float32))), ModelConfig(vocab_size=512, hidden=64, tie_embeddings=True, num_layers=4, num_kda_layers=3, num_mla_layers=1, num_head..._policy='none', ce_chunk_tokens=0, kda_chunked_backward=False, kda_impl='chunked', kda_wyut_chunk=64, scan_layers=True), Array([[ 79, 124, 329, 447,  73, 424,  44, 493, 460,  21,  50, 491, 174,\n        313, 136, 303],\n       [ 74,  74, 349, 142, 467, 180,  84, 141, 357,   1, 131, 497, 321,\n        452, 199, 249]], dtype=int32), grad_ckpt_policy='none')
+E        +      where <function forward at 0x7e7d51d0a5c0> = <module 'baseline_net.model' from '/home/roman/.arch-ml/worktrees/axiom-43e236d789188868/theseus-20261016050103/net/tests/.baseline-net/baseline_net/model.py'>.forward
+E        +        where <module 'baseline_net.model' from '/home/roman/.arch-ml/worktrees/axiom-43e236d789188868/theseus-20261016050103/net/tests/.baseline-net/baseline_net/model.py'> = namespace(config=<module 'baseline_net.config' from '/home/roman/.arch-ml/worktrees/axiom-43e236d789188868/theseus-202...roman/.arch-ml/worktrees/axiom-43e236d789188868/theseus-20261016050103/net/tests/.baseline-net/baseline_net/model.py'>).model
+
+net/tests/test_29_compute_dtype.py:343: AssertionError
+=============================== warnings summary ===============================
+net/tests/test_29_compute_dtype.py::test_mla_dense_oracle_is_bitwise_the_baseline
+  /usr/lib/python3.12/tarfile.py:2301: DeprecationWarning: Python 3.14 will, by default, filter extracted tar archives and reject files or modify their metadata. Use the filter argument to control this behavior.
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED net/tests/test_29_compute_dtype.py::test_pilot_forward_and_loss_are_bitwise_the_baseline
+1 failed, 22 passed, 1 skipped, 1 warning in 27.01s

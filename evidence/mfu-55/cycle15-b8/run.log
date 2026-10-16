@@ -1,0 +1,18 @@
+[jax-preflight] XLA_PYTHON_CLIENT_MEM_FRACTION=0.96 (source: env)
+[jax-preflight] XLA_PYTHON_CLIENT_MEM_FRACTION=0.96 (source: env)
+[pretrain] ВНИМАНИЕ: детерминизм XLA не запиннен (NET_GATE_PROFILE=1) — побитовая воспроизводимость между процессами на GPU не гарантируется (ADR-013); запись в журнале это фиксирует
+[pretrain] l3-full: vocab=160000, T=8192, B=8 (micro=8, accum=off), шагов 10, grad-checkpointing=True, remat=none, токенизатор=16e4a5325f38df9d…
+/home/roman/venv-axiom-0112/lib/python3.12/site-packages/jax/_src/ops/scatter.py:105: FutureWarning: scatter inputs have incompatible types: cannot safely cast value from dtype=float32 to dtype=bfloat16 with jax_numpy_dtype_promotion=standard. In future JAX releases this will result in an error.
+  warnings.warn(
+E1016 04:58:43.418417  367774 cuda_executor.cc:1365] [0] Failed to allocate device memory of 52.82GiB (56715378688 bytes): RESOURCE_EXHAUSTED: : CUDA_ERROR_OUT_OF_MEMORY: out of memory
+=== Source Location Trace: ===
+external/xla+/xla/stream_executor/cuda/cuda_status.cc:45
+external/xla+/xla/stream_executor/cuda/cuda_device_allocator.cc:230
+external/xla+/xla/stream_executor/cuda/cuda_device_allocator.cc:487
+
+W1016 05:43:26.620116  367688 hlo_rematerialization.cc:3363] Can't reduce memory use below 109.38GiB (117446398962 bytes) by rematerialization; only reduced to 129.40GiB (138939390297 bytes), down from 134.00GiB (143882853339 bytes) originally
+W1016 05:43:57.129830  367688 bfc_allocator.cc:598] Allocator (GPU_0_bfc) ran out of memory trying to allocate 127.83GiB (rounded to 137251976704) from the lower end requested by op 
+If this is caused by memory fragmentation, the environment variable 'TF_GPU_ALLOCATOR=cuda_malloc_async' may improve the situation.
+Current allocation summary follows.
+W1016 05:43:57.375415  367688 bfc_allocator.cc:609] **********__________________________________________________________________________________________
+[pretrain] ОШИБКА цикла: RESOURCE_EXHAUSTED: Out of memory while trying to allocate 127.83GiB with allocator GPU_0_bfc on device 0. [executable_name='jit_loss_fn'] [tf-allocator-allocation-error='']

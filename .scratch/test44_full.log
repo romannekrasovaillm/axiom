@@ -1,0 +1,317 @@
+[ADR-010] policy: jax_default_matmul_precision=highest
+[ADR-010] backend: cpu (no CUDA device available) (NET_JAX_BACKEND=auto) jax.devices()=['CpuDevice(id=0)']
+[ADR-010] profile: local (NET_GATE_PROFILE=<unset>)
+[ADR-013] determinism: --xla_gpu_deterministic_ops=off (local profile: not pinned) XLA_FLAGS='<unset>'
+[ADR-010] preliminary run: no CUDA device and the local profile does not require one (the A4 gate profile does)
+.......................EEEE                                              [100%]
+==================================== ERRORS ====================================
+___________ ERROR at setup of test_ten_step_delta_loss_and_nan_gate ____________
+
+tmp_path_factory = TempPathFactory(_given_basetemp=None, _trace=<pluggy._tracing.TagTracerSub object at 0x74ec0f743710>, _basetemp=PosixPath('/tmp/pytest-of-roman/pytest-49'), _retention_count=3, _retention_policy='all')
+
+    @pytest.fixture(scope="module")
+    def parity_legs(tmp_path_factory):
+        """10-шаговые ноги (lr=1e-3): off / on / связка кампании.
+    
+        Данные — один детерминированный поток (парный дизайн).  ``combo`` —
+        боевая связка вехи: персистентный блок × flash-bwd-маркер × bf16-хранение
+        (Am.20) × per_layer_block (Am.18) × accum-jit (Am.16) × compute-bf16
+        (Am.30-линия) × master-bf16 (Am.13) — совместимость условий прогона и
+        nan-контроль прецедента 4b/4c (дефекты проявлялись на 4+ шагах).
+        """
+        cfg = small_config(mla_head_dim=16)
+        batches = _batches(cfg, _PARITY_STEPS)
+        combo_batches = _batches(cfg, _PARITY_STEPS * 2, seed=11)
+        out = tmp_path_factory.mktemp("veha13-legs")
+        legs = {}
+        with gate_env(None):
+            legs["off"] = _train_leg(cfg, _PARITY_STEPS, batches=batches,
+                                     metrics_path=out / "off.jsonl")
+        with _kernels_substituted(), gate_env("1"):
+            legs["on"] = _train_leg(cfg, _PARITY_STEPS, batches=batches,
+                                    metrics_path=out / "on.jsonl")
+        with _kernels_substituted(), gate_env(
+                "1", flash_bwd="1", mla_bf16="1", ce_bf16="1",
+                policy="per_layer_block", accum_jit="1", compute="bf16", master="bf16"):
+>           legs["combo"] = _train_leg(
+                cfg, _PARITY_STEPS, batches=combo_batches,
+                accum_tokens=2 * SEQ_LEN, metrics_path=out / "combo.jsonl")
+
+net/tests/test_44_mla_persist.py:627: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+net/tests/test_44_mla_persist.py:149: in _train_leg
+    return tl.train(
+net/train_loop.py:3627: in train
+    loss_value = float(jax.device_get(loss))
+                       ^^^^^^^^^^^^^^^^^^^^
+/home/roman/venv-axiom-0112cpu-py312/lib/python3.12/site-packages/jax/_src/api.py:2592: in device_get
+    return tree_map(_device_get, x)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+/home/roman/venv-axiom-0112cpu-py312/lib/python3.12/site-packages/jax/_src/tree_util.py:406: in tree_map
+    return treedef.unflatten(f(*xs) for xs in zip(*all_leaves))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/roman/venv-axiom-0112cpu-py312/lib/python3.12/site-packages/jax/_src/tree_util.py:406: in <genexpr>
+    return treedef.unflatten(f(*xs) for xs in zip(*all_leaves))
+                             ^^^^^^
+/home/roman/venv-axiom-0112cpu-py312/lib/python3.12/site-packages/jax/_src/api.py:2553: in _device_get
+    return toarray()
+           ^^^^^^^^^
+/home/roman/venv-axiom-0112cpu-py312/lib/python3.12/site-packages/jax/_src/array.py:409: in __array__
+    return np.asarray(self._value, dtype=dtype, **kwds)  # pyrefly: ignore[no-matching-overload]
+                      ^^^^^^^^^^^
+/home/roman/venv-axiom-0112cpu-py312/lib/python3.12/site-packages/jax/_src/profiler.py:420: in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <[JaxRuntimeError('UNIMPLEMENTED: Unsupported element type for DotThunk::Execute: BF16 x BF16 = F32') raised in repr()] ArrayImpl object at 0x74eb13bbbc50>
+
+    @property
+    @functools.partial(profiler.annotate_function, name="np.asarray(jax.Array)")
+    def _value(self) -> np.ndarray:
+      self._check_if_deleted()
+    
+      if self._npy_value is None:
+        # addressable_device_list can be empty. If it's empty, we will error below
+        if self.is_fully_replicated and self.sharding.has_addressable_devices:
+>         npy_value, did_copy = self._single_device_array_to_np_array_did_copy()
+                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E         jax.errors.JaxRuntimeError: UNIMPLEMENTED: Unsupported element type for DotThunk::Execute: BF16 x BF16 = F32
+
+/home/roman/venv-axiom-0112cpu-py312/lib/python3.12/site-packages/jax/_src/array.py:637: JaxRuntimeError
+_________ ERROR at setup of test_ten_step_nan_control_campaign_bundle __________
+
+tmp_path_factory = TempPathFactory(_given_basetemp=None, _trace=<pluggy._tracing.TagTracerSub object at 0x74ec0f743710>, _basetemp=PosixPath('/tmp/pytest-of-roman/pytest-49'), _retention_count=3, _retention_policy='all')
+
+    @pytest.fixture(scope="module")
+    def parity_legs(tmp_path_factory):
+        """10-шаговые ноги (lr=1e-3): off / on / связка кампании.
+    
+        Данные — один детерминированный поток (парный дизайн).  ``combo`` —
+        боевая связка вехи: персистентный блок × flash-bwd-маркер × bf16-хранение
+        (Am.20) × per_layer_block (Am.18) × accum-jit (Am.16) × compute-bf16
+        (Am.30-линия) × master-bf16 (Am.13) — совместимость условий прогона и
+        nan-контроль прецедента 4b/4c (дефекты проявлялись на 4+ шагах).
+        """
+        cfg = small_config(mla_head_dim=16)
+        batches = _batches(cfg, _PARITY_STEPS)
+        combo_batches = _batches(cfg, _PARITY_STEPS * 2, seed=11)
+        out = tmp_path_factory.mktemp("veha13-legs")
+        legs = {}
+        with gate_env(None):
+            legs["off"] = _train_leg(cfg, _PARITY_STEPS, batches=batches,
+                                     metrics_path=out / "off.jsonl")
+        with _kernels_substituted(), gate_env("1"):
+            legs["on"] = _train_leg(cfg, _PARITY_STEPS, batches=batches,
+                                    metrics_path=out / "on.jsonl")
+        with _kernels_substituted(), gate_env(
+                "1", flash_bwd="1", mla_bf16="1", ce_bf16="1",
+                policy="per_layer_block", accum_jit="1", compute="bf16", master="bf16"):
+>           legs["combo"] = _train_leg(
+                cfg, _PARITY_STEPS, batches=combo_batches,
+                accum_tokens=2 * SEQ_LEN, metrics_path=out / "combo.jsonl")
+
+net/tests/test_44_mla_persist.py:627: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+net/tests/test_44_mla_persist.py:149: in _train_leg
+    return tl.train(
+net/train_loop.py:3627: in train
+    loss_value = float(jax.device_get(loss))
+                       ^^^^^^^^^^^^^^^^^^^^
+/home/roman/venv-axiom-0112cpu-py312/lib/python3.12/site-packages/jax/_src/api.py:2592: in device_get
+    return tree_map(_device_get, x)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+/home/roman/venv-axiom-0112cpu-py312/lib/python3.12/site-packages/jax/_src/tree_util.py:406: in tree_map
+    return treedef.unflatten(f(*xs) for xs in zip(*all_leaves))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/roman/venv-axiom-0112cpu-py312/lib/python3.12/site-packages/jax/_src/tree_util.py:406: in <genexpr>
+    return treedef.unflatten(f(*xs) for xs in zip(*all_leaves))
+                             ^^^^^^
+/home/roman/venv-axiom-0112cpu-py312/lib/python3.12/site-packages/jax/_src/api.py:2553: in _device_get
+    return toarray()
+           ^^^^^^^^^
+/home/roman/venv-axiom-0112cpu-py312/lib/python3.12/site-packages/jax/_src/array.py:409: in __array__
+    return np.asarray(self._value, dtype=dtype, **kwds)  # pyrefly: ignore[no-matching-overload]
+                      ^^^^^^^^^^^
+/home/roman/venv-axiom-0112cpu-py312/lib/python3.12/site-packages/jax/_src/profiler.py:420: in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <[JaxRuntimeError('UNIMPLEMENTED: Unsupported element type for DotThunk::Execute: BF16 x BF16 = F32') raised in repr()] ArrayImpl object at 0x74eb13bbbc50>
+
+    @property
+    @functools.partial(profiler.annotate_function, name="np.asarray(jax.Array)")
+    def _value(self) -> np.ndarray:
+      self._check_if_deleted()
+    
+      if self._npy_value is None:
+        # addressable_device_list can be empty. If it's empty, we will error below
+        if self.is_fully_replicated and self.sharding.has_addressable_devices:
+>         npy_value, did_copy = self._single_device_array_to_np_array_did_copy()
+                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E         jax.errors.JaxRuntimeError: UNIMPLEMENTED: Unsupported element type for DotThunk::Execute: BF16 x BF16 = F32
+
+/home/roman/venv-axiom-0112cpu-py312/lib/python3.12/site-packages/jax/_src/array.py:637: JaxRuntimeError
+_____________ ERROR at setup of test_metrics_mark_the_persist_gate _____________
+
+tmp_path_factory = TempPathFactory(_given_basetemp=None, _trace=<pluggy._tracing.TagTracerSub object at 0x74ec0f743710>, _basetemp=PosixPath('/tmp/pytest-of-roman/pytest-49'), _retention_count=3, _retention_policy='all')
+
+    @pytest.fixture(scope="module")
+    def parity_legs(tmp_path_factory):
+        """10-шаговые ноги (lr=1e-3): off / on / связка кампании.
+    
+        Данные — один детерминированный поток (парный дизайн).  ``combo`` —
+        боевая связка вехи: персистентный блок × flash-bwd-маркер × bf16-хранение
+        (Am.20) × per_layer_block (Am.18) × accum-jit (Am.16) × compute-bf16
+        (Am.30-линия) × master-bf16 (Am.13) — совместимость условий прогона и
+        nan-контроль прецедента 4b/4c (дефекты проявлялись на 4+ шагах).
+        """
+        cfg = small_config(mla_head_dim=16)
+        batches = _batches(cfg, _PARITY_STEPS)
+        combo_batches = _batches(cfg, _PARITY_STEPS * 2, seed=11)
+        out = tmp_path_factory.mktemp("veha13-legs")
+        legs = {}
+        with gate_env(None):
+            legs["off"] = _train_leg(cfg, _PARITY_STEPS, batches=batches,
+                                     metrics_path=out / "off.jsonl")
+        with _kernels_substituted(), gate_env("1"):
+            legs["on"] = _train_leg(cfg, _PARITY_STEPS, batches=batches,
+                                    metrics_path=out / "on.jsonl")
+        with _kernels_substituted(), gate_env(
+                "1", flash_bwd="1", mla_bf16="1", ce_bf16="1",
+                policy="per_layer_block", accum_jit="1", compute="bf16", master="bf16"):
+>           legs["combo"] = _train_leg(
+                cfg, _PARITY_STEPS, batches=combo_batches,
+                accum_tokens=2 * SEQ_LEN, metrics_path=out / "combo.jsonl")
+
+net/tests/test_44_mla_persist.py:627: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+net/tests/test_44_mla_persist.py:149: in _train_leg
+    return tl.train(
+net/train_loop.py:3627: in train
+    loss_value = float(jax.device_get(loss))
+                       ^^^^^^^^^^^^^^^^^^^^
+/home/roman/venv-axiom-0112cpu-py312/lib/python3.12/site-packages/jax/_src/api.py:2592: in device_get
+    return tree_map(_device_get, x)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+/home/roman/venv-axiom-0112cpu-py312/lib/python3.12/site-packages/jax/_src/tree_util.py:406: in tree_map
+    return treedef.unflatten(f(*xs) for xs in zip(*all_leaves))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/roman/venv-axiom-0112cpu-py312/lib/python3.12/site-packages/jax/_src/tree_util.py:406: in <genexpr>
+    return treedef.unflatten(f(*xs) for xs in zip(*all_leaves))
+                             ^^^^^^
+/home/roman/venv-axiom-0112cpu-py312/lib/python3.12/site-packages/jax/_src/api.py:2553: in _device_get
+    return toarray()
+           ^^^^^^^^^
+/home/roman/venv-axiom-0112cpu-py312/lib/python3.12/site-packages/jax/_src/array.py:409: in __array__
+    return np.asarray(self._value, dtype=dtype, **kwds)  # pyrefly: ignore[no-matching-overload]
+                      ^^^^^^^^^^^
+/home/roman/venv-axiom-0112cpu-py312/lib/python3.12/site-packages/jax/_src/profiler.py:420: in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <[JaxRuntimeError('UNIMPLEMENTED: Unsupported element type for DotThunk::Execute: BF16 x BF16 = F32') raised in repr()] ArrayImpl object at 0x74eb13bbbc50>
+
+    @property
+    @functools.partial(profiler.annotate_function, name="np.asarray(jax.Array)")
+    def _value(self) -> np.ndarray:
+      self._check_if_deleted()
+    
+      if self._npy_value is None:
+        # addressable_device_list can be empty. If it's empty, we will error below
+        if self.is_fully_replicated and self.sharding.has_addressable_devices:
+>         npy_value, did_copy = self._single_device_array_to_np_array_did_copy()
+                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E         jax.errors.JaxRuntimeError: UNIMPLEMENTED: Unsupported element type for DotThunk::Execute: BF16 x BF16 = F32
+
+/home/roman/venv-axiom-0112cpu-py312/lib/python3.12/site-packages/jax/_src/array.py:637: JaxRuntimeError
+______ ERROR at setup of test_gate_read_once_per_build_and_marked_off_leg ______
+
+tmp_path_factory = TempPathFactory(_given_basetemp=None, _trace=<pluggy._tracing.TagTracerSub object at 0x74ec0f743710>, _basetemp=PosixPath('/tmp/pytest-of-roman/pytest-49'), _retention_count=3, _retention_policy='all')
+
+    @pytest.fixture(scope="module")
+    def parity_legs(tmp_path_factory):
+        """10-шаговые ноги (lr=1e-3): off / on / связка кампании.
+    
+        Данные — один детерминированный поток (парный дизайн).  ``combo`` —
+        боевая связка вехи: персистентный блок × flash-bwd-маркер × bf16-хранение
+        (Am.20) × per_layer_block (Am.18) × accum-jit (Am.16) × compute-bf16
+        (Am.30-линия) × master-bf16 (Am.13) — совместимость условий прогона и
+        nan-контроль прецедента 4b/4c (дефекты проявлялись на 4+ шагах).
+        """
+        cfg = small_config(mla_head_dim=16)
+        batches = _batches(cfg, _PARITY_STEPS)
+        combo_batches = _batches(cfg, _PARITY_STEPS * 2, seed=11)
+        out = tmp_path_factory.mktemp("veha13-legs")
+        legs = {}
+        with gate_env(None):
+            legs["off"] = _train_leg(cfg, _PARITY_STEPS, batches=batches,
+                                     metrics_path=out / "off.jsonl")
+        with _kernels_substituted(), gate_env("1"):
+            legs["on"] = _train_leg(cfg, _PARITY_STEPS, batches=batches,
+                                    metrics_path=out / "on.jsonl")
+        with _kernels_substituted(), gate_env(
+                "1", flash_bwd="1", mla_bf16="1", ce_bf16="1",
+                policy="per_layer_block", accum_jit="1", compute="bf16", master="bf16"):
+>           legs["combo"] = _train_leg(
+                cfg, _PARITY_STEPS, batches=combo_batches,
+                accum_tokens=2 * SEQ_LEN, metrics_path=out / "combo.jsonl")
+
+net/tests/test_44_mla_persist.py:627: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+net/tests/test_44_mla_persist.py:149: in _train_leg
+    return tl.train(
+net/train_loop.py:3627: in train
+    loss_value = float(jax.device_get(loss))
+                       ^^^^^^^^^^^^^^^^^^^^
+/home/roman/venv-axiom-0112cpu-py312/lib/python3.12/site-packages/jax/_src/api.py:2592: in device_get
+    return tree_map(_device_get, x)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+/home/roman/venv-axiom-0112cpu-py312/lib/python3.12/site-packages/jax/_src/tree_util.py:406: in tree_map
+    return treedef.unflatten(f(*xs) for xs in zip(*all_leaves))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/roman/venv-axiom-0112cpu-py312/lib/python3.12/site-packages/jax/_src/tree_util.py:406: in <genexpr>
+    return treedef.unflatten(f(*xs) for xs in zip(*all_leaves))
+                             ^^^^^^
+/home/roman/venv-axiom-0112cpu-py312/lib/python3.12/site-packages/jax/_src/api.py:2553: in _device_get
+    return toarray()
+           ^^^^^^^^^
+/home/roman/venv-axiom-0112cpu-py312/lib/python3.12/site-packages/jax/_src/array.py:409: in __array__
+    return np.asarray(self._value, dtype=dtype, **kwds)  # pyrefly: ignore[no-matching-overload]
+                      ^^^^^^^^^^^
+/home/roman/venv-axiom-0112cpu-py312/lib/python3.12/site-packages/jax/_src/profiler.py:420: in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <[JaxRuntimeError('UNIMPLEMENTED: Unsupported element type for DotThunk::Execute: BF16 x BF16 = F32') raised in repr()] ArrayImpl object at 0x74eb13bbbc50>
+
+    @property
+    @functools.partial(profiler.annotate_function, name="np.asarray(jax.Array)")
+    def _value(self) -> np.ndarray:
+      self._check_if_deleted()
+    
+      if self._npy_value is None:
+        # addressable_device_list can be empty. If it's empty, we will error below
+        if self.is_fully_replicated and self.sharding.has_addressable_devices:
+>         npy_value, did_copy = self._single_device_array_to_np_array_did_copy()
+                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E         jax.errors.JaxRuntimeError: UNIMPLEMENTED: Unsupported element type for DotThunk::Execute: BF16 x BF16 = F32
+
+/home/roman/venv-axiom-0112cpu-py312/lib/python3.12/site-packages/jax/_src/array.py:637: JaxRuntimeError
+=============================== warnings summary ===============================
+net/tests/test_44_mla_persist.py::test_gate_off_is_bitwise_previous_graph
+net/tests/test_44_mla_persist.py::test_ten_step_delta_loss_and_nan_gate
+  /home/roman/venv-axiom-0112cpu-py312/lib/python3.12/site-packages/jax/_src/interpreters/mlir.py:1453: UserWarning: Some donated buffers were not usable: float32[512,64], float32[64,64], float32[64,64], float32[64,64], float32[64,64], float32[64,64], float32[64,4], float32[64,16], float32[16,64], float32[4,64], float32[4,64], float32[4,64], float32[64,128], float32[64,128], float32[128,64], float32[64,64], float32[64,64], float32[64,64], float32[64,64], float32[64,64], float32[64,4], float32[64,16], float32[16,64], float32[4,64], float32[4,64], float32[4,64], float32[64,32], float32[32,64], float32[6,32,16], float32[6,32,16], float32[6,16,32], float32[2,64,32], float32[2,64,32], float32[2,32,64], float32[64,6], float32[64,64], float32[64,64], float32[64,64], float32[64,64], float32[64,64], float32[64,4], float32[64,16], float32[16,64], float32[4], float32[4], float32[4,64], float32[4,64], float32[4,64], float32[], float32[64], float32[64,32], float32[32,64], float32[6,32,16], float32[6,32,16], float32[6,16,32], float32[2,64,32], float32[2,64,32], float32[2,32,64], float32[64,6], float32[6], float32[64], float32[64], float32[64,32], float32[64,64], float32[32,64], float32[32,64], float32[64,64], float32[64,64], float32[64,64], float32[64,64], float32[64,128], float32[32,128], float32[], float32[], float32[64], float32[64], float32[64,32], float32[32,64], float32[6,32,16], float32[6,32,16], float32[6,16,32], float32[2,64,32], float32[2,64,32], float32[2,32,64], float32[64,6], float32[6], float32[6], float32[4,64], float32[64], float32[64], float32[128,64], float32[64], float32[64], float32[64,64], float32[64,64], float32[64,64], float32[64,64], float32[64,64], float32[64,4], float32[64,16], float32[16,64], float32[64], float32[64], float32[4], float32[4], float32[4,64], float32[4,64], float32[4,64], float32[], float32[], float32[64], float32[64], float32[64,128], float32[64,128], float32[128,64], float32[64], float32[64], float32[64], float32[64], float32[588,32], float32[16,32], float32[32,64], float32[64,32], float32[32], float32[32], float32[32,32], float32[32,96], float32[32,64], float32[64,32], float32[32], float32[32], float32[32], float32[32], float32[32,32], float32[32,96], float32[32,64], float32[32], float32[32].
+  See an explanation at https://docs.jax.dev/en/latest/faq.html#buffer-donation.
+    warnings.warn("Some donated buffers were not usable:"
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+ERROR net/tests/test_44_mla_persist.py::test_ten_step_delta_loss_and_nan_gate
+ERROR net/tests/test_44_mla_persist.py::test_ten_step_nan_control_campaign_bundle
+ERROR net/tests/test_44_mla_persist.py::test_metrics_mark_the_persist_gate - ...
+ERROR net/tests/test_44_mla_persist.py::test_gate_read_once_per_build_and_marked_off_leg
+23 passed, 2 warnings, 4 errors in 83.19s (0:01:23)

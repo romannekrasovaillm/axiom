@@ -217,6 +217,78 @@ _attn_out_bf16stored.defvjp(_attn_out_bf16stored_fwd, _attn_out_bf16stored_bwd)
 # здесь пиннуется jax-уровень: числа, состав графа, паритет и nan-контроль.
 # --------------------------------------------------------------------------- #
 
+# --------------------------------------------------------------------------- #
+# Веха-13 (ADR-054 Am.27, цикл-16 кампании MFU-55): персистентный MLA-блок —
+# fwd+bwd внимания MLA одним запуском кернела на слой-проход (ступень-2).
+#
+# NVTX-атрибуция Am.27: блокирующие эпизоды шага — backward-структура while/
+# remat (4,46 с одним спаном + 5 remat-спанов 150–300 мс) и тайл-цикл
+# flash-bwd вехи-12 (~12 с/шаг хоста).  Гейт ``AXIOM_MLA_PERSIST=1`` проводит
+# интервал внимания ``(q, k, v) -> o`` через персистентные кернелы
+# (:mod:`net.kernels.mla_persist`, образец KDA-вех 3–4: grid=(B*H,), состояние
+# в SMEM, один запуск на направление и слой-проход): forward-числа — тайловая
+# online-softmax algebra в bf16-операндах мма (объявленный путь операндов,
+# тот же, что у compute-dtype bf16), backward — персистентный кернел с
+# переисчислением скоров, полной (B,H,T,T) не существует ни в одном
+# промежутке; граф теряет и Python-тайл-цикл, и while/remat-структуру над
+# вниманием.  Дефолт ``0`` — побитово прежний граф (провал-закрытый гейт,
+# форма ``flash_bwd_mode``).  Приоритет при одновременном включении с
+# ``AXIOM_MLA_FLASH_BWD``/``AXIOM_MLA_BWD_BF16``: исполняется персистентный
+# путь (обе ноги-маркеры несут фактические значения гейтов — A/B-ноги
+# различимы по журналу); конфликт с ``AXIOM_MLA_DENSE_FLASH`` (два разных
+# внимания на один интервал) — ошибка, не тихий выбор.
+# --------------------------------------------------------------------------- #
+
+#: Env-гейт персистентных кернелов внимания MLA (``0`` — дефолт, прежний путь).
+MLA_PERSIST_ENV = "AXIOM_MLA_PERSIST"
+
+#: Допустимые значения; неизвестное — ошибка (fail-closed, без догадок).
+MLA_PERSIST_VALUES = ("0", "1")
+MLA_PERSIST_OFF = "0"
+MLA_PERSIST_ON = "1"
+
+
+class MlaPersistError(ValueError):
+    """Неизвестное значение ``AXIOM_MLA_PERSIST`` / конфликт путей (fail-closed)."""
+
+
+def persist_mode(value: str | None = None) -> bool:
+    """Персистентный MLA-блок: ``False`` (дефолт) | ``True``.
+
+    ``AXIOM_MLA_PERSIST=1`` проводит интервал внимания dense-пути через
+    :func:`net.kernels.mla_persist.mla_attention` (персистентные fwd/bwd
+    кернелы).  Пустая/незаданная переменная = ``"0"``; значения — только
+    ``"0"``/``"1"``; неизвестное — :class:`MlaPersistError` (fail-closed:
+    опечатка не должна тихо оставить прежний путь — замер ноги «персистентный
+    блок» стал бы замером dense-пути).  Явный аргумент сильнее окружения
+    (форма ``flash_bwd_mode``).  Читается на трейсе (как flash-переключатели),
+    чтобы тест мог переключить гейт в процессе.
+    """
+    raw = value if value is not None else os.environ.get(MLA_PERSIST_ENV)
+    mode = (raw or "").strip().lower() or MLA_PERSIST_OFF
+    if mode not in MLA_PERSIST_VALUES:
+        raise MlaPersistError(
+            f"{MLA_PERSIST_ENV}={mode!r}: ожидается одно из "
+            f"{list(MLA_PERSIST_VALUES)}"
+        )
+    return mode == MLA_PERSIST_ON
+
+
+def _mla_persist_attention(q: jnp.ndarray, k: jnp.ndarray, v: jnp.ndarray) -> jnp.ndarray:
+    """Интервал внимания через персистентные кернелы (ленивый импорт модуля).
+
+    Лениво — чтобы ``net.mla`` не тянул pallas/mosaic на путях, где гейт
+    выключен (форма ленивого импорта ``net.kda``).  Ветка — только плотный
+    causal-интервал: явная маска (неслучайный паттерн внимания) кернелами не
+    поддержана — ошибка на трейсе, не тихий откат (см. вызов).
+    """
+    from .kernels import mla_persist as mla_persist_kernels
+
+    return mla_persist_kernels.mla_attention(q, k, v)
+
+
+# --------------------------------------------------------------------------- #
+
 #: Env-гейт тайлового backward dense-внимания MLA (``0`` — дефолт, прежний путь).
 MLA_FLASH_BWD_ENV = "AXIOM_MLA_FLASH_BWD"
 
@@ -429,7 +501,25 @@ def _dense_apply(params: MLAParams, cfg: ModelConfig, x: jnp.ndarray, mask: jnp.
     c = compute_dtype.gemm(x32, params.W_c.astype(jnp.float32))  # (B, T, d_c)
     q, k, v = _project(params, cfg, x32, c)
 
-    if _flash_dense():
+    if persist_mode():
+        # Веха-13 (ADR-054 Am.27): персистентные кернелы внимания MLA —
+        # один запуск fwd и один bwd на слой-проход.  Кернел реализует
+        # causal-интервал; явная маска (иной паттерн внимания) — ошибка, не
+        # тихий откат.  С ``AXIOM_MLA_DENSE_FLASH`` (альтернативное внимание
+        # на тот же интервал) — тоже ошибка: два пути одновременно не
+        # выбираются молча (Am.27 стоп-условие «конфликт — эскалация»).
+        if _flash_dense():
+            raise MlaPersistError(
+                "AXIOM_MLA_PERSIST=1 и AXIOM_MLA_DENSE_FLASH=1 одновременно: "
+                "два несовместимых пути внимания MLA на один интервал; выберите "
+                "один (персистентный блок — ступень-2 кампании).")
+        if mask is not None:
+            raise MlaPersistError(
+                "AXIOM_MLA_PERSIST=1: персистентный кернел реализует только "
+                "причинную маску; явная маска внимания не поддержана — тихого "
+                "отката на dense-путь нет.")
+        o = _mla_persist_attention(q, k, v)
+    elif _flash_dense():
         # The kernel takes the mask as ``(B, N, T, S)`` with ``N`` the query-head
         # count (``jax/_src/nn/functions.py``); the caller's ``(T, S)`` boolean
         # mask is broadcast to that shape over batch and heads.

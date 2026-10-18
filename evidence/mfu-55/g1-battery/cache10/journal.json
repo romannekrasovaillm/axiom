@@ -4,7 +4,7 @@
  "status": "executed",
  "scale": "smoke",
  "run_ref": "g1-cache10",
- "started_at": "2026-10-12T06:07:31.695602+00:00",
+ "started_at": "2026-10-12T16:40:52.519141+00:00",
  "seed": 1337,
  "paths": {
   "shard_root": "~/axiom-run/raw-v2",
@@ -557,18 +557,18 @@
  "start_step": 0,
  "tokens_seen": 163840,
  "loss_first": 13.537934303283691,
- "loss_last": NaN,
+ "loss_last": 12.258672714233398,
  "lr_first": 0.0,
  "lr_last": 0.01,
- "tree_hash": "ed7bb4e7752c7137f2e74e0ea855a458c8a7dc73c8ba6df4c537c9d8a4fa90e5",
- "tree_hash_master": "68303865d9cdfeb5c964f6290a1055e879e14ab9c8f12e10c23a27c110afabc0",
+ "tree_hash": "42fed80e4fc14800d4a29b8fbf9156d5de4eaea4a9e71911395405feaf18a1f0",
+ "tree_hash_master": "e2a56b63908b3e631259aa060ee1382902fe62df1305ecf7d87d3b33b1679456",
  "tree_hash_note": "tree_hash — обслуживаемые веса (params); tree_hash_master — fp32-мастер, он же лежит в чекпойнте. При param_dtype=float32 веса и мастер совпадают и хеши равны",
  "timings": {
-  "first_step_seconds": 2162.8871,
-  "step_seconds_mean_tail": 27.388393,
-  "wall_seconds": 2418.058
+  "first_step_seconds": 79.247,
+  "step_seconds_mean_tail": 27.445005,
+  "wall_seconds": 336.293
  },
- "wall_clock_s": 2429.395,
+ "wall_clock_s": 348.217,
  "data_consumed": {
   "kind": "packed",
   "token_share": {
@@ -576,7 +576,7 @@
   },
   "phase": "stable",
   "decay_start": null,
-  "peak_rss_mb": 15715.0,
+  "peak_rss_mb": 13835.1,
   "streams": {
    "W": {
     "shard_index": 0,
@@ -601,8 +601,8 @@
   "target_tokens": null,
   "gpu_hours_estimate": null,
   "limit_usd": 5.0,
-  "gpu_hours_actual": 0.669306,
-  "gpu_hours_leg": 0.671683,
+  "gpu_hours_actual": 0.090666,
+  "gpu_hours_leg": 0.093415,
   "gpu_hours_resumed_base": 0.0,
   "tokens_seen_total": 163840,
   "tokens_seen_resumed_base": 0,
@@ -621,10 +621,10 @@
   "first_step_excluded": true,
   "kpi_rows": 9,
   "loss_first": 13.537934303283691,
-  "loss_last": NaN,
-  "loss_median_tail": NaN,
-  "tokens_per_sec_median": 600.8980445586432,
-  "mfu_median": 0.018445461415488165,
+  "loss_last": 12.258672714233398,
+  "loss_median_tail": 12.478466987609863,
+  "tokens_per_sec_median": 594.8030825956411,
+  "mfu_median": 0.01825836747045794,
   "mfu_params_only": true,
   "mfu_note": "MFU считается по параметрической части (6·N_active·tokens); вклад внимания (квадратичный по T) не входит — число неполное по построению"
  },

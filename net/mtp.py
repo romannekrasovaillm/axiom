@@ -8,6 +8,7 @@ tied embedding).  The auxiliary MTP loss is computed in ``model.mtp_loss``.
 
 from __future__ import annotations
 
+import os
 from typing import NamedTuple
 
 import jax
@@ -18,6 +19,75 @@ from . import compute_dtype
 from . import kda as kda_mod
 from . import mlp as mlp_mod
 from .norm import rms_norm
+
+
+# --------------------------------------------------------------------------- #
+# Гейт KDA-интервала MTP-слоя (ADR-054 Am.32, цикл-20).
+#
+# MTP-слой исторически считал KDA старым jnp-путём ``apply_chunked``: 256
+# чанков, forward + backward/remat — тот самый 256-графовый хвост 9.75 с
+# GPU/шага (провенанс-карта цикла-19).  Кампанийный путь ``chunked_cc``
+# (``kda_mod.apply_kda`` с диспетчеризацией по ``cfg.kda_impl``) снимает
+# хвост, но по умолчанию остаётся ПРЕЖНИЙ путь — побитово и с прежним
+# графом; новый путь включается только явно.  Значение читается на трейсе
+# (не кэшируется), чтобы A/B шёл на одной ревизии, а тест мог переключить
+# гейт в процессе.  Неизвестное значение — ошибка (fail-closed, форма
+# ``net.mla.persist_mode``): опечатка не должна тихо оставить прежний путь
+# и выдать её за замер новой ноги.
+# --------------------------------------------------------------------------- #
+
+#: Env-гейт KDA-интервала MTP-слоя (``chunked`` — дефолт, прежний путь).
+MTP_KDA_IMPL_ENV = "AXIOM_MTP_KDA_IMPL"
+
+#: Допустимые значения; неизвестное — ошибка (fail-closed, без догадок).
+MTP_KDA_IMPL_VALUES = ("chunked", "campaign")
+MTP_KDA_IMPL_CHUNKED = "chunked"
+MTP_KDA_IMPL_CAMPAIGN = "campaign"
+
+
+class MtpKdaImplError(ValueError):
+    """Неизвестное значение ``AXIOM_MTP_KDA_IMPL`` (fail-closed, без догадок)."""
+
+
+def mtp_kda_impl(value: str | None = None) -> str:
+    """KDA-интервал MTP-слоя: ``"chunked"`` (дефолт) | ``"campaign"``.
+
+    ``AXIOM_MTP_KDA_IMPL=campaign`` направляет KDA MTP-слоя в
+    :func:`net.kda.apply_kda` — диспетчеризацию по ``cfg.kda_impl``
+    (``chunked_cc`` на кампанийном конфиге); ``chunked`` — прежний прямой
+    :func:`net.kda.apply_chunked`, побитово.  Пустая/незаданная переменная =
+    ``"chunked"``; значения — только ``"chunked"``/``"campaign"`` (регистр и
+    окружающие пробелы нормализуются); неизвестное — :class:`MtpKdaImplError`
+    (fail-closed).  Явный аргумент сильнее окружения (форма
+    ``net.mla.persist_mode``).  Читается на трейсе, не кэшируется.
+    """
+    raw = value if value is not None else os.environ.get(MTP_KDA_IMPL_ENV)
+    mode = (raw or "").strip().lower() or MTP_KDA_IMPL_CHUNKED
+    if mode not in MTP_KDA_IMPL_VALUES:
+        raise MtpKdaImplError(
+            f"{MTP_KDA_IMPL_ENV}={mode!r}: ожидается одно из "
+            f"{list(MTP_KDA_IMPL_VALUES)}"
+        )
+    return mode
+
+
+def _kda_interval(
+    params: kda_mod.KDAParams,
+    cfg: ModelConfig,
+    xb: jnp.ndarray,
+    chunk_size: int,
+    impl: str | None = None,
+) -> jnp.ndarray:
+    """Один батч-элемент KDA MTP-слоя по гейту (единственный call-site).
+
+    ``campaign`` → :func:`net.kda.apply_kda` (диспетчеризация по
+    ``cfg.kda_impl``); иначе → прежний :func:`net.kda.apply_chunked`
+    (побитово прежний вызов и граф).  ``impl`` — явное значение сильнее env
+    (для A/B и тестов); ``None`` — читать env на трейсе.
+    """
+    if mtp_kda_impl(impl) == MTP_KDA_IMPL_CAMPAIGN:
+        return kda_mod.apply_kda(params, cfg, xb, chunk_size)
+    return kda_mod.apply_chunked(params, cfg, xb, chunk_size)
 
 
 def _rand(key, shape, scale: float) -> jnp.ndarray:
@@ -60,8 +130,9 @@ def apply(params: MTPParams, cfg: ModelConfig, h: jnp.ndarray, next_emb: jnp.nda
     )  # (B, T, hid)
     z = rms_norm(fused, params.norm_in)
 
-    # KDA attention (chunked) vmap'd over the batch.
-    attn = jax.vmap(lambda xb: kda_mod.apply_chunked(params.kda, cfg, xb, chunk_size))(z)
+    # KDA attention vmap'd over the batch; the gate picks the implementation
+    # (default: the pre-gate ``apply_chunked``, bit-for-bit).
+    attn = jax.vmap(lambda xb: _kda_interval(params.kda, cfg, xb, chunk_size))(z)
     z = z + attn
     z = z + mlp_mod.apply(params.mlp, cfg, rms_norm(z, params.norm_mlp))
     return rms_norm(z, params.norm_out)

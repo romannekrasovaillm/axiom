@@ -1,0 +1,37 @@
+# HLO /home/roman/axiom-run/xladump-c19/module_0508.jit_loss_fn.sm_12.1a_gpu_after_optimizations.txt (20875 имён с op_name)
+
+# GPU всего 39.04s, ядер 84991
+== по probe-компоненту
+  17.03s    23761 яд   43.6%  probe_—
+  14.62s    56974 яд   37.5%  probe_ce
+   4.34s     2415 яд   11.1%  probe_moe
+   1.75s     1409 яд    4.5%  probe_kda
+   1.14s      382 яд    2.9%  probe_mla
+   0.12s       16 яд    0.3%  probe_mlp
+   0.04s       34 яд    0.1%  probe_attnres
+
+== топ-спаны command_buffer_*
+   7.11s  command_buffer_1226                      | ce 98%, — 2%
+   3.10s  command_buffer_1070                      | — 59%, ce 41%
+   2.64s  command_buffer_985                       | ce 90%, — 10%
+   1.31s  command_buffer_2637                      | ce 69%, — 17%, kda 9%, moe 4%
+   1.13s  command_buffer_1                         | — 95%, kda 3%, ce 2%, moe 1%
+   0.89s  command_buffer_2825                      | — 55%, mla 18%, kda 16%, ce 8%
+   0.80s  command_buffer_2004                      | ce 42%, — 40%, moe 18%
+   0.69s  command_buffer_2382                      | ce 42%, — 32%, kda 17%, moe 8%
+   0.69s  command_buffer_949                       | ce 58%, moe 22%, — 20%
+   0.63s  command_buffer_2131                      | ce 52%, — 21%, kda 16%, moe 6%
+   0.50s  command_buffer_2800                      | — 74%, moe 26%
+   0.50s  command_buffer_2541                      | — 75%, moe 25%
+
+== неотнесённое (топ-10)
+   3.69s  _body_mosaic_gpu_kernel
+   2.08s  void magma_sgemmEx_kernel<float, float, float, (bool)1, (bool)0, (int)6, (int)4, (int)6, (int)3, (int)4>(int, 
+   1.39s  batched_body_mosaic_gpu_kernel
+   1.24s  void cutlass::Kernel2<cutlass_80_simt_sgemm_256x128_8x4_nn_align1>(T1::Params)
+   1.03s  nvjet_sm121_tss_mma_128x176x64_2_32x88x64_tmaAB_alignCD4_bz_TNNN
+   0.72s  void cutlass::Kernel2<cutlass_80_simt_sgemm_128x128_8x4_nn_align1>(T1::Params)
+   0.57s  nvjet_sm121_tss_mma_128x160x64_2_64x40x64_tmaAB_alignCD4_bz_NNNN
+   0.52s  loop_select_transpose_fusion_3
+   0.50s  wrapped_transpose_7
+   0.50s  wrapped_transpose_9

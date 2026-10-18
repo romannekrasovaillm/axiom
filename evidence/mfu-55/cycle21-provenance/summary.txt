@@ -1,0 +1,3 @@
+[c21] rc=0
+1,2G	/home/roman/axiom-run/xladump-c21
+[c21] стационар: 1113.7 ток/с, шаг 29.422 с, nan 0

@@ -988,3 +988,44 @@ CE-grad); без неё выбор MoE опирается на forward-карт�
 риск ухудшения на малых группах (ragged-формы) — A/B на реальных формах обязателен.
 **Reversibility:** гейт `AXIOM_MOE_*` (fail-closed, дефолт прежний); jnp-путь —
 оракул; откат — выключение гейта/`git revert`.
+
+---
+
+## Amendment 35 (2026-10-18): цикл-22 — пофазовый профиль B=4: **backward 23.87 с (80 %)**, forward 4.84, opt 1.25; оптимизатор не является SIMT-классом; цель G2 — backward (MoE + CE-градиенты)
+
+**Измерение (main, `--phase-profile`, B=4 persist-on, `AXIOM_MTP_KDA_IMPL=campaign`,
+20 шагов; стационар n=19: 1 092.5 ток/с, 29.992 с, nan 0; отчёт
+`evidence/mfu-55/cycle22-phase/`).** Профильный шаг 20 (29.953 с):
+`sec_forward` **4.836**, `sec_backward` **23.871**, `sec_backopt` **1.247**,
+`sec_other` −0.002, `reconciliation_pct` 100.005 — разложение полное.
+
+**Backward по компонентам (отдельные grad-проходы — ориентир, не партиция):**
+`sec_bwd_kda` 4.489, `sec_bwd_mla` 3.759, `sec_bwd_ce` **2.267**,
+`sec_bwd_other` 0.021, **`sec_bwd_moe` = null** (нога не исполнилась; пик
+`sec_bwd_kda` 50.8 ГиБ намекает на OOM MoE-ноги при B=4); сумма ног 10.54 против
+23.87 полного backward (44 %, finding `backward_legs_divergence` — ожидаемо).
+
+**Выводы.**
+1. **Шаг — backward-bound:** 80 % времени в backward, forward 16 %, оптимизатор 4 %.
+2. **Оптимизатор — не SIMT-класс:** 1.25 с; ранее измеренные 5.9 с fp32
+   cutlass/magma живут в **backward** (MoE/CE/прочие градиенты), не в `jit_step`.
+3. **KDA/MLA backward эффективны** по реальным FLOPs (KDA 4.49 с ≈ 40 % пика,
+   MLA 3.76 с ≈ 54 %) — не первый адрес.
+4. **CE-градиент неэффективен:** 2.27 с при ~14 % пика (lm_head grad ~32 TFLOP) —
+   второй адрес после MoE.
+5. **MoE backward — крупнейшая неразмеченная доля** (~остаток backward минус
+   именованные ноги); нога `bwd_moe` требует B=2 (B=4 OOM).
+
+**Решение цикла-23 (до реализации).**
+1. Снять `sec_bwd_moe` на **B=2** (память), зафиксировать долю MoE в backward
+   (запуск уже в работе: `evidence/mfu-55/cycle22-phase-b2/`).
+2. Первый кернел G2 — **MoE forward+backward: группированный/персистентный
+   expert-кернел** (dispatch → linear1 → SwiGLU → linear2 → combine; Mosaic
+   `plgpu.mma`, 99 КиБ/блок; backward — expert-GEMM adjoint + combine).
+   Ожидание: −2…−4 с на backward + снижение fp32 SIMT-класса.
+3. Второй — **CE/lm_head backward** (2.27 с, 14 % пика): фьюзинг softmax-CE
+   backward / bf16-тензорные ядра для lm_head-grad.
+4. Оптимизатор как рычаг **закрыт** (1.25 с).
+**Промежуточная приёмка:** шаг ≤ 27.5 с (≥ 1 192 ток/с), nan 0, паритет лосса;
+G2 — SIMT < 5 %, MFU ≥ 10 % (3 258 ток/с).
+**Reversibility:** MoE-кернел за гейтом, дефолт прежний; jnp-путь — оракул.

@@ -13,8 +13,9 @@
 # Стенд: B=4 ~82.5 ГиБ; риск OOM профильных ног — при OOM фиксируем и идём B=2.
 set -u
 cd "${REPO:-/home/roman/axiom}" || exit 1
-OUT=${OUT:-evidence/mfu-55/cycle22-phase}
+OUT=${OUT:-evidence/mfu-55/cycle22-phase-b$BATCH}
 STEPS=${STEPS:-20}
+BATCH=${BATCH:-4}
 CACHE=${CACHE:-$HOME/.cache/jax_cc_0112_c20_mtp}
 mkdir -p "$OUT"
 (
@@ -28,7 +29,7 @@ mkdir -p "$OUT"
   export XLA_FLAGS="--xla_gpu_autotune_level=1"
   exec timeout -k 60 6900 /home/roman/venv-axiom-0112/bin/python tools/pretrain_run.py \
     --model-preset l3-full --grad-checkpointing --grad-checkpointing-policy full \
-    --seq-len 8192 --batch-size 4 --micro-batch 4 --steps "$STEPS" --total-steps "$STEPS" \
+    --seq-len 8192 --batch-size "$BATCH" --micro-batch "$BATCH" --steps "$STEPS" --total-steps "$STEPS" \
     --budget-limit-usd 5 --peak-tflops 98.2 --ce-chunk-tokens 2048 \
     --remat-policy none --chunk-size 32 --phase-profile \
     --shard-root /home/roman/axiom-run/raw-v2 \

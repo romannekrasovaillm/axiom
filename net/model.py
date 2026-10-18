@@ -1076,25 +1076,49 @@ def compute_loss(
     """
     policy = cfg.grad_ckpt_policy if grad_ckpt_policy is None else grad_ckpt_policy
     ce_tokens = int(cfg.ce_chunk_tokens)
+    # ADR-054 Am.33 (цикл-21): тонкие провенанс-метки ``forward``/``ntp_ce``/
+    # ``mtp`` — только границы вызовов (``net/provenance.py``).  Прежняя метка
+    # ``probe_ce`` стояла вокруг всего ``compute_loss`` и через обратный проход
+    # захватывала backward (37.5% шага), из-за чего CE-голова/lm_head не
+    # отделялись; здесь каждый компонент получает своё имя.  При ``off``
+    # (дефолт) ``mark`` — прямой вызов: те же объекты/формы/числа, ни одной
+    # новой jit/checkpoint-границы; финальная сумма намеренно не обёрнута.
     if ce_tokens > 0:
-        hidden, qb = forward(
-            params, cfg, input_ids, chunk_size, use_attnres,
-            return_hidden=True, collect_qb=True,
-            grad_ckpt_policy=policy, emit_logits=False,
-            remat_policy=remat_policy,
+        hidden, qb = provenance.mark(
+            "forward",
+            lambda: forward(
+                params, cfg, input_ids, chunk_size, use_attnres,
+                return_hidden=True, collect_qb=True,
+                grad_ckpt_policy=policy, emit_logits=False,
+                remat_policy=remat_policy,
+            ),
         )
-        ntp = _chunked_cross_entropy(
-            hidden[:, :-1], input_ids[:, 1:], params.embedding, ce_tokens
+        ntp = provenance.mark(
+            "ntp_ce",
+            lambda: _chunked_cross_entropy(
+                hidden[:, :-1], input_ids[:, 1:], params.embedding, ce_tokens
+            ),
         )
     else:
-        logits, hidden, qb = forward(
-            params, cfg, input_ids, chunk_size, use_attnres,
-            return_hidden=True, collect_qb=True,
-            grad_ckpt_policy=policy,
-            remat_policy=remat_policy,
+        logits, hidden, qb = provenance.mark(
+            "forward",
+            lambda: forward(
+                params, cfg, input_ids, chunk_size, use_attnres,
+                return_hidden=True, collect_qb=True,
+                grad_ckpt_policy=policy,
+                remat_policy=remat_policy,
+            ),
         )
-        ntp = _cross_entropy(logits[:, :-1], input_ids[:, 1:])
-    aux = mtp_loss(params, cfg, hidden, input_ids, chunk_size, ce_chunk_tokens=ce_tokens)
+        ntp = provenance.mark(
+            "ntp_ce",
+            lambda: _cross_entropy(logits[:, :-1], input_ids[:, 1:]),
+        )
+    aux = provenance.mark(
+        "mtp",
+        lambda: mtp_loss(
+            params, cfg, hidden, input_ids, chunk_size, ce_chunk_tokens=ce_tokens
+        ),
+    )
     return ntp + cfg.mtp_loss_weight * aux + cfg.qb_weight * qb
 
 

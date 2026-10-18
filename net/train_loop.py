@@ -3331,19 +3331,16 @@ def train(
         return float(schedule(step))
 
     def loss_fn(params, batch):
-        # ADR-054 Am.31 (цикл-19): провенанс-метка CE/loss-вычисления — одна и
-        # в САМОМ ВНЕШНЕМ месте: сам вызов ``compute_loss``.  Не внутри
-        # чанкового цикла (``model._chunked_cross_entropy``: named_call на
-        # каждый чанк менял бы границы reduction'а) и не в горячем внутреннем
-        # скане (``make_jitted_accum``).  Гейт ``AXIOM_TRACE_MARKERS`` по
-        # умолчанию выключен: ``provenance.mark`` делает прямой вызов, граф
-        # побитово прежний; при ``=1`` scope ``probe_ce`` ложится на HLO-опы
-        # loss-головы и атрибутирует их трейсу.
-        return provenance.mark(
-            "ce",
-            lambda: model.compute_loss(
-                params, cfg, batch, chunk_size=train_config.chunk_size
-            ),
+        # ADR-054 Am.33 (цикл-21): тонкие провенанс-метки живут внутри
+        # ``net/model.compute_loss`` (``forward``/``ntp_ce``/``mtp``).  Внешняя
+        # метка ``probe_ce`` вокруг всего лосса захватывала и backward (через
+        # ``transpose(jvp(probe_ce))`` — 37.5% шага в карте цикла-19) и не
+        # позволяла отделить CE-голову/lm_head от остальных компонентов,
+        # поэтому здесь прямой вызов.  Гейт ``AXIOM_TRACE_MARKERS`` по
+        # умолчанию выключен: ``provenance.mark`` внутри модели — прямой вызов,
+        # граф и числа побитово прежние.
+        return model.compute_loss(
+            params, cfg, batch, chunk_size=train_config.chunk_size
         )
 
     # Coarse-обёртка поверх ВСЕГО loss применяется, только когда модельный
@@ -3672,16 +3669,29 @@ def train(
         if use_bf16_master:
             # Am.13: grads — bf16, рабочей копии нет, второго выхода шага тоже
             # (каст-в-шаг цикл-4 в этом режиме упразднён: params и есть мастер).
-            master, state = step_fn(master, grads, state, lr_at(absolute - 1))
+            # ADR-054 Am.33 (цикл-21): граница оптимизатора — провенанс-метка
+            # ``opt``.  ``step_fn`` уже jit-функция (``optimizer.make_step``):
+            # named_call расширяет name stack только на трассировке, а тело
+            # готового jit уже скомпилировано, поэтому имя внутрь модуля не
+            # проникает — в дампе шаг остаётся модулем своего jit
+            # (``jit(step)``; в отчётах кампании — ``jit_step``), по нему
+            # оптимизатор и атрибутируется.  При ``off`` — прямой вызов.
+            master, state = provenance.mark(
+                "opt", lambda: step_fn(master, grads, state, lr_at(absolute - 1))
+            )
             params = master
         elif use_bf16:
             grads = jax.tree_util.tree_map(lambda leaf: leaf.astype(jnp.float32), grads)
             # ADR-054 (цикл-4, Am.10 п.1): bf16-рабочая копия — третий выход
             # того же jitted-шага (каст в его графе); отдельного
             # ``working_params(master)`` вне jit на шаг больше нет.
-            master, state, params = step_fn(master, grads, state, lr_at(absolute - 1))
+            master, state, params = provenance.mark(
+                "opt", lambda: step_fn(master, grads, state, lr_at(absolute - 1))
+            )
         else:
-            master, state = step_fn(master, grads, state, lr_at(absolute - 1))
+            master, state = provenance.mark(
+                "opt", lambda: step_fn(master, grads, state, lr_at(absolute - 1))
+            )
             # fp32: рабочая копия и есть мастер (``params is master``) — прежний
             # путь; в bf16 её вернул шаг выше.
             params = working_params(master)

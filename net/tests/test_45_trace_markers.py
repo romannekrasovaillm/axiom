@@ -13,6 +13,10 @@
   содержит ``probe_kda`` (имя scope живёт в location-метаданных StableHLO и
   уезжает в ``op_name`` скомпилированного HLO — то, по чему трейс атрибутирует
   ядра; в тексте *скомпилированного* HLO это видно и без debug_info);
+* **тонкая карта (Am.33)**: ``compute_loss`` несёт ``probe_forward``/
+  ``probe_ntp_ce``/``probe_mtp`` в обеих ветках CE; внешнего loss-scope
+  ``probe_ce`` больше нет — метка вокруг всего лосса захватывала backward
+  через ``transpose(jvp(probe_ce))`` и не давала отделить CE-голову;
 * **побитовый паритет**: loss/градиенты/forward маленькой модели при ``off`` и
   ``on`` равны ``jnp.array_equal`` — метка диагностическая и не меняет
   численные операции (блокирующий критерий задачи);
@@ -22,6 +26,10 @@
 
 from __future__ import annotations
 
+import dataclasses
+import re
+from pathlib import Path
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -29,7 +37,7 @@ import pytest
 
 from conftest import tiny_config
 
-from net import model
+from net import model, optimizer
 from net import provenance
 from net.provenance import TRACE_MARKERS_ENV, TraceMarkersError
 
@@ -175,8 +183,11 @@ def _assert_trees_bitwise_equal(a, b):
         {},  # production [K,K,K,M]: KDA + MLA + MoE + dense MLP + AttnRes
         {"dense_standard_layers": 4, "num_kda_layers": 0, "num_mla_layers": 0},
         # ^ pure dense-standard build: ветка ``mla_dense`` (оракул MLA)
+        {"ce_chunk_tokens": 8},
+        # ^ chunked-CE ветка ``compute_loss``: новый call-site ``ntp_ce``
+        #   вокруг ``_chunked_cross_entropy`` (и ``forward`` с emit_logits=False)
     ],
-    ids=["kda-mla-moe", "dense-standard"],
+    ids=["kda-mla-moe", "dense-standard", "chunked-ce"],
 )
 def test_off_on_bitwise_parity(monkeypatch, cfg_overrides):
     cfg = tiny_config(**cfg_overrides)
@@ -196,16 +207,19 @@ def test_off_on_bitwise_parity(monkeypatch, cfg_overrides):
     assert jnp.array_equal(logits_off, logits_on)
 
 
-def test_ce_mark_parity_matches_train_loop_composition(monkeypatch):
-    """Та же композиция, что в ``train_loop.loss_fn``: ``mark("ce", compute_loss)``."""
+def test_loss_composition_parity_matches_train_loop(monkeypatch):
+    """Та же композиция, что в ``train_loop.loss_fn``: прямой ``compute_loss``.
+
+    Внешней метки ``ce`` больше нет (Am.33): тонкие метки живут внутри
+    ``compute_loss``.  Здесь пиннуется побитовый паритет off/on ровно этой
+    композиции — вместе с новыми call-site ``forward``/``ntp_ce``/``mtp``.
+    """
     cfg = tiny_config()
     params = model.init_params(jr.PRNGKey(0), cfg)
     ids = jr.randint(jr.PRNGKey(1), (2, 16), 0, cfg.vocab_size)
 
     def loss(p):
-        return provenance.mark(
-            "ce", lambda: model.compute_loss(p, cfg, ids, chunk_size=8)
-        )
+        return model.compute_loss(p, cfg, ids, chunk_size=8)
 
     monkeypatch.setenv(TRACE_MARKERS_ENV, "0")
     loss_off, grads_off = jax.jit(jax.value_and_grad(loss))(params)
@@ -217,32 +231,127 @@ def test_ce_mark_parity_matches_train_loop_composition(monkeypatch):
 
 
 def test_all_component_scopes_visible_in_loss_hlo(monkeypatch):
-    """Все обёрнутые границы действительно дают scope ``probe_<name>``."""
+    """Все обёрнутые границы действительно дают scope ``probe_<name>``.
+
+    Тонкая карта Am.33: ``probe_forward``/``probe_ntp_ce``/``probe_mtp`` в
+    обеих ветках CE; внешнего loss-scope ``probe_ce`` больше нет — метка
+    вокруг всего ``compute_loss`` захватывала backward через
+    ``transpose(jvp(probe_ce))`` и не позволяла отделить CE-голову.
+    """
     monkeypatch.setenv(TRACE_MARKERS_ENV, "1")
     cfg = tiny_config()
     params = model.init_params(jr.PRNGKey(0), cfg)
     ids = jr.randint(jr.PRNGKey(1), (2, 16), 0, cfg.vocab_size)
 
-    def loss(p):
-        return provenance.mark(
-            "ce", lambda: model.compute_loss(p, cfg, ids, chunk_size=8)
-        )
-
-    text = jax.jit(loss).lower(params).as_text(debug_info=True)
-    for name in ("ce", "kda", "mla", "moe", "mlp", "attnres"):
+    text = jax.jit(
+        lambda p: model.compute_loss(p, cfg, ids, chunk_size=8)
+    ).lower(params).as_text(debug_info=True)
+    for name in (
+        "forward", "ntp_ce", "mtp", "kda", "mla", "moe", "mlp", "attnres",
+    ):
         assert f"probe_{name}" in text, f"scope probe_{name} отсутствует в HLO"
+    assert "probe_ce" not in text, "внешний loss-scope probe_ce вернулся"
+
+    # Chunked-ветка: ``forward`` без логитов + ``_chunked_cross_entropy`` —
+    # те же три тонких имени, внешнего ``probe_ce`` нет.
+    chunked_cfg = dataclasses.replace(cfg, ce_chunk_tokens=8)
+    chunked = jax.jit(
+        lambda p: model.compute_loss(p, chunked_cfg, ids, chunk_size=8)
+    ).lower(params).as_text(debug_info=True)
+    for name in ("forward", "ntp_ce", "mtp"):
+        assert f"probe_{name}" in chunked, (
+            f"chunked-ветка: scope probe_{name} отсутствует в HLO"
+        )
+    assert "probe_ce" not in chunked, "внешний loss-scope probe_ce вернулся"
 
     dense_cfg = tiny_config(
         dense_standard_layers=4, num_kda_layers=0, num_mla_layers=0
     )
     dense_params = model.init_params(jr.PRNGKey(0), dense_cfg)
     dense = jax.jit(
-        lambda p: provenance.mark(
-            "ce",
-            lambda: model.compute_loss(p, dense_cfg, ids, chunk_size=8),
-        )
+        lambda p: model.compute_loss(p, dense_cfg, ids, chunk_size=8)
     ).lower(dense_params)
     assert "probe_mla_dense" in dense.as_text(debug_info=True)
+
+
+def test_off_has_no_thin_probe_names_in_loss_hlo(monkeypatch):
+    """При ``off`` тонких имён в HLO нет — граф и числа побитово прежние."""
+    monkeypatch.setenv(TRACE_MARKERS_ENV, "0")
+    cfg = tiny_config()
+    params = model.init_params(jr.PRNGKey(0), cfg)
+    ids = jr.randint(jr.PRNGKey(1), (2, 16), 0, cfg.vocab_size)
+
+    text = jax.jit(
+        lambda p: model.compute_loss(p, cfg, ids, chunk_size=8)
+    ).lower(params).as_text(debug_info=True)
+    for name in ("forward", "ntp_ce", "mtp", "ce"):
+        assert f"probe_{name}" not in text
+
+
+# ---------------------------------------------------------------------------
+# d2. оптимизатор: метка ``opt`` на границе шага (Am.33)
+# ---------------------------------------------------------------------------
+
+
+def _random_grads(params):
+    """Детерминированные ненулевые градиенты той же структуры, что параметры."""
+    leaves, treedef = jax.tree_util.tree_flatten(params)
+    keys = jr.split(jr.PRNGKey(2), len(leaves))
+    grads = [jr.normal(k, leaf.shape, leaf.dtype) for k, leaf in zip(keys, leaves)]
+    return jax.tree_util.tree_unflatten(treedef, grads)
+
+
+def test_opt_marker_names_the_optimizer_step(monkeypatch):
+    """``mark("opt", step_fn)`` даёт ``probe_opt`` в lowered HLO шага.
+
+    В тренировочном цикле ``step_fn`` уже jit-функция
+    (:func:`net.optimizer.make_step`): ``jax.named_call`` расширяет name stack
+    только на трассировке, а тело готового jit не перестраивается — поэтому
+    имя внутрь модуля шага не проникает (шаг в дампе остаётся модулем своего
+    jit — ``jit(step)``/``jit_step``; по нему оптимизатор и атрибутируется).
+    Здесь пиннуется сам механизм метки: шаг, трассируемый внутри jit, несёт
+    ``probe_opt`` на границе.
+    """
+    monkeypatch.setenv(TRACE_MARKERS_ENV, "1")
+    cfg = tiny_config()
+    params = model.init_params(jr.PRNGKey(0), cfg)
+    grads = _random_grads(params)
+    state = optimizer.init_state(params, key_seed=0)
+    step = optimizer.make_step(cfg, jit=False)
+
+    def outer(master, grads_, state_):
+        return provenance.mark("opt", lambda: step(master, grads_, state_, 1e-3))
+
+    text = jax.jit(outer).lower(params, grads, state).as_text(debug_info=True)
+    assert "probe_opt" in text
+
+
+def test_train_loop_wraps_every_optimizer_call_site():
+    """Оба call-site шага (2 и 3 выхода) помечены ``provenance.mark("opt")``."""
+    source = (Path(__file__).resolve().parents[1] / "train_loop.py").read_text()
+    assert len(re.findall(r'provenance\.mark\(\s*"opt"', source)) >= 3
+    assert "master, state = provenance.mark(" in source
+    assert "master, state, params = provenance.mark(" in source
+
+
+def test_off_on_bitwise_parity_optimizer_step(monkeypatch):
+    """Новый call-site ``mark("opt", step_fn)``: off/on — побитовый паритет."""
+    cfg = tiny_config()
+    params = model.init_params(jr.PRNGKey(0), cfg)
+    grads = _random_grads(params)
+    state = optimizer.init_state(params, key_seed=0)
+    step = optimizer.make_step(cfg, jit=False)
+
+    def run():
+        return jax.jit(
+            lambda m, g, s: provenance.mark("opt", lambda: step(m, g, s, 1e-3))
+        )(params, grads, state)
+
+    monkeypatch.setenv(TRACE_MARKERS_ENV, "0")
+    off = run()
+    monkeypatch.setenv(TRACE_MARKERS_ENV, "1")
+    on = run()
+    _assert_trees_bitwise_equal(off, on)
 
 
 # ---------------------------------------------------------------------------

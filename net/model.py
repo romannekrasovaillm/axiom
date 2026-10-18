@@ -87,6 +87,7 @@ from . import mla as mla_mod
 from . import mlp as mlp_mod
 from . import moe as moe_mod
 from . import mtp as mtp_mod
+from . import provenance
 from . import vit as vit_mod
 from .norm import rms_norm
 
@@ -321,28 +322,52 @@ def _block_delta(
     untouched (like KDA, it neither builds nor consumes one).
     """
     hn = rms_norm(h, block.norm_attn)
+    # ADR-054 Am.31 (цикл-19): границы вызовов компонентов — провенанс-метки
+    # диагностики (``net/provenance.py``).  Гейт ``AXIOM_TRACE_MARKERS`` по
+    # умолчанию выключен: ``mark`` делает прямой вызов, граф побитово прежний;
+    # при ``=1`` имя scope (``probe_kda``/``probe_mla``/...) попадает в
+    # ``op_name`` HLO и атрибутирует ядра/command buffer'ы трейса компоненту.
+    # Оборачиваются только границы вызовов, не тела и не порядок операций.
     if dense_standard:
-        attn_out = mla_mod._dense_apply(block.attn, cfg, hn)
+        attn_out = provenance.mark(
+            "mla_dense", lambda: mla_mod._dense_apply(block.attn, cfg, hn)
+        )
     elif is_kda:
         # ``cfg.kda_impl`` selects the KDA primitive (ADR-031 delta A):
         # ``chunked`` — the pre-delta associative-scan form (default), ``wyut``
         # — the WY/UT chunkwise form.  ``apply_kda`` keeps the branch in one
         # place so the two implementations stay swappable and cross-checked.
         attn_out = jax.vmap(
-            lambda xb: kda_mod.apply_kda(block.attn, cfg, xb, chunk_size)
+            lambda xb: provenance.mark(
+                "kda",
+                lambda xb: kda_mod.apply_kda(block.attn, cfg, xb, chunk_size),
+                xb,
+            )
         )(hn)
     else:
-        attn_out, pool = mla_mod.apply_with_pool(block.attn, cfg, hn, pool=pool, mode=mode)
+        attn_out, pool = provenance.mark(
+            "mla",
+            lambda: mla_mod.apply_with_pool(
+                block.attn, cfg, hn, pool=pool, mode=mode
+            ),
+        )
     h1 = h + attn_out
     mlp_in = rms_norm(h1, block.norm_mlp)
     qb = None
     if isinstance(block.mlp, moe_mod.LatentMoEParams):
         if collect_qb:
-            mlp_out, qb = moe_mod.apply(block.mlp, cfg, mlp_in, want_qb=True)
+            mlp_out, qb = provenance.mark(
+                "moe",
+                lambda: moe_mod.apply(block.mlp, cfg, mlp_in, want_qb=True),
+            )
         else:
-            mlp_out = moe_mod.apply(block.mlp, cfg, mlp_in)
+            mlp_out = provenance.mark(
+                "moe", lambda: moe_mod.apply(block.mlp, cfg, mlp_in)
+            )
     else:
-        mlp_out = mlp_mod.apply(block.mlp, cfg, mlp_in)
+        mlp_out = provenance.mark(
+            "mlp", lambda: mlp_mod.apply(block.mlp, cfg, mlp_in)
+        )
     return attn_out + mlp_out, qb, pool
 
 
@@ -400,7 +425,9 @@ def _layer_transition(
         )
     if use_attnres and index > 0:
         sources = jnp.stack([embed_src, *prior_deltas], axis=0)  # (N, B, T, hidden)
-        corr = attnres_mod.apply_layer(attnres_w, sources)
+        corr = provenance.mark(
+            "attnres", lambda: attnres_mod.apply_layer(attnres_w, sources)
+        )
     else:
         corr = 0.0
     return h + delta + corr, delta, qb, pool_out

@@ -3153,6 +3153,7 @@ def train(
     from net import mla as mla_mod
     from net import moe as moe_mod
     from net import model, optimizer
+    from net import provenance
 
     # Повторный гейт внутри цикла: лимит уже мог быть выдан смоук-режимом
     # (pretrain_run.py: explicit_limit_usd -> Budget.limit_usd), не требуем его снова.
@@ -3330,7 +3331,20 @@ def train(
         return float(schedule(step))
 
     def loss_fn(params, batch):
-        return model.compute_loss(params, cfg, batch, chunk_size=train_config.chunk_size)
+        # ADR-054 Am.31 (цикл-19): провенанс-метка CE/loss-вычисления — одна и
+        # в САМОМ ВНЕШНЕМ месте: сам вызов ``compute_loss``.  Не внутри
+        # чанкового цикла (``model._chunked_cross_entropy``: named_call на
+        # каждый чанк менял бы границы reduction'а) и не в горячем внутреннем
+        # скане (``make_jitted_accum``).  Гейт ``AXIOM_TRACE_MARKERS`` по
+        # умолчанию выключен: ``provenance.mark`` делает прямой вызов, граф
+        # побитово прежний; при ``=1`` scope ``probe_ce`` ложится на HLO-опы
+        # loss-головы и атрибутирует их трейсу.
+        return provenance.mark(
+            "ce",
+            lambda: model.compute_loss(
+                params, cfg, batch, chunk_size=train_config.chunk_size
+            ),
+        )
 
     # Coarse-обёртка поверх ВСЕГО loss применяется, только когда модельный
     # уровень не несёт свою remat-политику: послойный ``per_layer`` живёт

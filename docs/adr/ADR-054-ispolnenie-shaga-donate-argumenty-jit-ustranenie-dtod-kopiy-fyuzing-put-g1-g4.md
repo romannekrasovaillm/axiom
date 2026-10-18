@@ -761,3 +761,49 @@ MoE counting-sort (Am.24).
 
 **Reversibility.** Цикл-17 — read-only; цикл-18 начинается с дампа (артефакт), код — за
 существующими гейтами; откат — выключение гейта/`git revert`.
+
+---
+
+## Amendment 30 (2026-10-18): цикл-18, часть 1 — карта kernel→HLO: хвост 1229/985 = per-chunk reverse-scan бэкварда KDA (variant B); XLA-флаги GEMM-пути шаг не двигают; цикл-18, часть 2 — персистентный transposed-backward KDA
+
+**Карта kernel→HLO (дамп `~/axiom-run/xladump-c18`, клетка persist-on B=4, 1 шаг).**
+`command_buffer_1229` (7.09 с GPU, 40 192 ядра, 256 графов) и `command_buffer_985`
+(2.66 с, 17 664 ядра, 256 графов) — **не MoE и не MLA**: их ядра несут
+`op_name = transpose(jvp(vmap()))/while/body/eval_jaxpr/.../checkpoint/...` (1229) и
+`jvp(vmap())/while/body/eval_jaxpr/...` (985), а форма `while.203` держит carry
+`f32[256,4,32,1536]` + `f32[256,4,12,128,128]` — **256 чанков KDA (C=32) с per-chunk
+скорингами**. Ядра — f32 `__triton_nested_gemm_fusion` с тайлами 1×64×32/128,
+1–4 стадии, 2–8 warps: `gemm_fusion_dot_1221/1227/1231/1239/1232/…`, плюс
+`input_reduce_fusion_17` (`chuv,chu->chv/dot_general` — линейно-вниманиевая
+контракция KDA) и `input_add_reduce_fusion` (`checkpoint/reduce_sum`). Это ровно
+документированный follow-up персистентного KDA
+(`net/kernels/kda_cc_fused_persist.py`: «forward = один кернел, backward = jnp
+reverse scan по чанкам, variant B — scoped follow-up»).
+
+**Скрининг XLA-флагов GEMM-пути (5 клеток, 3 шага, стационар n=2):**
+
+| клетка | ток/с | шаг, с | Δ | вердикт |
+|---|---:|---:|---:|---|
+| ctrl (стек c16) | 840.8 | 38.979 | — | база |
+| `--xla_gpu_enable_triton_gemm=false` | 806.1 | 40.649 | −4.1% | **минус №24** |
+| `--xla_gpu_experimental_gemm_fusion_v2=true` | 838.8 | 39.068 | −0.2% | нейтрально |
+| `warp_spec` + `triton_gemm_any` | 842.2 | 38.915 | +0.2% | нейтрально (шум) |
+| `ragged_dot_grouped_gemm` / комбинации | — | — | — | вторая батарея, решение не меняет |
+
+Вывод: выбор GEMM-эмиттера (Triton nested / cuBLAS / fusion v2 / warp specialization)
+шаг не двигает — цена сидит в **структуре** per-chunk reverse-scan (512 графов,
+57.9k ядер), а не в конфигурации отдельного GEMM.
+
+**Решение цикла-18, часть 2 (до реализации).** Реализовать **variant B —
+персистентный transposed-backward кернел KDA** (один запуск на слой-проход, состояние
+adjoint в SMEM, обратный проход по чанкам внутри программы), который заменяет jnp
+reverse scan; forward не трогается, jnp-backward остаётся оракулом и откатом. Гейт
+`AXIOM_KDA_CC_IMPL=persistent_bwd` (fail-closed, дефолт прежний). Ожидание: снятие
+7.09 с (1229) и части 985 ⇒ шаг 32–35 с, **G1 (33.53 с / 977 ток/с) достижим**.
+**Приёмка:** CPU-паритет против jnp reverse scan ≤1e-3 (grad-check), 10-шаговый
+nan-гейт, стендовый A/B на клетке B=4 persist-on (10 шагов, nan 0), шаг ≤35.5 с;
+при промахе — измеренный минус и возврат к вопросу стека (ADR-050 п.4).
+**Риски:** объём кернела (обратный проход ~20 mma-фаз, прецедент — 986 строк MLA
+persist); nan-стабилизация (прецеденты 4b/4c — 10-шаговый гейт); SMEM 99 КиБ/блок.
+**Reversibility:** гейт env, дефолт выключен; откат — выключение гейта/`git revert`;
+оракул (jnp reverse scan) остаётся в коде.

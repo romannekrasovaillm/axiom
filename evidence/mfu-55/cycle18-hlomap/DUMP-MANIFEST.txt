@@ -1,0 +1,10 @@
+2421
+1,1G	.
+563666685 module_0508.jit_loss_fn.sm_12.1a_gpu_after_optimizations-buffer-assignment-values.txt
+108551929 module_0508.jit_loss_fn.sm_12.1a_gpu_after_optimizations.txt
+107415047 module_0508.jit_loss_fn.before_config_assignment.txt
+104501879 module_0508.jit_loss_fn.after_spmd_partitioner.txt
+32605448 module_0508.jit_loss_fn.before_optimizations.txt
+24645810 module_14642.jit_step.sm_12.1a_gpu_after_optimizations.txt
+21657218 module_14642.jit_step.sm_12.1a_gpu_after_optimizations-buffer-assignment-values.txt
+20731242 module_14642.jit_step.before_config_assignment.txt

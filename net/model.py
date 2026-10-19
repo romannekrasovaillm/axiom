@@ -22,6 +22,7 @@ prefix :func:`layer_kind` reproduces the pinned ``[K,K,K,M]`` pattern exactly.
 
 from __future__ import annotations
 
+import functools
 import logging
 import math
 import os
@@ -844,6 +845,117 @@ def ce_bf16_mode(value: str | None = None) -> bool:
     return mode == CE_BF16_ON
 
 
+# --------------------------------------------------------------------------- #
+# Веха-10 / цикл-23 (ADR-054 Am.35/36, кампания MFU-55): fused backward CE.
+#
+# Пофазовый профиль B=4 показал ``sec_bwd_ce`` = 2.267 с при ~14 % пика:
+# autodiff чанкованного CE проводит backward через ``jax.checkpoint`` каждого
+# чанка (рекомпиляция логитов + transpose-правила ``log_softmax``/gather),
+# но остаётся цепочкой мелких графов.  Гейт ``AXIOM_CE_BWD=fused`` заменяет
+# autodiff всей свёртки явным :func:`jax.custom_vjp`: forward — тот же
+# chunked-цикл (числа те же), backward — пересчёт логитов по чанку и
+# аналитическая формула ``dlogits = (softmax(logits) − onehot(t))·dL/count``,
+# аккумулирующая ``dfeatures``/``dembedding``.  Никакие ``(B, T', vocab)``
+# остатки не сохраняются: полный логит-тензор не нужен ни forward, ни
+# backward.  Дефолт ``"jax"`` оставляет прежний autodiff-путь побитово.
+# --------------------------------------------------------------------------- #
+
+#: Env-гейт backward'а чанкованного CE (``"jax"`` — дефолт, прежний autodiff).
+CE_BWD_ENV = "AXIOM_CE_BWD"
+
+#: Допустимые значения; неизвестное — ошибка (fail-closed, без догадок).
+CE_BWD_VALUES = ("jax", "fused")
+CE_BWD_JAX = "jax"
+CE_BWD_FUSED = "fused"
+
+
+class CeBwdError(ValueError):
+    """Неизвестное значение ``AXIOM_CE_BWD`` (fail-closed, без догадок)."""
+
+
+def ce_bwd_mode(value: str | None = None) -> str:
+    """Backward чанкованного CE: ``"jax"`` (дефолт) | ``"fused"``.
+
+    ``AXIOM_CE_BWD=fused`` оборачивает свёртку :func:`_chunked_cross_entropy`
+    в явный :func:`jax.custom_vjp`: forward-правило — дословно тот же
+    chunked-цикл (глобальные сумма/счётчик), backward-правило — пересчёт
+    логитов чанка и аналитический градиент softmax-CE без сохранения
+    ``(B, T', vocab)``-логитов.  ``jax`` — прежний autodiff через
+    per-chunk ``jax.checkpoint``, побитово и с прежним графом.
+
+    Пустая/незаданная переменная = ``"jax"``; значения — только
+    ``"jax"``/``"fused"`` (регистр и окружающие пробелы нормализуются);
+    неизвестное — :class:`CeBwdError` (fail-closed: опечатка не должна тихо
+    выдать прежний путь за замер fused-ноги).  Явный аргумент сильнее
+    окружения (форма :func:`ce_bf16_mode`).  Читается на трейсе, не
+    кэшируется — A/B идёт на одной ревизии.
+    """
+    raw = value if value is not None else os.environ.get(CE_BWD_ENV)
+    mode = (raw or "").strip().lower() or CE_BWD_JAX
+    if mode not in CE_BWD_VALUES:
+        raise CeBwdError(
+            f"{CE_BWD_ENV}={mode!r}: ожидается одно из {list(CE_BWD_VALUES)}"
+        )
+    return mode
+
+
+def _chunk_sum_plain(f, t, emb, mask):
+    """Один CE-чанк: логиты → ``log_softmax`` → gather NLL → sum/count.
+
+    Дословно прежнее тело ``chunk_sum`` из :func:`_chunked_cross_entropy`
+    (вынесено, чтобы fused-forward и autodiff-путь считали одни и те же
+    выражения).  Глобальная свёртка — сумма NLL и счётчик токенов; маска
+    исключает паддинг и из числителя, и из знаменателя.
+    """
+    logits = compute_dtype.gemm(f, emb.T)
+    logp = jax.nn.log_softmax(logits, axis=-1)
+    nll = -jnp.take_along_axis(logp, t[..., None], axis=-1)[..., 0]  # (b, chunk)
+    if mask is None:
+        return jnp.sum(nll), jnp.array(nll.size, jnp.float32)
+    m = mask.astype(nll.dtype)
+    return jnp.sum(nll * m), jnp.sum(m)
+
+
+def _chunked_ce_reduce(
+    features: jnp.ndarray,
+    targets: jnp.ndarray,
+    embedding: jnp.ndarray,
+    loss_mask: jnp.ndarray | None,
+    ce_chunk_tokens: int,
+    *,
+    checkpoint_chunks: bool,
+):
+    """Глобальная сумма NLL / счётчик по чанкам — дословно текущий цикл.
+
+    ``checkpoint_chunks=True`` — прежний autodiff-путь: каждый чанк обёрнут
+    в ``jax.checkpoint`` (рекомпиляция в backward).  ``False`` — fused-путь:
+    тот же цикл без remat-границы, потому что backward пересчитывает логиты
+    сам и ничего не сохраняет.  Тело чанка выбирается гейтом
+    ``AXIOM_CE_BF16`` (:func:`ce_bf16_mode`) в обоих случаях; forward-числа
+    от этого выбора не зависят.
+    """
+    _, total_rows = targets.shape
+    n_chunks = -(-total_rows // ce_chunk_tokens)  # ceil
+
+    # Веха-9: гейт выбирает тело чанка (bf16-хранение логитов для backward);
+    # дефолт 0 оставляет прежнее тело побитово.
+    chunk_body = _chunk_sum_bf16 if ce_bf16_mode() else _chunk_sum_plain
+
+    total_sum = jnp.zeros(())
+    total_count = jnp.zeros(())
+    for c in range(n_chunks):
+        start = c * ce_chunk_tokens
+        end = min(start + ce_chunk_tokens, total_rows)
+        mask = None if loss_mask is None else loss_mask[:, start:end]
+        body = jax.checkpoint(chunk_body) if checkpoint_chunks else chunk_body
+        part_sum, part_count = body(
+            features[:, start:end], targets[:, start:end], embedding, mask
+        )
+        total_sum = total_sum + part_sum
+        total_count = total_count + part_count
+    return total_sum, total_count
+
+
 @jax.custom_vjp
 def _chunk_sum_bf16(
     f: jnp.ndarray,
@@ -924,12 +1036,107 @@ def _chunk_sum_bf16_bwd(res, g):
 _chunk_sum_bf16.defvjp(_chunk_sum_bf16_fwd, _chunk_sum_bf16_bwd)
 
 
+@functools.lru_cache(maxsize=8)
+def _chunked_ce_fused(ce_chunk_tokens: int):
+    """Fused-VJP всей chunked-CE, ключ — ширина чанка (цикл-23, Am.35/36).
+
+    Возвращает :func:`jax.custom_vjp`-функцию ``(features, targets, emb,
+    loss_mask) -> loss``.  Граница дифференцирования — только ``features`` и
+    ``embedding``; ``targets``/``loss_mask`` — данные (индексы/паддинг), их
+    котангенты объявлены ``None``.
+
+    * forward-правило — :func:`_chunked_ce_reduce` без ``jax.checkpoint``:
+      дословно тот же цикл, те же глобальные сумма/счётчик, включая
+      bf16-ветку ``AXIOM_CE_BF16``; forward-числа совпадают с ``"jax"``
+      побитово;
+    * backward-правило — пересчёт ``logits = features_chunk @ embedding.T``
+      по чанку (bf16-операнды, fp32-аккум — как в forward), ``p = softmax``,
+      ``dlogits = (p − onehot(t))·(dL/count)`` (маска обнуляет исключённые
+      строки), ``dfeatures_chunk = dlogits @ embedding``,
+      ``dembedding += dlogits.T @ features_chunk``.  Логиты чанка — самый
+      большой живой тензор (B, chunk, vocab); полные ``(B, T', vocab)`` не
+      сохраняются и не материализуются.
+
+    Фабрика кэшируется по ширине чанка: объект ``custom_vjp`` стабилен между
+    шагами (jit-кэш не рвётся), а env-гейты читаются внутри правил на каждом
+    трейсе.
+    """
+
+    @jax.custom_vjp
+    def ce_fused(features, targets, embedding, loss_mask):
+        total_sum, total_count = _chunked_ce_reduce(
+            features,
+            targets,
+            embedding,
+            loss_mask,
+            ce_chunk_tokens,
+            checkpoint_chunks=False,
+        )
+        return total_sum / total_count
+
+    def ce_fused_fwd(features, targets, embedding, loss_mask):
+        total_sum, total_count = _chunked_ce_reduce(
+            features,
+            targets,
+            embedding,
+            loss_mask,
+            ce_chunk_tokens,
+            checkpoint_chunks=False,
+        )
+        # Остаток — только входы и глобальный счётчик: логитов нет.
+        return total_sum / total_count, (
+            features,
+            targets,
+            embedding,
+            loss_mask,
+            total_count,
+        )
+
+    def ce_fused_bwd(res, dloss):
+        features, targets, embedding, loss_mask, total_count = res
+        _, total_rows = targets.shape
+        n_chunks = -(-total_rows // ce_chunk_tokens)  # ceil
+        scale = dloss / total_count
+        grad_features = jnp.zeros(features.shape, jnp.float32)
+        grad_embedding = jnp.zeros(embedding.shape, jnp.float32)
+        for c in range(n_chunks):
+            start = c * ce_chunk_tokens
+            end = min(start + ce_chunk_tokens, total_rows)
+            f = features[:, start:end]
+            t = targets[:, start:end]
+            logits = compute_dtype.gemm(f, embedding.T)
+            p = jax.nn.softmax(logits, axis=-1)
+            onehot = jax.nn.one_hot(t, logits.shape[-1], dtype=jnp.float32)
+            dlogits = (p - onehot) * scale
+            if loss_mask is not None:
+                m = loss_mask[:, start:end]
+                dlogits = dlogits * m[..., None].astype(jnp.float32)
+            grad_features = grad_features.at[:, start:end].add(
+                compute_dtype.gemm(dlogits, embedding)
+            )
+            grad_embedding = grad_embedding + compute_dtype.gemm_einsum(
+                "btv,bth->vh", dlogits, f
+            )
+        # Котангенты несут dtype прималов (контракт вехи-9): при bf16-рабочей
+        # копии параметров градиент эмбеддинга обязан быть bf16.
+        return (
+            grad_features.astype(features.dtype),
+            None,
+            grad_embedding.astype(embedding.dtype),
+            None,
+        )
+
+    ce_fused.defvjp(ce_fused_fwd, ce_fused_bwd)
+    return ce_fused
+
+
 def _chunked_cross_entropy(
     features: jnp.ndarray,
     targets: jnp.ndarray,
     embedding: jnp.ndarray,
     ce_chunk_tokens: int,
     loss_mask: jnp.ndarray | None = None,
+    ce_bwd: str | None = None,
 ) -> jnp.ndarray:
     """Cross-entropy over vocabulary-sized logits built one T-slice at a time.
 
@@ -964,39 +1171,33 @@ def _chunked_cross_entropy(
     save-the-dots policy here would spend the memory this path exists to save.
     ADR-049 names the backbone layer (``net/model.py``) and the KDA scan bodies
     (``net/kda.py``) as the policy's consumers.
+
+    Цикл-23 (ADR-054 Am.35/36): гейт ``AXIOM_CE_BWD`` (:func:`ce_bwd_mode`)
+    выбирает backward.  Дефолт ``"jax"`` — прежний autodiff через
+    per-chunk ``jax.checkpoint`` (побитово и с прежним графом); ``"fused"``
+    — :func:`_chunked_ce_fused`: тот же forward-цикл, но backward пересчитывает
+    логиты по чанку и считает softmax-градиент аналитически, не сохраняя
+    ``(B, T', vocab)``-остатков.  Явный ``ce_bwd`` сильнее env.
     """
+    mode = ce_bwd_mode(ce_bwd)  # fail-closed до трейса и до чанкования
     _, total_rows = targets.shape
     if total_rows == 0 or ce_chunk_tokens <= 0:
         raise ValueError(
             "ce_chunk_tokens must be > 0 and targets non-empty for the chunked "
             f"path (got ce_chunk_tokens={ce_chunk_tokens!r}, rows={total_rows})"
         )
-    n_chunks = -(-total_rows // ce_chunk_tokens)  # ceil
-
-    def chunk_sum(f, t, emb, mask):
-        logits = compute_dtype.gemm(f, emb.T)
-        logp = jax.nn.log_softmax(logits, axis=-1)
-        nll = -jnp.take_along_axis(logp, t[..., None], axis=-1)[..., 0]  # (b, chunk)
-        if mask is None:
-            return jnp.sum(nll), jnp.array(nll.size, jnp.float32)
-        m = mask.astype(nll.dtype)
-        return jnp.sum(nll * m), jnp.sum(m)
-
-    # Веха-9: гейт выбирает тело чанка (bf16-хранение логитов для backward);
-    # дефолт 0 оставляет прежнее тело побитово.
-    chunk_body = _chunk_sum_bf16 if ce_bf16_mode() else chunk_sum
-
-    total_sum = jnp.zeros(())
-    total_count = jnp.zeros(())
-    for c in range(n_chunks):
-        start = c * ce_chunk_tokens
-        end = min(start + ce_chunk_tokens, total_rows)
-        mask = None if loss_mask is None else loss_mask[:, start:end]
-        part_sum, part_count = jax.checkpoint(chunk_body)(
-            features[:, start:end], targets[:, start:end], embedding, mask
+    if mode == CE_BWD_FUSED:
+        return _chunked_ce_fused(ce_chunk_tokens)(
+            features, targets, embedding, loss_mask
         )
-        total_sum = total_sum + part_sum
-        total_count = total_count + part_count
+    total_sum, total_count = _chunked_ce_reduce(
+        features,
+        targets,
+        embedding,
+        loss_mask,
+        ce_chunk_tokens,
+        checkpoint_chunks=True,
+    )
     return total_sum / total_count
 
 

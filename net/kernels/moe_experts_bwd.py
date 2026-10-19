@@ -73,6 +73,19 @@ autodiff побитово.  В режиме ``"fused"`` forward-правило `
 * численная семантика кернела пинуется его jnp-адъюнктом
   :func:`reference_bwd` (CPU): ``net/tests/test_54_moe_bwd_fused.py`` сверяет
   его с autodiff прежнего пути на допуске 2e-2 (bf16);
+* цикл-31: эпизод ``dz_grouped`` цикла-30 (стенд: rel 1.28 при исправных
+  ``dwg``/``dwu``/``dwd``) локализован в **записи** dz — тайл latent писался
+  в колонки ``[0, bt)`` вместо ``[tj·bt, tj·bt+bt)``, поэтому 5/6 колонок
+  выхода оставались незаписанными, а первая — перезаписанной последним
+  тайлом.  Адресация вынесена в единственный источник истины
+  (:func:`dz_tile_columns`, :func:`expert_block_range`,
+  :func:`expert_block_offset`, :func:`expert_row_slot`), который делят кернел
+  и CPU-зеркало :func:`mirror_dz_path`; структурная проба
+  ``test_54_moe_bwd_fused.py`` проверяет адресацию, которую исполняет **само
+  тело кернела** (запись строк под регистрирующей обёрткой на lowering), а
+  зеркало с исторической политикой «все тайлы в колонку 0» даёт
+  ``‖Δdz‖/‖dz‖ ≈ 1.08`` (нулевой буфер) … ``1.41`` (остаточная память):
+  наблюдённая на стенде 1.28 лежит внутри этого интервала;
 * паритет *исполненного* кернела, время и детерминизм — замер архитектора на
   GB10 (``check_kernel.py``).
 """
@@ -246,6 +259,80 @@ def device_available() -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Адресация записей кернела (единственный источник истины)
+# ---------------------------------------------------------------------------
+
+
+def dz_tile_columns(latent, bt):
+    """Колонки latent, которые обрабатывает тайл ``tj`` dz-эпилога: ``(c0, width)``.
+
+    Кернел и его CPU-зеркало :func:`mirror_dz_path` берут базу колонок отсюда:
+    тайл ``tj`` читает веса ``wg[e, tj·bt : tj·bt+bt, :]`` и пишет результат в
+    колонки ``[tj·bt, tj·bt+bt)`` выхода ``dz``.  Дефект цикла-30 — запись
+    каждого тайла в колонки ``[0, bt)`` — оставлял ``latent − bt`` колонок
+    незаписанными и перезаписывал первую; проба
+    ``net/tests/test_54_moe_bwd_fused.py`` проверяет покрытие ``[0, latent)``
+    без перекрытий.
+    """
+    latent, bt = int(latent), int(bt)
+    if bt <= 0 or latent % bt:
+        raise ValueError(
+            f"dz-эпилог: latent={latent} не делится на bt={bt} — тайлинг колонок "
+            "не покрывает выход")
+    return tuple((tj * bt, bt) for tj in range(latent // bt))
+
+
+def expert_block_range(start, end, bm):
+    """Границы блоков строк эксперта: ``(i0, i1)`` — полуинтервал номеров блоков.
+
+    Блоки ``bm`` строк покрывают ``[start, end)`` с запасом по краям: первый
+    начинается не позже ``start``, последний кончается не раньше ``end``;
+    принадлежность строки группе решает маска :func:`expert_row_slot`.
+    """
+    return start // bm, (end + bm - 1) // bm
+
+
+def expert_block_offset(i, rows, bm):
+    """Смещение блока ``i`` в GMEM: ``i·bm``, клампленное к ``rows − bm``.
+
+    Кламп держит чтения блока в границах буфера (последний блок не выходит за
+    ``rows``).  При ``rows % bm ≠ 0`` крайние блоки перекрываются: построчные
+    записи ``dz``/``dhg``/``dhu`` от этого не страдают (значения строки — те
+    же), а весовые фазы кампанийной геометрии идут при ``rows % bm == 0``
+    (учёт перекрытия в них — вне задачи цикла-31, открытый вопрос архитектору).
+    """
+    return jnp.minimum(i * bm, rows - bm)
+
+
+def expert_row_slot(gr, start, end, rows, e):
+    """GMEM-строка записи строки ``gr``: своя строка группы либо dump-слот.
+
+    Строки вне ``[start, end)`` уходят в слот ``rows + e`` (буферы ``dz``/
+    ``dhg``/``dhu`` имеют ``rows + n_exp`` строк): программа эксперта пишет
+    только свои строки и собственный слот, гонки с соседом нет.  Dump-строки
+    не читаются (:func:`kernel` возвращает ``dz[:rows]``).
+    """
+    return jnp.where((gr >= start) & (gr < end), gr, rows + e)
+
+
+def _store_row(out, idx, row_s, r, c0, width):
+    """Записать строку ``r`` блока SMEM в строку ``idx`` GMEM, колонки ``[c0, c0+width)``.
+
+    ``idx`` — динамическая строка записи (:func:`expert_row_slot`); ``c0`` —
+    база колонок тайла (:func:`dz_tile_columns` для dz, ``0`` для скретча
+    ``dhg``/``dhu``).  Регистровый путь — одна строка, поэтому ``bm`` построчных
+    записей вместо скеттера: адрес записи и база колонок — параметры вызова, и
+    структурная проба подменяет функцию на lowering, чтобы проверить адресацию,
+    исполняемую самим телом кернела.
+    """
+    from jax.experimental import pallas as pl
+    from jax.experimental.pallas import mosaic_gpu as plgpu
+
+    out[idx, pl.ds(c0, width)] = plgpu.load(
+        row_s.at[pl.ds(r, 1), pl.ds(0, width)], optimized=False).reshape(width)
+
+
+# ---------------------------------------------------------------------------
 # Mosaic GPU-кернел
 # ---------------------------------------------------------------------------
 
@@ -301,9 +388,6 @@ def _build_kernel(rows, latent, inter, n_exp, bm, bt, bk, dtype,
     def _l(ref, layout):
         return plgpu.load(ref, layout=layout, optimized=False)
 
-    def _plain(ref):
-        return plgpu.load(ref, optimized=False)
-
     def _zero(shape, layout):
         return plgpu.layout_cast(jnp.zeros(shape, f32), layout)
 
@@ -325,17 +409,11 @@ def _build_kernel(rows, latent, inter, n_exp, bm, bt, bk, dtype,
             start = start + jnp.where(jnp.int32(j) < e, gsg[j], jnp.int32(0))
         size = gsg[e]
         end = start + size
-        i0 = start // bm
-        i1 = (end + bm - 1) // bm
-
-        def _row_store(out, idx, row_s, r, width):
-            """Построчная запись строки r из SMEM в GMEM по динамическому индексу."""
-            out[idx, pl.ds(0, width)] = _plain(
-                row_s.at[pl.ds(r, 1), pl.ds(0, width)]).reshape(width)
+        i0, i1 = expert_block_range(start, end, bm)
 
         def _row_block(i):
             """Фаза A: da/dhg/dhu/dz одного блока строк эксперта."""
-            off = jnp.minimum(i * bm, rows - bm)
+            off = expert_block_offset(i, rows, bm)
             gi = _iota((bm, inter), 0) + off
             valid = (gi >= start) & (gi < end)
             op_i_s[...] = valid.astype(dt)
@@ -368,25 +446,29 @@ def _build_kernel(rows, latent, inter, n_exp, bm, bt, bk, dtype,
             # Скретч dhg/dhu для весовых фаз (bf16 — объявленный операнд-путь).
             for r in range(bm):
                 gr = off + jnp.int32(r)
-                idx = jnp.where((gr >= start) & (gr < end), gr, rows + e)
-                _row_store(dhg_o, idx, dhg_s, r, inter)
-                _row_store(dhu_o, idx, dhu_s, r, inter)
+                idx = expert_row_slot(gr, start, end, rows, e)
+                _store_row(dhg_o, idx, dhg_s, r, 0, inter)
+                _store_row(dhu_o, idx, dhu_s, r, 0, inter)
 
-            # dz = dhg·wg^T + dhu·wu^T, тайлы bt по latent.
-            for tj in range(latent // bt):
-                acc = _zero((bm, bt), ACC_R)
+            # dz = dhg·wg^T + dhu·wu^T, тайлы bt по latent: тайл tj читает
+            # колонки wg/wu [tj·bt, (tj+1)·bt) и пишет в те же колонки dz
+            # (база колонок — из dz_tile_columns, иначе 5/6 выхода теряется).
+            for c0, width in dz_tile_columns(latent, bt):
+                acc = _zero((bm, width), ACC_R)
                 for kk in range(inter // bk):
                     dhg_k = _l(dhg_s.at[pl.ds(0, bm), pl.ds(kk * bk, bk)], L_R)
-                    w_s[...] = _l(wgg.at[e, pl.ds(tj * bt, bt), pl.ds(kk * bk, bk)], ACC_LT)
+                    w_s[...] = _l(
+                        wgg.at[e, pl.ds(c0, width), pl.ds(kk * bk, bk)], ACC_LT)
                     acc = plgpu.mma(acc, dhg_k, _l(w_s.T, R_R))
                     dhu_k = _l(dhu_s.at[pl.ds(0, bm), pl.ds(kk * bk, bk)], L_R)
-                    w_s[...] = _l(wug.at[e, pl.ds(tj * bt, bt), pl.ds(kk * bk, bk)], ACC_LT)
+                    w_s[...] = _l(
+                        wug.at[e, pl.ds(c0, width), pl.ds(kk * bk, bk)], ACC_LT)
                     acc = plgpu.mma(acc, dhu_k, _l(w_s.T, R_R))
                 dz_s[...] = acc
                 for r in range(bm):
                     gr = off + jnp.int32(r)
-                    idx = jnp.where((gr >= start) & (gr < end), gr, rows + e)
-                    _row_store(dz_o, idx, dz_s, r, bt)
+                    idx = expert_row_slot(gr, start, end, rows, e)
+                    _store_row(dz_o, idx, dz_s, r, c0, width)
 
         pl.loop(i0, i1)(_row_block)
 
@@ -600,3 +682,106 @@ def reference(z_grouped, h_g, h_u, a, de_grouped, wg, wu, wd, group_sizes,
     """Псевдоним :func:`reference_bwd` для контракта скилла (``reference``)."""
     return reference_bwd(z_grouped, h_g, h_u, a, de_grouped, wg, wu, wd,
                          group_sizes, **kwargs)
+
+
+def mirror_dz_path(h_g, h_u, de_grouped, wd, wg, wu, group_sizes, *,
+                   bt=BT_DEFAULT, bk=BK_DEFAULT, tile_columns=None,
+                   store_column=None, weights="tiled",
+                   beta_gate=BETA_GATE_DEFAULT, beta_up=BETA_UP_DEFAULT):
+    """CPU-зеркало dz-пути кернела: da → siti-адъюнкт → тайлы latent → запись строк.
+
+    Повторяет последовательность фазы A кернела на строках своего эксперта:
+
+    * ``da = de·wd^T`` — K-поток тайлами ``bk`` по latent, тайл веса
+      ``(inter, bk)`` транспонируется в RHS ``(bk, inter)`` (тот же
+      операнд-путь, что ``_l(wd_s.T, R_R)``);
+    * siti-адъюнкт ``dhg``/``dhu`` и их квантование в bf16 — скретч кернела
+      (``dhg_o``/``dhu_o``);
+    * ``dz = dhg·wg^T + dhu·wu^T`` тайлами ``bt`` по latent с K-потоком ``bk``
+      по inter: тайл ``(width, bk)`` веса транспонируется в RHS
+      ``(bk, width)``;
+    * запись: строки группы ``[start, end)`` — в свои строки, строки вне
+      группы — в dump-слот ``rows + e`` (в зеркале dump-слот не заполняется:
+      он скретч, его адресацию пинует целочисленная проба).
+
+    ``tile_columns`` — политика колонок *операнда* (по умолчанию
+    производственная :func:`dz_tile_columns`), ``store_column`` — политика
+    колонок *записи* ``(tj, c0, width) → c0 записи``; по умолчанию тайл
+    пишется в те же колонки, из которых прочитан.  Исторический дефект
+    цикла-30 — ``store_column=lambda tj, c0, width: 0`` (все тайлы в колонку
+    0): проба ``test_54`` показывает, что эта политика воспроизводит
+    наблюдённую на стенде ошибку, а заведомо верная jnp-версия операнда
+    (``weights="full"``) её **не** снимает — значит, дефект был в адресации
+    записи, а не в ориентации ``wgᵀ``.
+
+    ``weights="tiled"`` — операнд-путь кернела (тайлы ``bk``),
+    ``"full"`` — заведомо верная jnp-версия одним matmul (``dhg·wg^T`` без
+    тайлинга K): сверка режимов отделяет ориентацию операндов от адресации.
+
+    Возвращает fp32-буфер ``(rows + n_exp, latent)`` — форму ``out_type``
+    кернела; ``dz = out[:rows]``.  Это CPU-пин адресации и формул, а не
+    исполнение Mosaic: семантику ``plgpu.mma`` на устройстве проверяет стенд
+    (ADR-011).
+    """
+    rows, inter = h_g.shape
+    latent = wg.shape[1]
+    n_exp = wg.shape[0]
+    gs = [int(v) for v in jnp.asarray(group_sizes).reshape(-1)]
+    if len(gs) != n_exp:
+        raise ValueError(f"group_sizes: {len(gs)} групп при n_exp={n_exp}")
+    if sum(gs) != rows:
+        raise ValueError(f"group_sizes: сумма {sum(gs)} ≠ rows={rows}")
+    if inter % bk:
+        raise ValueError(f"inter={inter} не делится на bk={bk}")
+    if weights not in ("tiled", "full"):
+        raise ValueError(f"weights: {weights!r} вне ('tiled', 'full')")
+    f32 = jnp.float32
+    bg, bu = float(beta_gate), float(beta_up)
+
+    tiles = tuple(dz_tile_columns(latent, bt) if tile_columns is None
+                  else tile_columns(latent, bt))
+    store = (lambda tj, c0, width: c0) if store_column is None else store_column
+
+    hgq, huq = _q(h_g), _q(h_u)
+    deq, wdq = _q(de_grouped), _q(wd)
+    wgq, wuq = _q(wg), _q(wu)
+    out = jnp.zeros((rows + n_exp, latent), f32)
+
+    start = 0
+    for e in range(n_exp):
+        end = start + gs[e]
+        if end > start:
+            hg_e = hgq[start:end]
+            hu_e = huq[start:end]
+            de_e = deq[start:end]
+            # da = de·wd^T: K-поток по latent тайлами bk (операнд-путь кернела).
+            da = jnp.zeros((end - start, inter), f32)
+            for k0 in range(latent // bk):
+                kk = k0 * bk
+                da = da + de_e[:, kk:kk + bk] @ wdq[e, :, kk:kk + bk].T
+            sig_g = jax.nn.sigmoid(hg_e)
+            th_g = jnp.tanh(hg_e / bg)
+            th_u = jnp.tanh(hu_e / bu)
+            gate = bg * th_g * sig_g
+            up = bu * th_u
+            dgate = (1.0 - th_g * th_g) * sig_g + bg * th_g * sig_g * (1.0 - sig_g)
+            dup = 1.0 - th_u * th_u
+            dhg = _q(da * up * dgate)          # скретч ядра — bf16-операнд
+            dhu = _q(da * gate * dup)
+            for tj, (c0, width) in enumerate(tiles):
+                if weights == "full":
+                    # Заведомо верная jnp-версия: dhg·wg^T без тайлинга K.
+                    acc = (dhg @ wgq[e, c0:c0 + width, :].T
+                           + dhu @ wuq[e, c0:c0 + width, :].T)
+                else:
+                    acc = jnp.zeros((end - start, width), f32)
+                    for k0 in range(inter // bk):
+                        kk = k0 * bk
+                        acc = acc + dhg[:, kk:kk + bk] @ \
+                            wgq[e, c0:c0 + width, kk:kk + bk].T
+                        acc = acc + dhu[:, kk:kk + bk] @ \
+                            wuq[e, c0:c0 + width, kk:kk + bk].T
+                c0_store = store(tj, c0, width)
+                out = out.at[start:end, c0_store:c0_store + width].set(acc)
+        start = end
+    return out

@@ -28,6 +28,17 @@ fused-кернел ``net/kernels/moe_experts_bwd.py`` плюс XLA для гру
 * **(д) lower_check-адаптер** ``net/tests/moe_experts_bwd_lower.py`` (форма
   ``kda_persist_bwd_lower.py``) и lowering живого случая для sm_121 на этом
   CPU-узле (патч arch/Mosaic SMEM, как ``test_kda_cc_fused.py``).
+* **(е) структурная проба dz-эпилога** (цикл-31, ADR-054 Am.53): колонки
+  тайлов покрывают ``[0, latent)`` ровно один раз; адресация строк
+  (префиксные суммы ``group_sizes`` + маска + dump-слот) проверяется
+  целочисленно на кампанийных и граничных раскладках; запись, которую
+  исполняет **само тело кернела**, проверяется подменой ``_store_row`` на
+  lowering — тайл ``tj`` обязан писать в колонки ``[tj·bt, (tj+1)·bt)``;
+  CPU-зеркало ``mirror_dz_path`` сверяется с ``reference_bwd``, а
+  историческая политика «все тайлы в колонку 0» даёт сигнатуру стенда
+  (``‖Δ‖/‖·‖ = 1.08`` на пустом буфере … ``1.41`` на остаточной памяти —
+  наблюдённая 1.28 внутри).  Реальный GPU-паритет по-прежнему за
+  архитектором (ADR-011): здесь пинуется адресация и формулы, не ``mma``.
 
 Окружение: CPU-интерпретатор, ``NET_JAX_BACKEND=cpu``/``JAX_PLATFORMS=cpu``;
 KDA-тело — ``jax``; fused-кернел не исполняется (только lowering), численный
@@ -39,6 +50,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import math
 import os
 import subprocess
 import sys
@@ -595,3 +607,253 @@ def test_oversize_case_is_not_lowered():
             assert moe_experts_bwd._smem_floor_bytes(
                 16, 128, 32, case["latent"], case["inter"]
             ) > moe_experts_bwd.SMEM_LIMIT_BYTES or case["latent"] % 128
+
+
+# --------------------------------------------------------------------------- #
+# (е) структурная проба dz-эпилога (цикл-31, ADR-054 Am.53)
+# --------------------------------------------------------------------------- #
+
+
+def _dz_signature(rows: int = 32, latent: int = 768, inter: int = 128,
+                  n_exp: int = 3, seed: int = 0):
+    """Малая форма для проб dz-эпилога: пустая группа и неполный хвост."""
+    return moe_experts_bwd.make_inputs(
+        jr.PRNGKey(seed), rows=rows, latent=latent, inter=inter, n_exp=n_exp)
+
+
+def _rel_l2(on, off) -> float:
+    """``‖on − off‖ / ‖off‖`` — относительная L2-норма (метрика стенда)."""
+    return float(jnp.linalg.norm(on - off) / jnp.linalg.norm(off))
+
+
+def _group_layout(rows: int, n_exp: int) -> list[int]:
+    """Раскладка ``group_sizes`` как у :func:`make_inputs`: пустая группа + хвост."""
+    base = rows // n_exp
+    sizes = [base] * n_exp
+    sizes[0] += rows - base * n_exp
+    sizes[1] = 0
+    sizes[0] += base
+    assert sum(sizes) == rows
+    return sizes
+
+
+@pytest.mark.parametrize("latent,bt", [(768, 128), (768, 384), (384, 128),
+                                       (256, 256)])
+def test_dz_tile_columns_partition_latent(latent, bt):
+    """Колонки тайлов dz покрывают ``[0, latent)`` ровно один раз.
+
+    Гард дефекта цикла-30: каждый тайл писался в колонки ``[0, bt)``, поэтому
+    ``latent − bt`` колонок оставались незаписанными, а первая — перезаписанной
+    последним тайлом.  Покрытие считается по тем же ``(c0, width)``, которые
+    кернел отдаёт в ``pl.ds(c0, width)`` своей записи.
+    """
+    cols = moe_experts_bwd.dz_tile_columns(latent, bt)
+    assert sum(width for _, width in cols) == latent
+    assert [c0 for c0, _ in cols] == list(range(0, latent, bt))
+    written = [c for c0, width in cols for c in range(c0, c0 + width)]
+    assert written == list(range(latent)), (latent, bt)
+
+
+def test_dz_tile_columns_reject_a_partial_tile():
+    """Тайлинг, не покрывающий latent, — типизированный отказ, а не тихая дыра."""
+    with pytest.raises(ValueError):
+        moe_experts_bwd.dz_tile_columns(768, 100)
+
+
+def test_kernel_out_types_carry_expert_rows_and_dump_slots():
+    """Объявленные выходы кернела: ``dz`` — ``(rows + n_exp, latent)`` fp32.
+
+    ``kernel()`` возвращает ``dz[:rows]``: строки экспертов — первые ``rows``
+    (их адресует :func:`expert_row_slot`), хвост ``n_exp`` — dump-слоты для
+    строк вне группы.  ``jax.eval_shape`` пинует форму выходов без устройства
+    (lowering не нужен) — это CPU-часть проверки «правильная форма/строки».
+    """
+    case = moe_experts_bwd.CASES[1]
+    rows, latent, inter = case["rows"], case["latent"], case["inter"]
+    n_exp = case["n_exp"]
+    shapes = jax.eval_shape(
+        lambda: moe_experts_bwd.make_inputs(jax.random.key(0), **case))
+    build = moe_experts_bwd._build_kernel(rows, latent, inter, n_exp, 16, 128,
+                                          32, case["dtype"], 4.0, 25.0)
+    out = jax.eval_shape(lambda *a: build(*a), *shapes)
+    assert [tuple(o.shape) for o in out] == [
+        (n_exp, latent, inter),                 # dwg
+        (n_exp, latent, inter),                 # dwu
+        (n_exp, inter, latent),                 # dwd
+        (rows + n_exp, latent),                 # dz + dump-слоты
+        (rows + n_exp, inter),                  # dhg скретч
+        (rows + n_exp, inter),                  # dhu скретч
+    ]
+    assert [jnp.dtype(o.dtype) for o in out[3:]] == [
+        jnp.float32, jnp.bfloat16, jnp.bfloat16]
+
+
+@pytest.mark.parametrize("rows,n_exp,bm", [(2048, 12, 16), (256, 12, 16),
+                                           (48, 3, 16), (50, 3, 16)])
+def test_dz_row_slots_cover_the_expert_range(rows, n_exp, bm):
+    """Строки группы пишутся каждая в свою строку, строки вне группы — в dump-слот.
+
+    Целочисленная проба адресации, которую исполняет кернел: границы блоков
+    (``expert_block_range``), смещение блока (``expert_block_offset``) и выбор
+    строки записи (``expert_row_slot``) на префиксных суммах ``group_sizes``.
+    Перекрытие строк между экспертами или запись строки группы в dump-слот
+    ломают равенство с ``reference_bwd`` — это и есть проверяемое свойство.
+    """
+    sizes = _group_layout(rows, n_exp)
+    start = 0
+    for e, size in enumerate(sizes):
+        end = start + size
+        i0, i1 = moe_experts_bwd.expert_block_range(start, end, bm)
+        counts: dict[int, int] = {}
+        for i in range(int(i0), int(i1)):
+            off = int(moe_experts_bwd.expert_block_offset(jnp.int32(i), rows, bm))
+            assert off + bm <= rows
+            for r in range(bm):
+                gr = off + r
+                slot = int(moe_experts_bwd.expert_row_slot(
+                    jnp.int32(gr), jnp.int32(start), jnp.int32(end), rows, e))
+                if start <= gr < end:
+                    counts[slot] = counts.get(slot, 0) + 1
+                else:
+                    assert slot == rows + e, (e, gr, slot)
+        assert set(counts) == set(range(start, end)), (e, sizes, sorted(counts))
+        if size:
+            assert min(counts.values()) >= 1
+            # Кампанийные формы кратны bm: строка пишется ровно один раз.
+            if rows % bm == 0:
+                assert max(counts.values()) == 1, (e, sizes)
+        start = end
+    assert start == rows
+
+
+def test_dz_kernel_writes_each_tile_into_its_own_columns(monkeypatch):
+    """Запись, исполняемая самим телом кернела: тайл ``tj`` → колонки ``[tj·bt, (tj+1)·bt)``.
+
+    ``_store_row`` — единственный путь записи строк в GMEM (скретч ``dhg``/
+    ``dhu`` и dz-эпилог), поэтому проба подменяет его регистрирующей обёрткой
+    на время трейса ``_build_kernel``: проверяется не jnp-эмуляция, а тот код,
+    который уходит в Mosaic-нижний уровень.  При дефекте цикла-30 набор баз
+    dz-тайлов был бы ``{0}``, а покрытие — ``[0, bt)``.
+    """
+    pytest.importorskip("jax.experimental.pallas.mosaic_gpu")
+    if any(d.platform == "gpu" for d in jax.devices()):  # pragma: no cover — стенд
+        pytest.skip("GPU присутствует: запись исполняется стендом (check_kernel.py)")
+
+    case = moe_experts_bwd.CASES[1]                     # rows=256, latent=768, inter=384
+    bm, bt = moe_experts_bwd.BM_DEFAULT, moe_experts_bwd.BT_DEFAULT
+    calls: list[tuple[int, int, int]] = []
+    real = moe_experts_bwd._store_row
+
+    def _spy(out, idx, row_s, r, c0, width):
+        calls.append((int(c0), int(width), int(r)))
+        return real(out, idx, row_s, r, c0, width)
+
+    monkeypatch.setattr(moe_experts_bwd, "_store_row", _spy)
+    moe_experts_bwd._build_kernel.cache_clear()
+    try:
+        text = _lower_live_case(case)
+    finally:
+        moe_experts_bwd._build_kernel.cache_clear()
+    assert "mosaic_gpu" in text, "lowering не дал Mosaic-кернел"
+
+    expected = [tj * bt for tj in range(case["latent"] // bt)]
+    dz_calls = [(c0, width, r) for c0, width, r in calls if width == bt]
+    scratch = [(c0, width, r) for c0, width, r in calls if width == case["inter"]]
+    bases = sorted({c0 for c0, _, _ in dz_calls})
+    assert bases == expected, f"dz-тайлы пишутся в колонки {bases}, ожидались {expected}"
+    assert {width for _, width, _ in dz_calls} == {bt}
+    assert sorted({r for _, _, r in dz_calls}) == list(range(bm))
+    per_tile = {c0: sum(1 for cc, _, _ in dz_calls if cc == c0) for c0 in expected}
+    assert len(set(per_tile.values())) == 1, per_tile
+    # Скретч dhg/dhu — всегда колонка 0 и полная ширина inter.
+    assert {c0 for c0, _, _ in scratch} == {0}
+    assert sorted({r for _, _, r in scratch}) == list(range(bm))
+    print(f"dz store: bases={bases} calls/tile={per_tile[expected[0]]} "
+          f"scratch_calls={len(scratch)}")
+
+
+@pytest.mark.parametrize("weights", ["tiled", "full"])
+def test_dz_mirror_matches_reference(weights):
+    """CPU-зеркало dz-пути совпадает с ``reference_bwd`` (пустой эксперт + хвост).
+
+    ``tiled`` — операнд-путь кернела (K-тайлы ``bk``, транспонированные тайлы
+    ``wg``/``wu``), ``full`` — заведомо верная jnp-версия ``dhg·wgᵀ + dhu·wuᵀ``
+    одним matmul.  Совпадение обоих с ``reference_bwd`` пинует формулы,
+    ориентацию и порядок строк.
+    """
+    z, hg, hu, a, de, wg, wu, wd, gs = _dz_signature()
+    _, _, _, dz_ref = moe_experts_bwd.reference_bwd(z, hg, hu, a, de, wg, wu, wd, gs)
+    rows, latent = dz_ref.shape
+    out = moe_experts_bwd.mirror_dz_path(hg, hu, de, wd, wg, wu, gs, weights=weights)
+    rel = _rel_l2(out[:rows], dz_ref)
+    print(f"mirror({weights}) vs reference_bwd: rel_l2={rel:.3e}")
+    assert out.shape == (rows + wg.shape[0], latent)
+    assert rel <= 1e-5
+
+
+def test_dz_error_is_addressing_not_wg_orientation():
+    """Ошибка — в адресации записи, а не в ориентации ``wgᵀ``/``wuᵀ``.
+
+    Две сверки на одной форме:
+
+    * операнд-путь кернела (``tiled``) и заведомо верная jnp-версия (``full``)
+      дают одну и ту же dz: расхождение ≤ 1e-5 — ориентация и K-тайлинг не
+      источник ошибки;
+    * историческая политика записи (все тайлы в колонку 0) уводит **оба**
+      режима одинаково — подмена ``wgᵀ`` на заведомо верную jnp-версию ошибку
+      не снимает, значит, её источник — запись (строка/колонка/offset).
+    """
+    z, hg, hu, a, de, wg, wu, wd, gs = _dz_signature(latent=384, inter=128)
+    _, _, _, dz_ref = moe_experts_bwd.reference_bwd(z, hg, hu, a, de, wg, wu, wd, gs)
+    rows = dz_ref.shape[0]
+
+    tiled = moe_experts_bwd.mirror_dz_path(hg, hu, de, wd, wg, wu, gs)
+    full = moe_experts_bwd.mirror_dz_path(hg, hu, de, wd, wg, wu, gs, weights="full")
+    assert _rel_l2(tiled[:rows], full[:rows]) <= 1e-5
+    assert _rel_l2(full[:rows], dz_ref) <= 1e-5
+
+    zero_column = lambda tj, c0, width: 0      # noqa: E731 — исторический дефект
+    buggy = moe_experts_bwd.mirror_dz_path(
+        hg, hu, de, wd, wg, wu, gs, store_column=zero_column)
+    buggy_full = moe_experts_bwd.mirror_dz_path(
+        hg, hu, de, wd, wg, wu, gs, weights="full", store_column=zero_column)
+    rel_buggy = _rel_l2(buggy[:rows], dz_ref)
+    rel_buggy_full = _rel_l2(buggy_full[:rows], dz_ref)
+    print(f"store-at-column-0: tiled={rel_buggy:.4f} full={rel_buggy_full:.4f}")
+    assert rel_buggy > 0.5
+    assert rel_buggy_full == pytest.approx(rel_buggy, rel=1e-5)
+
+
+def test_dz_store_defect_reproduces_the_cycle30_signature():
+    """Историческая политика записи воспроизводит стендовую сигнатуру rel ≈ 1.28.
+
+    ``latent=768``, ``bt=128``: незаписанных колонок 640 из 768, первая
+    перезаписана последним тайлом, поэтому на пустом буфере
+    ``‖Δ‖/‖dz‖ = sqrt((latent − bt + 2·bt)/latent) = sqrt(1 + bt/latent) =
+    1.080``, а на остаточной памяти с RMS ≈ RMS(dz) — ``sqrt(2) = 1.414``.
+    Наблюдённая на стенде 1.28 лежит между границами (остаточная память с
+    RMS ≈ 0.75·RMS(dz)); исправленная политика даёт ≤ 1e-5.  Это объяснение
+    сигнатуры, а не заявление паритета исполненного ядра (ADR-011).
+    """
+    z, hg, hu, a, de, wg, wu, wd, gs = _dz_signature()
+    _, _, _, dz_ref = moe_experts_bwd.reference_bwd(z, hg, hu, a, de, wg, wu, wd, gs)
+    rows, latent = dz_ref.shape
+    bt = moe_experts_bwd.BT_DEFAULT
+
+    fixed = moe_experts_bwd.mirror_dz_path(hg, hu, de, wd, wg, wu, gs)[:rows]
+    buggy = moe_experts_bwd.mirror_dz_path(
+        hg, hu, de, wd, wg, wu, gs, store_column=lambda tj, c0, width: 0)[:rows]
+    rel_fixed = _rel_l2(fixed, dz_ref)
+    rel_zero = _rel_l2(buggy, dz_ref)
+    # Остаточная память: детерминированный «мусор» той же RMS в незаписанных колонках.
+    touched = jnp.any(buggy != 0, axis=0, keepdims=True)
+    leftover = jr.normal(jr.PRNGKey(13), buggy.shape) * jnp.sqrt(jnp.mean(dz_ref ** 2))
+    rel_residual = _rel_l2(buggy + leftover * (~touched), dz_ref)
+    print(f"dz store: fixed={rel_fixed:.3e} zero-init={rel_zero:.4f} "
+          f"residual={rel_residual:.4f} analytic={math.sqrt(1.0 + bt / latent):.4f}")
+    assert rel_fixed <= 1e-5
+    # Аналитическая оценка — с точностью до выборочных кросс-членов.
+    assert rel_zero == pytest.approx(math.sqrt(1.0 + bt / latent), abs=5e-3)
+    assert 1.0 <= rel_residual <= 1.45
+    # Стендовая 1.28 — внутри интервала [1.080, 1.414]: сигнатура объяснена.
+    assert rel_zero <= 1.28 <= math.sqrt(2.0)

@@ -1,21 +1,23 @@
 # Задача для кодового харнесса
 
-Цикл-29 кампании MFU-55 (ADR-054 Am.51): диагностика `bwd_moe`-ноги phase-profile. Сейчас `sec_bwd_moe`=null, а `PhaseProfiler.attempt` глотает исключение — причина неизвестна. Сделать причину видимой и попробовать per-layer remat внутри `_phase_moe_stack`. Численные пути шага не меняются (только диагностическая нога).
+Цикл-30 кампании MFU-55 (ADR-054 Am.52): **fused MoE backward** — главный измеренный адрес. `sec_bwd_moe` = 10.235 с (49 % полного backward 20.98, 38 % шага 27.1) при ~0.6 TFLOP ≈ 0.06 TFLOPS: overhead/мелкие кернелы градиента экспертов. Forward остаётся ragged (fused-forward измерен минусом); fused — только backward. Гейт default `jax` (побитово).
 
-ОКРУЖЕНИЕ: CPU-интерпретатор `/home/roman/venv-axiom-0112cpu-py312/bin/python` (jax 0.11.2, CPU); `NET_JAX_BACKEND=cpu JAX_PLATFORMS=cpu`; по одному файлу pytest с heartbeat; полный pytest не гонять.
+ОКРУЖЕНИЕ: CPU-интерпретатор `/home/roman/venv-axiom-0112cpu-py312/bin/python` (jax 0.11.2, CPU); `NET_JAX_BACKEND=cpu JAX_PLATFORMS=cpu`; по одному файлу pytest с heartbeat; полный pytest не гонять. GPU-only кернел; на CPU fused-режим отказывает типизированно (тесты подменяют шов, форма KDA/MLA).
 
-1) `net/train_loop.py`, `PhaseProfiler`:
-   - `self._errors: dict[str, str] = {}` (инициализация в `__init__`);
-   - в `attempt(field, thunk, ...)`: `except Exception as exc: self._errors[field] = f"{type(exc).__name__}: {str(exc)[:200]}"; return None, None` (сохранить форму возврата);
-   - в `measure(...)`: добавить в запись поле `phase_errors` = `dict(self._errors)` (после прогона; пустой dict, если ошибок нет); поле аддитивное, схему `pretrain-metrics/v1` не ломает; обновить константу/докстринг полей phase-profile.
-2) `_phase_moe_stack(params, cfg, input_ids, *, remat=False)`: при `remat=True` каждый слой — `jax.checkpoint(lambda hh, b=block: hh + <mlp/moe>(b))(h)` (per-layer remat, по образцу модели); forward-нога (`sec_moe`) вызывает без remat (прежнее поведение); `bwd_moe`-нога — `jax.jit(jax.grad(lambda p, ids: jnp.sum(_phase_moe_stack(p, cfg, ids, remat=True))))` (внешний `jax.checkpoint` из Am.49 убрать, чтобы не дублировать; если он был — заменить).
-3) Тесты `net/tests/test_53_bwd_moe_diag.py` (CPU):
-   a. `attempt`-ошибка: нога с искусственным исключением → `phase_errors["<field>"]` содержит имя/текст, поле времени null, метрики не падают;
-   b. `remat=True`: на малой конфигурации `_phase_moe_stack` с remat даёт те же значения, что без remat (побитово/в допуске), в jaxpr/lower присутствует remat-примитив на слой; `bwd_moe`-нога компилируется и возвращает градиенты той же формы, что params;
-   c. forward-нога `sec_moe` не изменилась (побитово к ревизии до дельты);
-   d. `phase_errors` присутствует в записи phase-profile (пустой dict при успехе).
-4) Прогони по одному файлу: `test_53_bwd_moe_diag.py`, затем `test_52_phase_bwd_moe`, `test_46_mtp_kda_impl`.
-5) Ограничения: без unsafe; `net/config.json` не трогать; численные пути шага — без изменений; стиль русских docstring.
+1) `net/moe.py` — гейт `AXIOM_MOE_BWD` (форма `counting_sort_mode`/`persist_mode`): `"jax"` (дефолт — прежний autodiff, побитово) | `"fused"`; пусто/не задано = "jax"; неизвестное → `MoeBwdError` (fail-closed); читается на трейсе.
+2) `_routed_experts_grouped`: при gate="fused" — `jax.custom_vjp` вокруг экспертной части: forward — ДОСЛОВНО прежний путь (grouping + три `_ragged_gemm` + `siti_glu`; числа те же); backward — fused-кернел + XLA для группировки/сборки:
+   - входы кернела: `z_grouped (rows,768)`, `h_g (rows,384)`, `h_u (rows,384)`, `a (rows,384)`, `de_grouped (rows,768)`, веса `wg (12,768,384)`, `wu (12,768,384)`, `wd (12,384,768)`, `group_sizes (12,)`;
+   - на эксперта (grid=(12,), SMEM ≤99 КиБ, bf16-операнды/fp32-аккум): `dwd = aᵀ·de` (384×768); `da = de·wdᵀ` (rows×384); siti-adjoint дословно (`net/mlp.py:siti_glu`: `gate=βg·tanh(hg/βg)·sigmoid(hg)`, `up=βu·tanh(hu/βu)`; `dhg = da·up·d(hg-side)`, `dhu = da·gate·sech²(hu/βu)`, где `d(hg-side)=sech²(hg/βg)·sigmoid(hg)+tanh(hg/βg)·sigmoid(hg)(1−sigmoid(hg))`); `dwg = zᵀ·dhg`, `dwu = zᵀ·dhu`; `dz_grouped = dhg·wgᵀ + dhu·wuᵀ`;
+   - выходы: `dwg,dwu,dwd` (по экспертам) и `dz_grouped`; XLA — `de_grouped` из котангента выхода (обратная перестановка/сборка, как в forward), `dz` обратно по токенам, градиенты `sel_p`/`topk` (routing) — прежним XLA-путём.
+   - новый модуль `net/kernels/moe_experts_bwd.py` (Mosaic GPU): `CASES/make_inputs/reference/kernel/cost/TUNE_SPACE/valid_config/device_available`, плюс jnp-`reference_bwd` (адъюнкт экспертного блока) для CPU-паритета.
+3) Тесты `net/tests/test_54_moe_bwd_fused.py` (CPU, шов kernel):
+   a. гейт: пусто/jax/fused/регистр/пробелы; неизвестное → `MoeBwdError`; явный аргумент сильнее env;
+   b. off: MoE output/градиенты побитово равны ревизии до дельты;
+   c. on (шов = jnp-reference_bwd): градиенты z_grouped/весов == autodiff off в scale-relative ≤2e-2 (bf16); порядок групп/строк сохранён; особые случаи: пустой эксперт (group_size=0), неполная группа;
+   d. `valid_config`/`device_available=False` → отказ типизированно;
+   e. lower_check-адаптер `net/tests/moe_experts_bwd_lower.py` (форма `kda_persist_bwd_lower.py`).
+4) Прогони по одному файлу: `test_54_moe_bwd_fused.py`, затем `test_32_moe_grouped_topk`, `test_46_mtp_kda_impl`, `test_47_ce_bwd`, `test_50_gemm_fp8`.
+5) Ограничения: без unsafe; `net/config.json` не трогать; gate default `jax`; при off — побитово (блокирующий критерий); forward не менять; стиль русских docstring.
 
 JSON-контракт результата обязателен (status/assumptions/open_questions). Финальный git-коммит обязателен.
 
@@ -30,7 +32,7 @@ JSON-контракт результата обязателен (status/assumpti
 
 ## План отката
 
-Откат: git reset --hard <baseline_commit из .arch-handoff/MANIFEST.json> (диагностика; численные пути не меняются). Признак регрессии: phase-profile ломается, phase_errors не появляется, новые красные.
+Откат: git reset --hard <baseline_commit из .arch-handoff/MANIFEST.json> (гейт default `jax` — побитово прежний путь). Признак регрессии: off-путь перестал быть побитовым, паритет MoE-backward вне допуска, новые красные.
 
 ## Финализация (обязательно)
 

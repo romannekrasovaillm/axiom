@@ -1,0 +1,3 @@
+[c24p] rc=0
+[c24p] стационар n=19: 1136.3 ток/с, шаг 28.838 с, nan 0
+[c24p phase] {'step': 20, 'step_seconds': 28.932, 'sec_forward': 4.734, 'sec_backward': 22.733, 'sec_backopt': 1.258, 'sec_other': 0.206, 'sec_kda': 0.726, 'sec_mla': 0.562, 'sec_moe': 1.175, 'sec_ce': 0.874, 'sec_bwd_kda': 4.603, 'sec_bwd_mla': 3.778, 'sec_bwd_moe': None, 'sec_bwd_ce': 2.225, 'sec_bwd_other': 0.019, 'reconciliation_pct': 99.287, 'sec_loader': 0.0}

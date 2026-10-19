@@ -199,11 +199,14 @@ def test_bwd_moe_leg_contains_remat_in_jaxpr():
 
 
 def test_bwd_moe_leg_differs_from_uncheckpointed_stack():
-    """Ремат не меняет значения: градиенты бит-в-бит равны нерематной ноге.
+    """Ремат не меняет значения: градиенты равны нерематной ноге в допуске.
 
     ``jax.checkpoint`` — только про память/пересчёт; численный результат
-    диагностической ноги обязан совпадать с прежней формой (Am.49: численные
-    пути не меняются).
+    диагностической ноги обязан совпадать с прежней формой (численные пути не
+    меняются).  С Am.51 граница стоит на каждом слое, поэтому XLA компилирует
+    слой отдельной областью и фузинг отличается: расхождение порядка 1e-7 —
+    это шум пересчёта, а не сдвиг формулы, поэтому сравнение в допуске
+    (побитовое равенство держал лишь внешний checkpoint Am.49).
     """
     cfg = small_config()
     params, ids = _moe_batch(cfg)
@@ -216,7 +219,12 @@ def test_bwd_moe_leg_differs_from_uncheckpointed_stack():
     for index, (a, b) in enumerate(
         zip(jax.tree_util.tree_leaves(checked), jax.tree_util.tree_leaves(plain))
     ):
-        assert _bitwise_equal(a, b), f"лист {index}: ремат изменил градиент"
+        left = np.asarray(a)
+        right = np.asarray(b)
+        assert np.allclose(left, right, rtol=1e-5, atol=1e-6), (
+            f"лист {index}: ремат изменил градиент сильнее допуска "
+            f"(max|Δ|={float(np.max(np.abs(left - right))):.3e})"
+        )
 
 
 # --------------------------------------------------------------------------- #

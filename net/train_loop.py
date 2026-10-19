@@ -2083,7 +2083,9 @@ def mfu(flops: float, *, seconds: float, peak_tflops: float | None) -> float | N
 #   на каждом профильном шаге.
 #
 # Фаза, которую собрать или исполнить не удалось, записывается ``null``:
-# неизмеренное не выдаётся за измеренное (ADR-011).
+# неизмеренное не выдаётся за измеренное (ADR-011).  Причина отказа не
+# глотается: тип и текст исключения этой ноги едут в ``PHASE_ERRORS_FIELD``
+# (Am.51) — иначе ``null`` не отличает OOM от ошибки компиляции.
 
 #: Поля-секунды в записи метрик (контракт дельты) — в порядке вывода.
 PHASE_PROFILE_FIELDS = (
@@ -2138,6 +2140,12 @@ BWD_LEG_FIELDS = (
 #: Ключ ``sec_backward`` несёт память графа fwd+bwd (``grad_fn``): отдельного
 #: исполнителя «только обратный проход» у шага нет.
 PHASE_MEMORY_FIELD = "phase_memory_bytes"
+
+#: Поле-носитель причин отказа ног (Am.51, цикл-29): имя поля ноги из
+#: ``PHASE_PROFILE_FIELDS`` → ``"ТипИсключения: текст"`` (текст усечён до 200
+#: символов).  Поле аддитивное: пустой словарь — все ноги исполнены; схему
+#: ``pretrain-metrics/v1`` оно не ломает (как ``PHASE_MEMORY_FIELD``).
+PHASE_ERRORS_FIELD = "phase_errors"
 
 #: Поле-носитель сверки суммы backward-ног с полным ``sec_backward`` (ориентир).
 BWD_RECONCILIATION_FIELD = "bwd_reconciliation"
@@ -2388,19 +2396,35 @@ def _phase_mla_stack(params, cfg, input_ids):
     return h
 
 
-def _phase_moe_stack(params, cfg, input_ids):
-    """MoE-фаза: проход по канальному микшеру всех слоёв (dense MLP и LatentMoE)."""
+def _phase_moe_stack(params, cfg, input_ids, *, remat=False):
+    """MoE-фаза: проход по канальному микшеру всех слоёв (dense MLP и LatentMoE).
+
+    ``remat=True`` (Am.51, цикл-29) оборачивает **каждый слой** в
+    :func:`jax.checkpoint` — по образцу per-layer remat ``model.forward``:
+    живой набор обратного прохода — вход слоя ``h``, а не активации всех
+    слоёв.  Арифметика слоя от границы не зависит (пересчёт тех же операций),
+    поэтому значения forward-ноги те же, что без remat.  Forward-нога
+    (``sec_moe``) вызывает стек без remat — прежнее поведение побитово;
+    граница нужна только backward-ноге ``sec_bwd_moe``.
+    """
+    import jax
+
     from net import mlp as mlp_mod
     from net import moe as moe_mod
     from net.norm import rms_norm
 
     h = params.embedding[input_ids]
     for block in params.layers:
-        x = rms_norm(h, block.norm_mlp)
-        if isinstance(block.mlp, moe_mod.LatentMoEParams):
-            h = h + moe_mod.apply(block.mlp, cfg, x)
-        else:
-            h = h + mlp_mod.apply(block.mlp, cfg, x)
+
+        def layer(hh, block=block):
+            x = rms_norm(hh, block.norm_mlp)
+            if isinstance(block.mlp, moe_mod.LatentMoEParams):
+                return hh + moe_mod.apply(block.mlp, cfg, x)
+            return hh + mlp_mod.apply(block.mlp, cfg, x)
+
+        if remat:
+            layer = jax.checkpoint(layer)
+        h = layer(h)
     return h
 
 
@@ -2446,6 +2470,9 @@ class _PhaseProfiler:
     время в замер не попадает (иначе в ``sec_*`` попала бы компиляция, а не
     стоимость фазы на шаге).  Отказ любой ноги (нет хука, ошибка компиляции) —
     ``null`` в её поле, а не падение тренировки: профиль диагностический.
+    Причина отказа при этом **не глотается** (Am.51): тип и текст исключения
+    ноги едут в ``PHASE_ERRORS_FIELD`` записи — ``null`` без причины не
+    отличает OOM от ошибки компиляции.
 
     ``grad_fn``/``forward_fn`` приходят снаружи — это **реальные** графы шага
     (forward = тот же ``loss_fn`` под ``jax.jit``, fwd+bwd = тот же ``grad_fn``),
@@ -2466,6 +2493,10 @@ class _PhaseProfiler:
         chunk_size = int(train_config.chunk_size)
         ce_tokens = int(cfg.ce_chunk_tokens)
         self._warmed = False
+        #: Причины отказа ног текущего замера (Am.51): поле ноги → ``"Тип: текст"``.
+        #: Сбрасывается в начале :meth:`measure`; отдаётся записью как
+        #: ``PHASE_ERRORS_FIELD`` (пустой словарь — все ноги исполнены).
+        self._errors: dict[str, str] = {}
         # Реальные графы шага — только для ног сверки (forward/backward).
         self._grad_fn = grad_fn
         self._forward_fn = forward_fn
@@ -2493,16 +2524,14 @@ class _PhaseProfiler:
             "bwd_mla": jax.jit(
                 jax.grad(lambda p, ids: jnp.sum(_phase_mla_stack(p, cfg, ids)))
             ),
-            # Am.49 (цикл-28): ремат MoE-стека — память ≤ одного слоя вместо
-            # активаций всех MoE-слоёв (``sec_bwd_moe`` падал OOM при B=4).
-            # Время ноги поэтому включает пересчёт и подаётся как **ориентир**,
-            # а не партиция (согласовано с ``bwd_reconciliation``).
+            # Am.51 (цикл-29): per-layer remat внутри стека (внешняя граница
+            # Am.49 убрана — она дублировала бы границы слоёв).  Память ≤ одного
+            # слоя, время ноги включает пересчёт и подаётся как **ориентир**, а не
+            # партиция (согласовано с ``bwd_reconciliation``).
             "bwd_moe": jax.jit(
                 jax.grad(
                     lambda p, ids: jnp.sum(
-                        jax.checkpoint(
-                            lambda pp: _phase_moe_stack(pp, cfg, ids)
-                        )(p)
+                        _phase_moe_stack(p, cfg, ids, remat=True)
                     )
                 )
             ),
@@ -2544,11 +2573,16 @@ class _PhaseProfiler:
         Возвращает запись со всеми полями ``PHASE_PROFILE_FIELDS`` плюс
         ``reconciliation_pct``/``sec_other``/``finding`` (сверка
         ``reconcile_phases``), карту пиковой памяти ног (``PHASE_MEMORY_FIELD``,
-        снятую на прогреве) и сверку backward-ног (``BWD_RECONCILIATION_FIELD``,
-        ориентир с пометкой).  ``loader_seconds`` — справка вне шага: лоадер
+        снятую на прогреве), сверку backward-ног (``BWD_RECONCILIATION_FIELD``,
+        ориентир с пометкой) и причины отказа ног текущего замера
+        (``PHASE_ERRORS_FIELD``; пустой словарь — все ноги исполнены).
+        ``loader_seconds`` — справка вне шага: лоадер
         меряется до ``tick`` и в ``step_seconds`` не входит, поэтому он НЕ нога
         сверки.
         """
+        # Ошибки относятся к текущему замеру, а не к прошлым kpi-шагам: без
+        # сброса упавшая однажды нога навсегда оставила бы ложную причину.
+        self._errors.clear()
         if not self._warmed:
             self._warmed = True
             self._sweep(
@@ -2567,6 +2601,9 @@ class _PhaseProfiler:
         )
         record.update(reconcile_phases(step_seconds, record))
         record[PHASE_MEMORY_FIELD] = dict(self._memory)
+        # Причины отказа ног — аддитивное поле записи (Am.51): видно, почему
+        # нога ``null``, а не только сам факт.  Пустой словарь при успехе.
+        record[PHASE_ERRORS_FIELD] = dict(self._errors)
         record[BWD_RECONCILIATION_FIELD] = reconcile_backward_legs(
             record.get("sec_backward"), record
         )
@@ -2600,7 +2637,11 @@ class _PhaseProfiler:
         def attempt(field, thunk, lower=None, graph=None):
             try:
                 elapsed, value = run(thunk)
-            except Exception:
+            except Exception as exc:
+                # Причина отказа не глотается (Am.51): время остаётся ``null``,
+                # но запись несёт тип и текст исключения этой ноги.  Форма
+                # возврата прежняя — ``_sweep`` не меняет провод фаз.
+                self._errors[field] = f"{type(exc).__name__}: {str(exc)[:200]}"
                 return None, None
             record[field] = elapsed
             if lower is not None:

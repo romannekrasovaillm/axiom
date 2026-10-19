@@ -1,23 +1,25 @@
 # Задача для кодового харнесса
 
-Цикл-23 кампании MFU-55 (ADR-054 Am.35/36): fused backward для chunked-CE (lm_head/softmax-CE). Пофазовый профиль: `sec_bwd_ce` 2.267 с при ~14 % пика, `sec_ce` (fwd) 0.886 с — CE/lm_head неэффективен; оба CE-головы (NTP и MTP) идут через `_chunked_cross_entropy` (net/model.py), сейчас backward — autodiff через per-chunk `jax.checkpoint`. Задача — явный `jax.custom_vjp` с fused backward, гейт default off (побитово прежний путь), без изменения forward-чисел.
+Цикл-24 кампании MFU-55 (ADR-054 Am.34/38): fused MoE-кернел (forward, ступень 1) — главный измеренный адрес G2/G3. Провенанс: MoE forward 4.13 с при ~0.3 TFLOP (~0.07 TFLOPS) — доминирует overhead/мелкие кернелы, не GEMM. Цель ступени 1: один персистентный Mosaic-кернел на эксперта, фьюзящий gate/up GEMM + SwiGLU (siti_glu) + down GEMM для сгруппированных строк; группировка/сборка (sort/scatter/mix) остаются XLA; backward — прежний autodiff (ступень 2 — отдельная дельта). Гейт default off (побитово прежний путь).
 
 ОКРУЖЕНИЕ: CPU-интерпретатор `/home/roman/venv-axiom-0112cpu-py312/bin/python` (jax 0.11.2, CPU); `NET_JAX_BACKEND=cpu JAX_PLATFORMS=cpu`; по одному файлу pytest с heartbeat; полный pytest не гонять.
 
-1) `net/model.py` — гейт `AXIOM_CE_BWD` (форма `ce_bf16_mode`/`persist_mode`): значения `"jax"` (дефолт — текущий autodiff-путь, побитово) и `"fused"`; пусто/не задано = `"jax"`; неизвестное → `CeBwdError` (fail-closed); читается на трейсе; явный аргумент сильнее env.
-2) `_chunked_cross_entropy` — при gate="fused" обернуть ВЫЧИСЛЕНИЕ ЛОССА в `jax.custom_vjp` с границей `(features, embedding) -> loss` (targets/loss_mask — недифференцируемые статические/целочисленные аргументы; для них градиент не нужен, но функция должна работать и с `loss_mask`):
-   - forward-правило: дословно текущий chunked-цикл (глобальная сумма NLL / глобальный счётчик; bf16-ветка `ce_bf16_mode` сохраняется), числа те же;
-   - backward-правило (dL — котангент скаляра): для каждого чанка пересчитать `logits = features_chunk @ embedding.T` (bf16-операнды, fp32-аккум — как в forward), `p = softmax(logits)`, `dlogits = (p - onehot(target)) * (dL / global_count)`; `dembedding += dlogits.T @ features_chunk`; `dfeatures_chunk = dlogits @ embedding`; чанки аккумулируются. Полные `(chunk, vocab)` для backward не сохранять (пересчёт; никакого `jax.checkpoint` внутри fused-ветки), живой тензор ≤ одного чанка.
-   - маска `loss_mask`: исключённые строки не дают вклада ни в числитель, ни в знаменатель (как в forward).
-3) Численная политика: fused-backward сверяется с autodiff того же bf16-пути; допуск — scale-relative ≤2e-2 (кампанийный допуск CE bf16) с документированием фактического max|d|/scale; forward при gate="fused" обязан совпадать с gate="jax" (тот же цикл).
-4) Тесты `net/tests/test_47_ce_bwd.py` (CPU):
-   a. гейт: пусто/jax/fused/регистр/пробелы; неизвестное → `CeBwdError` до трейса; явный аргумент сильнее env.
-   b. off: `_chunked_cross_entropy` (и градиенты по features/embedding) побитово равны ревизии до дельты (прямой вызов текущей реализации).
-   c. on: forward-лосс побитово равен off; градиенты features/embedding == autodiff off в scale-relative ≤2e-2; несколько сидов/форм, включая хвостовой неполный чанк и `loss_mask` (если используется).
-   d. память: живой тензор чанка (форма) ≤ (chunk_tokens, vocab) — пин на jaxpr/`lower().as_text()` по отсутствию полного (B*T, vocab) буфера.
-   e. Композит: маленькая модель с `compute_loss` (NTP+MTP) при gate=fused: лосс == off (побитово), градиенты параметров в допуске.
-5) Прогони по одному файлу: `test_47_ce_bwd.py`, затем регресс: `test_29_compute_dtype` (известный унаследованный красный — зафиксировать), `test_30`, `test_36`, `test_39`, `test_46_mtp_kda_impl`.
-6) Ограничения: без unsafe; `net/config.json` не трогать; gate default `"jax"`; при off — побитово прежние числа и граф (блокирующий критерий); стиль русских docstring.
+1) `net/moe.py` — гейт `AXIOM_MOE_IMPL` (форма `counting_sort_mode`/`persist_mode`): значения `"ragged"` (дефолт — текущий `lax.ragged_dot`-путь, побитово) и `"fused"`; пусто/не задано = `"ragged"`; неизвестное → `MoeImplError` (fail-closed); читается на трейсе; явный аргумент сильнее env.
+2) Новый модуль `net/kernels/moe_experts_fused.py` (Mosaic GPU, sm_121 — образец `net/kernels/kda_cc_fused_persist.py`):
+   - `CASES`, `make_inputs`, `reference`, `kernel`, `cost`, `TUNE_SPACE`, `valid_config`, `device_available` по контракту pallas-gb10-kernel;
+   - `kernel(z_grouped (rows, latent=768), group_sizes (12,), wg (12,768,384), wu (12,768,384), wd (12,384,768)) -> e_grouped (rows, 768)`:
+     каждый эксперт — отдельная программа (grid=(n_routed,)), строки группы читаются из z_grouped по префиксным суммам group_sizes; gate/up — `plgpu.mma` bf16-операнды/fp32-аккум (768x384), SwiGLU в теле (siti-семантика — прочитать `net/mlp.py:siti_glu` и повторить дословно), down (384x768); веса эксперта стримятся из GMEM (SMEM ≤99 КиБ/блок — тайлинг), выход — в e_grouped по тем же строкам. Один запуск на forward всего MoE-блока;
+   - `valid_config`: латент 768/expert_inter 384/12 экспертов — живые формы; sieve отвергает то, что не влезает в SMEM/tiling (без тихого отката);
+   - GPU-only: на CPU `device_available=False` → режим `fused` отказывает типизированной ошибкой (тесты подменяют шов, форма KDA/MLA).
+3) `net/moe.py`: при gate="fused" заменить три `_ragged_gemm`+`siti_glu` на вызов `moe_experts_fused.kernel` (grouping и scatter/mix — вне кернела, как сейчас); при off — прежний код дословно.
+4) Тесты `net/tests/test_48_moe_fused.py` (CPU):
+   a. гейт: пусто/ragged/fused/регистр/пробелы; неизвестное → `MoeImplError`; явный аргумент сильнее env.
+   b. off: MoE output/градиенты побитово равны ревизии до дельты (прямой вызов).
+   c. on (с подменой kernel-шва на jnp-реализацию declared-нумерики): forward == off в scale-relative ≤2e-2 (bf16-операнды), SwiGLU-семантика совпадает; группировка/порядок строк сохраняются.
+   d. `valid_config` отвергает нежизнеспособные формы; `device_available=False` → типизированная ошибка в fused-режиме.
+   e. lower_check-адаптер (`net/tests/moe_fused_lower.py`, форма `kda_persist_bwd_lower.py`) — если доступен статический lowering.
+5) Прогони по одному файлу: `test_48_moe_fused.py`, затем регресс: `test_32_moe_grouped_topk`, `test_46_mtp_kda_impl`, `test_33/34` (MoE-тесты — найти grep'ом `moe`), `test_02_kda_parity`.
+6) Ограничения: без unsafe; `net/config.json` не трогать; gate default `ragged`; при off — побитово прежний путь (блокирующий критерий); стиль русских docstring.
 
 JSON-контракт результата обязателен (status/assumptions/open_questions). Финальный git-коммит обязателен.
 
@@ -32,7 +34,7 @@ JSON-контракт результата обязателен (status/assumpti
 
 ## План отката
 
-Откат: git reset --hard <baseline_commit из .arch-handoff/MANIFEST.json> (гейт default `jax` — побитово прежний путь). Признак регрессии: off-путь перестал быть побитовым или новые красные.
+Откат: git reset --hard <baseline_commit из .arch-handoff/MANIFEST.json> (гейт default `ragged` — побитово прежний путь). Признак регрессии: off-путь перестал быть побитовым, паритет MoE вне допуска или новые красные.
 
 ## Финализация (обязательно)
 

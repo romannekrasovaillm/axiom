@@ -1,22 +1,21 @@
 # Задача для кодового харнесса
 
-Цикл-26 кампании MFU-55 (ADR-054 Am.45): full-step FP8 GEMM для плотных проекций/MLP с STE — смена класса к 55 %. Мотив: FP8 CE in situ дал минус (−1.6 %, Am.44) — изолированные 85 TFLOPS не переносятся; проверяем FP8 на тяжёлых плотных GEMM шага (проекции attention, MLP), а не на CE. Гейт default 0 (побитово bf16/fp32-путь).
+Цикл-27 кампании MFU-55 (ADR-054 Am.47): FP8 в **backward** GEMM-helper (градиентные матмулы). Forward-fp8 уже дал +8.8 % (1200.9 ток/с, Am.46); backward шага 22.7 с — крупнейший оставшийся рычаг того же класса. Под-гейт default 0 (bf16-backward — побитово текущему пути).
 
-ОКРУЖЕНИЕ: CPU-интерпретатор `/home/roman/venv-axiom-0112cpu-py312/bin/python` (jax 0.11.2, CPU); `NET_JAX_BACKEND=cpu JAX_PLATFORMS=cpu`; по одному файлу pytest с heartbeat; полный pytest не гонять. fp8-матмул на CPU может не lowering-иться — шов `_fp8_matmul(a, b)` (на GPU — `jnp.matmul(..., preferred_element_type=jnp.float32)`), тесты подменяют деквантованным f32-матмулом.
+ОКРУЖЕНИЕ: CPU-интерпретатор `/home/roman/venv-axiom-0112cpu-py312/bin/python` (jax 0.11.2, CPU); `NET_JAX_BACKEND=cpu JAX_PLATFORMS=cpu`; по одному файлу pytest с heartbeat; полный pytest не гонять. fp8-матмул на CPU может не lowering-иться — шов `_fp8_matmul(a,b)` (на GPU — `jnp.matmul(..., preferred_element_type=jnp.float32)`), тесты подменяют деквантованным f32-матмулом.
 
-1) `net/compute_dtype.py` — гейт `AXIOM_GEMM_FP8` (форма `mode()`/`persist_mode`): `"0"` (дефолт) | `"1"`; пусто/не задано = "0"; неизвестное → `GemmFp8Error` (fail-closed); читается на трейсе; явный аргумент сильнее env.
-   - `def gemm_fp8(a, b)`: `jax.custom_vjp` с границей `(a, b) -> c`; forward: `s_a=max|a|/448`, `s_b=max|b|/448` (f32, данные-зависимые), `qa=clip(a/s_a,±448).astype(e4m3)`, `qb=...`, `c=_fp8_matmul(qa,qb)*(s_a*s_b)` (f32-аккум);
-     backward: `ga = compute_dtype.gemm(g, b)` и `gb = compute_dtype.gemm(a.T-сторона, g)` — bf16-операнды/f32-аккум по **неквантованным** a/b (STE; производная квантизации = I; скейлы — константы).
-   - `def gemm(a, b)`: при гейте on и `a,b` float — `gemm_fp8(a,b)`, иначе прежний bf16/fp32-путь (побитово); не менять семантику fp32/bf16 режимов.
-2) Callsite-ы (только эти; CE НЕ трогать): `net/kda.py:_project` (все проекции q/k/v/gate/alpha/beta), `net/mla.py` — проекции латента/выхода (найти `compute_dtype.gemm`/`gemm_einsum` в проекционных путях), `net/mlp.py:apply` (gate/up/down, кроме SwiGLU-элементвайза). Если callsite использует `gemm_einsum`/`gemm_batched` — добавить аналогичный fp8-путь только там, где это чистый GEMM (не attention-скоры).
-3) Тесты `net/tests/test_50_gemm_fp8.py` (CPU, шов `_fp8_matmul`):
-   a. гейт: пусто/0/1/регистр/пробелы; неизвестное → `GemmFp8Error`; явный аргумент сильнее env.
-   b. off: `compute_dtype.gemm` и все callsite-ы побитово равны ревизии до дельты.
-   c. on: forward `c` == bf16-эталон в scale-relative (документировать фактический max|d|/scale; ожидание ≤2e-2), градиенты a/b == bf16-эталон в scale-relative ≤2e-2 (STE).
-   d. композит: маленькая модель (KDA/MLA/MLP) при gate=on: лосс == off в допуске; 2-шаговый прогон без nan.
-   e. скейлы: нулевой/вырожденный тензор (max=0) не даёт nan; скейлы не текут в градиенты.
-4) Прогони по одному файлу: `test_50_gemm_fp8.py`, затем регресс: `test_02_kda_parity`, `test_31_mla_dense_compute_dtype`, `test_29_compute_dtype` (унаследованный красный — зафиксировать), `test_46_mtp_kda_impl`, `test_47_ce_bwd`.
-5) Ограничения: без unsafe; `net/config.json` не трогать; gate default 0; при off — побитово (блокирующий критерий); CE не трогать; стиль русских docstring.
+1) `net/compute_dtype.py` — под-гейты (форма `mode()`/`persist_mode`, fail-closed, читаются на трейсе, явный аргумент сильнее env):
+   - `AXIOM_GEMM_FP8_BWD=0|1` (default 0: текущий backward в bf16 через `compute_dtype.gemm`, побитово); `1`: градиентные матмулы `ga = g @ bᵀ`, `gb = aᵀ @ g` в fp8 (e4m3, per-tensor скейлы, f32-аккум) со STE;
+   - `AXIOM_FP8_ROW_SCALE=0|1` (default 0: per-tensor; `1`: per-row для `g`/`a` — `(q(a/s_row)@qb)*s_row[:,None]`, аккуратно с транспонированием `gb`; per-tensor для второго операнда). Per-block (128×128) НЕ делать — нужен отдельный кернел (отложено).
+2) `gemm_fp8` (в `compute_dtype.py`): backward-правило расширить; при под-гейте off — прежний bf16-путь дословно; при on — fp8-матмулы с теми же скейлами/STE; `dtype` котангентов — как у прималов; нулевой/вырожденный тензор (max=0) не даёт nan (скейл-эпсилон).
+3) Тесты `net/tests/test_51_gemm_fp8_bwd.py` (CPU, шов `_fp8_matmul`):
+   a. под-гейты: пусто/0/1/регистр/пробелы; неизвестное → ошибка; явный аргумент сильнее env.
+   b. off (AXIOM_GEMM_FP8=1, BWD=0): градиенты побитово равны ревизии до дельты (bf16-backward).
+   c. on: forward == прежнему fp8-forward (побитово/в допуске); градиенты a/b == bf16-эталону в scale-relative (начать с 5e-2; фактический max|d|/scale задокументировать); per-tensor и per-row варианты; нулевой тензор.
+   d. композит: маленькая модель (KDA/MLA/MLP) при FP8+BWD=on: 2-шаговый прогон без nan, лосс в допуске 5e-2 к off-ноге.
+   e. STE-границы: скейлы не текут в градиенты; нет нулевых градиентов.
+4) Прогони по одному файлу: `test_51_gemm_fp8_bwd.py`, затем регресс: `test_50_gemm_fp8`, `test_02_kda_parity`, `test_31_mla_dense_compute_dtype`, `test_46_mtp_kda_impl`, `test_47_ce_bwd`.
+5) Ограничения: без unsafe; `net/config.json` не трогать; под-гейт default 0; при off — побитово (блокирующий критерий); CE/MoE не трогать; стиль русских docstring.
 
 JSON-контракт результата обязателен (status/assumptions/open_questions). Финальный git-коммит обязателен.
 
@@ -31,7 +30,7 @@ JSON-контракт результата обязателен (status/assumpti
 
 ## План отката
 
-Откат: git reset --hard <baseline_commit из .arch-handoff/MANIFEST.json> (гейт default 0 — побитово прежний путь). Признак регрессии: off-путь перестал быть побитовым, паритет on вне допуска, nan на 10 шагах или новые красные.
+Откат: git reset --hard <baseline_commit из .arch-handoff/MANIFEST.json> (под-гейт default 0 — bf16-backward, побитово текущему FP8-forward-only пути). Признак регрессии: off-путь перестал быть побитовым, паритет on вне допуска, nan/дрейф лосса на 10 шагах или новые красные.
 
 ## Финализация (обязательно)
 

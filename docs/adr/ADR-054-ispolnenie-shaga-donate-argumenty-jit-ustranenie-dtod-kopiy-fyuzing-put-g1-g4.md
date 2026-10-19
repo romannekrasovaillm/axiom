@@ -1509,3 +1509,32 @@ bf16-CE/MoE). Остаток backward ~13 с — MoE + проекции/MLP back
 (и тогда решение по MoE принимается по ней: B=2-нога или отказ от адреса).
 **Риски:** per-layer remat завышает время ноги (пересчёт) — это ориентир, не
 партиция; память одной ноги не равна памяти шага. **Reversibility:** диагностика.
+
+---
+
+## Amendment 52 (2026-10-19): `sec_bwd_moe` ИЗМЕРЕН — **10.235 с** (доминанта backward, 49 %); per-layer remat снял OOM; цикл-30 — fused MoE backward
+
+**Измерение (main 2f81c7a, `AXIOM_GEMM_FP8=1`, B=4, 20 шагов;
+`evidence/mfu-55/cycle29-phase-bwdmoe/`):** стационар **1 203.7 ток/с**, шаг
+27.222 с, nan 0; `phase_errors = {}` (нога исполнилась).
+Профильный шаг 27.128 с: forward 4.822 (kda 0.748, mla 0.620, moe 1.174,
+ce 0.891); **backward 20.977**; opt 1.225; other 0.103; reconciliation 99.62 %.
+Backward-ноги: kda 2.993, mla 3.409, **moe 10.235**, ce 2.040, other 0.020
+(сумма 18.70 ≈ 89 % полного backward).
+
+**Вывод.** MoE-backward — **крупнейший компонент шага (38 %)**: forward MoE 1.17 с,
+backward 10.24 с (включая per-layer remat-пересчёт; в fused-шаге — та же
+структура). Реальные FLOPs ~0.6 TFLOP ⇒ ~0.06 TFLOPS — overhead-bound
+(dispatching/сортировки/мелкие кернелы градиента), как и forward, но в 9 раз
+дороже. Это оправдывает **fused MoE backward** (ступень 2), несмотря на минус
+fused-forward (там выигрывать было нечего — 1.17 с).
+
+**Решение цикла-30 (до реализации).** Гейт `AXIOM_MOE_BWD=fused|jax` (default
+`jax`, побитово): при `fused` — персистентный Mosaic-кернел на эксперта
+(обратные экспертные GEMM: `dW_d += aᵀ·de`, `da = de·W_dᵀ`; SwiGLU-adjoint
+`dh_g/dh_u`; `dW_g/u += zᵀ·dh`; `dz += dh·Wᵀ`) + XLA для scatter/routing-градиента;
+forward остаётся ragged (fused-forward — минус). **Приёмка:** CPU-паритет
+declared-нумерики; стенд: `sec_bwd_moe` ≤6 с и шаг ≤25.5 с (≥+6 % к 1 203.7);
+иначе минус. **Риски:** 20+ mma-сайтов adjoint (как KDA), SMEM 99 КиБ,
+порядок/стабильность групп; нижняя граница — real FLOPs ~0.6 TFLOP (0.2 с на
+пике), т.е. потолок выигрыша ~−8 с. **Reversibility:** гейт default `jax`.

@@ -1,25 +1,21 @@
 # Задача для кодового харнесса
 
-Цикл-30 кампании MFU-55 (ADR-054 Am.52): **fused MoE backward** — главный измеренный адрес. `sec_bwd_moe` = 10.235 с (49 % полного backward 20.98, 38 % шага 27.1) при ~0.6 TFLOP ≈ 0.06 TFLOPS: overhead/мелкие кернелы градиента экспертов. Forward остаётся ragged (fused-forward измерен минусом); fused — только backward. Гейт default `jax` (побитово).
+Цикл-31 кампании MFU-55 (ADR-054 Am.53): фикс `dz_grouped` в fused MoE-backward (`net/kernels/moe_experts_bwd.py`). GPU-исполнение на GB10 (архитектор) дало по case0 (rows=2048, latent=768, inter=384, 12 экспертов): `(dwg,dwu,dwd,dz_grouped)` rel = 9.5e-4, 7.9e-4, 5.3e-7, **1.28**; детерминизм да. Первые три выхода — в допуске; `dz_grouped` неверен. CPU-тесты этого не ловят (kernel-шов подменяется jnp-эмуляцией); реальное ядро проверяется на стенде архитектором.
 
-ОКРУЖЕНИЕ: CPU-интерпретатор `/home/roman/venv-axiom-0112cpu-py312/bin/python` (jax 0.11.2, CPU); `NET_JAX_BACKEND=cpu JAX_PLATFORMS=cpu`; по одному файлу pytest с heartbeat; полный pytest не гонять. GPU-only кернел; на CPU fused-режим отказывает типизированно (тесты подменяют шов, форма KDA/MLA).
+ГИПОТЕЗЫ (проверить обе, в порядке вероятности):
+1) **Запись/адресация выхода `dz_grouped`** (per-row): диапазон строк эксперта по префиксным суммам `group_sizes`, маска строк, offset записи в GMEM. Первые три выхода — по-экспертные матрицы (без per-row адресации) и верны, поэтому подозрение №1 — строка/маска/offset записи dz.
+2) **Ориентация mma для `wgᵀ`/`wuᵀ`**: `dz = dhg·wgᵀ + dhu·wuᵀ` (rows×384 @ 384×768 + rows×384 @ 384×768). Сверить с `reference_bwd` (строка за строкой) и с рабочим паттерном `dwg = zᵀ·dhg` (он верен: z/dhg ориентации и dwg-выход корректны; значит, вероятен неверный load/раскладка именно `wgᵀ`/`wuᵀ` в dz-пути, либо порядок слагаемых/аккумулятор).
+3) Знак/сложение двух вкладов (dhg-путь + dhu-путь) в один аккумулятор dz.
 
-1) `net/moe.py` — гейт `AXIOM_MOE_BWD` (форма `counting_sort_mode`/`persist_mode`): `"jax"` (дефолт — прежний autodiff, побитово) | `"fused"`; пусто/не задано = "jax"; неизвестное → `MoeBwdError` (fail-closed); читается на трейсе.
-2) `_routed_experts_grouped`: при gate="fused" — `jax.custom_vjp` вокруг экспертной части: forward — ДОСЛОВНО прежний путь (grouping + три `_ragged_gemm` + `siti_glu`; числа те же); backward — fused-кернел + XLA для группировки/сборки:
-   - входы кернела: `z_grouped (rows,768)`, `h_g (rows,384)`, `h_u (rows,384)`, `a (rows,384)`, `de_grouped (rows,768)`, веса `wg (12,768,384)`, `wu (12,768,384)`, `wd (12,384,768)`, `group_sizes (12,)`;
-   - на эксперта (grid=(12,), SMEM ≤99 КиБ, bf16-операнды/fp32-аккум): `dwd = aᵀ·de` (384×768); `da = de·wdᵀ` (rows×384); siti-adjoint дословно (`net/mlp.py:siti_glu`: `gate=βg·tanh(hg/βg)·sigmoid(hg)`, `up=βu·tanh(hu/βu)`; `dhg = da·up·d(hg-side)`, `dhu = da·gate·sech²(hu/βu)`, где `d(hg-side)=sech²(hg/βg)·sigmoid(hg)+tanh(hg/βg)·sigmoid(hg)(1−sigmoid(hg))`); `dwg = zᵀ·dhg`, `dwu = zᵀ·dhu`; `dz_grouped = dhg·wgᵀ + dhu·wuᵀ`;
-   - выходы: `dwg,dwu,dwd` (по экспертам) и `dz_grouped`; XLA — `de_grouped` из котангента выхода (обратная перестановка/сборка, как в forward), `dz` обратно по токенам, градиенты `sel_p`/`topk` (routing) — прежним XLA-путём.
-   - новый модуль `net/kernels/moe_experts_bwd.py` (Mosaic GPU): `CASES/make_inputs/reference/kernel/cost/TUNE_SPACE/valid_config/device_available`, плюс jnp-`reference_bwd` (адъюнкт экспертного блока) для CPU-паритета.
-3) Тесты `net/tests/test_54_moe_bwd_fused.py` (CPU, шов kernel):
-   a. гейт: пусто/jax/fused/регистр/пробелы; неизвестное → `MoeBwdError`; явный аргумент сильнее env;
-   b. off: MoE output/градиенты побитово равны ревизии до дельты;
-   c. on (шов = jnp-reference_bwd): градиенты z_grouped/весов == autodiff off в scale-relative ≤2e-2 (bf16); порядок групп/строк сохранён; особые случаи: пустой эксперт (group_size=0), неполная группа;
-   d. `valid_config`/`device_available=False` → отказ типизированно;
-   e. lower_check-адаптер `net/tests/moe_experts_bwd_lower.py` (форма `kda_persist_bwd_lower.py`).
-4) Прогони по одному файлу: `test_54_moe_bwd_fused.py`, затем `test_32_moe_grouped_topk`, `test_46_mtp_kda_impl`, `test_47_ce_bwd`, `test_50_gemm_fp8`.
-5) Ограничения: без unsafe; `net/config.json` не трогать; gate default `jax`; при off — побитово (блокирующий критерий); forward не менять; стиль русских docstring.
+Что сделать:
+- Разобрать dz-путь в кернеле против `reference_bwd` (формулы/ориентации/строки), исправить; НЕ трогать dwg/dwu/dwd-пути без нужды.
+- Добавить регрессионное свидетельство, проверяемое на CPU: (a) `lower_check` адаптера остаётся OK; (b) тест, что шов-эмуляция dz совпадает с `reference_bwd` (это уже есть), и новая **структурная проба**: на малой форме проверить, что выход `dz_grouped` ядра имеет правильную форму/строки и что при подмене `wgᵀ` на заведомо верную jnp-версию ошибка исчезает (максимально возможная CPU-проверка без GPU; исполнитель может также добавить pure-jnp зеркало dz-пути и сверить с reference).
+- Прогони: `test_54_moe_bwd_fused.py`, `moe_experts_bwd_lower.py` (lower_check), `test_32_moe_grouped_topk`.
+- В отчёте явно: реальный GPU-чек — за архитектором (стенд); заявлять паритет ядра нельзя до него (ADR-011).
 
-JSON-контракт результата обязателен (status/assumptions/open_questions). Финальный git-коммит обязателен.
+ОКРУЖЕНИЕ: CPU-интерпретатор `/home/roman/venv-axiom-0112cpu-py312/bin/python`; `NET_JAX_BACKEND=cpu JAX_PLATFORMS=cpu`; по одному файлу.
+Ограничения: без unsafe; `net/config.json` не трогать; гейт default `jax`; forward и dwg/dwu/dwd-пути — не менять (они проходят GPU-чек); стиль русских docstring.
+JSON-контракт результата обязателен. Финальный git-коммит обязателен.
 
 ## Границы (scope)
 
@@ -32,7 +28,7 @@ JSON-контракт результата обязателен (status/assumpti
 
 ## План отката
 
-Откат: git reset --hard <baseline_commit из .arch-handoff/MANIFEST.json> (гейт default `jax` — побитово прежний путь). Признак регрессии: off-путь перестал быть побитовым, паритет MoE-backward вне допуска, новые красные.
+Откат: git reset --hard <baseline_commit из .arch-handoff/MANIFEST.json> (гейт AXIOM_MOE_BWD default `jax` — fused-путь инертен). Признак регрессии: CPU-тесты/ lowering MoE-bwd ломаются, GPU-чек (архитектор) не проходит.
 
 ## Финализация (обязательно)
 

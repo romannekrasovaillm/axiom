@@ -39,6 +39,15 @@ fused-кернел ``net/kernels/moe_experts_bwd.py`` плюс XLA для гру
   (``‖Δ‖/‖·‖ = 1.08`` на пустом буфере … ``1.41`` на остаточной памяти —
   наблюдённая 1.28 внутри).  Реальный GPU-паритет по-прежнему за
   архитектором (ADR-011): здесь пинуется адресация и формулы, не ``mma``.
+* **(ж) guard'ы цикла-32** (ADR-054 Am.54): пустая группа эксперта даёт
+  ровно нулевые ``dwg``/``dwu``/``dwd`` без nan/inf — и на «боевом» условии
+  стенда (скретч соседней группы не инициализирован: ``scratch_init="nan"``
+  в ``mirror_weight_path``); маскированный операнд — select, а не умножение
+  (``0·NaN = NaN``); ``valid_config`` fail-closed отвергает
+  ``rows % bm != 0`` (кламп последнего блока перекрывает строки, весовые
+  фазы считали бы их дважды); неполная группа пишет каждую живую строку
+  ровно один раз, dump-слоты не пересекаются с живыми; весовая CPU-эмуляция
+  сходится с ``reference_bwd`` на полной/хвостовой группе.
 
 Окружение: CPU-интерпретатор, ``NET_JAX_BACKEND=cpu``/``JAX_PLATFORMS=cpu``;
 KDA-тело — ``jax``; fused-кернел не исполняется (только lowering), численный
@@ -857,3 +866,233 @@ def test_dz_store_defect_reproduces_the_cycle30_signature():
     assert 1.0 <= rel_residual <= 1.45
     # Стендовая 1.28 — внутри интервала [1.080, 1.414]: сигнатура объяснена.
     assert rel_zero <= 1.28 <= math.sqrt(2.0)
+
+
+# --------------------------------------------------------------------------- #
+# (ж) guard'ы цикла-32: пустая/неполная группа, rows % bm fail-closed
+# --------------------------------------------------------------------------- #
+
+
+def test_valid_config_requires_rows_multiple_of_bm():
+    """``rows % bm != 0`` — fail-closed: сито отвергает форму, CASES не меняются.
+
+    При некратных ``rows`` кламп последнего блока (``expert_block_offset``)
+    перекрывает строки, и весовые фазы с K-потоком по строкам посчитали бы
+    их дважды.  Кампанийная и тестовая геометрия ``CASES`` кратна ``bm=16`` и
+    проходит.
+    """
+    params = {"bm": 16, "bt": 128, "bk": 32}
+    base = dict(rows=256, latent=768, inter=384, n_exp=12, dtype="bfloat16")
+    assert moe_experts_bwd.valid_config(base, params)
+    for rows in (257, 264, 100):
+        assert not moe_experts_bwd.valid_config(dict(base, rows=rows), params), rows
+    # Проверка идёт по действующему bm: bm=32 требует rows % 32 == 0.
+    small = dict(rows=2048, latent=128, inter=128, n_exp=12, dtype="bfloat16")
+    wide = {"bm": 32, "bt": 128, "bk": 32}
+    assert moe_experts_bwd.valid_config(small, wide)
+    assert not moe_experts_bwd.valid_config(dict(small, rows=2064), wide)
+
+
+def test_kernel_refuses_non_multiple_rows_typed(monkeypatch):
+    """Некратные rows — :class:`MoeBwdKernelError` до построения/исполнения."""
+    monkeypatch.setattr(moe_experts_bwd, "device_available", lambda: True)
+    args = _kernel_inputs(rows=2050)
+    with pytest.raises(moe_experts_bwd.MoeBwdKernelError) as excinfo:
+        moe_experts_bwd.kernel(*args)
+    message = str(excinfo.value)
+    assert "valid_config" in message and "rows % bm" in message
+
+
+def test_masked_operand_selects_zero_instead_of_nan():
+    """Маска строки — select: nan/inf вне группы не попадают в аккумулятор.
+
+    Стендовый механизм цикла-32: весовая фаза читает скретч блоками строк, а
+    строки соседней группы могли быть ещё не записаны (неинициализированный
+    GMEM).  ``0·NaN = NaN``; select выбирает ноль и не протаскивает nan.
+    """
+    values = jnp.array([[jnp.nan, 2.0], [jnp.inf, -1.0]], jnp.float32)
+    mask = jnp.array([[0.0], [1.0]], jnp.float32)
+    out = moe_experts_bwd.masked_operand(values, mask)
+    assert jnp.all(jnp.isfinite(out[0]))
+    assert jnp.all(out[0] == 0)
+    assert jnp.array_equal(out[1], values[1])
+    # Контроль: умножение на маску — источник nan (0·nan = nan).
+    assert jnp.isnan(values * mask).any()
+
+
+def test_empty_group_weight_guard_ignores_the_accumulator():
+    """Пустая группа: выход весового тайла — ровно нули, carry не читается."""
+    acc = jnp.full((4, 4), jnp.nan, jnp.float32)
+    zero = moe_experts_bwd.empty_group_weight_guard(acc, jnp.int32(0))
+    assert jnp.all(zero == 0) and jnp.all(jnp.isfinite(zero))
+    # Непустая группа: аккумулятор проходит без изменений.
+    keep = moe_experts_bwd.empty_group_weight_guard(acc, jnp.int32(3))
+    assert jnp.all(jnp.isnan(keep))
+
+
+def test_mirror_weight_empty_group_is_zero_and_finite():
+    """Пустая группа стендовой формы (rows=256, 12 экспертов): нули без nan.
+
+    ``make_inputs`` кампанийной формы отдаёт эксперту 1 ноль строк.  Зеркало
+    весовых фаз прогоняется дважды: с нулевым скретчем и с nan-заполненным
+    (неинициализированный GMEM соседних групп — условие стенда).  Оба прогона
+    обязаны дать одинаковые конечные ``dwg``/``dwu``/``dwd`` и ровно нулевой
+    срез пустого эксперта; строки его блоков адресуются только в dump-слот
+    ``rows + e`` и не пересекаются с живыми.
+    """
+    case = moe_experts_bwd.CASES[1]                     # rows=256, 12 экспертов
+    z, hg, hu, a, de, wg, wu, wd, gs = moe_experts_bwd.make_inputs(
+        jr.PRNGKey(0), **case)
+    rows = case["rows"]
+    bm = moe_experts_bwd.BM_DEFAULT
+    assert int(gs[1]) == 0
+    assert int(jnp.sum(gs)) == rows
+
+    grads = {}
+    for init in ("zeros", "nan"):
+        dwg, dwu, dwd, dhg_s, dhu_s = moe_experts_bwd.mirror_weight_path(
+            z, hg, hu, a, de, wg, wu, wd, gs, scratch_init=init)
+        for name, grad in (("dwg", dwg), ("dwu", dwu), ("dwd", dwd)):
+            assert jnp.all(jnp.isfinite(grad)), (init, name)
+            assert jnp.all(grad[1] == 0), (init, name)
+        # Guard не занулил всю программу: непустая группа живая.
+        assert jnp.any(dwg[0] != 0)
+        grads[init] = (dwg, dwu, dwd, dhg_s, dhu_s)
+    for lhs, rhs in zip(grads["zeros"][:3], grads["nan"][:3]):
+        assert jnp.array_equal(lhs, rhs), "nan-скретч изменил весовой градиент"
+
+    # Адресация строк пустой группы: блок(и) пишут только собственный dump-слот.
+    start = int(jnp.cumsum(gs.astype(jnp.int32))[0])
+    end = start
+    i0, i1 = moe_experts_bwd.expert_block_range(start, end, bm)
+    slots = set()
+    for i in range(int(i0), int(i1)):
+        off = int(moe_experts_bwd.expert_block_offset(jnp.int32(i), rows, bm))
+        for r in range(bm):
+            slots.add(int(moe_experts_bwd.expert_row_slot(
+                jnp.int32(off + r), jnp.int32(start), jnp.int32(end), rows, 1)))
+    assert slots == {rows + 1}
+    assert slots.isdisjoint(set(range(rows)))
+
+
+@pytest.mark.parametrize("rows,bm,sizes", [
+    (64, 16, [23, 0, 41]),
+    (64, 16, [17, 47]),
+    (96, 16, [1, 0, 95]),
+])
+def test_partial_group_rows_written_once_and_dump_disjoint(rows, bm, sizes):
+    """Неполная группа: каждая живая строка — ровно один раз, dump вне живых.
+
+    Кратные ``rows`` (условие сита) и группы, не выровненные по ``bm``: блоки
+    с запасом по краям пересекаются с соседними группами, но маска оставляет
+    каждую живую строку ровно в одном блоке, а строки вне группы уходят в
+    dump-слот эксперта ``rows + e`` (он не пересекается с ``[0, rows)``).
+    """
+    assert sum(sizes) == rows and rows % bm == 0
+    start = 0
+    dump = set()
+    for e, size in enumerate(sizes):
+        end = start + size
+        i0, i1 = moe_experts_bwd.expert_block_range(start, end, bm)
+        counts: dict[int, int] = {}
+        for i in range(int(i0), int(i1)):
+            off = int(moe_experts_bwd.expert_block_offset(jnp.int32(i), rows, bm))
+            assert 0 <= off and off + bm <= rows
+            for r in range(bm):
+                gr = off + r
+                slot = int(moe_experts_bwd.expert_row_slot(
+                    jnp.int32(gr), jnp.int32(start), jnp.int32(end), rows, e))
+                if start <= gr < end:
+                    counts[slot] = counts.get(slot, 0) + 1
+                else:
+                    assert slot == rows + e, (e, gr, slot)
+                    dump.add(slot)
+        assert sorted(counts) == list(range(start, end)), (e, sizes)
+        if size:
+            assert max(counts.values()) == 1, (e, sizes)
+        start = end
+    assert start == rows
+    assert dump and dump.isdisjoint(set(range(rows)))
+
+
+def test_non_multiple_rows_overlap_is_why_fail_closed():
+    """Свидетель причины fail-closed: rows=50, bm=16 — строки 34..47 дважды.
+
+    Последний блок кламплится к ``rows − bm`` и накрывает хвост предыдущего;
+    весовые фазы с K-потоком по строкам посчитали бы перекрытие дважды.
+    Поэтому :func:`valid_config` и зеркало отвергают некратные формы.
+    """
+    rows, bm = 50, 16
+    i0, i1 = moe_experts_bwd.expert_block_range(0, rows, bm)
+    offsets = [int(moe_experts_bwd.expert_block_offset(jnp.int32(i), rows, bm))
+               for i in range(int(i0), int(i1))]
+    assert offsets == [0, 16, 32, 34]
+    seen: dict[int, int] = {}
+    for off in offsets:
+        for gr in range(off, off + bm):
+            seen[gr] = seen.get(gr, 0) + 1
+    assert sorted(g for g, n in seen.items() if n > 1) == list(range(34, 48))
+
+    case = dict(rows=rows, latent=768, inter=384, n_exp=2, dtype="bfloat16")
+    assert not moe_experts_bwd.valid_config(
+        case, {"bm": bm, "bt": 128, "bk": 32})
+    z, hg, hu, a, de, wg, wu, wd, _ = moe_experts_bwd.make_inputs(
+        jr.PRNGKey(0), rows=50, latent=256, inter=128, n_exp=2)
+    with pytest.raises(ValueError):
+        moe_experts_bwd.mirror_weight_path(
+            z, hg, hu, a, de, wg, wu, wd, jnp.array([25, 25], jnp.int32))
+
+
+@pytest.mark.parametrize("sizes", [[32, 32], [23, 41], [17, 47], [64, 0]])
+def test_weight_mirror_matches_reference(sizes):
+    """Регресс цикла-32: весовая эмуляция равна ``reference_bwd``, dz не тронут.
+
+    Полная группа, хвостовая (неполная) и пустая — все три весовых
+    градиента совпадают с jnp-адъюнктом; dz-паритет зеркала
+    (``mirror_dz_path``) сохраняется — путь цикла-31 не сломан.
+    """
+    rows, latent, inter, n_exp = 64, 256, 128, 2
+    z, hg, hu, a, de, wg, wu, wd, _ = moe_experts_bwd.make_inputs(
+        jr.PRNGKey(0), rows=rows, latent=latent, inter=inter, n_exp=n_exp)
+    gs = jnp.asarray(sizes, jnp.int32)
+    dwg, dwu, dwd, dz_ref = moe_experts_bwd.reference_bwd(
+        z, hg, hu, a, de, wg, wu, wd, gs)
+    mdwg, mdwu, mdwd, _dhg_s, _dhu_s = moe_experts_bwd.mirror_weight_path(
+        z, hg, hu, a, de, wg, wu, wd, gs)
+    for name, on, off in (("dwg", mdwg, dwg), ("dwu", mdwu, dwu),
+                          ("dwd", mdwd, dwd)):
+        rel = _rel_l2(on, off)
+        assert rel <= 1e-5, (name, rel)
+    dz = moe_experts_bwd.mirror_dz_path(hg, hu, de, wd, wg, wu, gs)[:rows]
+    assert _rel_l2(dz, dz_ref) <= 1e-5
+
+
+def test_kernel_weight_tiles_are_guarded_on_trace(monkeypatch):
+    """Тело кернела: каждый из трёх весовых выходов обёрнут guard'ом.
+
+    Регистрирующая обёртка ``empty_group_weight_guard`` на трейсе
+    ``_build_kernel``: три весовые фазы (dwd, dwg, dwu) обязаны пройти через
+    guard пустой группы — иначе на стенде rows=256 вновь появится ``dwg=nan``.
+    """
+    pytest.importorskip("jax.experimental.pallas.mosaic_gpu")
+    case = moe_experts_bwd.CASES[1]
+    calls: list[tuple[int, ...]] = []
+    real = moe_experts_bwd.empty_group_weight_guard
+
+    def _spy(acc, size):
+        calls.append(tuple(acc.shape))
+        return real(acc, size)
+
+    monkeypatch.setattr(moe_experts_bwd, "empty_group_weight_guard", _spy)
+    moe_experts_bwd._build_kernel.cache_clear()
+    try:
+        shapes = jax.eval_shape(lambda: moe_experts_bwd.make_inputs(
+            jax.random.key(0), **case))
+        build = moe_experts_bwd._build_kernel(
+            case["rows"], case["latent"], case["inter"], case["n_exp"],
+            16, 128, 32, case["dtype"], 4.0, 25.0)
+        jax.eval_shape(lambda *args: build(*args), *shapes)
+    finally:
+        moe_experts_bwd._build_kernel.cache_clear()
+    assert len(calls) == 3, calls
+    assert all(shape == (128, 128) for shape in calls), calls

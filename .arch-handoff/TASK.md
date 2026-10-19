@@ -1,25 +1,23 @@
 # Задача для кодового харнесса
 
-Цикл-24 кампании MFU-55 (ADR-054 Am.34/38): fused MoE-кернел (forward, ступень 1) — главный измеренный адрес G2/G3. Провенанс: MoE forward 4.13 с при ~0.3 TFLOP (~0.07 TFLOPS) — доминирует overhead/мелкие кернелы, не GEMM. Цель ступени 1: один персистентный Mosaic-кернел на эксперта, фьюзящий gate/up GEMM + SwiGLU (siti_glu) + down GEMM для сгруппированных строк; группировка/сборка (sort/scatter/mix) остаются XLA; backward — прежний autodiff (ступень 2 — отдельная дельта). Гейт default off (побитово прежний путь).
+Цикл-25 кампании MFU-55 (ADR-054 Am.43): FP8 CE/lm_head через custom_vjp + STE — FP8-нога к 55 %. Forward-логиты в fp8 e4m3 (численно годен: loss rel 5e-5), backward в bf16/fp32 по НЕквантованным операндам (наивный fp8-autodiff в JAX ломает градиенты — каст fp32->fp8 не даёт корректного градиента; измерено dFeat rel=1.0). Гейт default 0 (побитово прежний bf16-путь).
 
-ОКРУЖЕНИЕ: CPU-интерпретатор `/home/roman/venv-axiom-0112cpu-py312/bin/python` (jax 0.11.2, CPU); `NET_JAX_BACKEND=cpu JAX_PLATFORMS=cpu`; по одному файлу pytest с heartbeat; полный pytest не гонять.
+ОКРУЖЕНИЕ: CPU-интерпретатор `/home/roman/venv-axiom-0112cpu-py312/bin/python` (jax 0.11.2, CPU); `NET_JAX_BACKEND=cpu JAX_PLATFORMS=cpu`; по одному файлу pytest с heartbeat; полный pytest не гонять. ВАЖНО: fp8-матмул на CPU-бэкенде может не lowering-иться — предусмотреть шов `_fp8_matmul(a, b)` (на GPU — `jnp.matmul(..., preferred_element_type=jnp.float32)`), который тесты подменяют на деквантованный f32-матмул (`a.astype(f32) @ b.astype(f32)`); численный эффект квантизации сохраняется.
 
-1) `net/moe.py` — гейт `AXIOM_MOE_IMPL` (форма `counting_sort_mode`/`persist_mode`): значения `"ragged"` (дефолт — текущий `lax.ragged_dot`-путь, побитово) и `"fused"`; пусто/не задано = `"ragged"`; неизвестное → `MoeImplError` (fail-closed); читается на трейсе; явный аргумент сильнее env.
-2) Новый модуль `net/kernels/moe_experts_fused.py` (Mosaic GPU, sm_121 — образец `net/kernels/kda_cc_fused_persist.py`):
-   - `CASES`, `make_inputs`, `reference`, `kernel`, `cost`, `TUNE_SPACE`, `valid_config`, `device_available` по контракту pallas-gb10-kernel;
-   - `kernel(z_grouped (rows, latent=768), group_sizes (12,), wg (12,768,384), wu (12,768,384), wd (12,384,768)) -> e_grouped (rows, 768)`:
-     каждый эксперт — отдельная программа (grid=(n_routed,)), строки группы читаются из z_grouped по префиксным суммам group_sizes; gate/up — `plgpu.mma` bf16-операнды/fp32-аккум (768x384), SwiGLU в теле (siti-семантика — прочитать `net/mlp.py:siti_glu` и повторить дословно), down (384x768); веса эксперта стримятся из GMEM (SMEM ≤99 КиБ/блок — тайлинг), выход — в e_grouped по тем же строкам. Один запуск на forward всего MoE-блока;
-   - `valid_config`: латент 768/expert_inter 384/12 экспертов — живые формы; sieve отвергает то, что не влезает в SMEM/tiling (без тихого отката);
-   - GPU-only: на CPU `device_available=False` → режим `fused` отказывает типизированной ошибкой (тесты подменяют шов, форма KDA/MLA).
-3) `net/moe.py`: при gate="fused" заменить три `_ragged_gemm`+`siti_glu` на вызов `moe_experts_fused.kernel` (grouping и scatter/mix — вне кернела, как сейчас); при off — прежний код дословно.
-4) Тесты `net/tests/test_48_moe_fused.py` (CPU):
-   a. гейт: пусто/ragged/fused/регистр/пробелы; неизвестное → `MoeImplError`; явный аргумент сильнее env.
-   b. off: MoE output/градиенты побитово равны ревизии до дельты (прямой вызов).
-   c. on (с подменой kernel-шва на jnp-реализацию declared-нумерики): forward == off в scale-relative ≤2e-2 (bf16-операнды), SwiGLU-семантика совпадает; группировка/порядок строк сохраняются.
-   d. `valid_config` отвергает нежизнеспособные формы; `device_available=False` → типизированная ошибка в fused-режиме.
-   e. lower_check-адаптер (`net/tests/moe_fused_lower.py`, форма `kda_persist_bwd_lower.py`) — если доступен статический lowering.
-5) Прогони по одному файлу: `test_48_moe_fused.py`, затем регресс: `test_32_moe_grouped_topk`, `test_46_mtp_kda_impl`, `test_33/34` (MoE-тесты — найти grep'ом `moe`), `test_02_kda_parity`.
-6) Ограничения: без unsafe; `net/config.json` не трогать; gate default `ragged`; при off — побитово прежний путь (блокирующий критерий); стиль русских docstring.
+1) `net/model.py` — гейт `AXIOM_CE_FP8` (форма `ce_bf16_mode`/`persist_mode`): значения `"0"` (дефолт) и `"1"`; пусто/не задано = "0"; неизвестное → `CeFp8Error` (fail-closed); читается на трейсе; явный аргумент сильнее env.
+2) `_chunked_cross_entropy` — при гейте on: `jax.custom_vjp` с границей `(features, embedding) -> loss` (targets/loss_mask — недифференцируемые аргументы, котангент None):
+   - forward (на чанк, глобальные сумма NLL / счётчик, loss_mask в числителе и знаменателе): `a = q(features_chunk, s_f)`, `b = q(embedding.T, s_e)` — квантизация e4m3: `clip(x/s, -448, 448).astype(jnp.float8_e4m3fn)`, per-tensor `s_f=max|features_chunk|/448`, `s_e=max|embedding|/448` (f32, данные-зависимые, STE: в backward — константы); `logits = _fp8_matmul(a, b) * (s_f*s_e)`; softmax/logsumexp/NLL — в fp32;
+   - backward: пересчитать лог-иты чанка тем же fp8-путём (без сохранения полных (chunk,vocab)), `p=softmax(logits)` (f32), `dlogits=(p-onehot(target))*(dL/global_count)`, `dembedding += compute_dtype.gemm(dlogits.T, features_chunk)` и `dfeatures_chunk = compute_dtype.gemm(dlogits, embedding)` — bf16-операнды/f32-аккум по НЕквантованным операндам; loss_mask исключает строки из обоих;
+   - при gate off — дословно прежний код (побитово).
+3) `net/compute_dtype.py` при необходимости — helper для fp8-квантизации/скейла (не менять поведение bf16/fp32-режимов).
+4) Тесты `net/tests/test_49_ce_fp8.py` (CPU, со швом `_fp8_matmul`):
+   a. гейт: пусто/0/1/регистр/пробелы; неизвестное → `CeFp8Error`; явный аргумент сильнее env.
+   b. off: loss и градиенты features/embedding побитово равны ревизии до дельты.
+   c. on: forward-loss == off в допуске (ожидание ≤2e-2, фактически ~5e-5); градиенты == bf16-эталон в scale-relative ≤2e-2 (фактический max|d|/scale задокументировать); хвостовой неполный чанк; loss_mask.
+   d. память: в jaxpr/lower нет полного (B,T,vocab); живой тензор ≤ чанка; в backward нет удержания логитов между чанками.
+   e. STE: градиент квантизации не даёт нулей/мусора (сравнение с bf16-эталоном — зубы); fp8-скейлы не течут в градиенты.
+5) Прогони по одному файлу: `test_49_ce_fp8.py`, затем регресс: `test_29_compute_dtype` (унаследованный красный — зафиксировать), `test_30_mla_flash_parity`, `test_36_accum_jit`, `test_39_bwd_bf16_storage`, `test_46_mtp_kda_impl`.
+6) Ограничения: без unsafe; `net/config.json` не трогать; gate default 0; при off — побитово (блокирующий критерий); стиль русских docstring.
 
 JSON-контракт результата обязателен (status/assumptions/open_questions). Финальный git-коммит обязателен.
 
@@ -34,7 +32,7 @@ JSON-контракт результата обязателен (status/assumpti
 
 ## План отката
 
-Откат: git reset --hard <baseline_commit из .arch-handoff/MANIFEST.json> (гейт default `ragged` — побитово прежний путь). Признак регрессии: off-путь перестал быть побитовым, паритет MoE вне допуска или новые красные.
+Откат: git reset --hard <baseline_commit из .arch-handoff/MANIFEST.json> (гейт default 0 — побитово прежний путь). Признак регрессии: off-путь перестал быть побитовым, паритет on вне допуска или новые красные.
 
 ## Финализация (обязательно)
 

@@ -86,6 +86,17 @@ autodiff побитово.  В режиме ``"fused"`` forward-правило `
   зеркало с исторической политикой «все тайлы в колонку 0» даёт
   ``‖Δdz‖/‖dz‖ ≈ 1.08`` (нулевой буфер) … ``1.41`` (остаточная память):
   наблюдённая на стенде 1.28 лежит внутри этого интервала;
+* цикл-32: стенд дал ``dwg = nan`` на малой форме (rows=256, 12 экспертов) —
+  у эксперта пустая группа, а весовая фаза читает скретч ``dhg``/``dhu``
+  блоками строк: строки соседней группы к моменту чтения могут быть ещё не
+  записаны (программы экспертов идут параллельно), и умножение на маску
+  ``0 · NaN = NaN`` протаскивало nan в аккумулятор.  Фикс: маскированный
+  операнд выбирается через :func:`masked_operand` (select, не умножение),
+  а выход весового тайла пустой группы пишется нулями через
+  :func:`empty_group_weight_guard` (аккумулятор не используется).  Плюс
+  fail-closed ``rows % bm == 0`` в :func:`valid_config`: при некратных rows
+  кламп последнего блока перекрывает строки, и весовые фазы посчитали бы их
+  дважды;
 * паритет *исполненного* кернела, время и детерминизм — замер архитектора на
   GB10 (``check_kernel.py``).
 """
@@ -174,9 +185,13 @@ def valid_config(case, params):
 
     Живые случаи — bf16, ``latent``/``inter`` кратны 128 (построчные записи
     читают из SMEM строку ``inter`` элементов: загрузка фрагментированного
-    массива требует кратности 128), ``bm``/``bt``/``bk`` кратны 16.  fp32 и
-    oversize-геометрии возвращают False — это честный скип ``lower_check``,
-    а не молчаливый откат.
+    массива требует кратности 128), ``bm``/``bt``/``bk`` кратны 16, а
+    ``rows % bm == 0`` — fail-closed: при некратных ``rows``
+    :func:`expert_block_offset` кламплит последний блок к ``rows − bm``, крайние
+    блоки перекрываются и весовые фазы (K-поток по строкам) дважды считают
+    перекрытые строки.  Кампанийная геометрия (2048/256) кратна ``bm=16``;
+    fp32 и oversize-геометрии возвращают False — это честный скип
+    ``lower_check``, а не молчаливый откат.
     """
     rows = int(case["rows"])
     latent = int(case["latent"])
@@ -188,7 +203,7 @@ def valid_config(case, params):
     dt = jnp.dtype(case.get("dtype", "bfloat16"))
     if dt != jnp.bfloat16:
         return False
-    if n_exp < 1 or rows < bm:
+    if n_exp < 1 or rows < bm or rows % bm:
         return False
     if min(bm, bt, bk) < 16 or bm % 16 or bt % 16 or bk % 16:
         return False
@@ -298,8 +313,9 @@ def expert_block_offset(i, rows, bm):
     Кламп держит чтения блока в границах буфера (последний блок не выходит за
     ``rows``).  При ``rows % bm ≠ 0`` крайние блоки перекрываются: построчные
     записи ``dz``/``dhg``/``dhu`` от этого не страдают (значения строки — те
-    же), а весовые фазы кампанийной геометрии идут при ``rows % bm == 0``
-    (учёт перекрытия в них — вне задачи цикла-31, открытый вопрос архитектору).
+    же), а весовые фазы с K-потоком по строкам посчитали бы перекрытые строки
+    дважды.  Поэтому цикл-32 закрывает это ситом: :func:`valid_config` требует
+    ``rows % bm == 0`` (fail-closed, типизированный отказ в :func:`kernel`).
     """
     return jnp.minimum(i * bm, rows - bm)
 
@@ -313,6 +329,35 @@ def expert_row_slot(gr, start, end, rows, e):
     не читаются (:func:`kernel` возвращает ``dz[:rows]``).
     """
     return jnp.where((gr >= start) & (gr < end), gr, rows + e)
+
+
+def masked_operand(values, mask):
+    """Операнд строки под маской принадлежности эксперту: вне группы — ровно 0.
+
+    Это **select**, а не умножение на маску: ``0 · NaN = NaN``, а весовая фаза
+    читает скретч ``dhg``/``dhu`` блоками строк, где соседние строки
+    принадлежат другим экспертам и к моменту чтения могут быть ещё не записаны
+    их программами (гонка программ в одном запуске).  ``jnp.where`` выбирает
+    ноль в невыбранной строке и не протаскивает nan из невычисленной ветви;
+    умножение на маску дало бы ``dwg = nan`` (цикл-32, стенд rows=256).
+
+    ``mask`` — 0/1 в fp32 той же формы, что ``values`` (или broadcast-совместима
+    с ней, например ``(bm, 1)``).
+    """
+    return jnp.where(mask > 0, values, jnp.zeros((), values.dtype))
+
+
+def empty_group_weight_guard(acc, size):
+    """Весовая фаза пустой группы: тайл — ровно нули, аккумулятор не читается.
+
+    ``size == group_sizes[e]`` — динамический размер группы эксперта.  При
+    ``size == 0`` (``start == end``) программа эксперта не исполняет ни одной
+    строки группы, и её ``dwg[e]``/``dwu[e]``/``dwd[e]`` обязаны быть нулями;
+    аккумулятор ``pl.loop`` (``init_carry`` — нули) в этом случае не является
+    источником истины: неинициализированный/пустой регистровый carry не должен
+    утекать в выход.  ``jnp.where`` выбирает нули, не читая значение carry.
+    """
+    return jnp.where(size > 0, acc, jnp.zeros((), acc.dtype))
 
 
 def _store_row(out, idx, row_s, r, c0, width):
@@ -371,6 +416,14 @@ def _build_kernel(rows, latent, inter, n_exp, bm, bt, bk, dtype,
     f32 = jnp.float32
     bg = float(beta_gate)
     bu = float(beta_up)
+    # Единственные знаменатели кернела — статические β SiTU-GLU (``hg/βg``,
+    # ``hu/βu``); данных-зависимых делений (на счётчик группы/``inter``/``bm``)
+    # в кернеле нет.  β < 1 сделал бы знаменатель усилителем сигнала и не
+    # является живой геометрией — типизированный отказ до построения.
+    if bg < 1.0 or bu < 1.0:
+        raise MoeBwdKernelError(
+            f"fused MoE-backward: β SiTU-GLU (gate={bg}, up={bu}) должны быть ≥ 1: "
+            "это единственные знаменатели кернела; тихого 0/0 нет")
 
     def _mma_layouts(m):
         mw = 1 if m < 64 else 4
@@ -424,7 +477,8 @@ def _build_kernel(rows, latent, inter, n_exp, bm, bt, bk, dtype,
             da = _zero((bm, inter), ACC_R)
             for kk in range(latent // bk):
                 de_v = _l(deg.at[pl.ds(off, bm), pl.ds(kk * bk, bk)], ACC_R).astype(f32)
-                de_s[...] = (de_v * mask_k).astype(dt)
+                # select, не умножение: 0·NaN = NaN (см. :func:`masked_operand`).
+                de_s[...] = masked_operand(de_v, mask_k).astype(dt)
                 wd_s[...] = _l(wdg.at[e, pl.ds(0, inter), pl.ds(kk * bk, bk)], ACC_W)
                 da = plgpu.mma(da, _l(de_s, L_R), _l(wd_s.T, R_R))
 
@@ -492,11 +546,15 @@ def _build_kernel(rows, latent, inter, n_exp, bm, bt, bk, dtype,
                 m = _tile_mask(off)
                 lv = _l(lhs_ref.at[pl.ds(off, bm), pl.ds(ti * bt, bt)], ACC_R).astype(f32)
                 rv = _l(rhs_ref.at[pl.ds(off, bm), pl.ds(tj * bt, bt)], ACC_R).astype(f32)
-                x_s.transpose((1, 0))[...] = (lv * m).astype(dt)
-                y_s.transpose((1, 0))[...] = (rv * m).astype(dt)
+                # Строки вне группы выбираются нулём (select), а не умножаются
+                # на маску: скретч соседней группы может быть ещё не записан.
+                x_s.transpose((1, 0))[...] = masked_operand(lv, m).astype(dt)
+                y_s.transpose((1, 0))[...] = masked_operand(rv, m).astype(dt)
                 return plgpu.mma(acc, _l(x_s, L_B), _l(y_s.T, R_B))
 
             acc = pl.loop(i0, i1, init_carry=_zero((bt, bt), ACC_B))(_inner)
+            # Пустая группа: выход — нули, carry не читается (цикл-32).
+            acc = empty_group_weight_guard(acc, size)
             out_ref[e, pl.ds(ti * bt, bt), pl.ds(tj * bt, bt)] = acc
 
         def _weight_pass(lhs_ref, rhs_ref, out_ref, nt_m, nt_n):
@@ -565,7 +623,11 @@ def kernel(z_grouped, h_g, h_u, a, de_grouped, wg, wu, wd, group_sizes, *,
 
     Все операнды — bf16 (валидированный mma-путь sm_121), аккумуляторы — fp32;
     ``group_sizes`` — int32, сумма равна ``rows``; пустая группа и неполная
-    группа — штатные границы (маска строк + dump-слоты).  Возвращает
+    группа — штатные границы (маска строк + dump-слоты): пустая группа
+    получает ровно нулевые весовые градиенты, её строки не участвуют в
+    аккумуляции.  ``rows % bm == 0`` — требование сита :func:`valid_config`
+    (иначе крайние блоки перекрываются и весовые фазы дважды считают строки;
+    отказ — :class:`MoeBwdKernelError`, без тихой ошибки).  Возвращает
     градиенты весов по экспертам (fp32) и ``dz_grouped`` (rows, latent) fp32.
 
     Исполнение требует Mosaic GPU (GB10); на CPU-узле — типизированный
@@ -581,7 +643,8 @@ def kernel(z_grouped, h_g, h_u, a, de_grouped, wg, wu, wd, group_sizes, *,
     if not valid_config(case, params):
         raise MoeBwdKernelError(
             f"fused MoE-backward: конфигурация {case} (bm={bm}, bt={bt}, bk={bk}) "
-            "вне живых случаев сита valid_config (формы mma/SMEM-пол/bf16); "
+            "вне живых случаев сита valid_config (формы mma/SMEM-пол/bf16/"
+            "rows % bm == 0); "
             "тихого отката нет")
     if not device_available():
         raise MoeBwdKernelError(
@@ -785,3 +848,132 @@ def mirror_dz_path(h_g, h_u, de_grouped, wd, wg, wu, group_sizes, *,
                 out = out.at[start:end, c0_store:c0_store + width].set(acc)
         start = end
     return out
+
+
+def mirror_weight_path(z_grouped, h_g, h_u, a, de_grouped, wg, wu, wd,
+                       group_sizes, *, bm=BM_DEFAULT, bt=BT_DEFAULT,
+                       bk=BK_DEFAULT, beta_gate=BETA_GATE_DEFAULT,
+                       beta_up=BETA_UP_DEFAULT, scratch_init="zeros"):
+    """CPU-зеркало весовых фаз B/C/D кернела: guard'ы пустой/неполной группы.
+
+    Повторяет структуру ``_weight_pass``/``_weight_tile`` кернела на jnp:
+
+    * блоки строк эксперта — :func:`expert_block_range`/
+      :func:`expert_block_offset`; строки вне ``[start, end)`` выбираются нулём
+      через :func:`masked_operand` (select, а не умножение: ``0·NaN = NaN``);
+    * весовой тайл ``(bt, bt)`` — K-поток по блокам строк с накоплением в fp32,
+      как ``pl.loop(i0, i1)`` кернела;
+    * выход тайла — :func:`empty_group_weight_guard` от ``group_sizes[e]``:
+      пустая группа даёт ровно нули, аккумулятор не читается;
+    * скретч ``dhg``/``dhu`` — bf16-буфер ``(rows + n_exp, inter)`` с
+      dump-слотами (:func:`expert_row_slot`) — форма ``out_type`` кернела.
+
+    ``scratch_init="nan"`` заполняет скретч nan перед работой: это
+    воспроизводит стендовое состояние цикла-32, где строки соседней группы к
+    моменту чтения ещё не записаны (GMEM не инициализирован).  С select-маской
+    выход остаётся конечным и равным ``"zeros"``-прогону; умножение на маску
+    дало бы ``dwg = nan``.
+
+    ``rows % bm != 0`` — типизированный отказ (та же причина, что в
+    :func:`valid_config`): кламп последнего блока перекрывает строки, и
+    весовые фазы посчитали бы их дважды.  Возвращает
+    ``(dwg, dwu, dwd, dhg_scratch, dhu_scratch)`` — формы ``out_type``
+    кернела.  Это CPU-пин семантики guard'ов, а не исполнение Mosaic
+    (ADR-011).
+    """
+    rows, inter = h_g.shape
+    latent = z_grouped.shape[1]
+    n_exp = wg.shape[0]
+    gs = [int(v) for v in jnp.asarray(group_sizes).reshape(-1)]
+    if len(gs) != n_exp:
+        raise ValueError(f"group_sizes: {len(gs)} групп при n_exp={n_exp}")
+    if sum(gs) != rows:
+        raise ValueError(f"group_sizes: сумма {sum(gs)} ≠ rows={rows}")
+    if rows % bm:
+        raise ValueError(
+            f"rows={rows} не делится на bm={bm}: крайние блоки перекрываются, "
+            "весовые фазы дважды считают строки — форма вне сита valid_config")
+    if latent % bt or inter % bt or latent % bk or inter % bk:
+        raise ValueError(
+            f"latent={latent}/inter={inter} не делятся на bt={bt}/bk={bk}")
+    if scratch_init not in ("zeros", "nan"):
+        raise ValueError(f"scratch_init: {scratch_init!r} вне ('zeros', 'nan')")
+    f32 = jnp.float32
+    bg, bu = float(beta_gate), float(beta_up)
+    if bg < 1.0 or bu < 1.0:
+        raise ValueError(f"β SiTU-GLU (gate={bg}, up={bu}) должны быть ≥ 1")
+
+    dt = jnp.dtype(z_grouped.dtype)
+    zq, hgq, huq = _q(z_grouped), _q(h_g), _q(h_u)
+    aq, deq = _q(a), _q(de_grouped)
+    wdq = _q(wd)
+    if scratch_init == "nan":
+        dhg_s = jnp.full((rows + n_exp, inter), jnp.nan, dt)
+        dhu_s = jnp.full((rows + n_exp, inter), jnp.nan, dt)
+    else:
+        dhg_s = jnp.zeros((rows + n_exp, inter), dt)
+        dhu_s = jnp.zeros((rows + n_exp, inter), dt)
+    dwg = jnp.zeros((n_exp, latent, inter), f32)
+    dwu = jnp.zeros((n_exp, latent, inter), f32)
+    dwd = jnp.zeros((n_exp, inter, latent), f32)
+
+    def _row_mask(off, start, end):
+        gi = off + jnp.arange(bm, dtype=jnp.int32)
+        return ((gi >= start) & (gi < end)).astype(f32)[:, None]
+
+    start = 0
+    for e in range(n_exp):
+        size = gs[e]
+        end = start + size
+        i0, i1 = expert_block_range(start, end, bm)
+
+        # Фаза A: dhg/dhu блоками; строки вне группы — в dump-слот эксперта.
+        for i in range(int(i0), int(i1)):
+            off = int(expert_block_offset(jnp.int32(i), rows, bm))
+            m = _row_mask(off, start, end)
+            de_b = masked_operand(deq[off:off + bm], m)
+            da = jnp.zeros((bm, inter), f32)
+            for k0 in range(latent // bk):
+                kk = k0 * bk
+                da = da + de_b[:, kk:kk + bk] @ wdq[e, :, kk:kk + bk].T
+            hg_b = masked_operand(hgq[off:off + bm], m)
+            hu_b = masked_operand(huq[off:off + bm], m)
+            sig_g = jax.nn.sigmoid(hg_b)
+            th_g = jnp.tanh(hg_b / bg)
+            th_u = jnp.tanh(hu_b / bu)
+            gate = bg * th_g * sig_g
+            up = bu * th_u
+            dgate = (1.0 - th_g * th_g) * sig_g + bg * th_g * sig_g * (1.0 - sig_g)
+            dup = 1.0 - th_u * th_u
+            dhg = _q(da * up * dgate)          # скретч ядра — bf16-операнд
+            dhu = _q(da * gate * dup)
+            idx = jnp.stack([
+                expert_row_slot(off + r, start, end, rows, e) for r in range(bm)])
+            dhg_s = dhg_s.at[idx].set(dhg.astype(dt))
+            dhu_s = dhu_s.at[idx].set(dhu.astype(dt))
+
+        def _weight_tiles(lhs, rhs, nt_m, nt_n):
+            """Все тайлы одного весового градиента: K = блоки строк группы."""
+            out = jnp.zeros((nt_m * bt, nt_n * bt), f32)
+            for ti in range(nt_m):
+                for tj in range(nt_n):
+                    acc = jnp.zeros((bt, bt), f32)
+                    for i in range(int(i0), int(i1)):
+                        off = int(expert_block_offset(jnp.int32(i), rows, bm))
+                        m = _row_mask(off, start, end)
+                        lv = masked_operand(
+                            lhs[off:off + bm, ti * bt:(ti + 1) * bt].astype(f32), m)
+                        rv = masked_operand(
+                            rhs[off:off + bm, tj * bt:(tj + 1) * bt].astype(f32), m)
+                        acc = acc + lv.T @ rv
+                    acc = empty_group_weight_guard(acc, jnp.int32(size))
+                    out = out.at[ti * bt:(ti + 1) * bt,
+                                 tj * bt:(tj + 1) * bt].set(acc)
+            return out
+
+        # B: dwd = a^T·de; C: dwg = z^T·dhg; D: dwu = z^T·dhu.
+        dwd = dwd.at[e].set(_weight_tiles(aq, deq, inter // bt, latent // bt))
+        dwg = dwg.at[e].set(_weight_tiles(zq, dhg_s, latent // bt, inter // bt))
+        dwu = dwu.at[e].set(_weight_tiles(zq, dhu_s, latent // bt, inter // bt))
+        start = end
+    return dwg, dwu, dwd, dhg_s, dhu_s

@@ -1482,3 +1482,30 @@ bf16-CE/MoE). Остаток backward ~13 с — MoE + проекции/MLP back
 3. Если `bwd_moe` окажется <2 с — MoE закрывается как адрес; если >5 с —
    fused MoE backward (ступень 2 вехи-13-семейства) становится кандидатом.
 **Reversibility:** только диагностика; численные пути не меняются.
+
+---
+
+## Amendment 51 (2026-10-19): цикл-29 — диагностика `bwd_moe`: surfaced-исключение + per-layer remat внутри `_phase_moe_stack`
+
+**Основание.** Am.50: `sec_bwd_moe`=null и после checkpoint всей ноги; `attempt`
+в `PhaseProfiler` глотает исключение (`except Exception: return None, None`) —
+причина неизвестна (OOM? ошибка формы? compile?). Цель — сделать ногу
+исполнимой или назвать причину.
+
+**Решение (до реализации).**
+1. `PhaseProfiler.attempt`: сохранять `type(exc).__name__: str(exc)[:200]` в
+   `self._errors[field]`; в запись phase-profile добавить поле `phase_errors`
+   (dict; `{}` — ошибок нет). ADR-011: неизмеренное остаётся null, но причина
+   теперь видна.
+2. `_phase_moe_stack(params, cfg, ids, *, remat=False)`: при `remat=True`
+   каждый слой оборачивается `jax.checkpoint` (per-layer, по образцу модели);
+   нога `bwd_moe` вызывает с `remat=True`; forward-нога — прежний путь.
+3. Тесты `test_53_bwd_moe_diag.py` (CPU): (a) исключение в ноге → `phase_errors`
+   содержит причину, поле null; (b) `remat=True` — в jaxpr remat-примитив на
+   слой, результат градиентов той же формы; (c) forward-нога не меняется;
+   (d) регресс PhaseProfiler-тестов.
+**Приёмка:** тесты; стенд: phase-profile B=4 с `AXIOM_GEMM_FP8=1` — либо
+`sec_bwd_moe` ≠ null, либо `phase_errors["bwd_moe"]` с точной причиной
+(и тогда решение по MoE принимается по ней: B=2-нога или отказ от адреса).
+**Риски:** per-layer remat завышает время ноги (пересчёт) — это ориентир, не
+партиция; память одной ноги не равна памяти шага. **Reversibility:** диагностика.

@@ -1,12 +1,12 @@
 # Архитектурный контекст (epic-context)
 
-Собран: 2026-10-19T14:51:00.838637027+00:00
+Собран: 2026-10-19T17:40:44.768268687+00:00
 
 Источники:
 - /home/roman/axiom/ARCHITECTURE-SPINE.md
 - /home/roman/axiom/docs/adr/ADR-054-ispolnenie-shaga-donate-argumenty-jit-ustranenie-dtod-kopiy-fyuzing-put-g1-g4.md
 - /home/roman/axiom/net/train_loop.py
-- /home/roman/axiom/net/compute_dtype.py
+- /home/roman/axiom/net/tests/test_45_trace_markers.py
 
 <!-- источник: /home/roman/axiom/ARCHITECTURE-SPINE.md -->
 
@@ -57,6 +57,6 @@
 
 - **Binds**: код модели ↔ техотчёт K3 (`k3_tech_report.pdf`, проверен 11.09.2026)
 - **Prevents**: самовольные архитектурные эксперименты на бюджете претрейна (22k H800-ч как цена одной непроверенной гипотезы)
-- **Rule**: KDA, AttnRes,
+- **Rule**:
 
 > **Контекст усечён** до 6000 символов; полные тексты — в файлах-источниках (см. MANIFEST.json).

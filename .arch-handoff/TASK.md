@@ -1,21 +1,19 @@
 # Задача для кодового харнесса
 
-Цикл-27 кампании MFU-55 (ADR-054 Am.47): FP8 в **backward** GEMM-helper (градиентные матмулы). Forward-fp8 уже дал +8.8 % (1200.9 ток/с, Am.46); backward шага 22.7 с — крупнейший оставшийся рычаг того же класса. Под-гейт default 0 (bf16-backward — побитово текущему пути).
+Цикл-28 кампании MFU-55 (ADR-054 Am.49): (1) memory-lean `bwd_moe`-нога phase-profile (checkpoint) — сейчас `sec_bwd_moe`=null из-за OOM при B=4; (2) fail-closed валидация дормантных FP8-гейтов (`AXIOM_FP8_ROW_SCALE` не проверяется, пока `AXIOM_GEMM_FP8_BWD=0`). Численные пути не меняются; фазовая нога — диагностика.
 
-ОКРУЖЕНИЕ: CPU-интерпретатор `/home/roman/venv-axiom-0112cpu-py312/bin/python` (jax 0.11.2, CPU); `NET_JAX_BACKEND=cpu JAX_PLATFORMS=cpu`; по одному файлу pytest с heartbeat; полный pytest не гонять. fp8-матмул на CPU может не lowering-иться — шов `_fp8_matmul(a,b)` (на GPU — `jnp.matmul(..., preferred_element_type=jnp.float32)`), тесты подменяют деквантованным f32-матмулом.
+ОКРУЖЕНИЕ: CPU-интерпретатор `/home/roman/venv-axiom-0112cpu-py312/bin/python` (jax 0.11.2, CPU); `NET_JAX_BACKEND=cpu JAX_PLATFORMS=cpu`; по одному файлу pytest с heartbeat; полный pytest не гонять.
 
-1) `net/compute_dtype.py` — под-гейты (форма `mode()`/`persist_mode`, fail-closed, читаются на трейсе, явный аргумент сильнее env):
-   - `AXIOM_GEMM_FP8_BWD=0|1` (default 0: текущий backward в bf16 через `compute_dtype.gemm`, побитово); `1`: градиентные матмулы `ga = g @ bᵀ`, `gb = aᵀ @ g` в fp8 (e4m3, per-tensor скейлы, f32-аккум) со STE;
-   - `AXIOM_FP8_ROW_SCALE=0|1` (default 0: per-tensor; `1`: per-row для `g`/`a` — `(q(a/s_row)@qb)*s_row[:,None]`, аккуратно с транспонированием `gb`; per-tensor для второго операнда). Per-block (128×128) НЕ делать — нужен отдельный кернел (отложено).
-2) `gemm_fp8` (в `compute_dtype.py`): backward-правило расширить; при под-гейте off — прежний bf16-путь дословно; при on — fp8-матмулы с теми же скейлами/STE; `dtype` котангентов — как у прималов; нулевой/вырожденный тензор (max=0) не даёт nan (скейл-эпсилон).
-3) Тесты `net/tests/test_51_gemm_fp8_bwd.py` (CPU, шов `_fp8_matmul`):
-   a. под-гейты: пусто/0/1/регистр/пробелы; неизвестное → ошибка; явный аргумент сильнее env.
-   b. off (AXIOM_GEMM_FP8=1, BWD=0): градиенты побитово равны ревизии до дельты (bf16-backward).
-   c. on: forward == прежнему fp8-forward (побитово/в допуске); градиенты a/b == bf16-эталону в scale-relative (начать с 5e-2; фактический max|d|/scale задокументировать); per-tensor и per-row варианты; нулевой тензор.
-   d. композит: маленькая модель (KDA/MLA/MLP) при FP8+BWD=on: 2-шаговый прогон без nan, лосс в допуске 5e-2 к off-ноге.
-   e. STE-границы: скейлы не текут в градиенты; нет нулевых градиентов.
-4) Прогони по одному файлу: `test_51_gemm_fp8_bwd.py`, затем регресс: `test_50_gemm_fp8`, `test_02_kda_parity`, `test_31_mla_dense_compute_dtype`, `test_46_mtp_kda_impl`, `test_47_ce_bwd`.
-5) Ограничения: без unsafe; `net/config.json` не трогать; под-гейт default 0; при off — побитово (блокирующий критерий); CE/MoE не трогать; стиль русских docstring.
+1) `net/train_loop.py`, `PhaseProfiler.__init__`: нога `bwd_moe` — обернуть `_phase_moe_stack` в `jax.checkpoint` внутри grad-лямбды:
+   `jax.jit(jax.grad(lambda p, ids: jnp.sum(jax.checkpoint(lambda pp: _phase_moe_stack(pp, cfg, ids))(p))))`
+   (ремат слоя: память ≤ одного слоя вместо всех MoE-слоёв). Комментарий: время ноги включает пересчёт и подаётся как **ориентир**, не партиция (согласовано с `bwd_reconciliation`). Остальные ноги не трогать.
+2) `net/compute_dtype.py`: все FP8-гейты валидируются на каждом трейсе независимо от прочих: `AXIOM_FP8_ROW_SCALE` — вызывать парсер/валидатор в `gemm_fp8`/`gemm` даже когда `AXIOM_GEMM_FP8_BWD=0` и даже когда `AXIOM_GEMM_FP8=0`? Достаточно: при любом вызове `gemm_fp8`/`gemm` и при сборке fp8-пути опечатка ROW-гейта → ошибка (fail-closed). Не менять поведение корректных значений.
+3) Тесты `net/tests/test_52_phase_bwd_moe.py` (CPU):
+   a. `PhaseProfiler` с малой конфигурацией: нога `bwd_moe` компилируется и исполняется; результат — pytree градиентов той же формы, что params (не None); проверка, что `jax.checkpoint` в графе (по lower/jaxpr — remat-примитив присутствует).
+   b. Гейты: `AXIOM_FP8_ROW_SCALE=мусор` → ошибка и при `AXIOM_GEMM_FP8_BWD=0`, и при `AXIOM_GEMM_FP8=0` (если путь gemm вызывается); корректные 0/1 — без ошибок; регистр/пробелы.
+   c. Регресс: `test_50_gemm_fp8`, `test_51_gemm_fp8_bwd` (не ломать семантику).
+4) Прогони по одному файлу: `test_52_phase_bwd_moe.py`, затем `test_50_gemm_fp8`, `test_51_gemm_fp8_bwd`, `test_46_mtp_kda_impl`.
+5) Ограничения: без unsafe; `net/config.json` не трогать; численные пути — без изменений; стиль русских docstring.
 
 JSON-контракт результата обязателен (status/assumptions/open_questions). Финальный git-коммит обязателен.
 
@@ -30,7 +28,7 @@ JSON-контракт результата обязателен (status/assumpti
 
 ## План отката
 
-Откат: git reset --hard <baseline_commit из .arch-handoff/MANIFEST.json> (под-гейт default 0 — bf16-backward, побитово текущему FP8-forward-only пути). Признак регрессии: off-путь перестал быть побитовым, паритет on вне допуска, nan/дрейф лосса на 10 шагах или новые красные.
+Откат: git reset --hard <baseline_commit из .arch-handoff/MANIFEST.json> (диагностика/валидация; численные пути не меняются). Признак регрессии: phase-profile ломается, гейты не валидируются, новые красные.
 
 ## Финализация (обязательно)
 

@@ -1029,3 +1029,39 @@ CE-grad); без неё выбор MoE опирается на forward-карт�
 **Промежуточная приёмка:** шаг ≤ 27.5 с (≥ 1 192 ток/с), nan 0, паритет лосса;
 G2 — SIMT < 5 %, MFU ≥ 10 % (3 258 ток/с).
 **Reversibility:** MoE-кернел за гейтом, дефолт прежний; jnp-путь — оракул.
+
+---
+
+## Amendment 36 (2026-10-18): цикл-23 — первым кернелом G2 выбран **fused backward chunked-CE** (lm_head+softmax), а не MoE; ce-чанк A/B — в работе
+
+**Пересмотр порядка Am.35.** Am.35 ставил первым MoE, но нога `sec_bwd_moe`
+**не измерена** (B=4 OOM, B=2 phase-profile убит cold-compile-инцидентом), а
+MoE-кернел (dispatch→linear1→SwiGLU→linear2→combine + backward) — многодневная
+DeepGEMM-работа. Измеренный и неэффективный адрес есть у **CE/lm_head**:
+`sec_ce` 0.886 + `sec_bwd_ce` **2.267** с при **~14 % пика** (lm_head GEMM
+16.1 TFLOP fwd + ~32 TFLOP bwd). Оба CE-головы (NTP и MTP) идут одним
+`_chunked_cross_entropy`; fused-backward снимает per-chunk checkpoint/autodiff
+и пересчитывает логиты чанком в bf16 с явной формулой softmax-CE.
+
+**Решение (цикл-23, до реализации).** `jax.custom_vjp` вокруг chunked-CE:
+граница `(features, embedding) -> loss`; forward — дословно текущий цикл
+(побитово, гейт `AXIOM_CE_BWD=jax` — дефолт); backward — на чанк:
+`logits = features_chunk @ embedding.T` (bf16-операнды, fp32-аккум),
+`p = softmax(logits)`, `dlogits = (p - onehot)·(dL/count)`,
+`dembedding += dlogits.T @ features_chunk`, `dfeatures_chunk = dlogits @ embedding`;
+полные `(chunk, vocab)` не сохраняются (пересчёт); `loss_mask` учитывается
+в числителе и знаменателе. Гейт fail-closed, читается на трейсе.
+**Приёмка:** off — побитово; on — forward-лосс побитово, градиенты
+features/embedding в scale-relative ≤2e-2; CPU-тесты; стендовый A/B B=4
+10 шагов: шаг ≤27.5 с (≥1 192 ток/с), `sec_bwd_ce` ≤1.5 с, nan 0.
+**Риски:** численность backward (bf16-операнды — допуск 2e-2, документировать
+фактический max|d|/scale); общая tied-embedding для NTP и MTP (сумма градиентов
+двух голов — линейность custom_vjp сохраняет); хвостовой неполный чанк.
+
+**Параллельно (измерение, не решение):** A/B ce-чанка `ce8192` против базы
+`ce2048` (10 шагов, B=4). Компиляция fused-шага с ce8192 идёт **>45 мин**
+против ~25 мин базы — цена компиляции уже является минусом; если шаг не даёт
+≥+2 %, рычаг ce-чанка закрывается как минус, приоритет — fused-CE-кернел.
+
+**Reversibility:** гейт `AXIOM_CE_BWD` default `jax`; откат — выключение гейта/
+`git revert`.

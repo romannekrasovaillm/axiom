@@ -1,24 +1,23 @@
 # Задача для кодового харнесса
 
-Цикл-21 кампании MFU-55 (ADR-054 Am.33, подготовка G2): тонкая провенанс-карта. Сейчас `probe_ce` стоит на всём `compute_loss` (net/train_loop.py:3342) и через `transpose(jvp(probe_ce))` захватывает backward (37.5% шага), из-за чего CE-голова/lm_head не отделимы. Задача — заменить грубую метку тонкими, гейт `AXIOM_TRACE_MARKERS` (default off, побитово прежний граф), без изменения численных операций.
+Цикл-23 кампании MFU-55 (ADR-054 Am.35/36): fused backward для chunked-CE (lm_head/softmax-CE). Пофазовый профиль: `sec_bwd_ce` 2.267 с при ~14 % пика, `sec_ce` (fwd) 0.886 с — CE/lm_head неэффективен; оба CE-головы (NTP и MTP) идут через `_chunked_cross_entropy` (net/model.py), сейчас backward — autodiff через per-chunk `jax.checkpoint`. Задача — явный `jax.custom_vjp` с fused backward, гейт default off (побитово прежний путь), без изменения forward-чисел.
 
 ОКРУЖЕНИЕ: CPU-интерпретатор `/home/roman/venv-axiom-0112cpu-py312/bin/python` (jax 0.11.2, CPU); `NET_JAX_BACKEND=cpu JAX_PLATFORMS=cpu`; по одному файлу pytest с heartbeat; полный pytest не гонять.
 
-1) `net/train_loop.py`: убрать внешнюю метку `provenance.mark("ce", ...)` вокруг `model.compute_loss` — вернуть прямой вызов `model.compute_loss(params, cfg, batch, chunk_size=train_config.chunk_size)` (комментарий заменить: тонкие метки живут в `net/model.compute_loss`; внешняя метка захватывала backward). Импорт `provenance` оставить для метки оптимизатора (п.3).
-2) `net/model.py`, `compute_loss` — тонкие метки (только границы вызовов):
-   - `forward(...)` в обеих ветках (`ce_tokens>0` и else) → `provenance.mark("forward", lambda: forward(...))` (вернуть тот же результат/кортеж);
-   - NTP-CE: `_chunked_cross_entropy(hidden[:, :-1], input_ids[:, 1:], params.embedding, ce_tokens)` и `_cross_entropy(logits[:, :-1], input_ids[:, 1:])` → `provenance.mark("ntp_ce", lambda: ...)`;
-   - `mtp_loss(params, cfg, hidden, input_ids, chunk_size, ce_chunk_tokens=ce_tokens)` → `provenance.mark("mtp", lambda: ...)`;
-   - финальную сумму (`ntp + cfg.mtp_loss_weight*aux + cfg.qb_weight*qb`) не оборачивать.
-   - При off — те же объекты/формы/числа; никаких новых jit/checkpoint границ.
-3) `net/train_loop.py`: пометить шаг оптимизатора в ОБОИХ call-site (`master, state = step_fn(...)` и `master, state, params = step_fn(...)`) как `provenance.mark("opt", lambda: step_fn(...))` (распаковать кортеж). Это метка границы; если jit-граница не пронесёт имя внутрь модуля — в отчёте так и сказать (атрибуция оптимизатора дополнительно пойдёт по модулю `jit_step` в дампе).
-4) Тесты `net/tests/test_45_trace_markers.py` — обновить/добавить:
-   a. при `AXIOM_TRACE_MARKERS=1` lowered HLO маленькой модели/`compute_loss` содержит `probe_forward`, `probe_ntp_ce`, `probe_mtp`; `probe_ce` больше НЕ появляется как внешний loss-scope (если старый тест его ждал — поправить);
-   b. gate off — побитовый паритет `compute_loss`/градиентов (существующий тест расширить на новые call-site);
-   c. метка `probe_opt` присутствует в lowered HLO шага оптимизатора (если jit-граница не даёт — задокументировать и проверить хотя бы наличие вызова `mark` с `opt`);
-   d. существующие тесты gate off/on и `MtpKdaImplError` не ломать.
-5) Прогони по одному файлу: `test_45_trace_markers.py`, затем регресс: `test_24_grad_checkpoint`, `test_31_remat_policy`, `test_37_per_layer_block`, `test_02_kda_parity`, `test_46_mtp_kda_impl`.
-6) Ограничения: без unsafe; `net/config.json` не трогать; гейт default off; при off — побитово прежние числа (блокирующий критерий); стиль русских docstring.
+1) `net/model.py` — гейт `AXIOM_CE_BWD` (форма `ce_bf16_mode`/`persist_mode`): значения `"jax"` (дефолт — текущий autodiff-путь, побитово) и `"fused"`; пусто/не задано = `"jax"`; неизвестное → `CeBwdError` (fail-closed); читается на трейсе; явный аргумент сильнее env.
+2) `_chunked_cross_entropy` — при gate="fused" обернуть ВЫЧИСЛЕНИЕ ЛОССА в `jax.custom_vjp` с границей `(features, embedding) -> loss` (targets/loss_mask — недифференцируемые статические/целочисленные аргументы; для них градиент не нужен, но функция должна работать и с `loss_mask`):
+   - forward-правило: дословно текущий chunked-цикл (глобальная сумма NLL / глобальный счётчик; bf16-ветка `ce_bf16_mode` сохраняется), числа те же;
+   - backward-правило (dL — котангент скаляра): для каждого чанка пересчитать `logits = features_chunk @ embedding.T` (bf16-операнды, fp32-аккум — как в forward), `p = softmax(logits)`, `dlogits = (p - onehot(target)) * (dL / global_count)`; `dembedding += dlogits.T @ features_chunk`; `dfeatures_chunk = dlogits @ embedding`; чанки аккумулируются. Полные `(chunk, vocab)` для backward не сохранять (пересчёт; никакого `jax.checkpoint` внутри fused-ветки), живой тензор ≤ одного чанка.
+   - маска `loss_mask`: исключённые строки не дают вклада ни в числитель, ни в знаменатель (как в forward).
+3) Численная политика: fused-backward сверяется с autodiff того же bf16-пути; допуск — scale-relative ≤2e-2 (кампанийный допуск CE bf16) с документированием фактического max|d|/scale; forward при gate="fused" обязан совпадать с gate="jax" (тот же цикл).
+4) Тесты `net/tests/test_47_ce_bwd.py` (CPU):
+   a. гейт: пусто/jax/fused/регистр/пробелы; неизвестное → `CeBwdError` до трейса; явный аргумент сильнее env.
+   b. off: `_chunked_cross_entropy` (и градиенты по features/embedding) побитово равны ревизии до дельты (прямой вызов текущей реализации).
+   c. on: forward-лосс побитово равен off; градиенты features/embedding == autodiff off в scale-relative ≤2e-2; несколько сидов/форм, включая хвостовой неполный чанк и `loss_mask` (если используется).
+   d. память: живой тензор чанка (форма) ≤ (chunk_tokens, vocab) — пин на jaxpr/`lower().as_text()` по отсутствию полного (B*T, vocab) буфера.
+   e. Композит: маленькая модель с `compute_loss` (NTP+MTP) при gate=fused: лосс == off (побитово), градиенты параметров в допуске.
+5) Прогони по одному файлу: `test_47_ce_bwd.py`, затем регресс: `test_29_compute_dtype` (известный унаследованный красный — зафиксировать), `test_30`, `test_36`, `test_39`, `test_46_mtp_kda_impl`.
+6) Ограничения: без unsafe; `net/config.json` не трогать; gate default `"jax"`; при off — побитово прежние числа и граф (блокирующий критерий); стиль русских docstring.
 
 JSON-контракт результата обязателен (status/assumptions/open_questions). Финальный git-коммит обязателен.
 
@@ -33,7 +32,7 @@ JSON-контракт результата обязателен (status/assumpti
 
 ## План отката
 
-Откат: git reset --hard <baseline_commit из .arch-handoff/MANIFEST.json> (метки диагностические; при off численные пути и граф побитово прежние). Признак регрессии: паритет off/on не побитовый или новые красные.
+Откат: git reset --hard <baseline_commit из .arch-handoff/MANIFEST.json> (гейт default `jax` — побитово прежний путь). Признак регрессии: off-путь перестал быть побитовым или новые красные.
 
 ## Финализация (обязательно)
 

@@ -2493,8 +2493,18 @@ class _PhaseProfiler:
             "bwd_mla": jax.jit(
                 jax.grad(lambda p, ids: jnp.sum(_phase_mla_stack(p, cfg, ids)))
             ),
+            # Am.49 (цикл-28): ремат MoE-стека — память ≤ одного слоя вместо
+            # активаций всех MoE-слоёв (``sec_bwd_moe`` падал OOM при B=4).
+            # Время ноги поэтому включает пересчёт и подаётся как **ориентир**,
+            # а не партиция (согласовано с ``bwd_reconciliation``).
             "bwd_moe": jax.jit(
-                jax.grad(lambda p, ids: jnp.sum(_phase_moe_stack(p, cfg, ids)))
+                jax.grad(
+                    lambda p, ids: jnp.sum(
+                        jax.checkpoint(
+                            lambda pp: _phase_moe_stack(pp, cfg, ids)
+                        )(p)
+                    )
+                )
             ),
             "bwd_ce": jax.jit(
                 jax.grad(

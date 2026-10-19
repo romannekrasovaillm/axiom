@@ -60,8 +60,32 @@ MoE, oracle-пути) остаются на прежнем fp32/bf16-пути п
 ``_chunked_cross_entropy`` и голова не трогаются, а измеренный минус FP8-CE
 (Am.44) не смешивается с замером FP8-проекций.  Forward FP8-границы —
 ``matmul(q(a), q(b))·(s_a·s_b)`` (e4m3, per-tensor скейлы, fp32-аккум),
-backward — STE: градиенты считаются по неквантованным операндам на обычной
-bf16/fp32-границе, скейлы в котангенты не текут.
+backward — STE: при ``AXIOM_GEMM_FP8_BWD=0`` (дефолт) градиенты считаются
+по неквантованным операндам на обычной bf16/fp32-границе, скейлы в
+котангенты не текут.
+
+Под-гейты backward (цикл-27 кампании MFU-55, ADR-054 Am.47)
+----------------------------------------------------------
+
+``AXIOM_GEMM_FP8_BWD`` (default ``0``) расширяет FP8 на **градиентные
+матмулы** правила backward (:func:`_gemm_fp8_bwd`): ``ga = g @ bᵀ`` и
+``gb = aᵀ @ g`` считаются e4m3-матмулом (fp32-аккум) со STE.  При ``0``
+backward остаётся прежним (bf16/fp32-граница по неквантованным операндам)
+побитово.  ``AXIOM_FP8_ROW_SCALE`` (default ``0``) выбирает per-row скейл
+первого операнда градиентного матмула (``g`` для ``ga``, столбцы ``a`` для
+``gb``); второй операнд — per-tensor.  Per-block (128×128) в этой дельте не
+реализован (нужен отдельный кернел, отложено).
+
+Fail-closed на каждом трейсе (цикл-28 кампании MFU-55, ADR-054 Am.49)
+--------------------------------------------------------------------
+
+Все FP8-гейты (``AXIOM_GEMM_FP8``, ``AXIOM_GEMM_FP8_BWD``,
+``AXIOM_FP8_ROW_SCALE``) читаются и валидируются на **каждом** трейсе
+:func:`gemm` / :func:`gemm_fp8` и в правиле backward, независимо от значений
+других гейтов.  Опечатка дормантного ``AXIOM_FP8_ROW_SCALE`` при
+``AXIOM_GEMM_FP8_BWD=0`` или ``AXIOM_GEMM_FP8=0`` — ошибка, а не тихо
+проигнорированная переменная.  Корректные ``0``/``1`` поведения не меняют:
+валидация только читает гейты, ветвление остаётся прежним.
 """
 
 from __future__ import annotations
@@ -199,6 +223,93 @@ def gemm_fp8_mode(value: str | None = None) -> bool:
     return mode == GEMM_FP8_ON
 
 
+#: Env-гейт FP8-backward FP8-границы (цикл-27, ADR-054 Am.47).
+GEMM_FP8_BWD_ENV = "AXIOM_GEMM_FP8_BWD"
+
+#: Допустимые значения; неизвестное — ошибка (fail-closed, без догадок).
+GEMM_FP8_BWD_VALUES = ("0", "1")
+GEMM_FP8_BWD_OFF = "0"
+GEMM_FP8_BWD_ON = "1"
+
+#: Env-гейт per-row скейлов градиентных матмулов (``0`` — per-tensor).
+FP8_ROW_SCALE_ENV = "AXIOM_FP8_ROW_SCALE"
+
+#: Допустимые значения; неизвестное — ошибка (fail-closed, без догадок).
+FP8_ROW_SCALE_VALUES = ("0", "1")
+FP8_ROW_SCALE_OFF = "0"
+FP8_ROW_SCALE_ON = "1"
+
+
+class GemmFp8BwdError(ValueError):
+    """Неизвестное значение ``AXIOM_GEMM_FP8_BWD`` (fail-closed, без догадок)."""
+
+
+class Fp8RowScaleError(ValueError):
+    """Неизвестное значение ``AXIOM_FP8_ROW_SCALE`` (fail-closed, без догадок)."""
+
+
+def gemm_fp8_bwd_mode(value: str | None = None) -> bool:
+    """FP8-градиентные матмулы FP8-границы: ``False`` (дефолт) | ``True``.
+
+    ``AXIOM_GEMM_FP8_BWD=1`` направляет ``ga = g @ bᵀ`` и ``gb = aᵀ @ g``
+    правила :func:`_gemm_fp8_bwd` в :func:`_fp8_grad_matmul` (e4m3,
+    fp32-аккум, STE); при ``0`` backward остаётся bf16/fp32-границей
+    побитово.  Пустая/незаданная переменная = ``"0"``; значения — только
+    ``"0"``/``"1"`` (пробелы нормализуются); неизвестное —
+    :class:`GemmFp8BwdError` (fail-closed: опечатка не должна тихо оставить
+    bf16-backward — замер ноги «fp8 backward» стал бы замером прежнего
+    пути).  Явный аргумент сильнее окружения (форма
+    :func:`net.mla.persist_mode`).  Читается на трейсе, не кэшируется.
+    """
+    raw = value if value is not None else os.environ.get(GEMM_FP8_BWD_ENV)
+    mode = (raw or "").strip().lower() or GEMM_FP8_BWD_OFF
+    if mode not in GEMM_FP8_BWD_VALUES:
+        raise GemmFp8BwdError(
+            f"{GEMM_FP8_BWD_ENV}={mode!r}: ожидается одно из "
+            f"{list(GEMM_FP8_BWD_VALUES)}"
+        )
+    return mode == GEMM_FP8_BWD_ON
+
+
+def fp8_row_scale_mode(value: str | None = None) -> bool:
+    """Per-row скейлы градиентных матмулов: ``False`` (дефолт) | ``True``.
+
+    ``AXIOM_FP8_ROW_SCALE=1`` — первый операнд градиентного матмула
+    квантизуется per-row (``(q(a/s_row)@q(b))·s_row[:,None]``): для ``ga``
+    это строки ``g``, для ``gb`` — столбцы ``a`` (после транспонирования
+    строки ``aᵀ``).  Второй операнд остаётся per-tensor.  Per-block
+    (128×128) не реализован — нужен отдельный кернел (отложено).
+    Пустая/незаданная переменная = ``"0"``; значения — только
+    ``"0"``/``"1"`` (пробелы нормализуются); неизвестное —
+    :class:`Fp8RowScaleError` (fail-closed).  Явный аргумент сильнее
+    окружения.  Читается на трейсе, не кэшируется.
+    """
+    raw = value if value is not None else os.environ.get(FP8_ROW_SCALE_ENV)
+    mode = (raw or "").strip().lower() or FP8_ROW_SCALE_OFF
+    if mode not in FP8_ROW_SCALE_VALUES:
+        raise Fp8RowScaleError(
+            f"{FP8_ROW_SCALE_ENV}={mode!r}: ожидается одно из "
+            f"{list(FP8_ROW_SCALE_VALUES)}"
+        )
+    return mode == FP8_ROW_SCALE_ON
+
+
+def _validate_fp8_gates() -> bool:
+    """Прочитать и проверить все FP8-гейты; вернуть режим ``AXIOM_GEMM_FP8``.
+
+    Am.49 (цикл-28): валидация fail-closed — на **каждом** трейсе, независимо
+    от значений прочих гейтов.  Раньше ``AXIOM_FP8_ROW_SCALE`` читался только
+    в fp8-ветке backward (``AXIOM_GEMM_FP8_BWD=1``), поэтому опечатка
+    дормантного гейта не ловилась.  Здесь он проверяется и при ``BWD=0``, и
+    при ``AXIOM_GEMM_FP8=0``.  Корректные ``0``/``1`` поведения не меняют:
+    функция только читает гейты, ветвление остаётся прежним.
+    """
+    enabled = gemm_fp8_mode()
+    gemm_fp8_bwd_mode()
+    fp8_row_scale_mode()
+    return enabled
+
+
 def _fp8_matmul(a: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
     """FP8-матмул ``(…, M, K) @ (K, N)`` с fp32-аккумулятором — шов стенда.
 
@@ -228,6 +339,39 @@ def _gemm_regular(a: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
     )
 
 
+def _fp8_row_scale(x: jnp.ndarray) -> jnp.ndarray:
+    """Per-row масштаб e4m3: ``max|x|`` по последней оси, ``(…, 1)`` в fp32.
+
+    Строка — первый операнд градиентного матмула (``g`` в ``ga = g @ bᵀ``;
+    столбцы ``a`` после транспонирования в ``gb``).  Нулевая строка получает
+    скейл ``1/448`` (форма :func:`fp8_scale`: деления на ноль и nan нет).
+    """
+    amax = jnp.max(jnp.abs(x.astype(jnp.float32)), axis=-1, keepdims=True)
+    safe = jnp.where(amax > 0, amax, jnp.ones_like(amax))
+    return (safe / E4M3_MAX).astype(jnp.float32)
+
+
+def _fp8_grad_matmul(
+    x: jnp.ndarray, y: jnp.ndarray, *, row_scale: bool
+) -> jnp.ndarray:
+    """Матмул backward-правила: e4m3-операнды, fp32-аккум, STE по скейлам.
+
+    ``row_scale`` — per-row скейл **первого** операнда
+    (``AXIOM_FP8_ROW_SCALE=1``), второй операнд всегда per-tensor.  Скейлы
+    обёрнуты в :func:`jax.lax.stop_gradient`: производная квантизации —
+    единица (STE), через ``max|·|`` котангенты не текут (иначе вторая
+    производная получила бы член ``q·∂s/∂x``).  Форма выражения — как у
+    forward-правила: ``matmul(q(x), q(y))·(s_x·s_y)``; :func:`_fp8_matmul`
+    — шов стенда (на CPU подменяется деквантованным f32-матмулом).
+    """
+    s_x = jax.lax.stop_gradient(
+        _fp8_row_scale(x) if row_scale else fp8_scale(x)
+    )
+    s_y = jax.lax.stop_gradient(fp8_scale(y))
+    c = _fp8_matmul(quantize_e4m3(x, s_x), quantize_e4m3(y, s_y))
+    return c * (s_x * s_y)
+
+
 def _gemm_fp8_forward(a: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
     """Forward FP8-границы: ``q(a)·q(b)·(s_a·s_b)`` в fp32 (e4m3-операнды)."""
     s_a = fp8_scale(a)
@@ -252,31 +396,50 @@ def gemm_fp8(a: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
     ``s_a = max|a|/448``, ``s_b = max|b|/448`` (fp32, данные-зависимые),
     операнды ``clip(a/s_a, ±448)`` кастуются в e4m3, произведение
     масштабируется обратно в fp32.  Backward (:func:`_gemm_fp8_bwd`):
-    производная квантизации — единица (STE), скейлы — константы, поэтому
-    градиенты считаются по **неквантованным** ``a``/``b`` на обычной
-    bf16/fp32-границе.
+    производная квантизации — единица (STE), скейлы — константы.  При
+    ``AXIOM_GEMM_FP8_BWD=0`` (дефолт) градиенты считаются по
+    **неквантованным** ``a``/``b`` на обычной bf16/fp32-границе; при ``=1``
+    сами градиентные матмулы — e4m3 (fp32-аккум, per-tensor или per-row
+    скейлы, ``AXIOM_FP8_ROW_SCALE``).
 
     Поддерживается ``a`` с произвольными ведущими осями и 2-D ``b`` (веса
     проекций): backward сводит ведущие оси ``a``/``g`` в матрицу
     ``(prod(…), ·)``.  Вызывается из :func:`gemm` только при гейте on и
-    float-операндах; прямой вызов минует гейт (тестовый шов).
+    float-операндах; прямой вызов минует гейт (тестовый шов), но не минует
+    fail-closed валидацию всех FP8-гейтов (Am.49).
     """
+    _validate_fp8_gates()
     return _gemm_fp8_forward(a, b)
 
 
 def _gemm_fp8_bwd(res, g):
-    """STE-backward FP8-границы: градиенты по неквантованным операндам.
+    """STE-backward FP8-границы: ``ga = g @ bᵀ``, ``gb = aᵀ @ g``.
 
-    ``ga = g @ bᵀ``, ``gb = aᵀ @ g`` (ведущие оси ``a``/``g`` свёрнуты в
-    строки) на :func:`_gemm_regular` — bf16-операнды/fp32-аккум под
-    ``AXIOM_COMPUTE_DTYPE=bf16``, иначе fp32.  Скейлов в остатке нет:
-    производная ``max|·|`` не нужна (STE).
+    Ведущие оси ``a``/``g`` свёрнуты в строки.  При ``AXIOM_GEMM_FP8_BWD=0``
+    (дефолт) — прежний путь :func:`_gemm_regular` (bf16-операнды/fp32-аккум
+    под ``AXIOM_COMPUTE_DTYPE=bf16``, иначе fp32) побитово.  При ``=1`` оба
+    матмула идут через :func:`_fp8_grad_matmul`: e4m3, fp32-аккум,
+    per-tensor скейлы (``AXIOM_FP8_ROW_SCALE=1`` — per-row для первого
+    операнда), STE.  Скейлов в остатке нет: производная ``max|·|`` не нужна
+    (STE), в котангенты они не текут.  Все FP8-гейты валидируются здесь
+    независимо от ``AXIOM_GEMM_FP8_BWD`` (Am.49: дормантный
+    ``AXIOM_FP8_ROW_SCALE`` не должен ждать включения backward-ноги).
     """
     a, b = res
-    ga = _gemm_regular(g, jnp.swapaxes(b, -1, -2))
-    a2 = a.reshape(-1, a.shape[-1])
-    g2 = g.reshape(-1, g.shape[-1])
-    gb = _gemm_regular(jnp.swapaxes(a2, -1, -2), g2)
+    _validate_fp8_gates()
+    if gemm_fp8_bwd_mode():
+        row_scale = fp8_row_scale_mode()
+        ga = _fp8_grad_matmul(g, jnp.swapaxes(b, -1, -2), row_scale=row_scale)
+        a2 = a.reshape(-1, a.shape[-1])
+        g2 = g.reshape(-1, g.shape[-1])
+        gb = _fp8_grad_matmul(
+            jnp.swapaxes(a2, -1, -2), g2, row_scale=row_scale
+        )
+    else:
+        ga = _gemm_regular(g, jnp.swapaxes(b, -1, -2))
+        a2 = a.reshape(-1, a.shape[-1])
+        g2 = g.reshape(-1, g.shape[-1])
+        gb = _gemm_regular(jnp.swapaxes(a2, -1, -2), g2)
     # Контракт backward: котангент несёт dtype своего примала.
     return ga.astype(a.dtype), gb.astype(b.dtype)
 
@@ -296,7 +459,9 @@ def gemm(a: jnp.ndarray, b: jnp.ndarray, *, fp8: bool = False) -> jnp.ndarray:
     :func:`gemm_fp8`; при гейте off — прежний путь побитово.  Дефолт
     ``fp8=False`` оставляет CE/lm_head, MoE и oracle-пути нетронутыми.
     """
-    enabled = gemm_fp8_mode()  # fail-closed: опечатка гейта — ошибка всегда
+    # Fail-closed (Am.49): все FP8-гейты проверяются на каждом трейсе, даже
+    # когда fp8-путь не выбран и backward-нога дормантна.
+    enabled = _validate_fp8_gates()
     if (
         fp8
         and enabled

@@ -1583,3 +1583,25 @@ GPU-чек (rows=256): `(dwg,dwu,dwd,dz_grouped)` = **nan, 9.17e-04, 8.57e-08,
 недопустима). (3) GPU-чек case0 (rows=2048) и case1 — все выходы ≤2e-2,
 детерминизм; затем merge ветки и стендовый A/B (`AXIOM_MOE_BWD=fused`).
 **Reversibility:** гейт default `jax`; fused-путь инертен до приёмки.
+
+---
+
+## Amendment 55 (2026-10-19): fused MoE-backward **ПРОШЁЛ GPU-паритет** (case0/case1: max rel 9.5e-4, детерминизм); ветка влита; цикл-33 — стендовый A/B `fused` vs `jax`
+
+**GPU-чек после фиксов (ветка `6157b40`; `check_moe_bwd.py`, архитектор):**
+case0 (rows=2048, latent=768, inter=384, 12 экспертов) — rel
+`(dwg,dwu,dwd,dz)` = **9.50e-04, 7.89e-04, 5.34e-07, 5.28e-04**, det=True;
+case1 (rows=256, с пустыми группами) — **8.11e-04, 9.17e-04, 8.57e-08,
+3.62e-04**, det=True; oversize-кейс — честный скип `valid_config`.
+`rows % bm` — fail-closed; пустая/неполная группа — нулевые вес-градиенты,
+dump-слоты. `test_54` 58 passed. Паритет **исполненного** ядра заявлен (ADR-011
+соблюдён: числа — с устройства, не с lowering).
+
+**Merge:** ветка влита в `arch/bf16-phase1-wip` (гейт `AXIOM_MOE_BWD` default
+`jax`; fused-путь включается явно).
+
+**Цикл-33 (следующий, измерение):** стендовый A/B `AXIOM_MOE_BWD=jax` vs
+`fused` на кампанийной клетке (FP8-forward + campaign MTP): шаг/ток/с/MFU,
+10 шагов, nan 0, лосс в допуске; затем phase-profile — `sec_bwd_moe` (было
+10.235 с). Приёмка: `sec_bwd_moe` ≤6 с и шаг ≤25.5 с (≥+6 % к 1 203.7);
+иначе — минус (кернел корректен, но не быстрее). **Reversibility:** default `jax`.

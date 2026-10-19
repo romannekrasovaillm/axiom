@@ -1325,3 +1325,26 @@ main 1 103.7 / 29.690 — **−1.6 %**.
 Ближайшие bf16-адреса без смены класса: остаточный fp32 SIMT в backward (5.9 с),
 optimizer/host; и `bwd_moe`-нога (предусловие MoE).
 **Reversibility:** гейты default прежние; ветки не влиты.
+
+---
+
+## Amendment 45 (2026-10-19): fused backward CE ПРИНЯТ в main (+3.2 %); цикл-26 — full-step FP8 GEMM (проекции/MLP) с STE, гейт default off
+
+**Merge.** Ветка `theseus-20261019045022` (`d1de21f`, fused backward CE) влита
+в `arch/bf16-phase1-wip` (`1bff120`) именным аппрувером владельца (Am.37: +3.2 %,
+шаг 28.763 с, `sec_bwd_ce` без изменений — выигрыш в полном backward); на main
+`test_47` 19 passed. Ветки-минусы (`MoE` −3.5 %, `FP8 CE` −1.6 %) в main не влиты.
+
+**Решение цикла-26 (смена класса, до реализации).** FP8 на **тяжёлые плотные
+GEMM шага** (проекции attention, MLP; не CE — CE-fp8 измерен минусом): новый helper
+`compute_dtype.gemm_fp8(a,b)` — `jax.custom_vjp`: forward `matmul(q(a,s_a),
+q(b,s_b))·(s_a·s_b)` (e4m3, f32-аккум, per-tensor скейлы), backward — bf16/fp32 по
+неквантованным операндам (STE); гейт `AXIOM_GEMM_FP8=0|1` (default 0, fail-closed).
+Callsite-ы — `_project` в `net/kda.py`/`net/mla.py`, `net/mlp.py:apply` (не CE).
+**Приёмка:** off — побитово; on — forward/градиенты на изолированном GEMM в
+≤2e-2, затем **полный шаг**: лосс 10 шагов в допуске bf16-эталона, nan 0, шаг
+≤27.5 с; публиковать `MFU_111.5`. **Критерий остановки FP8-программы:** если на
+полном шаге выигрыш <3 % — FP8 по этим классам закрывается как минус (in-situ
+правило цикла-25), и остаётся только смена рантайма/стекла.
+**Риски:** стабильность e4m3 в транке (10-шаговый nan-гейт, прецеденты 4b/4c),
+скейлы на выбросах, потеря fusion. **Reversibility:** гейт default 0.

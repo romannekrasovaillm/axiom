@@ -1267,3 +1267,30 @@ lower_check OK 4/0), но персистентный per-expert кернел **�
 2. optimizer (1.25 с) / хост-цена / остаточный fp32 SIMT (5.9 с в backward);
 3. `bwd_moe`-нога — предусловие любого возврата к MoE.
 **Reversibility:** гейт default `ragged`; ветка не влита.
+
+---
+
+## Amendment 43 (2026-10-19): цикл-25 — FP8 CE/lm_head через custom_vjp + STE (FP8-нога к 55 %); forward fp8, backward bf16/fp32
+
+**Основание.** Am.38/цикл-26: FP8-forward CE численно годен (loss rel 5e-5,
+scaled 2.5e-5), но **наивный fp8-autodiff ломает градиенты** (dFeat rel=1.0 —
+каст fp32→fp8 в JAX без корректного градиента). Формы: lm_head-чанк fp8 85 TFLOPS
+против модельных ~18 bf16 (×4.7). CE/lm_head — измеренный и неэффективный адрес
+(Am.35/37), единственный правдоподобный путь к 55 % — FP8.
+
+**Решение (цикл-25, до реализации).** Гейт `AXIOM_CE_FP8=0|1` (default 0,
+fail-closed, форма `ce_bf16_mode`). При `1` — `jax.custom_vjp` вокруг
+`_chunked_cross_entropy`: граница `(features, embedding) -> loss`;
+**forward** на чанк: `a=q(features_chunk,s_f)`, `b=q(embedding.T,s_e)` (e4m3,
+per-tensor скейл), `logits = matmul(a,b,f32-аккум)·(s_f·s_e)`, softmax/NLL в fp32,
+глобальные сумма/счётчик, `loss_mask` в числителе и знаменателе;
+**backward**: `p=softmax(logits)` (пересчёт fp8-логитов чанком), `dlogits=(p−onehot)·dL/count`,
+`dembedding += dlogits.T @ features_chunk`, `dfeatures_chunk = dlogits @ embedding`
+— в bf16/fp32 по **неквантованным** операндам (STE: производная квантизации = I);
+полные `(chunk, vocab)` не сохраняются.
+**Приёмка:** off — побитово; on — forward-лосс в scale-relative ≤2e-2 (ожидание
+~5e-5), градиенты features/embedding ≤2e-2 против bf16-эталона; CPU-тесты; стенд:
+CE-время и шаг ≤27.5 с, nan 0; FP8-нога публикует `MFU_111.5`.
+**Риски:** STE-ошибка градиентов (допуск 2e-2; при промахе — скейл/остаточная
+коррекция: A = A_fp8 + A_res, два fp8-матмула); стабильность e4m3 на выбросах
+(per-tensor max); вес MTP 0.1. **Reversibility:** гейт default 0; bf16-путь — эталон.

@@ -161,18 +161,26 @@ def _project(params: KDAParams, cfg: ModelConfig, x: jnp.ndarray) -> dict:
     expose a final ``(heads, d)`` axis.
     """
     H, dk, dv = cfg.num_heads, cfg.kda_dk, cfg.kda_dv
-    qp = compute_dtype.gemm(x, params.W_q)  # (..., H*dk)
-    kp = compute_dtype.gemm(x, params.W_k)  # (..., H*dk)
-    vp = compute_dtype.gemm(x, params.W_v)  # (..., H*dv)
-    beta = jax.nn.sigmoid(compute_dtype.gemm(x, params.W_beta))  # (..., H)
+    # FP8-нога цикла-26 (ADR-054 Am.45): все проекции блока — проекционные
+    # GEMM, гейт ``AXIOM_GEMM_FP8`` (default 0 — прежний путь побитово).
+    qp = compute_dtype.gemm(x, params.W_q, fp8=True)  # (..., H*dk)
+    kp = compute_dtype.gemm(x, params.W_k, fp8=True)  # (..., H*dk)
+    vp = compute_dtype.gemm(x, params.W_v, fp8=True)  # (..., H*dv)
+    beta = jax.nn.sigmoid(
+        compute_dtype.gemm(x, params.W_beta, fp8=True)
+    )  # (..., H)
     z = compute_dtype.gemm(
-        compute_dtype.gemm(x, params.W_a_down), params.W_a_up
+        compute_dtype.gemm(x, params.W_a_down, fp8=True),
+        params.W_a_up,
+        fp8=True,
     ) + params.b_alpha  # (..., H*dk)
     z = z.reshape(*z.shape[:-1], H, dk)  # (..., H, dk)
     # lower-bounded log-decay (Eq. 5): g = g_min * sigmoid(exp(A) * z)
     g = cfg.kda_g_min * jax.nn.sigmoid(jnp.exp(params.A)[..., None] * z)  # (..., H, dk)
     alpha = jnp.exp(g)  # (..., H, dk), in (e^gmin, 1)
-    gate = jax.nn.sigmoid(compute_dtype.gemm(x, params.W_g))  # (..., hid)
+    gate = jax.nn.sigmoid(
+        compute_dtype.gemm(x, params.W_g, fp8=True)
+    )  # (..., hid)
     return {
         "qp": qp,
         "kp": kp,
@@ -203,7 +211,7 @@ def _output_gate(o: jnp.ndarray, gate: jnp.ndarray, params: KDAParams) -> jnp.nd
     """
     o = headwise_rms_norm(o)  # (..., H, dv)
     o = o.reshape(*o.shape[:-2], -1)  # (..., H*dv)
-    return compute_dtype.gemm(gate * o, params.W_o)
+    return compute_dtype.gemm(gate * o, params.W_o, fp8=True)
 
 
 # ---------------------------------------------------------------------------
@@ -226,10 +234,16 @@ def _window_projection(params: KDAParams, cfg: ModelConfig, x: jnp.ndarray):
         vc = short_conv(proj["vp"], params.conv_v)
         gate = proj["gate"]
     else:
-        qc = short_conv(compute_dtype.gemm(x, params.W_swa_q), params.conv_swa_q)
-        kc = short_conv(compute_dtype.gemm(x, params.W_swa_k), params.conv_swa_k)
-        vc = short_conv(compute_dtype.gemm(x, params.W_swa_v), params.conv_swa_v)
-        gate = jax.nn.sigmoid(compute_dtype.gemm(x, params.W_g))
+        qc = short_conv(
+            compute_dtype.gemm(x, params.W_swa_q, fp8=True), params.conv_swa_q
+        )
+        kc = short_conv(
+            compute_dtype.gemm(x, params.W_swa_k, fp8=True), params.conv_swa_k
+        )
+        vc = short_conv(
+            compute_dtype.gemm(x, params.W_swa_v, fp8=True), params.conv_swa_v
+        )
+        gate = jax.nn.sigmoid(compute_dtype.gemm(x, params.W_g, fp8=True))
     q, k, v = _postprocess(qc, kc, vc, cfg)
     return q, k, v, gate
 

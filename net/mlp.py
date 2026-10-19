@@ -55,7 +55,9 @@ def apply(params: MLPParams, cfg: ModelConfig, x: jnp.ndarray) -> jnp.ndarray:
     because a boundary returns fp32 — ``AXIOM_COMPUTE_DTYPE``, see
     ``net/compute_dtype.py``).
     """
-    h_g = compute_dtype.gemm(x, params.W_g)
-    h_u = compute_dtype.gemm(x, params.W_u)
+    # FP8-нога цикла-26 (ADR-054 Am.45): три проекции — проекционные GEMM;
+    # гейт ``AXIOM_GEMM_FP8`` (default 0 — прежний путь побитово).
+    h_g = compute_dtype.gemm(x, params.W_g, fp8=True)
+    h_u = compute_dtype.gemm(x, params.W_u, fp8=True)
     a = siti_glu((h_g, h_u), cfg.siti_beta_gate, cfg.siti_beta_up)
-    return compute_dtype.gemm(a, params.W_down)
+    return compute_dtype.gemm(a, params.W_down, fp8=True)

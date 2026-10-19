@@ -472,9 +472,17 @@ def _causal_mask(T: int) -> jnp.ndarray:
 def _project(params: MLAParams, cfg: ModelConfig, x32: jnp.ndarray, c: jnp.ndarray):
     """Per-head q, k, v from the latent (shared by the dense and sparse paths)."""
     H, dq = cfg.num_heads, cfg.mla_head_dim
-    q = compute_dtype.gemm(x32, params.W_q.astype(jnp.float32)).reshape(*x32.shape[:-1], H, dq)
-    k = compute_dtype.gemm(c, params.W_k_up.astype(jnp.float32)).reshape(*x32.shape[:-1], H, dq)
-    v = compute_dtype.gemm(c, params.W_v_up.astype(jnp.float32)).reshape(*x32.shape[:-1], H, dq)
+    # FP8-нога цикла-26 (ADR-054 Am.45): проекции q/k/v — проекционные GEMM;
+    # гейт ``AXIOM_GEMM_FP8`` (default 0 — прежний путь побитово).
+    q = compute_dtype.gemm(
+        x32, params.W_q.astype(jnp.float32), fp8=True
+    ).reshape(*x32.shape[:-1], H, dq)
+    k = compute_dtype.gemm(
+        c, params.W_k_up.astype(jnp.float32), fp8=True
+    ).reshape(*x32.shape[:-1], H, dq)
+    v = compute_dtype.gemm(
+        c, params.W_v_up.astype(jnp.float32), fp8=True
+    ).reshape(*x32.shape[:-1], H, dq)
     return q, k, v
 
 
@@ -498,7 +506,9 @@ def _dense_apply(params: MLAParams, cfg: ModelConfig, x: jnp.ndarray, mask: jnp.
     """
     H, dq = cfg.num_heads, cfg.mla_head_dim
     x32 = x.astype(jnp.float32)
-    c = compute_dtype.gemm(x32, params.W_c.astype(jnp.float32))  # (B, T, d_c)
+    c = compute_dtype.gemm(
+        x32, params.W_c.astype(jnp.float32), fp8=True
+    )  # (B, T, d_c)
     q, k, v = _project(params, cfg, x32, c)
 
     if persist_mode():
@@ -562,8 +572,12 @@ def _dense_apply(params: MLAParams, cfg: ModelConfig, x: jnp.ndarray, mask: jnp.
             o = compute_dtype.gemm_einsum("bhts,bshd->bthd", attn, v)  # (B, T, H, dq)
     o = o.reshape(*x.shape[:-1], H * dq)
 
-    gate = jax.nn.sigmoid(compute_dtype.gemm(x32, params.W_g.astype(jnp.float32)))
-    return compute_dtype.gemm(gate * o, params.W_o.astype(jnp.float32))
+    gate = jax.nn.sigmoid(
+        compute_dtype.gemm(x32, params.W_g.astype(jnp.float32), fp8=True)
+    )
+    return compute_dtype.gemm(
+        gate * o, params.W_o.astype(jnp.float32), fp8=True
+    )
 
 
 def layer_mode(cfg: ModelConfig, ordinal: int) -> str:
@@ -595,7 +609,9 @@ def _sparse_apply(
     """Sparse + sliding-window gated MLA (ADR-009 D1/D2/D3 + ADR-012 pool)."""
     H, dq = cfg.num_heads, cfg.mla_head_dim
     x32 = x.astype(jnp.float32)
-    c = compute_dtype.gemm(x32, params.W_c.astype(jnp.float32))  # (B, T, d_c)
+    c = compute_dtype.gemm(
+        x32, params.W_c.astype(jnp.float32), fp8=True
+    )  # (B, T, d_c)
     if cfg.qat_kv_enabled:
         # D3: fake-quant the cached latent in MXFP4, dequantise before attention.
         c = quant.fake_quant_mxfp4_latent(c)
@@ -603,8 +619,12 @@ def _sparse_apply(
 
     window = int(cfg.swa_window)
     if window > 0:
-        ks = compute_dtype.gemm(x32, params.W_swa_k.astype(jnp.float32)).reshape(*x32.shape[:-1], H, dq)
-        vs = compute_dtype.gemm(x32, params.W_swa_v.astype(jnp.float32)).reshape(*x32.shape[:-1], H, dq)
+        ks = compute_dtype.gemm(
+            x32, params.W_swa_k.astype(jnp.float32), fp8=True
+        ).reshape(*x32.shape[:-1], H, dq)
+        vs = compute_dtype.gemm(
+            x32, params.W_swa_v.astype(jnp.float32), fp8=True
+        ).reshape(*x32.shape[:-1], H, dq)
         # The SWA KV stays FP8 (source: the window is quantisation-sensitive).
         ks = quant.fake_quant_fp8_e4m3(ks)
         vs = quant.fake_quant_fp8_e4m3(vs)
@@ -618,8 +638,12 @@ def _sparse_apply(
     if mode == "reuse" and pool is not None and pool.selection is not None:
         idx_q = idx_k = None
     else:
-        idx_q = compute_dtype.gemm(x32, params.W_idx_q.astype(jnp.float32)).reshape(*x32.shape[:-1], cfg.mla_index_heads, cfg.mla_index_dim)
-        idx_k = compute_dtype.gemm(c, params.W_idx_k.astype(jnp.float32)).reshape(*x32.shape[:-1], cfg.mla_index_heads, cfg.mla_index_dim)
+        idx_q = compute_dtype.gemm(
+            x32, params.W_idx_q.astype(jnp.float32), fp8=True
+        ).reshape(*x32.shape[:-1], cfg.mla_index_heads, cfg.mla_index_dim)
+        idx_k = compute_dtype.gemm(
+            c, params.W_idx_k.astype(jnp.float32), fp8=True
+        ).reshape(*x32.shape[:-1], cfg.mla_index_heads, cfg.mla_index_dim)
 
     o, pool_out = attn_sparse.sparse_union_attention(
         q, k, v, ks, vs, idx_q, idx_k,
@@ -635,8 +659,13 @@ def _sparse_apply(
         exact_topk=bool(cfg.attn_topk_exact),
     )
     o = o.reshape(*x.shape[:-1], H * dq)
-    gate = jax.nn.sigmoid(compute_dtype.gemm(x32, params.W_g.astype(jnp.float32)))
-    return compute_dtype.gemm(gate * o, params.W_o.astype(jnp.float32)), pool_out
+    gate = jax.nn.sigmoid(
+        compute_dtype.gemm(x32, params.W_g.astype(jnp.float32), fp8=True)
+    )
+    return (
+        compute_dtype.gemm(gate * o, params.W_o.astype(jnp.float32), fp8=True),
+        pool_out,
+    )
 
 
 def apply_with_pool(

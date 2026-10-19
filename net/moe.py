@@ -57,6 +57,7 @@ stable=True)`` в :func:`_routed_experts_grouped` на counting-sort
 
 from __future__ import annotations
 
+import functools
 import os
 from typing import NamedTuple
 
@@ -435,6 +436,186 @@ def _counting_sort_positions(expert_of: jnp.ndarray, group_sizes: jnp.ndarray) -
     return offsets[expert_of] + rank_of  # (N*k,) позиция в упорядоченной раскладке
 
 
+#: Env-гейт backward'а маршрутизированных экспертов (ADR-054 Am.52, цикл-30):
+#: ``"jax"`` (дефолт — прежний autodiff, побитово) | ``"fused"``
+#: (``jax.custom_vjp``: forward дословно прежний, backward — fused-кернел
+#: ``net/kernels/moe_experts_bwd.py``).  Форма ``AXIOM_MOE_COUNTING``/
+#: ``AXIOM_KDA_CC_IMPL``: читается на трейсе, неизвестное — ошибка.
+MOE_BWD_ENV = "AXIOM_MOE_BWD"
+
+#: Допустимые значения гейта; неизвестное — :class:`MoeBwdError` (fail-closed).
+MOE_BWD_VALUES = ("jax", "fused")
+MOE_BWD_JAX = "jax"
+MOE_BWD_FUSED = "fused"
+
+
+class MoeBwdError(ValueError):
+    """Неизвестное значение ``AXIOM_MOE_BWD`` (fail-closed, без догадок)."""
+
+
+def moe_bwd_mode(value: str | None = None) -> str:
+    """Backward маршрутизированных экспертов: ``"jax"`` (дефолт) | ``"fused"``.
+
+    ``AXIOM_MOE_BWD=fused`` оборачивает экспертную часть
+    :func:`_routed_experts_grouped` в :func:`jax.custom_vjp`: forward-правило —
+    дословно прежний путь (grouping + три ``ragged_dot`` + ``siti_glu``; числа
+    те же), backward-правило — fused-кернел экспертного блока
+    (:mod:`net.kernels.moe_experts_bwd`), а группировка/сборка строк и
+    градиент маршрутизации (``sel_p``/``topk``) остаются в XLA.  ``jax`` —
+    прежний autodiff, побитово и с прежним jaxpr (блокирующий критерий дельты).
+
+    Пустая/незаданная переменная = ``"jax"``; значения — только
+    ``"jax"``/``"fused"`` (регистр и окружающие пробелы нормализуются);
+    неизвестное — :class:`MoeBwdError` (fail-closed: опечатка не должна тихо
+    выдать прежний путь за fused-замер).  Явный аргумент сильнее окружения
+    (форма :func:`net.model.ce_bwd_mode`).  Читается на трейсе, не кешируется —
+    A/B идёт на одной ревизии.
+    """
+    raw = value if value is not None else os.environ.get(MOE_BWD_ENV)
+    mode = (raw or "").strip().lower() or MOE_BWD_JAX
+    if mode not in MOE_BWD_VALUES:
+        raise MoeBwdError(
+            f"{MOE_BWD_ENV}={mode!r}: ожидается одно из {list(MOE_BWD_VALUES)}"
+        )
+    return mode
+
+
+def _grouped_layout(topk, n_tokens, k, n_routed, counting):
+    """Раскладка назначений по экспертам — дословно прежний путь forward'а.
+
+    Возвращает ``(expert_of, token_of, group_sizes, keys)``, где ``keys`` —
+    ``("pos", pos)`` для counting-sort или ``("order", order)`` для stable
+    argsort.  Вынесено из :func:`_routed_experts_grouped`, чтобы fused-forward
+    считал ту же раскладку теми же выражениями (побитовое совпадение).
+    """
+    expert_of = topk.reshape(-1)
+    token_of = jnp.repeat(jnp.arange(n_tokens, dtype=expert_of.dtype), k)
+    group_sizes = jnp.bincount(expert_of, length=n_routed).astype(jnp.int32)
+    if counting:
+        pos = _counting_sort_positions(expert_of, group_sizes)
+        return expert_of, token_of, group_sizes, ("pos", pos)
+    order = jnp.argsort(expert_of, stable=True)
+    return expert_of, token_of, group_sizes, ("order", order)
+
+
+def _grouped_forward(wg, wu, wd, z, topk, sel_p, n_tokens, k, n_routed,
+                     counting, beta_gate, beta_up):
+    """Дословно прежний forward экспертной части + остатки для backward'а.
+
+    Те же выражения, что в :func:`_routed_experts_grouped` (grouping, три
+    ``_ragged_gemm``, ``siti_glu``, обратная перестановка и микс ``sel_p``):
+    числа fused-forward совпадают с ``jax``-путём побитово.
+    """
+    expert_of, token_of, group_sizes, keys = _grouped_layout(
+        topk, n_tokens, k, n_routed, counting)
+    kind, key = keys
+    if kind == "pos":
+        z_grouped = jnp.zeros((expert_of.shape[0], z.shape[-1]), dtype=z.dtype).at[key].set(
+            z[token_of]
+        )
+    else:
+        z_grouped = z[token_of[key]]
+
+    h_g = _ragged_gemm(z_grouped, wg, group_sizes)
+    h_u = _ragged_gemm(z_grouped, wu, group_sizes)
+    a = mlp_mod.siti_glu((h_g, h_u), beta_gate, beta_up)
+    e_grouped = _ragged_gemm(a, wd, group_sizes)  # (N*k, latent)
+    if kind == "pos":
+        e = e_grouped[key].reshape(n_tokens, k, -1)
+    else:
+        e = jnp.zeros_like(e_grouped).at[key].set(e_grouped).reshape(n_tokens, k, -1)
+    u = compute_dtype.gemm_einsum("nk,nkl->nl", sel_p, e)
+    res = (wg, wu, wd, z, topk, sel_p, group_sizes, z_grouped, h_g, h_u, a, e,
+           key)
+    return u, res
+
+
+def _grouped_backward(res, du, counting):
+    """Fused backward экспертной части: кернел + XLA-группировка/сборка.
+
+    Котангент выхода ``du`` (N, latent) переводится в котангент сгруппированных
+    строк (``de_grouped``) *той же* перестановкой, что forward; fused-кернел
+    экспертного блока возвращает градиенты весов (по экспертам) и
+    ``dz_grouped``; ``dz`` собирается обратно по токенам, ``dsel_p`` —
+    прежним XLA-путём (``∂u/∂sel_p`` через сохранённый ``e``).  ``topk`` —
+    индексы: котангента нет (``None``).
+    """
+    from .kernels import moe_experts_bwd  # локальный импорт: нужен только под fused
+
+    (wg, wu, wd, z, topk, sel_p, group_sizes, z_grouped, h_g, h_u, a, e,
+     key) = res
+    n_tokens, k, latent = e.shape
+    rows = z_grouped.shape[0]
+    dt = jnp.bfloat16
+
+    # Котангент выхода -> котангент назначений -> сгруппированные строки.
+    # u_nl = sum_k sel_p_nk · e_nkl  =>  de_nkl = du_nl · sel_p_nk.
+    de = du[:, None, :] * sel_p[..., None]  # (N, k, latent)
+    de_flat = de.reshape(rows, latent)
+    if counting:
+        de_grouped = jnp.zeros((rows, latent), dtype=de_flat.dtype).at[key].set(de_flat)
+    else:
+        de_grouped = de_flat[key]
+
+    # Единственный fused-запуск: все градиенты экспертного блока.  Операнды
+    # приводятся к объявленному bf16-пути mma; аккумуляторы — fp32.
+    dwg, dwu, dwd, dz_grouped = moe_experts_bwd.kernel(
+        z_grouped.astype(dt),
+        h_g.astype(dt),
+        h_u.astype(dt),
+        a.astype(dt),
+        de_grouped.astype(dt),
+        wg.astype(dt),
+        wu.astype(dt),
+        wd.astype(dt),
+        group_sizes,
+    )
+
+    # dz обратно по токенам (обратная перестановка forward'а) и сумма по k.
+    if counting:
+        dz_flat = dz_grouped[key]
+    else:
+        dz_flat = jnp.zeros_like(dz_grouped).at[key].set(dz_grouped)
+    dz = jnp.sum(dz_flat.reshape(n_tokens, k, latent), axis=1)
+
+    dsel_p = compute_dtype.gemm_einsum("nl,nkl->nk", du, e)
+    return (
+        dwg.astype(wg.dtype),
+        dwu.astype(wu.dtype),
+        dwd.astype(wd.dtype),
+        dz.astype(z.dtype),
+        None,
+        dsel_p.astype(sel_p.dtype),
+    )
+
+
+@functools.lru_cache(maxsize=8)
+def _grouped_fused_impl(n_tokens, k, n_routed, counting, beta_gate, beta_up):
+    """``custom_vjp``-обёртка экспертной части, ключ — статическая геометрия.
+
+    Фабрика кэшируется по статическим параметрам (объект ``custom_vjp``
+    стабилен между шагами, jit-кеш не рвётся); гейт читается до входа сюда —
+    на трейсе.  Правила резолвят :func:`net.kernels.moe_experts_bwd.kernel` на
+    модуле в момент вызова, поэтому тесты подменяют шов, не трогая moe.py.
+    """
+
+    @jax.custom_vjp
+    def experts(wg, wu, wd, z, topk, sel_p):
+        u, _ = _grouped_forward(wg, wu, wd, z, topk, sel_p, n_tokens, k,
+                                n_routed, counting, beta_gate, beta_up)
+        return u
+
+    def experts_fwd(wg, wu, wd, z, topk, sel_p):
+        return _grouped_forward(wg, wu, wd, z, topk, sel_p, n_tokens, k,
+                                n_routed, counting, beta_gate, beta_up)
+
+    def experts_bwd(res, du):
+        return _grouped_backward(res, du, counting)
+
+    experts.defvjp(experts_fwd, experts_bwd)
+    return experts
+
+
 def _routed_experts(params, cfg: ModelConfig, z, topk, sel_p):
     """Маршрутизированный микшер: групповая диспетчеризация top-k, либо dense по флагу."""
     if dispatch_mode() == "dense":
@@ -442,8 +623,14 @@ def _routed_experts(params, cfg: ModelConfig, z, topk, sel_p):
     return _routed_experts_grouped(params, cfg, z, topk, sel_p)
 
 
-def _routed_experts_grouped(params, cfg: ModelConfig, z, topk, sel_p):
+def _routed_experts_grouped(params, cfg: ModelConfig, z, topk, sel_p, *,
+                            bwd: str | None = None):
     """Routed mix ``u`` computing **only the top-k selected experts** per token.
+
+    Гейт ``AXIOM_MOE_BWD`` (``bwd`` сильнее env) выбирает backward: ``"jax"``
+    (дефолт) — прежний autodiff побитово; ``"fused"`` — ``custom_vjp``, forward
+    которого дословно повторяет путь ниже, а backward исполняет fused-кернел
+    экспертного блока (:func:`_grouped_fused_impl`).  Forward не меняется.
 
     Each token is gathered once per selected expert (``N * top_k`` rows), the rows
     are ordered by expert into ``n_routed`` ragged groups, the expert MLP runs on
@@ -460,6 +647,13 @@ def _routed_experts_grouped(params, cfg: ModelConfig, z, topk, sel_p):
     einsum spelling is only the lowering — an fp32 relative gap of ~1e-6, the
     tolerance the same test pins.
     """
+    if moe_bwd_mode(bwd) == MOE_BWD_FUSED:
+        impl = _grouped_fused_impl(
+            z.shape[0], cfg.moe_top_k, cfg.moe_num_routed, counting_sort_mode(),
+            cfg.siti_beta_gate, cfg.siti_beta_up)
+        return impl(params.expert_g, params.expert_u, params.expert_d, z,
+                    topk, sel_p)
+
     n_tokens = z.shape[0]
     k = cfg.moe_top_k
     n_routed = cfg.moe_num_routed

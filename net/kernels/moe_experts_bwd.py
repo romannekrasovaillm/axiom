@@ -1,0 +1,602 @@
+"""Fused backward экспертного блока маршрутизированных MoE-экспертов (ADR-054 Am.52).
+
+Зачем один запуск (измеренный адрес)
+------------------------------------
+Пофазовый профиль цикла-29 отнёс ``sec_bwd_moe`` = 10.235 с (49 % полного
+backward 20.98 с, 38 % шага 27.1 с) при ~0.6 TFLOP ≈ 0.06 TFLOPS.  Узкое
+место — не арифметика экспертного блока (она мала), а *мелкие кернелы* и
+submission overhead: autodiff трёх ``ragged_dot`` и ``siti_glu`` раскладывается
+в десятки отдельных запусков на слой.  Этот модуль сворачивает **весь backward
+экспертной части** в один ``plgpu.kernel``: ``grid=(n_exp,)``, один программа-
+эксперт, все градиенты эксперта (``dwg``, ``dwu``, ``dwd``) и ``dz_grouped``
+считаются внутри одного запуска.
+
+Граница ответственности
+-----------------------
+Кернел — **только backward**.  Forward остаётся прежним ragged-путём
+(``net/moe.py:_routed_experts_grouped``): fused-forward измерен минусом
+(цикл-29), поэтому гейт ``AXIOM_MOE_BWD`` по умолчанию ``"jax"`` — прежний
+autodiff побитово.  В режиме ``"fused"`` forward-правило ``custom_vjp``
+дословно повторяет прежний путь (числа те же), а backward-правило зовёт
+:func:`kernel` этого модуля; группировка/сборка строк и градиент маршрутизации
+(``sel_p``/``topk``) остаются в XLA.
+
+Алгебра, которую кернел транскрибирует (на эксперта ``e``)
+----------------------------------------------------------
+Входы — уже сгруппированные по экспертам строки (``rows = N * top_k``):
+``z_grouped`` (rows, latent), ``h_g``/``h_u``/``a`` (rows, inter),
+``de_grouped`` (rows, latent) — котангент выхода экспертного блока; веса
+``wg``/``wu`` (n_exp, latent, inter), ``wd`` (n_exp, inter, latent),
+``group_sizes`` (n_exp,).  Для каждой строки своего эксперта::
+
+    dwd = a^T · de                                   # (inter, latent)
+    da  = de · wd^T                                  # (rows, inter)
+    gate = βg·tanh(hg/βg)·sigmoid(hg)
+    up   = βu·tanh(hu/βu)
+    d(hg) = sech²(hg/βg)·sigmoid(hg)
+            + βg·tanh(hg/βg)·sigmoid(hg)·(1−sigmoid(hg))
+    dhg = da·up·d(hg)                                # (rows, inter)
+    dhu = da·gate·sech²(hu/βu)                       # (rows, inter)
+    dwg = z^T · dhg                                  # (latent, inter)
+    dwu = z^T · dhu                                  # (latent, inter)
+    dz_grouped = dhg·wg^T + dhu·wu^T                 # (rows, latent)
+
+``d(hg)`` — производная ``siti_glu`` по gate-ветви; множитель ``βg`` при
+втором слагаемом — из ``d/dhg[βg·tanh(hg/βg)] = sech²(hg/βg)`` (в тексте
+задачи он пропущен; здесь производная взята точно, иначе паритет с autodiff
+не сходится).
+
+Реализация: три последовательные фазы одной программы
+------------------------------------------------------
+* **A — строковая**: по блокам ``bm`` строк своего эксперта считает ``da``
+  (K-поток по latent), siti-адъюнкт, ``dhg``/``dhu`` (в GMEM-скретч, bf16 —
+  объявленный операнд-путь кернела) и ``dz`` (K-поток по inter, тайлы ``bt``
+  по latent);
+* **B/C/D — весовые**: ``dwd``, ``dwg``, ``dwu`` тайлами ``(bt, bt)`` с
+  накоплением в регистрах по всем строкам эксперта (K = строки).
+
+Строки читаются с маской принадлежности эксперту; строки вне группы в
+строковых записях уходят в *dump-слот* ``rows + e`` (буферы ``dz``/``dhg``/
+``dhu`` имеют ``rows + n_exp`` строк).  Это исключает гонку записи с соседним
+экспертом: каждая программа пишет только свои строки и собственный слот.
+
+Операнды — bf16, аккумулятор — fp32 (валидированный путь sm_121 mma; форма
+``kda_cc_fused``).  SMEM ≤ 99 КиБ на программу: см. :func:`_smem_floor_bytes`.
+
+Статус проверки (честно)
+------------------------
+* кернел **не исполнялся на устройстве**: узел CPU-only, а interpret-режим
+  jax 0.11.2 не имеет правила для ``plgpu.mma``;
+* *lowering* для sm_121 проверяется на этом узле (``lower_check.py`` скилла
+  ``pallas-gb10-kernel`` и ``net/tests/moe_experts_bwd_lower.py``): все живые
+  ``CASES`` обязаны собраться, oversize — честно скипнуться ситом;
+* численная семантика кернела пинуется его jnp-адъюнктом
+  :func:`reference_bwd` (CPU): ``net/tests/test_54_moe_bwd_fused.py`` сверяет
+  его с autodiff прежнего пути на допуске 2e-2 (bf16);
+* паритет *исполненного* кернела, время и детерминизм — замер архитектора на
+  GB10 (``check_kernel.py``).
+"""
+
+from __future__ import annotations
+
+import dataclasses
+import functools
+
+import jax
+import jax.numpy as jnp
+
+# ---------------------------------------------------------------------------
+# Контракт модуля (скилл pallas-gb10-kernel)
+# ---------------------------------------------------------------------------
+
+#: Формы случаев.  ``rows`` — сгруппированные строки (``N * top_k``); живая
+#: кампанийная геометрия — ``latent=768``, ``inter=384``, ``n_exp=12``.
+#: Последний случай объявлен как oversize: его SMEM-пол по бюджету GB10 не
+#: проходит (сито :func:`valid_config` его честно скипает, а не делает вид,
+#: что он запускается).
+CASES = [
+    dict(rows=2048, latent=768, inter=384, n_exp=12, dtype="bfloat16"),
+    dict(rows=256, latent=768, inter=384, n_exp=12, dtype="bfloat16"),
+    dict(rows=2048, latent=1024, inter=768, n_exp=16, dtype="bfloat16"),  # oversize: skipped
+]
+
+#: Операнд-путь кернела — bf16; допуск паритета с autodiff — scale-relative
+#: 2e-2 (объявленный кампанийный допуск bf16, форма cyclic-30).
+TOLERANCE = {"bfloat16": (2e-2, 2e-2)}
+
+#: Статические ручки :func:`kernel`: блок строк, тайл весового выхода и
+#: K-тайл потоковых операндов.  ``bk=32`` — минимальная N-плитка
+#: ``MMA_ACC`` (16, 32), на которой опускаются маски строк; он же держит
+#: SMEM-пол под 99 КиБ (см. :func:`_smem_floor_bytes`).
+TUNE_SPACE = dict(bm=[16], bt=[128], bk=[32])
+
+#: Бюджет SMEM одного блока GB10 (99 КиБ) минус эпизодический запас эпилога
+#: (4 КиБ) — та же величина, что в ``kda_cc_fused``.
+SMEM_LIMIT_BYTES = 101376
+SMEM_EPILOGUE_BYTES = 4 * 1024
+
+BM_DEFAULT = 16
+BT_DEFAULT = 128
+BK_DEFAULT = 32
+
+#: β SiTU-GLU (``net/config.py:siti_beta_gate/siti_beta_up``); передаются
+#: статически — кернел не импортирует схему модели.
+BETA_GATE_DEFAULT = 4.0
+BETA_UP_DEFAULT = 25.0
+
+
+class MoeBwdKernelError(RuntimeError):
+    """Типизированный отказ fused-кернела MoE-backward.
+
+    Возникает, когда (а) конфигурация вне живых случаев сита — форма/тип не
+    опускаются на sm_121, либо (б) на узле нет GPU: Mosaic-кернел исполняется
+    только на устройстве.  Тихий откат к ``jax`` запрещён — режим выбирается
+    гейтом ``AXIOM_MOE_BWD`` явно.
+    """
+
+
+def _smem_floor_bytes(bm, bt, bk, latent, inter, itemsize=2, out_itemsize=4):
+    """Объявленный SMEM-пол одной программы (все буферы живут одновременно).
+
+    Буферы: маска строк ``(bm, inter)``, потоковый ``de`` ``(bm, bk)``,
+    потоковый ``wd`` ``(inter, bk)``, скретч ``dhg``/``dhu`` ``(bm, inter)``
+    (bf16), потоковый вес ``(bt, bk)``, эпилог ``dz`` ``(bm, bt)`` fp32, маска
+    весовой фазы ``(bm, bt)`` и два транспонирующих буфера ``(bt, bm)``.
+    """
+    smem = (
+        bm * inter * itemsize          # op_i: маска строк (фаза A)
+        + bm * bk * itemsize           # de: потоковый операнд da
+        + inter * bk * itemsize        # wd: потоковый вес da
+        + 2 * bm * inter * itemsize    # dhg/dhu: скретч bf16
+        + bt * bk * itemsize           # w: потоковый wg/wu
+        + bm * bt * out_itemsize       # dz_s: эпилог dz (fp32)
+        + bm * bt * itemsize           # op_t: маска весовой фазы
+        + 2 * bt * bm * itemsize       # x_s/y_s: транспонирование операндов
+    )
+    return smem + SMEM_EPILOGUE_BYTES
+
+
+def valid_config(case, params):
+    """Статическое сито: формы mma-тайлинга, операнд-путь и SMEM-пол.
+
+    Живые случаи — bf16, ``latent``/``inter`` кратны 128 (построчные записи
+    читают из SMEM строку ``inter`` элементов: загрузка фрагментированного
+    массива требует кратности 128), ``bm``/``bt``/``bk`` кратны 16.  fp32 и
+    oversize-геометрии возвращают False — это честный скип ``lower_check``,
+    а не молчаливый откат.
+    """
+    rows = int(case["rows"])
+    latent = int(case["latent"])
+    inter = int(case["inter"])
+    n_exp = int(case["n_exp"])
+    bm = int(params.get("bm", case.get("bm", BM_DEFAULT)))
+    bt = int(params.get("bt", case.get("bt", BT_DEFAULT)))
+    bk = int(params.get("bk", case.get("bk", BK_DEFAULT)))
+    dt = jnp.dtype(case.get("dtype", "bfloat16"))
+    if dt != jnp.bfloat16:
+        return False
+    if n_exp < 1 or rows < bm:
+        return False
+    if min(bm, bt, bk) < 16 or bm % 16 or bt % 16 or bk % 16:
+        return False
+    if latent % 128 or inter % 128 or latent % bt or inter % bt:
+        return False
+    if latent % bk or inter % bk:
+        return False
+    return _smem_floor_bytes(bm, bt, bk, latent, inter) <= SMEM_LIMIT_BYTES
+
+
+def cost(rows, latent, inter, n_exp, bm=BM_DEFAULT, bt=BT_DEFAULT,
+         bk=BK_DEFAULT, dtype="bfloat16", **kw):
+    """Минимальные FLOPs/байты одного запуска (roofline-учёт).
+
+    Веса эксперта читаются по тайлам в каждой из весовых фаз; строковые
+    операнды перечитываются ``latent/bt`` (dz) и ``inter/bt`` (веса) раз —
+    это осознанная цена тайлинга аккумуляторов в регистрах.
+    """
+    b = jnp.dtype(dtype).itemsize
+    rows_flops = 12 * rows * inter * latent          # da, dwd, dwg, dwu, 2·dz
+    weight_tiles = (latent // bt) * (inter // bt)
+    weight_bytes = weight_tiles * rows * (2 * latent + 2 * inter) * b
+    row_bytes = rows * (2 * (latent + 3 * inter)) * b
+    return dict(flops=2 * rows_flops,
+                bytes=row_bytes + weight_bytes + 3 * n_exp * latent * inter * 4)
+
+
+def make_inputs(key, rows, latent, inter, n_exp, dtype="bfloat16", **kw):
+    """Входы одного backward-вызова кернела.
+
+    ``z_grouped``/``de_grouped`` — ``(rows, latent)``; ``h_g``/``h_u``/``a`` —
+    ``(rows, inter)``; веса — ``(n_exp, latent, inter)`` ×2 и
+    ``(n_exp, inter, latent)``; ``group_sizes`` — разбиение ``rows`` по
+    экспертам с одной **пустой** группой и неполной (не кратной ``bm``)
+    последней группой: границы, которые кернел обязан пережить.
+    """
+    dt = jnp.dtype(dtype)
+    k1, k2, k3, k4, k5 = jax.random.split(key, 5)
+    scale = 0.1
+    z = (jax.random.normal(k1, (rows, latent), jnp.float32) * scale).astype(dt)
+    hg = (jax.random.normal(k2, (rows, inter), jnp.float32) * scale).astype(dt)
+    hu = (jax.random.normal(k3, (rows, inter), jnp.float32) * scale).astype(dt)
+    a = (jax.random.normal(k4, (rows, inter), jnp.float32) * scale).astype(dt)
+    de = (jax.random.normal(k5, (rows, latent), jnp.float32) * scale).astype(dt)
+    kk = jax.random.split(k1, 3)
+    wg = (jax.random.normal(kk[0], (n_exp, latent, inter), jnp.float32) * 0.02).astype(dt)
+    wu = (jax.random.normal(kk[1], (n_exp, latent, inter), jnp.float32) * 0.02).astype(dt)
+    wd = (jax.random.normal(kk[2], (n_exp, inter, latent), jnp.float32) * 0.02).astype(dt)
+    base = rows // n_exp
+    sizes = jnp.full((n_exp,), base, jnp.int32).at[0].add(rows - base * n_exp)
+    if n_exp > 1:
+        # Пустая группа (граница, которую кернел обязан пережить) — её доля
+        # уходит группе 0, сумма остаётся rows.
+        sizes = sizes.at[1].set(0).at[0].add(base)
+    return z, hg, hu, a, de, wg, wu, wd, sizes
+
+
+def device_available() -> bool:
+    """True, когда JAX видит GPU-устройство (Mosaic требует устройство).
+
+    Lowering устройства не требует (``lower_check`` работает ровно так), —
+    поэтому проверка стоит в :func:`kernel`, а не в :func:`_build_kernel`.
+    """
+    try:
+        return any(d.platform == "gpu" for d in jax.devices())
+    except Exception:  # noqa: BLE001 — сломанный плагин не должен читаться как GPU
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Mosaic GPU-кернел
+# ---------------------------------------------------------------------------
+
+
+@dataclasses.dataclass(frozen=True)
+class _KernelSpec:
+    """Статические формы, под которые построен кернел (ключ jit-кеша)."""
+
+    rows: int
+    latent: int
+    inter: int
+    n_exp: int
+    bm: int
+    bt: int
+    bk: int
+    dtype: str
+    beta_gate: float
+    beta_up: float
+
+
+@functools.lru_cache(maxsize=8)
+def _build_kernel(rows, latent, inter, n_exp, bm, bt, bk, dtype,
+                  beta_gate, beta_up):
+    """Построить Pallas/Mosaic-кернел: одна программа на эксперта.
+
+    Фаза A идёт по блокам строк группы (динамические границы ``pl.loop``, маска
+    принадлежности эксперту), фазы B/C/D — по тайлам весовых выходов с
+    накоплением в регистрах.  Скретч ``dhg``/``dhu`` — GMEM-выходы кернела
+    (``plgpu.kernel`` не имеет GMEM-scratch, кроме ``out_type``; та же
+    структура, что у персистентного KDA-кернела).
+    """
+    from jax.experimental import pallas as pl
+    from jax.experimental.pallas import mosaic_gpu as plgpu
+
+    dt = jnp.dtype(dtype)
+    f32 = jnp.float32
+    bg = float(beta_gate)
+    bu = float(beta_up)
+
+    def _mma_layouts(m):
+        mw = 1 if m < 64 else 4
+        return (
+            plgpu.Layout.MMA_ACC(dt, m_warps=mw),
+            plgpu.Layout.MMA_LHS(dt, m_warps=mw),
+            plgpu.Layout.MMA_RHS(dt, m_warps=mw),
+        )
+
+    ACC_R, L_R, R_R = _mma_layouts(bm)      # (bm, .) — строковые аккумуляторы
+    ACC_B, L_B, R_B = _mma_layouts(bt)      # (bt, bt) — весовые тайлы
+    ACC_W, _, _ = _mma_layouts(inter)       # (inter, bk) — загрузка wd
+    ACC_LT, _, _ = _mma_layouts(latent)     # (latent, bk) — загрузка wg/wu
+
+    def _l(ref, layout):
+        return plgpu.load(ref, layout=layout, optimized=False)
+
+    def _plain(ref):
+        return plgpu.load(ref, optimized=False)
+
+    def _zero(shape, layout):
+        return plgpu.layout_cast(jnp.zeros(shape, f32), layout)
+
+    def _iota(shape, axis):
+        return plgpu.layout_cast(
+            plgpu.broadcasted_iota(jnp.int32, shape, axis),
+            plgpu.Layout.WG_STRIDED(shape, 2),
+        )
+
+    def _body(zg, hgg, hug, ag, deg, wgg, wug, wdg, gsg,
+              dwg_o, dwu_o, dwd_o, dz_o, dhg_o, dhu_o,
+              op_i_s, de_s, wd_s, dhg_s, dhu_s, w_s, dz_s, op_t_s, x_s, y_s):
+        e = jax.lax.axis_index("expert")
+
+        # Начало и размер группы эксперта e: статическая сумма по всем
+        # экспертам с маской j < e (динамический срез group_sizes невозможен).
+        start = jnp.zeros((), jnp.int32)
+        for j in range(n_exp):
+            start = start + jnp.where(jnp.int32(j) < e, gsg[j], jnp.int32(0))
+        size = gsg[e]
+        end = start + size
+        i0 = start // bm
+        i1 = (end + bm - 1) // bm
+
+        def _row_store(out, idx, row_s, r, width):
+            """Построчная запись строки r из SMEM в GMEM по динамическому индексу."""
+            out[idx, pl.ds(0, width)] = _plain(
+                row_s.at[pl.ds(r, 1), pl.ds(0, width)]).reshape(width)
+
+        def _row_block(i):
+            """Фаза A: da/dhg/dhu/dz одного блока строк эксперта."""
+            off = jnp.minimum(i * bm, rows - bm)
+            gi = _iota((bm, inter), 0) + off
+            valid = (gi >= start) & (gi < end)
+            op_i_s[...] = valid.astype(dt)
+            mask_i = _l(op_i_s, ACC_R).astype(f32)          # (bm, inter)
+            mask_k = _l(op_i_s.at[pl.ds(0, bm), pl.ds(0, bk)], ACC_R).astype(f32)
+
+            # da = de · wd^T (K-поток по latent, wd читается тайлами).
+            da = _zero((bm, inter), ACC_R)
+            for kk in range(latent // bk):
+                de_v = _l(deg.at[pl.ds(off, bm), pl.ds(kk * bk, bk)], ACC_R).astype(f32)
+                de_s[...] = (de_v * mask_k).astype(dt)
+                wd_s[...] = _l(wdg.at[e, pl.ds(0, inter), pl.ds(kk * bk, bk)], ACC_W)
+                da = plgpu.mma(da, _l(de_s, L_R), _l(wd_s.T, R_R))
+
+            # siti-адъюнкт: те же выражения, что net/mlp.py:siti_glu.
+            hg_v = _l(hgg.at[pl.ds(off, bm), pl.ds(0, inter)], ACC_R).astype(f32) * mask_i
+            hu_v = _l(hug.at[pl.ds(off, bm), pl.ds(0, inter)], ACC_R).astype(f32) * mask_i
+            sig_g = jax.nn.sigmoid(hg_v)
+            th_g = jnp.tanh(hg_v / bg)
+            th_u = jnp.tanh(hu_v / bu)
+            gate = bg * th_g * sig_g
+            up = bu * th_u
+            dgate = (1.0 - th_g * th_g) * sig_g + bg * th_g * sig_g * (1.0 - sig_g)
+            dup = 1.0 - th_u * th_u
+            dhg = da * up * dgate
+            dhu = da * gate * dup
+            dhg_s[...] = dhg.astype(dt)
+            dhu_s[...] = dhu.astype(dt)
+
+            # Скретч dhg/dhu для весовых фаз (bf16 — объявленный операнд-путь).
+            for r in range(bm):
+                gr = off + jnp.int32(r)
+                idx = jnp.where((gr >= start) & (gr < end), gr, rows + e)
+                _row_store(dhg_o, idx, dhg_s, r, inter)
+                _row_store(dhu_o, idx, dhu_s, r, inter)
+
+            # dz = dhg·wg^T + dhu·wu^T, тайлы bt по latent.
+            for tj in range(latent // bt):
+                acc = _zero((bm, bt), ACC_R)
+                for kk in range(inter // bk):
+                    dhg_k = _l(dhg_s.at[pl.ds(0, bm), pl.ds(kk * bk, bk)], L_R)
+                    w_s[...] = _l(wgg.at[e, pl.ds(tj * bt, bt), pl.ds(kk * bk, bk)], ACC_LT)
+                    acc = plgpu.mma(acc, dhg_k, _l(w_s.T, R_R))
+                    dhu_k = _l(dhu_s.at[pl.ds(0, bm), pl.ds(kk * bk, bk)], L_R)
+                    w_s[...] = _l(wug.at[e, pl.ds(tj * bt, bt), pl.ds(kk * bk, bk)], ACC_LT)
+                    acc = plgpu.mma(acc, dhu_k, _l(w_s.T, R_R))
+                dz_s[...] = acc
+                for r in range(bm):
+                    gr = off + jnp.int32(r)
+                    idx = jnp.where((gr >= start) & (gr < end), gr, rows + e)
+                    _row_store(dz_o, idx, dz_s, r, bt)
+
+        pl.loop(i0, i1)(_row_block)
+
+        def _tile_mask(off):
+            """Маска (bm, bt) текущего блока строк для весовых фаз."""
+            gi = _iota((bm, bt), 0) + off
+            op_t_s[...] = ((gi >= start) & (gi < end)).astype(dt)
+            return _l(op_t_s, ACC_R).astype(f32)
+
+        def _weight_tile(ti, tj, lhs_ref, rhs_ref, out_ref):
+            """Один тайл ``(bt, bt)`` весового градиента: накопление по строкам.
+
+            ``lhs_ref`` — строковый операнд левой матрицы (``a``/``z``),
+            ``rhs_ref`` — правой (``de``/``dhg``); обе читаются с маской
+            принадлежности эксперту и транспонируются через SMEM: mma ждёт
+            ``k``-непрерывную память операндов.
+            """
+
+            def _inner(i, acc):
+                off = jnp.minimum(i * bm, rows - bm)
+                m = _tile_mask(off)
+                lv = _l(lhs_ref.at[pl.ds(off, bm), pl.ds(ti * bt, bt)], ACC_R).astype(f32)
+                rv = _l(rhs_ref.at[pl.ds(off, bm), pl.ds(tj * bt, bt)], ACC_R).astype(f32)
+                x_s.transpose((1, 0))[...] = (lv * m).astype(dt)
+                y_s.transpose((1, 0))[...] = (rv * m).astype(dt)
+                return plgpu.mma(acc, _l(x_s, L_B), _l(y_s.T, R_B))
+
+            acc = pl.loop(i0, i1, init_carry=_zero((bt, bt), ACC_B))(_inner)
+            out_ref[e, pl.ds(ti * bt, bt), pl.ds(tj * bt, bt)] = acc
+
+        def _weight_pass(lhs_ref, rhs_ref, out_ref, nt_m, nt_n):
+            """Все тайлы одного весового градиента — динамический ``pl.loop``.
+
+            Тайлы обходятся динамическим циклом (а не раскрываются Python-
+            циклом): модуль остаётся компактным, компиляция — секунды, а не
+            десятки; индексы выходного среза — динамические ``pl.ds``.
+            """
+
+            def _tile(t):
+                _weight_tile(t // nt_n, t % nt_n, lhs_ref, rhs_ref, out_ref)
+
+            pl.loop(0, nt_m * nt_n)(_tile)
+
+        # B: dwd = a^T · de — (inter, latent).
+        _weight_pass(ag, deg, dwd_o, inter // bt, latent // bt)
+        # C: dwg = z^T · dhg — (latent, inter), скретч bf16.
+        _weight_pass(zg, dhg_o, dwg_o, latent // bt, inter // bt)
+        # D: dwu = z^T · dhu.
+        _weight_pass(zg, dhu_o, dwu_o, latent // bt, inter // bt)
+
+    return plgpu.kernel(
+        _body,
+        out_type=(
+            jax.ShapeDtypeStruct((n_exp, latent, inter), jnp.float32),   # dwg
+            jax.ShapeDtypeStruct((n_exp, latent, inter), jnp.float32),   # dwu
+            jax.ShapeDtypeStruct((n_exp, inter, latent), jnp.float32),   # dwd
+            jax.ShapeDtypeStruct((rows + n_exp, latent), jnp.float32),   # dz + dump
+            jax.ShapeDtypeStruct((rows + n_exp, inter), dt),             # dhg скретч
+            jax.ShapeDtypeStruct((rows + n_exp, inter), dt),             # dhu скретч
+        ),
+        scratch_types=[
+            plgpu.SMEM((bm, inter), dt),     # op_i
+            plgpu.SMEM((bm, bk), dt),        # de
+            plgpu.SMEM((inter, bk), dt),     # wd
+            plgpu.SMEM((bm, inter), dt),     # dhg
+            plgpu.SMEM((bm, inter), dt),     # dhu
+            plgpu.SMEM((bt, bk), dt),        # wg/wu
+            plgpu.SMEM((bm, bt), f32),       # dz эпилог
+            plgpu.SMEM((bm, bt), dt),        # op_t
+            plgpu.SMEM((bt, bm), dt),        # x_s
+            plgpu.SMEM((bt, bm), dt),        # y_s
+        ],
+        compiler_params=dataclasses.replace(
+            plgpu.CompilerParams(), lowering_semantics=plgpu.LoweringSemantics.Lane
+        ),
+        grid=(n_exp,),
+        grid_names=("expert",),
+    )
+
+
+@functools.lru_cache(maxsize=8)
+def _kernel_run(rows, latent, inter, n_exp, bm, bt, bk, dtype,
+                beta_gate, beta_up):
+    """jit-обёртка построенного кернела (кеш по статической спецификации)."""
+    return jax.jit(_build_kernel(rows, latent, inter, n_exp, bm, bt, bk,
+                                 dtype, beta_gate, beta_up))
+
+
+def kernel(z_grouped, h_g, h_u, a, de_grouped, wg, wu, wd, group_sizes, *,
+           bm=BM_DEFAULT, bt=BT_DEFAULT, bk=BK_DEFAULT,
+           beta_gate=BETA_GATE_DEFAULT, beta_up=BETA_UP_DEFAULT):
+    """Fused backward экспертного блока: ``(z,hg,hu,a,de,wg,wu,wd,sizes)`` →
+    ``(dwg, dwu, dwd, dz_grouped)``.
+
+    Все операнды — bf16 (валидированный mma-путь sm_121), аккумуляторы — fp32;
+    ``group_sizes`` — int32, сумма равна ``rows``; пустая группа и неполная
+    группа — штатные границы (маска строк + dump-слоты).  Возвращает
+    градиенты весов по экспертам (fp32) и ``dz_grouped`` (rows, latent) fp32.
+
+    Исполнение требует Mosaic GPU (GB10); на CPU-узле — типизированный
+    :class:`MoeBwdKernelError` (без тихого отката).  *Lowering* устройства не
+    требует и проверяется отдельно (``net/tests/moe_experts_bwd_lower.py``).
+    """
+    rows, latent = z_grouped.shape
+    inter = h_g.shape[1]
+    n_exp = wg.shape[0]
+    case = dict(rows=int(rows), latent=int(latent), inter=int(inter),
+                n_exp=int(n_exp), dtype=jnp.dtype(z_grouped.dtype).name)
+    params = dict(bm=int(bm), bt=int(bt), bk=int(bk))
+    if not valid_config(case, params):
+        raise MoeBwdKernelError(
+            f"fused MoE-backward: конфигурация {case} (bm={bm}, bt={bt}, bk={bk}) "
+            "вне живых случаев сита valid_config (формы mma/SMEM-пол/bf16); "
+            "тихого отката нет")
+    if not device_available():
+        raise MoeBwdKernelError(
+            "fused MoE-backward: Mosaic-кернел исполняется только на GPU "
+            "(sm_121); на CPU-узле выберите AXIOM_MOE_BWD=jax. "
+            "Тихого отката нет — режим выбирается явно.")
+    spec = _KernelSpec(rows, latent, inter, n_exp, int(bm), int(bt), int(bk),
+                       jnp.dtype(z_grouped.dtype).name, float(beta_gate),
+                       float(beta_up))
+    run = _kernel_run(spec.rows, spec.latent, spec.inter, spec.n_exp, spec.bm,
+                      spec.bt, spec.bk, spec.dtype, spec.beta_gate, spec.beta_up)
+    dwg, dwu, dwd, dz, _dhg, _dhu = run(
+        z_grouped, h_g, h_u, a, de_grouped, wg, wu, wd, group_sizes)
+    return dwg, dwu, dwd, dz[:rows]
+
+
+# ---------------------------------------------------------------------------
+# jnp-адъюнкт экспертного блока (CPU-паритет; численный пин кернела)
+# ---------------------------------------------------------------------------
+
+
+def _q(x):
+    """Квантование операнда в bf16 и обратно в fp32 (объявленный путь mma)."""
+    return x.astype(jnp.bfloat16).astype(jnp.float32)
+
+
+def reference_bwd(z_grouped, h_g, h_u, a, de_grouped, wg, wu, wd, group_sizes,
+                  *, beta_gate=BETA_GATE_DEFAULT, beta_up=BETA_UP_DEFAULT):
+    """Аналитический адъюнкт экспертного блока — точная семантика кернела.
+
+    Повторяет алгебру :func:`kernel` в jnp: маска принадлежности строки
+    эксперту (``eid`` из ``group_sizes``), те же формулы ``siti_glu`` и
+    ``sech²``, те же точки квантования (все операнды и скретч ``dhg``/``dhu``
+    округляются в bf16 — операнд-путь кернела), аккумулятор fp32.
+
+    Сложность — ``O(n_exp · rows · latent · inter)``: это CPU-пин для малых
+    форм паритета (``net/tests/test_54_moe_bwd_fused.py``), не исполнитель
+    кампанийной геометрии.  Пустой эксперт (``group_size=0``) даёт нулевые
+    градиенты своего среза; порядок групп/строк — входной (кернел его не
+    переставляет).
+    """
+    rows, latent = z_grouped.shape
+    inter = h_g.shape[1]
+    n_exp = wg.shape[0]
+    f32 = jnp.float32
+    bg, bu = float(beta_gate), float(beta_up)
+
+    # bf16-операнды (точки округления кернела) в fp32-арифметике.
+    zq = _q(z_grouped)
+    hgq = _q(h_g)
+    huq = _q(h_u)
+    aq = _q(a)
+    deq = _q(de_grouped)
+    wgq = _q(wg)
+    wuq = _q(wu)
+    wdq = _q(wd)
+
+    gs = group_sizes.astype(jnp.int32)
+    starts = jnp.cumsum(gs) - gs
+    ridx = jnp.arange(rows, dtype=jnp.int32)
+    eid = jnp.sum((ridx[:, None] >= starts[None, :]).astype(jnp.int32), axis=1) - 1
+
+    dwg = jnp.zeros((n_exp, latent, inter), f32)
+    dwu = jnp.zeros((n_exp, latent, inter), f32)
+    dwd = jnp.zeros((n_exp, inter, latent), f32)
+    dz = jnp.zeros((rows, latent), f32)
+
+    for e in range(n_exp):
+        m = (eid == e).astype(f32)[:, None]
+        ze = zq * m
+        hge = hgq * m
+        hue = huq * m
+        ae = aq * m
+        dee = deq * m
+
+        sig_g = jax.nn.sigmoid(hge)
+        th_g = jnp.tanh(hge / bg)
+        th_u = jnp.tanh(hue / bu)
+        gate = bg * th_g * sig_g
+        up = bu * th_u
+        dgate = (1.0 - th_g * th_g) * sig_g + bg * th_g * sig_g * (1.0 - sig_g)
+        dup = 1.0 - th_u * th_u
+
+        da = dee @ wdq[e].T                       # (rows, inter)
+        dhg = da * up * dgate
+        dhu = da * gate * dup
+        dwd = dwd.at[e].set(ae.T @ dee)           # (inter, latent)
+        dhgq = _q(dhg)
+        dhuq = _q(dhu)
+        dwg = dwg.at[e].set(ze.T @ dhgq)          # (latent, inter)
+        dwu = dwu.at[e].set(ze.T @ dhuq)
+        dz = dz + dhgq @ wgq[e].T + dhuq @ wuq[e].T
+    return dwg, dwu, dwd, dz
+
+
+def reference(z_grouped, h_g, h_u, a, de_grouped, wg, wu, wd, group_sizes,
+              **kwargs):
+    """Псевдоним :func:`reference_bwd` для контракта скилла (``reference``)."""
+    return reference_bwd(z_grouped, h_g, h_u, a, de_grouped, wg, wu, wd,
+                         group_sizes, **kwargs)

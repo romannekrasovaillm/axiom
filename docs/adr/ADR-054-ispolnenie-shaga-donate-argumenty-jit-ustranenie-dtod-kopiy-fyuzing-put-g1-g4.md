@@ -1702,3 +1702,22 @@ got <class 'tuple'> at position 0` — fused-путь `net/moe.py` вызыва�
 принимается. (3) GPU-чек combine/scatter (архитектор). (4) Затем A/B: шаг
 ≤22 с и `sec_bwd_moe` ≤5.5 с, иначе минус.
 **Reversibility:** default `jax`; нерабочий fused-путь в кампанию не попал.
+
+---
+
+## Amendment 60 (2026-10-20): fused dispatch/scatter MoE — **МИНУС −50 %** (691.6 / 47.381 с против 1 389.6 / 23.581); корректен, но дорог; XLA-часть MoE-backward — не dispatch
+
+**GPU-паритет (цикл-36, `836443d`):** dispatch rel **0** (bitwise), combine
+(0.00e+00, 1.27e-07), scatter **0**, детерминизм; `test_56` (модельный композит)
++ `test_55` — 55 passed. **Исполнение** на кампанийной клетке:
+`AXIOM_MOE_DISPATCH=fused` (вместе с FP8 + `MOE_BWD=fused`) — **691.6 ток/с,
+шаг 47.381 с**, лосс в допуске, nan 0, против базы 1 389.6 / 23.581 — **−50 %**
+(шаг вырос на 23.8 с). Причина: 12 per-expert программ × 3 кернела (dispatch/
+combine/scatter) × 24 слоя — запуски/сериализация дороже XLA-последовательности.
+Гейт default `jax`; в кампанию не включаем.
+
+**Коррекция модели.** `sec_bwd_moe` 7.144 с = fused-кернел 3.55 + XLA ~3.6, но
+XLA-часть — **не** группировка/scatter (там мс по памяти/арифметике), а
+**per-layer remat-recompute форварда MoE** + routing/elementwise. Следующий адрес:
+recompute-forward в backward (или иные классы: CE 2.16, KDA 3.01, хост).
+**Reversibility:** гейт default `jax`; кампанийная нога не менялась.

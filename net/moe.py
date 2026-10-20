@@ -370,18 +370,76 @@ def _routed_experts_dense(params, cfg: ModelConfig, z, topk, sel_p):
     return compute_dtype.gemm_einsum("nk,nkl->nl", sel_p, e)
 
 
+#: Env-гейт fused dispatch/scatter (ADR-054 Am.58, цикл-35): ``"jax"``
+#: (дефолт — прежняя XLA-последовательность, побитово) | ``"fused"``
+#: (Mosaic-кернелы :mod:`net.kernels.moe_dispatch`).  Форма
+#: ``AXIOM_MOE_BWD``/``AXIOM_KDA_CC_IMPL``: читается на трейсе, неизвестное —
+#: ошибка (fail-closed).
+MOE_DISPATCH_ENV = "AXIOM_MOE_DISPATCH"
+
+#: Допустимые значения fused-гейта.
+MOE_DISPATCH_VALUES = ("jax", "fused")
+MOE_DISPATCH_JAX = "jax"
+MOE_DISPATCH_FUSED = "fused"
+
+
+class MoeDispatchError(ValueError):
+    """Неизвестное значение ``AXIOM_MOE_DISPATCH`` (fail-closed, без догадок)."""
+
+
 def dispatch_mode() -> str:
     """Режим исполнения маршрутизированных экспертов: ``grouped`` (по умолчанию) | ``dense``.
 
     Переменная окружения ``AXIOM_MOE_DISPATCH`` читается **на каждом вызове**: флаг
     существует ровно для отката, поэтому он не кешируется и не требует перезапуска
     интерпретатора. Неизвестное значение — ошибка, а не тихий откат к умолчанию.
+
+    С цикла-35 (ADR-054 Am.58) та же переменная несёт fused-гейт
+    :func:`moe_dispatch_mode` (``"jax"``/``"fused"``).  Здесь эти значения
+    читаются как ``grouped``: fused-путь — это тот же grouped-исполнитель, лишь
+    с Mosaic-раскладкой строк; ``dense`` остаётся отдельным откатным путём.
     """
-    mode = (os.environ.get("AXIOM_MOE_DISPATCH") or "grouped").strip().lower()
-    if mode not in ("grouped", "dense"):
-        raise ValueError(
-            f"AXIOM_MOE_DISPATCH={mode!r}: ожидается 'grouped' или 'dense'")
-    return mode
+    raw = os.environ.get(MOE_DISPATCH_ENV)
+    mode = (raw or "").strip().lower()
+    if mode in ("", "grouped", MOE_DISPATCH_JAX, MOE_DISPATCH_FUSED):
+        return "grouped"
+    if mode == "dense":
+        return "dense"
+    raise MoeDispatchError(
+        f"{MOE_DISPATCH_ENV}={mode!r}: ожидается 'grouped', 'dense', "
+        f"'jax' или 'fused'")
+
+
+def moe_dispatch_mode(value: str | None = None) -> str:
+    """Раскладка маршрутизации: ``"jax"`` (дефолт) | ``"fused"``.
+
+    ``AXIOM_MOE_DISPATCH=fused`` заменяет XLA-последовательность
+    ``expert_of → stable argsort → take(z) → ragged → scatter-add(dz)``
+    Mosaic-кернелами :mod:`net.kernels.moe_dispatch`: dispatch (каноническая
+    группировка строк), combine (``de_grouped``/``dsel_p``) и scatter (``dz``).
+    ``jax`` — прежний путь, побитово и с прежним jaxpr (блокирующий критерий
+    дельты).
+
+    Пустая/незаданная переменная = ``"jax"``; значения — ``"jax"``/``"fused"``
+    (регистр и пробелы нормализуются).  Легаси-значения ``"grouped"``/``"dense"``
+    относятся к прежнему исполнителю (:func:`dispatch_mode`) и читаются как
+    ``"jax"``: fused-раскладка их не подменяет.  Неизвестное —
+    :class:`MoeDispatchError` (fail-closed: опечатка не должна тихо выдать
+    прежний путь за fused-замер).  Явный аргумент сильнее окружения (форма
+    :func:`moe_bwd_mode`).  Читается на трейсе, не кешируется — A/B идёт на
+    одной ревизии.
+    """
+    raw = value if value is not None else os.environ.get(MOE_DISPATCH_ENV)
+    mode = (raw or "").strip().lower() or MOE_DISPATCH_JAX
+    if mode == MOE_DISPATCH_FUSED:
+        return MOE_DISPATCH_FUSED
+    if mode in (MOE_DISPATCH_JAX, "grouped", "dense"):
+        # dense — отдельный исполнитель (dispatch_mode), fused-раскладка в нём
+        # не участвует; для этого гейта он означает прежний путь.
+        return MOE_DISPATCH_JAX
+    raise MoeDispatchError(
+        f"{MOE_DISPATCH_ENV}={mode!r}: ожидается одно из "
+        f"{list(MOE_DISPATCH_VALUES)}")
 
 
 #: Env-гейт способа группировки назначений по экспертам: ``0`` (дефолт —
@@ -589,6 +647,122 @@ def _grouped_backward(res, du, counting):
     )
 
 
+def _grouped_dispatch_forward(wg, wu, wd, z, topk, sel_p, n_tokens, k,
+                              n_routed, beta_gate, beta_up):
+    """Forward fused-раскладки: Mosaic dispatch, дальше — дословно прежний путь.
+
+    ``net.kernels.moe_dispatch.kernel`` возвращает ``z_grouped`` в каноническом
+    порядке (стабильно по эксперту, внутри — порядок появления), поэтому
+    ragged-блок и микс ``sel_p`` — прежние выражения: числа совпадают с
+    ``jax``-путём побитово, если кернел раскладки точен (шов-эквивалент —
+    :func:`net.kernels.moe_dispatch.reference_dispatch`).
+    """
+    from .kernels import moe_dispatch
+
+    z_grouped, group_sizes, assign_rows, pair_of_row = moe_dispatch.kernel(
+        z, topk, sel_p, n_exp=n_routed)
+    h_g = _ragged_gemm(z_grouped, wg, group_sizes)
+    h_u = _ragged_gemm(z_grouped, wu, group_sizes)
+    a = mlp_mod.siti_glu((h_g, h_u), beta_gate, beta_up)
+    e_grouped = _ragged_gemm(a, wd, group_sizes)  # (N*k, latent)
+    # Обратная перестановка forward'а: e[i] = e_grouped[assign_rows[i]].
+    e = e_grouped[assign_rows].reshape(n_tokens, k, -1)
+    u = compute_dtype.gemm_einsum("nk,nkl->nl", sel_p, e)
+    res = (wg, wu, wd, z, topk, sel_p, group_sizes, z_grouped, h_g, h_u, a,
+           e, e_grouped, pair_of_row)
+    return u, res
+
+
+def _grouped_dispatch_backward(res, du, bwd_fused: bool, n_routed: int,
+                               beta_gate: float, beta_up: float):
+    """Backward fused-раскладки: combine/scatter-кернелы + экспертный backward.
+
+    ``combine`` собирает ``de_grouped`` (та же перестановка, что forward) и
+    ``dsel_p`` одним запуском; экспертные градиенты считает либо fused-кернел
+    (``AXIOM_MOE_BWD=fused``), либо ``jax.vjp`` блока (дефолт); ``scatter``
+    возвращает ``dz`` суммой по ``k`` фиксированного порядка.  Пустая группа —
+    пустой диапазон, без делений.
+    """
+    from .kernels import moe_dispatch
+
+    (wg, wu, wd, z, topk, sel_p, group_sizes, z_grouped, h_g, h_u, a, e,
+     e_grouped, pair_of_row) = res
+    n_tokens, k, _latent = e.shape
+
+    de_grouped, dsel_p = moe_dispatch.combine(
+        du, e_grouped, pair_of_row, sel_p, group_sizes, n_exp=n_routed)
+
+    if bwd_fused:
+        from .kernels import moe_experts_bwd
+
+        dt = jnp.bfloat16
+        dwg, dwu, dwd, dz_grouped = moe_experts_bwd.kernel(
+            z_grouped.astype(dt),
+            h_g.astype(dt),
+            h_u.astype(dt),
+            a.astype(dt),
+            de_grouped.astype(dt),
+            wg.astype(dt),
+            wu.astype(dt),
+            wd.astype(dt),
+            group_sizes,
+        )
+    else:
+        # Дословно тот же экспертный блок, что в forward: его VJP — прежний
+        # autodiff-путь, только без повторной XLA-раскладки строк.
+        def _block(zg, wg_v, wu_v, wd_v):
+            hg = _ragged_gemm(zg, wg_v, group_sizes)
+            hu = _ragged_gemm(zg, wu_v, group_sizes)
+            aa = mlp_mod.siti_glu((hg, hu), beta_gate, beta_up)
+            return _ragged_gemm(aa, wd_v, group_sizes)
+
+        _, vjp = jax.vjp(_block, z_grouped, wg, wu, wd)
+        dz_grouped, dwg, dwu, dwd = vjp(de_grouped.astype(z_grouped.dtype))
+
+    dz = moe_dispatch.scatter(
+        dz_grouped, pair_of_row, group_sizes,
+        n_tokens=n_tokens, k=k, n_exp=n_routed)
+    return (
+        dwg.astype(wg.dtype),
+        dwu.astype(wu.dtype),
+        dwd.astype(wd.dtype),
+        dz.astype(z.dtype),
+        None,
+        dsel_p.astype(sel_p.dtype),
+    )
+
+
+@functools.lru_cache(maxsize=8)
+def _grouped_dispatch_fused_impl(n_tokens, k, n_routed, beta_gate, beta_up,
+                                 bwd_fused):
+    """``custom_vjp``-обёртка fused-раскладки (dispatch + combine/scatter).
+
+    Ключ кэша — статическая геометрия и выбор экспертного backward'а; гейт
+    читается до входа сюда, на трейсе.  Правила резолвят функции
+    :mod:`net.kernels.moe_dispatch` на модуле в момент вызова, поэтому тесты
+    подменяют шов (jnp-эквиваленты), не трогая ``moe.py``.
+    """
+
+    @jax.custom_vjp
+    def experts(wg, wu, wd, z, topk, sel_p):
+        u, _ = _grouped_dispatch_forward(
+            wg, wu, wd, z, topk, sel_p, n_tokens, k, n_routed, beta_gate,
+            beta_up)
+        return u
+
+    def experts_fwd(wg, wu, wd, z, topk, sel_p):
+        return _grouped_dispatch_forward(
+            wg, wu, wd, z, topk, sel_p, n_tokens, k, n_routed, beta_gate,
+            beta_up)
+
+    def experts_bwd(res, du):
+        return _grouped_dispatch_backward(res, du, bwd_fused, n_routed,
+                                          beta_gate, beta_up)
+
+    experts.defvjp(experts_fwd, experts_bwd)
+    return experts
+
+
 @functools.lru_cache(maxsize=8)
 def _grouped_fused_impl(n_tokens, k, n_routed, counting, beta_gate, beta_up):
     """``custom_vjp``-обёртка экспертной части, ключ — статическая геометрия.
@@ -624,8 +798,14 @@ def _routed_experts(params, cfg: ModelConfig, z, topk, sel_p):
 
 
 def _routed_experts_grouped(params, cfg: ModelConfig, z, topk, sel_p, *,
-                            bwd: str | None = None):
+                            bwd: str | None = None,
+                            dispatch: str | None = None):
     """Routed mix ``u`` computing **only the top-k selected experts** per token.
+
+    Гейт ``AXIOM_MOE_DISPATCH`` (``dispatch`` сильнее env) выбирает раскладку:
+    ``"jax"`` (дефолт) — прежняя XLA-последовательность побитово; ``"fused"`` —
+    Mosaic dispatch/combine/scatter (:func:`_grouped_dispatch_fused_impl`),
+    канонический порядок групп/строк тот же.
 
     Гейт ``AXIOM_MOE_BWD`` (``bwd`` сильнее env) выбирает backward: ``"jax"``
     (дефолт) — прежний autodiff побитово; ``"fused"`` — ``custom_vjp``, forward
@@ -647,7 +827,14 @@ def _routed_experts_grouped(params, cfg: ModelConfig, z, topk, sel_p, *,
     einsum spelling is only the lowering — an fp32 relative gap of ~1e-6, the
     tolerance the same test pins.
     """
-    if moe_bwd_mode(bwd) == MOE_BWD_FUSED:
+    bwd_mode = moe_bwd_mode(bwd)
+    if moe_dispatch_mode(dispatch) == MOE_DISPATCH_FUSED:
+        impl = _grouped_dispatch_fused_impl(
+            z.shape[0], cfg.moe_top_k, cfg.moe_num_routed,
+            cfg.siti_beta_gate, cfg.siti_beta_up, bwd_mode == MOE_BWD_FUSED)
+        return impl(params.expert_g, params.expert_u, params.expert_d, z,
+                    topk, sel_p)
+    if bwd_mode == MOE_BWD_FUSED:
         impl = _grouped_fused_impl(
             z.shape[0], cfg.moe_top_k, cfg.moe_num_routed, counting_sort_mode(),
             cfg.siti_beta_gate, cfg.siti_beta_up)

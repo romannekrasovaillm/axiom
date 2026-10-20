@@ -68,6 +68,12 @@ ragged → scatter(dz)`` — это мелкие кернелы и латент�
 * численная семантика пинуется jnp-эквивалентами :func:`reference_dispatch`,
   :func:`reference_combine`, :func:`reference_scatter` (CPU): тесты подменяют
   шов этими функциями и сверяют fused-путь с autodiff ``jax``-пути;
+* структура выхода Pallas пинуется отдельно: ``out_type`` — дерево, поэтому
+  один выход scatter-кернела приходит кортежем ``(dz_k,)``.  Обёртки
+  :func:`combine`/:func:`scatter` распаковывают его явно (цикл-36: ``jnp.sum``
+  на кортеже падал с "sum requires ndarray or scalar arguments"); модельный
+  композит с настоящими обёртками и низкоуровневыми jnp-швами —
+  ``net/tests/test_56_moe_compose.py``;
 * паритет *исполненного* кернела, время и детерминизм на GB10 — за
   архитектором (``check_kernel.py``); до стенда паритет не заявляется.
 """
@@ -551,11 +557,13 @@ def combine(du, e_grouped, pair_of_row, sel_p, group_sizes, *, n_exp,
             "(sm_121); на CPU-узле выберите AXIOM_MOE_DISPATCH=jax. "
             "Тихого отката нет — режим выбирается явно.")
     offsets = group_offsets(group_sizes)
-    de, dsel = _combine_run(
+    # ``_combine_run`` — Pallas-дерево из двух выходов: распаковка явная,
+    # дальше ровно по одному ndarray на величину (цикл-36).
+    de_grouped, dsel_p = _combine_run(
         tokens, k, latent, n_exp, int(bm), int(bc),
         jnp.dtype(du.dtype).name)(du, e_grouped, pair_of_row, sel_p,
                                   group_sizes, offsets)
-    return de, dsel
+    return de_grouped, dsel_p
 
 
 def scatter(dz_grouped, pair_of_row, group_sizes, *, n_tokens, k, n_exp,
@@ -582,7 +590,12 @@ def scatter(dz_grouped, pair_of_row, group_sizes, *, n_tokens, k, n_exp,
             "(sm_121); на CPU-узле выберите AXIOM_MOE_DISPATCH=jax. "
             "Тихого отката нет — режим выбирается явно.")
     offsets = group_offsets(group_sizes)
-    dz_k = _scatter_run(
+    # ``out_type`` scatter-кернела — дерево из ОДНОГО ``ShapeDtypeStruct``,
+    # поэтому Pallas возвращает кортеж ``(dz_k,)``, а не голый массив
+    # (цикл-36: ``jnp.sum`` на этом кортеже падал с "sum requires ndarray or
+    # scalar arguments, got <class 'tuple'>"). Распаковка явная: дальше —
+    # ровно один ndarray ``(tokens, k, latent)``.
+    (dz_k,) = _scatter_run(
         n_tokens, k, latent, int(n_exp), int(bm), int(bc),
         jnp.dtype(dz_grouped.dtype).name)(
             dz_grouped, pair_of_row, group_sizes, offsets)

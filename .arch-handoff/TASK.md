@@ -1,20 +1,24 @@
 # Задача для кодового харнесса
 
-Цикл-32 кампании MFU-55 (ADR-054 Am.54): fused MoE-backward — два фикса перед GPU-приёмкой. (1) `dwg=nan` на пустой группе эксперта (rows=256, 12 экспертов): весовая фаза пустой группы даёт 0/0 или неинициализированный аккумулятор; на rows=2048 (группы ~341) dwg был 9.5e-4. (2) `rows % bm == 0` — fail-closed в valid_config (при rows % bm ≠ 0 крайние блоки перекрываются и весовые фазы дважды считают строки; кампанийная геометрия кратна, но тихая ошибка недопустима). `dz_grouped` уже исправлен и GPU-подтверждён (3.62e-4); его путь не ломать.
+Цикл-35 кампании MFU-55 (ADR-054 Am.58): fused dispatch/scatter MoE. Измерено (Am.56/57): `sec_bwd_moe` 7.144 с = fused-кернел 3.55 с + **XLA-часть ~3.6 с** (группировка/gather-scatter/routing-грады + per-layer remat-recompute; память ни при чём). Замена XLA-последовательности одним Mosaic-кернелом на чанк токенов; гейт default `jax` (побитово).
 
-ОКРУЖЕНИЕ: CPU-интерпретатор `/home/roman/venv-axiom-0112cpu-py312/bin/python`; `NET_JAX_BACKEND=cpu JAX_PLATFORMS=cpu`; по одному файлу pytest. Реальный GPU-чек — за архитектором (стенд); до него паритет ядра не заявлять (ADR-011).
+ОКРУЖЕНИЕ: CPU-интерпретатор `/home/roman/venv-axiom-0112cpu-py312/bin/python`; `NET_JAX_BACKEND=cpu JAX_PLATFORMS=cpu`; по одному файлу pytest. GPU-only кернел; на CPU fused отказывает типизированно (тесты подменяют шов). Реальный GPU-чек — за архитектором (стенд); до него паритет не заявлять.
 
-1) `net/kernels/moe_experts_bwd.py`:
-   - Empty-group guard: если `group_sizes[e] == 0` (start==end), программа эксперта пишет `dwg[e]=dwu[e]=dwd[e]=0` (без делений/аккумуляций по пустой группе) и ничего в dz/dhg/dhu, кроме собственного dump-слота; те же правила для неполной группы (строки вне [start,end) — dump-слот, маска).
-   - Найти источник nan: деление на счётчик группы/`inter`/`bm` при пустой группе, неинициализированный SMEM/ACC, `jnp.where` с невычисленной ветвью. Все деления — с guard'ом (знаменатель ≥1) или через маску, без nan.
-   - `valid_config`: добавить `rows % bm == 0` (иначе False, типизированный отказ в kernel); CASES не менять (2048/256 кратны 16); oversize-кейс остаётся скипом.
-2) Тесты `net/tests/test_54_moe_bwd_fused.py` (обновить/добавить):
-   a. пустая группа (один эксперт с 0 строк; вход `group_sizes` с нулём) — эмулятор/зеркало дают нулевые вес-градиенты, без nan/inf; dz строки — в dump-слоте;
-   b. неполная группа (rows % bm ≠ 0 при прочих кратных оговорках — если такие формы остаются в CASES; иначе синтетический юнит на helper'ах `expert_block_range/offset/row_slot`): строки покрыты ровно один раз, dump-слоты не пересекаются с живыми;
-   c. `valid_config` отвергает `rows % bm != 0`;
-   d. регресс: dz-паритет эмуляции с reference_bwd; dwg/dwu/dwd на полной группе.
-3) Прогони: `test_54_moe_bwd_fused.py`, lower_check адаптера (`moe_experts_bwd_lower.py`), `test_32_moe_grouped_topk`, `test_50_gemm_fp8`.
-4) Ограничения: без unsafe; `net/config.json` не трогать; гейт default `jax`; dz-путь (исправленный) не менять, кроме guard'ов; dwg/dwu/dwd на полной группе — не менять; стиль русских docstring.
+1) `net/moe.py` — гейт `AXIOM_MOE_DISPATCH` (форма `counting_sort_mode`/`persist_mode`): `"jax"` (дефолт — текущая XLA-последовательность, побитово) | `"fused"`; пусто/не задано = "jax"; неизвестное → `MoeDispatchError` (fail-closed); читается на трейсе.
+2) Новый модуль `net/kernels/moe_dispatch.py` (Mosaic GPU, контракт pallas-gb10-kernel: `CASES/make_inputs/reference/kernel/cost/TUNE_SPACE/valid_config/device_available`):
+   - **dispatch**: входы `z (tokens,768)` (латентные токены), `topk_idx (tokens,k)` (k=2), `sel_p (tokens,k)`; выход `z_grouped (rows,768)` (rows=tokens*k, в **каноническом порядке**: стабильно по эксперту, внутри эксперта — по порядку появления токена, как forward), `group_sizes (12,)`, и (для backward) `assign_rows`/`row_of_token` (позиция каждой (token,k) пары в группировке);
+   - **combine/scatter**: входы `de_grouped (rows,768)`, `row_of_token`, `sel_p`; выходы `dz (tokens,768)` = Σ_k sel_p·de (порядок суммирования k фиксирован — детерминизм), `dsel_p (tokens,k)` = <de, e_k>;
+   - всё per-expert (grid=(12,)) + префиксные суммы `group_sizes`; SMEM ≤99 КиБ; bf16/fp32-аккум; `rows % bm == 0` fail-closed (как в moe_experts_bwd); пустая группа — пустой диапазон без делений;
+   - jnp-`reference_dispatch`/`reference_combine` для CPU-паритета.
+3) `net/moe.py`: при gate="fused" использовать fused dispatch/combine в forward и в backward-пути (`de_grouped`/`dz`/`dsel_p`), сохраняя порядок/канон; при off — прежний код дословно.
+4) Тесты `net/tests/test_55_moe_dispatch.py` (CPU, шов):
+   a. гейт: пусто/jax/fused/регистр/пробелы; неизвестное → `MoeDispatchError`; явный аргумент сильнее env;
+   b. off: output/градиенты побитово равны ревизии до дельты;
+   c. on (шов = jnp-reference): `z_grouped` совпадает с текущим (порядок!), `group_sizes`; `dz`/`dsel_p` == autodiff off в scale-relative ≤2e-2; детерминизм (два запуска);
+   d. пустые/неполные группы; k=1 и k=2; `valid_config`/`device_available=False` — типизированный отказ;
+   e. lower_check-адаптер `net/tests/moe_dispatch_lower.py`.
+5) Прогони: `test_55_moe_dispatch.py`, затем `test_32_moe_grouped_topk`, `test_54_moe_bwd_fused`, `test_46_mtp_kda_impl`.
+6) Ограничения: без unsafe; `net/config.json` не трогать; gate default `jax`; при off — побитово (блокирующий критерий); порядок групп/токенов — канон forward; стиль русских docstring.
 JSON-контракт результата обязателен. Финальный git-коммит обязателен.
 
 ## Границы (scope)
@@ -28,7 +32,7 @@ JSON-контракт результата обязателен. Финальн�
 
 ## План отката
 
-Откат: git reset --hard <baseline_commit из .arch-handoff/MANIFEST.json> (гейт AXIOM_MOE_BWD default `jax` — fused-путь инертен). Признак регрессии: CPU-тесты/lowering ломаются, GPU-чек (архитектор) не проходит.
+Откат: git reset --hard <baseline_commit из .arch-handoff/MANIFEST.json> (гейт default `jax` — побитово прежний путь). Признак регрессии: off-путь перестал быть побитовым, порядок/паритет dispatch вне допуска, новые красные.
 
 ## Финализация (обязательно)
 

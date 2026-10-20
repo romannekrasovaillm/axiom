@@ -1,24 +1,20 @@
 # Задача для кодового харнесса
 
-Цикл-35 кампании MFU-55 (ADR-054 Am.58): fused dispatch/scatter MoE. Измерено (Am.56/57): `sec_bwd_moe` 7.144 с = fused-кернел 3.55 с + **XLA-часть ~3.6 с** (группировка/gather-scatter/routing-грады + per-layer remat-recompute; память ни при чём). Замена XLA-последовательности одним Mosaic-кернелом на чанк токенов; гейт default `jax` (побитово).
+Цикл-36 кампании MFU-55 (ADR-054 Am.59): починить fused dispatch-путь MoE. Стендовый A/B `AXIOM_MOE_DISPATCH=fused` (вместе с `AXIOM_GEMM_FP8=1` и `AXIOM_MOE_BWD=fused`) упал на первом шаге: `sum requires ndarray or scalar arguments, got <class 'tuple'> at position 0`. Dispatch-кернел проверен на GPU (bitwise exact, Am.59), подозреваемые — `moe_dispatch.combine`/`scatter` (`_combine_run`/`_scatter_run`): `jnp.sum` на tuple/распаковка. CPU-тесты `test_55` 46 passed, но **модельный композит с fused-гейтом не проверялся** — это обязательный гейт цикла-36.
 
-ОКРУЖЕНИЕ: CPU-интерпретатор `/home/roman/venv-axiom-0112cpu-py312/bin/python`; `NET_JAX_BACKEND=cpu JAX_PLATFORMS=cpu`; по одному файлу pytest. GPU-only кернел; на CPU fused отказывает типизированно (тесты подменяют шов). Реальный GPU-чек — за архитектором (стенд); до него паритет не заявлять.
+ОКРУЖЕНИЕ: CPU-интерпретатор `/home/roman/venv-axiom-0112cpu-py312/bin/python`; `NET_JAX_BACKEND=cpu JAX_PLATFORMS=cpu`; по одному файлу pytest. GPU-чек — архитектор (стенд); до него паритет не заявлять.
 
-1) `net/moe.py` — гейт `AXIOM_MOE_DISPATCH` (форма `counting_sort_mode`/`persist_mode`): `"jax"` (дефолт — текущая XLA-последовательность, побитово) | `"fused"`; пусто/не задано = "jax"; неизвестное → `MoeDispatchError` (fail-closed); читается на трейсе.
-2) Новый модуль `net/kernels/moe_dispatch.py` (Mosaic GPU, контракт pallas-gb10-kernel: `CASES/make_inputs/reference/kernel/cost/TUNE_SPACE/valid_config/device_available`):
-   - **dispatch**: входы `z (tokens,768)` (латентные токены), `topk_idx (tokens,k)` (k=2), `sel_p (tokens,k)`; выход `z_grouped (rows,768)` (rows=tokens*k, в **каноническом порядке**: стабильно по эксперту, внутри эксперта — по порядку появления токена, как forward), `group_sizes (12,)`, и (для backward) `assign_rows`/`row_of_token` (позиция каждой (token,k) пары в группировке);
-   - **combine/scatter**: входы `de_grouped (rows,768)`, `row_of_token`, `sel_p`; выходы `dz (tokens,768)` = Σ_k sel_p·de (порядок суммирования k фиксирован — детерминизм), `dsel_p (tokens,k)` = <de, e_k>;
-   - всё per-expert (grid=(12,)) + префиксные суммы `group_sizes`; SMEM ≤99 КиБ; bf16/fp32-аккум; `rows % bm == 0` fail-closed (как в moe_experts_bwd); пустая группа — пустой диапазон без делений;
-   - jnp-`reference_dispatch`/`reference_combine` для CPU-паритета.
-3) `net/moe.py`: при gate="fused" использовать fused dispatch/combine в forward и в backward-пути (`de_grouped`/`dz`/`dsel_p`), сохраняя порядок/канон; при off — прежний код дословно.
-4) Тесты `net/tests/test_55_moe_dispatch.py` (CPU, шов):
-   a. гейт: пусто/jax/fused/регистр/пробелы; неизвестное → `MoeDispatchError`; явный аргумент сильнее env;
-   b. off: output/градиенты побитово равны ревизии до дельты;
-   c. on (шов = jnp-reference): `z_grouped` совпадает с текущим (порядок!), `group_sizes`; `dz`/`dsel_p` == autodiff off в scale-relative ≤2e-2; детерминизм (два запуска);
-   d. пустые/неполные группы; k=1 и k=2; `valid_config`/`device_available=False` — типизированный отказ;
-   e. lower_check-адаптер `net/tests/moe_dispatch_lower.py`.
-5) Прогони: `test_55_moe_dispatch.py`, затем `test_32_moe_grouped_topk`, `test_54_moe_bwd_fused`, `test_46_mtp_kda_impl`.
-6) Ограничения: без unsafe; `net/config.json` не трогать; gate default `jax`; при off — побитово (блокирующий критерий); порядок групп/токенов — канон forward; стиль русских docstring.
+1) Диагностика/фикс `net/kernels/moe_dispatch.py`:
+   - Найти `sum(...)`/возврат tuple в `_combine_run`/`_scatter_run` (и их обвязке `combine`/`scatter`); привести к ndarray: `de_grouped`, `dsel_p`, `dz` — по одному массиву; распаковку — явную.
+   - Проверить формы/оси: `de_grouped[row] = du[token]·sel_p[token,slot]` (rows×latent); `dsel_p[token,slot] = <du[token], e_grouped[row]>` (tokens×k, fp32-аккум); `dz = Σ_k dz_grouped.reshape(tokens,k,latent)` по фиксированной оси 1.
+   - Если fused combine/scatter починить не удаётся без риска — **допустимый компромисс**: в fused-пути оставить только dispatch-кернел, а combine/scatter вести jnp-`reference_combine`/`reference_scatter` (XLA), честно указав это в docstring/отчёте; гейт остаётся, семантика та же.
+2) **Обязательный модельный композит-тест** `net/tests/test_56_moe_compose.py` (CPU, швы = jnp-reference и/или подмена kernel-швов):
+   - `moe.apply` с `AXIOM_MOE_DISPATCH=fused` (и отдельно с `AXIOM_MOE_BWD=fused`): forward-выход и градиенты по параметрам/x == off-путь в scale-relative ≤2e-2 (для dispatch-only — побитово/≤1e-6, т.к. это перестановка);
+   - прогон `compute_loss`/`jax.grad` на малой модели (l1/tiny-подобной) с fused-гейтом — **без исключений**, форма градиентов;
+   - регресс: off-путь побитово прежний.
+3) Прогони: `test_56_moe_compose.py`, `test_55_moe_dispatch.py`, `test_32_moe_grouped_topk`, `test_54_moe_bwd_fused`.
+4) Ограничения: без unsafe; `net/config.json` не трогать; default `jax`; при off — побитово; порядок/канон forward сохранить; стиль русских docstring.
+5) В отчёте явно: реальный GPU-чек и стендовый A/B — за архитектором; если выбран компромисс dispatch-only, назвать его и ожидаемый потолок (снимается только часть XLA-части).
 JSON-контракт результата обязателен. Финальный git-коммит обязателен.
 
 ## Границы (scope)
@@ -32,7 +28,7 @@ JSON-контракт результата обязателен. Финальн�
 
 ## План отката
 
-Откат: git reset --hard <baseline_commit из .arch-handoff/MANIFEST.json> (гейт default `jax` — побитово прежний путь). Признак регрессии: off-путь перестал быть побитовым, порядок/паритет dispatch вне допуска, новые красные.
+Откат: git reset --hard <baseline_commit из .arch-handoff/MANIFEST.json> (гейт `AXIOM_MOE_DISPATCH` default `jax` — побитово прежний путь). Признак регрессии: off-путь перестал быть побитовым, модельный композит не совпадает, новые красные.
 
 ## Финализация (обязательно)
 

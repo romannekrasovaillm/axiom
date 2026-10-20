@@ -1677,3 +1677,28 @@ remat-recompute). Память там ни при чём (~600 МБ при 417 �
 (цель ≤5.5 с) и шаг ≤22 с (≥+4.5 % к 1 389.6/23.581); nan 0, лосс в допуске.
 **Риски:** порядок top-k/групп (канон forward), дерево суммирования scatter-add
 (детерминизм), пустые группы (Am.54 guard). **Reversibility:** гейт default `jax`.
+
+---
+
+## Amendment 59 (2026-10-19): цикл-35 — dispatch-кернел точен (GPU, bitwise), но A/B упал: combine/scatter-путь даёт `sum(tuple)`; гейт `fused` нерабочий, цикл-36 — фикс и модельный композит-тест
+
+**Принято/измерено.** (1) `test_55` 46 passed, lower_check OK 2/0; GPU-чек
+**dispatch-кернела** (tokens=32768, k=2, latent=768, 12 экспертов): `z_grouped`
+rel **0.00e+00** (bitwise), `group_sizes`/`assign_rows`/`pair_of_row` — exact,
+детерминизм; ветка влита (`5f5d821`). (2) **Стендовый A/B `AXIOM_MOE_DISPATCH=fused`
+упал на первом шаге:** `ОШИБКА цикла: sum requires ndarray or scalar arguments,
+got <class 'tuple'> at position 0` — fused-путь `net/moe.py` вызывает
+`moe_dispatch.combine`/`scatter`, а их `_combine_run`/`_scatter_run` (в отличие
+от проверенного `kernel`) содержат `jnp.sum` на tuple; CPU-тесты проверяли
+диспетчер и ссылки, но **не модельный композит с fused-гейтом** — гейт
+нерабочий, кампанийная нога не затронута (default `jax`).
+
+**Решение цикла-36.** (1) Починить combine/scatter (`jnp.sum`/распаковка) ИЛИ
+— если быстрый фикс неочевиден — оставить в fused-пути **только dispatch**
+(verified bitwise), а combine/scatter вести jnp-`reference_combine`/
+`reference_scatter` (XLA), сохранив гейт и честно назвав это в отчёте.
+(2) Обязательный **модельный композит-тест**: `moe.apply` с гейтом `fused`
+(швы = reference), сверка forward/градиентов с off-путём; без него гейт не
+принимается. (3) GPU-чек combine/scatter (архитектор). (4) Затем A/B: шаг
+≤22 с и `sec_bwd_moe` ≤5.5 с, иначе минус.
+**Reversibility:** default `jax`; нерабочий fused-путь в кампанию не попал.

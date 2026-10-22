@@ -38,7 +38,7 @@ DONATE-дельта ADR-054 (стадия-1 «исполнение шага»): 
 compute_loss, оптимизатор-арифметику), конфиги и остальные модули не трогать. GPU-прогоны не запускать
 (их делает архитектор на стенде). JAX на этом узле CPU-only — тесты обязаны идти на CPU.
 
-ПРОВЕРКА (ПК): `/home/roman/venv-axiom/bin/python -m pytest -q net/tests/test_donate_step.py` зелёные;
+ПРОВЕРКА (ПК): `~/venv-axiom/bin/python -m pytest -q net/tests/test_donate_step.py` зелёные;
 плюс регресс существующих: `... -m pytest -q net/tests -k "train or optimizer or step"` (CPU-подмножество).
 
 РЕЗУЛЬТАТ: `.arch-handoff/result.json` + финальный git-commit. В assumptions — все найденные читатели
@@ -50,7 +50,7 @@ compute_loss, оптимизатор-арифметику), конфиги и о
 
 - **Можно писать:** `net/train_loop.py`, `net/optimizer.py`, `net/tests/*`
 - **Нельзя писать (сильнее allow):** `model/`, `ARCHITECTURE-SPINE.md`, `CONSTRAINTS.yaml`, `net/config.json`
-- **Можно запускать:** `python3 -m pytest*`, `/home/roman/venv-axiom/bin/python -m pytest*`
+- **Можно запускать:** `python3 -m pytest*`, `~/venv-axiom/bin/python -m pytest*`
 - **Сеть:** сети нет (детерминированный узел)
 
 ## План отката

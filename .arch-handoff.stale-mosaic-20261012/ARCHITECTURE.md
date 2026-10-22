@@ -3,11 +3,11 @@
 Собран: 2026-10-11T08:17:25.376719054+00:00
 
 Источники:
-- /home/roman/.arch-ml/worktrees/axiom-43e236d789188868/mfu55-step-exec/docs/adr/ADR-054-ispolnenie-shaga-donate-argumenty-jit-ustranenie-dtod-kopiy-fyuzing-put-g1-g4.md
-- /home/roman/.arch-ml/worktrees/axiom-43e236d789188868/mfu55-step-exec/docs/adr/ADR-053-kampaniya-krupnyy-shag-rost-mfu-cherez-ukrupnenie-raboty-batch-tokenov-gradientnye-tehniki-potolok-pamyati-izmeren.md
-- /home/roman/.arch-ml/worktrees/axiom-43e236d789188868/mfu55-step-exec/ARCHITECTURE-SPINE.md
+- ~/.arch-ml/worktrees/axiom-43e236d789188868/mfu55-step-exec/docs/adr/ADR-054-ispolnenie-shaga-donate-argumenty-jit-ustranenie-dtod-kopiy-fyuzing-put-g1-g4.md
+- ~/.arch-ml/worktrees/axiom-43e236d789188868/mfu55-step-exec/docs/adr/ADR-053-kampaniya-krupnyy-shag-rost-mfu-cherez-ukrupnenie-raboty-batch-tokenov-gradientnye-tehniki-potolok-pamyati-izmeren.md
+- ~/.arch-ml/worktrees/axiom-43e236d789188868/mfu55-step-exec/ARCHITECTURE-SPINE.md
 
-<!-- источник: /home/roman/.arch-ml/worktrees/axiom-43e236d789188868/mfu55-step-exec/docs/adr/ADR-054-ispolnenie-shaga-donate-argumenty-jit-ustranenie-dtod-kopiy-fyuzing-put-g1-g4.md -->
+<!-- источник: ~/.arch-ml/worktrees/axiom-43e236d789188868/mfu55-step-exec/docs/adr/ADR-054-ispolnenie-shaga-donate-argumenty-jit-ustranenie-dtod-kopiy-fyuzing-put-g1-g4.md -->
 
 ---
 id: ADR-054
@@ -99,6 +99,6 @@ worktree `arch/mfu55-step-exec`; веса/данные не затрагиваю
 - Профиль: `evidence/mfu-55/bigstep/sweep2/profile-best/` (sqlite-запросы в ADR-053 Am.3);
 - ADR-053 Am.3 (вердикты ночи-2), ADR-050 (лестница гейтов), ADR-041 (память), ADR-045 (рамка пина).
 
-<!-- источник: /home/roman/.arch-ml/worktrees/axiom-43e236d789188868/mfu55-step-exec/docs/adr/ADR-053-kampaniya-krupnyy-shag-rost-mfu-cherez-ukrupnenie-rab
+<!-- источник: ~/.arch-ml/worktrees/axiom-43e236d789188868/mfu55-step-exec/docs/adr/ADR-053-kampaniya-krupnyy-shag-rost-mfu-cherez-ukrupnenie-rab
 
 > **Контекст усечён** до 6000 символов; полные тексты — в файлах-источниках (см. MANIFEST.json).

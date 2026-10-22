@@ -24,7 +24,7 @@ spec_files: [ARCHITECTURE-SPINE.md]
 
 ## Decision
 
-1. **Кандидатная линия — отдельное изолированное окружение** `/home/roman/venv-axiom-0112` с точным пином `jax==0.11.2`, `jaxlib==0.11.2` и GPU plugin/PJRT/runtime, зафиксированными **фактическими** версиями и wheel-хешами (aarch64). Существующее `venv-axiom` (0.10.2) **не изменяется** — оно остаётся рабочей линией кампании и точкой отката.
+1. **Кандидатная линия — отдельное изолированное окружение** `~/venv-axiom-0112` с точным пином `jax==0.11.2`, `jaxlib==0.11.2` и GPU plugin/PJRT/runtime, зафиксированными **фактическими** версиями и wheel-хешами (aarch64). Существующее `venv-axiom` (0.10.2) **не изменяется** — оно остаётся рабочей линией кампании и точкой отката.
 2. **Capability gate, а не `jax_version >= 0.11`.** Статусы ведутся раздельно и только по evidence: (а) JAX GPU работает (`jax.devices()` + JIT-операция с `block_until_ready`), (б) Mosaic ALU/elementwise компилируется и исполняется, (в) Mosaic **MMA** — компиляция под CC12.1 + IR/PTX/SASS + численная сверка. Отсутствие `mgpu_mma_` в исходниках, `hasattr`, CPU-прогон и `interpret=True` — **не** доказательство.
 3. **Staged rollout по `mosaic-gb10-migrate`** (стадии не пропускаются):
    1. baseline-инвентаризация (Triton-импорты, layouts, precision, grid, reference/correctness/latency каждого кернела);

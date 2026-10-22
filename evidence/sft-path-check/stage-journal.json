@@ -1,0 +1,221 @@
+{
+  "schema": "sft-stage-journal/v1",
+  "stage": "sft",
+  "status": "failed",
+  "scale": "smoke",
+  "run_ref": "evidence/sft-path-check/stage-journal.json",
+  "started_at": "2026-10-22T15:37:01.263865+00:00",
+  "seed": 1337,
+  "steps": 1,
+  "qat_weights": "on",
+  "backend": {
+    "platform": "gpu",
+    "devices": [
+      {
+        "platform": "gpu",
+        "kind": "NVIDIA GB10"
+      }
+    ],
+    "device_kind": "NVIDIA GB10",
+    "jax_version": "0.11.2",
+    "matmul_precision": "highest",
+    "gate_profile": false,
+    "determinism_pinned": false,
+    "python": "3.12.3"
+  },
+  "notes": [
+    "Смоук-масштаб: доказательство провода стадии, не обучение модели (спека §5).",
+    "sft_train_v12.jsonl = sft_train_v10.1.jsonl + sft_train_v11.jsonl (build_sft_v12.sh, 28.08.2026): свежее v10.1 (25.08) и полнее по составу (мультитёрн-траектории агентного цикла). Выбор зафиксирован карточкой.",
+    "Траекторный блок (ADR-005 п. 1): смоук-окно покрыло 3 мультитёрн-документов агентного цикла — блок присутствует в окне."
+  ],
+  "dataset_symlink": {
+    "path": "data/sft_train_v12-normalized.jsonl",
+    "is_symlink": true,
+    "target": "~/gb10-shared/datasets/sft_train_v12-normalized.jsonl",
+    "shared_root": "~/gb10-shared",
+    "kind": "file",
+    "size_bytes": 486390312
+  },
+  "dataset_card": {
+    "name": "sft_train_v12-normalized",
+    "domain": "sft_messages",
+    "source": "gb10-shared/datasets/sft_train_v12-normalized.jsonl (симлинк; сборка build_sft_v12.sh = v10.1 + v11)",
+    "license": "смешанный: generated (собственные прогоны, self-distillation); не заявлена (синтетика того же пула, отфильтрованная RL-промптами); не заявлена (синтетический вывод модели-учителя Qwen3.8-27B); не заявлена (синтетический вывод сторонней модели-учителя; внутреннее экспериментальное использование); не установлена (в записи о сборке происхождение не объявлено); не установлена (источник не объявлен в реестре лицензий карточки)",
+    "hash": "fd7908bc7b32f13484d34a968084a5755ce058da62f34750f6b828f82c94a593",
+    "sha256": "fd7908bc7b32f13484d34a968084a5755ce058da62f34750f6b828f82c94a593",
+    "blocks": [
+      {
+        "source": "teacher_oxalpha_reasoning",
+        "examples": 22872,
+        "license": "не заявлена (синтетический вывод сторонней модели-учителя; внутреннее экспериментальное использование)",
+        "provenance": "teacher traces stealth/ox-alpha через OpenRouter, OXALPHA_HANDOFF.md 24.08.2026"
+      },
+      {
+        "source": "teacher_oxalpha_multiturn",
+        "examples": 7413,
+        "license": "не заявлена (синтетический вывод сторонней модели-учителя; внутреннее экспериментальное использование)",
+        "provenance": "teacher traces stealth/ox-alpha (мультитёрн), OXALPHA_HANDOFF.md 24.08.2026"
+      },
+      {
+        "source": "oxalpha_reasoning",
+        "examples": 3372,
+        "license": "не заявлена (синтетика того же пула, отфильтрованная RL-промптами)",
+        "provenance": "фильтр утечки build_sft_v10.py по RL-пулу"
+      },
+      {
+        "source": "v4_qwen25-15b_s1337",
+        "examples": 2604,
+        "license": "generated (собственные прогоны, self-distillation)",
+        "provenance": "self-distill Qwen2.5-15B (s1337/s2024/s42/s777/s31415), build_sft_v4.py"
+      },
+      {
+        "source": "teacher_native_xhigh",
+        "examples": 1738,
+        "license": "не заявлена (синтетический вывод модели-учителя Qwen3.8-27B)",
+        "provenance": "teacher_reasoning_v10 (нативный xhigh), build_sft_v10.py"
+      },
+      {
+        "source": "oxalpha_multiturn",
+        "examples": 1436,
+        "license": "не заявлена (синтетика того же пула, отфильтрованная RL-промптами)",
+        "provenance": "фильтр утечки build_sft_v10.py по RL-пулу"
+      },
+      {
+        "source": "<не объявлен>",
+        "examples": 1221,
+        "license": "не установлена (источник не объявлен в реестре лицензий карточки)",
+        "provenance": "происхождение в записи о сборке не объявлено"
+      },
+      {
+        "source": "v10_base",
+        "examples": 1221,
+        "license": "не установлена (в записи о сборке происхождение не объявлено)",
+        "provenance": "базовые примеры sft_train_v3, сохранённые build_sft_v10.py"
+      },
+      {
+        "source": "v4_qwen25-15b_s2024",
+        "examples": 1134,
+        "license": "generated (собственные прогоны, self-distillation)",
+        "provenance": "self-distill Qwen2.5-15B (s1337/s2024/s42/s777/s31415), build_sft_v4.py"
+      },
+      {
+        "source": "teacher_multiturn_xhigh",
+        "examples": 858,
+        "license": "не заявлена (синтетический вывод модели-учителя Qwen3.8-27B)",
+        "provenance": "teacher_multiturn_v10 (LLM-based), build_sft_v10.py"
+      },
+      {
+        "source": "v4_qwen25-15b_s42",
+        "examples": 654,
+        "license": "generated (собственные прогоны, self-distillation)",
+        "provenance": "self-distill Qwen2.5-15B (s1337/s2024/s42/s777/s31415), build_sft_v4.py"
+      },
+      {
+        "source": "v4_qwen25-15b_s777",
+        "examples": 342,
+        "license": "generated (собственные прогоны, self-distillation)",
+        "provenance": "self-distill Qwen2.5-15B (s1337/s2024/s42/s777/s31415), build_sft_v4.py"
+      },
+      {
+        "source": "v4_qwen25-15b_s31415",
+        "examples": 84,
+        "license": "generated (собственные прогоны, self-distillation)",
+        "provenance": "self-distill Qwen2.5-15B (s1337/s2024/s42/s777/s31415), build_sft_v4.py"
+      }
+    ],
+    "lines": 44949,
+    "bytes": 486390312,
+    "path": "data/sft_train_v12-normalized.jsonl",
+    "canonical_path": "~/gb10-shared/datasets/sft_train_v12-normalized.jsonl",
+    "mtime_utc": "2026-10-05T03:50:14.163309+00:00",
+    "date": "2026-10-22",
+    "card_scan_lines": 44949
+  },
+  "tokenizer": {
+    "hash": "9f8d03091c4a44fa8e7c08f57f7d9f4f97b69e8fde622bb9f6ab613da3565857",
+    "source": "net/tokenizer.py canonical (net/config.json:tokenizer_hash)",
+    "vocab_size": 160000,
+    "merges": 677,
+    "max_emitted_id": 936,
+    "model_vocab_size": 1024,
+    "note": "модельный vocab смоука покрывает все испускаемые id канонического токенизатора; полный vocab 160K — масштаб вне смоука"
+  },
+  "pool": {
+    "docs": 10,
+    "sources": {
+      "teacher_oxalpha_reasoning": 6,
+      "teacher_oxalpha_multiturn": 3,
+      "v4_qwen25-15b_s2024": 1
+    },
+    "trajectory_documents": 3,
+    "trajectory_block_covered": true,
+    "sequences": 10,
+    "seq_len": 8192,
+    "tokens": 81910,
+    "tokens_per_step": 8191,
+    "epochs_over_pool": 0.1,
+    "tokenize_seconds": 3.444,
+    "shuffle_seed": 1337,
+    "note": "смоук-окно: голова набора, ограничено --pool-docs/--doc-chars; полный проход по набору не входит в смоук-бюджет (чистый Python BPE)"
+  },
+  "scope": {
+    "dataset_coverage": "10 документов из 44949 в наборе (44949 строк, состав по всей голове)",
+    "trajectory_block_covered": true,
+    "not_full_stage": "СМОУК: стадия исполнена в смоук-масштабе; закрытием стадии «в полном объёме» не является (спека §5)"
+  },
+  "model_config": {
+    "preset": "small",
+    "qat_enabled": true,
+    "qat_kv_enabled": false,
+    "vocab_size": 1024,
+    "hidden": 64,
+    "num_layers": 4,
+    "num_kda_layers": 3,
+    "num_mla_layers": 1,
+    "dense_standard_layers": 0,
+    "num_heads": 4,
+    "head_dim": 16,
+    "dtype": "bf16",
+    "note": "скелет L3 той же архитектуры, что net/config.json (3 KDA + 1 MLA, MTP, LatentMoE, AttnRes), в смоук-масштабе net/tests/conftest.py"
+  },
+  "optimizer": {
+    "name": "per-head-muon+adamw",
+    "lr": 0.01,
+    "schedule": "cosine",
+    "warmup_ratio": 0.01,
+    "source": "net/optimizer.py"
+  },
+  "train_seconds": 63.462,
+  "timing": {
+    "first_step_seconds": 57.634,
+    "step_seconds_mean_tail": 0.0
+  },
+  "loss_curve": [
+    7.327989
+  ],
+  "tokens_seen": 8191,
+  "loss_first": 7.327989,
+  "loss_last": 7.327989,
+  "loss_fell": false,
+  "checkpoint": {
+    "path": "evidence/sft-path-check/checkpoint",
+    "canonical": "~/gb10-shared/checkpoints/sft-sft-path-check",
+    "symlink": true,
+    "format": "orbax",
+    "tree_hash": "caf6942a1c2bd13b4eb722dbeb90a7d51176ef3dd65eab0307e9d396b76a8239",
+    "roundtrip_ok": true
+  },
+  "wall_clock_s": 69.173,
+  "gpu_hours_actual": 0.019215,
+  "budget": {
+    "run_ref": "sft-smoke-2026-10-22",
+    "estimate_path": "evidence/budget/sft-smoke-2026-10-22.json",
+    "estimate_present": false,
+    "gpu_hours_actual": 0.019215,
+    "limit_usd": 5.0,
+    "usd_estimate": null,
+    "verdict": "сметы нет; объявлен явный лимит смоука 5.0 USD — прогон смоука в пределах лимита"
+  },
+  "error": "лосс не упал на смоук-окне (loss_first <= loss_last) — честная фиксация, подгонка запрещена (спека §4.2)",
+  "finished_at": "2026-10-22T15:38:10.438898+00:00"
+}

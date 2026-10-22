@@ -187,3 +187,10 @@ LR 5e-4 на 20 шагах (seed 2027): domain 12.6874, W 10.8459 — domain в�
 - `weights_changed=true`, `parameter_norm_delta=-0.0735`; checkpoint Orbax `tree_hash=6d1c31a4…`, 1.5 МБ, roundtrip ok.
 - `arch-ml` обязан быть в PATH (`~/.cargo/bin`), иначе `ArchMlUnavailable`.
 - **Дефект:** `run_sft_smoke` пишет canonical-чекпоинт в `~/gb10-shared/checkpoints/sft-smoke` независимо от `--out`; small SFT перезаписал l3-full SFT-чекпоинт (журнал l3-full с `tree_hash=7ae62134` остался, веса — уже small). Кандидат фикса: canonical-путь должен включать run/out.
+
+## 16. Фикс canonical-пути SFT-чекпоинта
+
+- Коммит `b4dec34`: canonical теперь `~/gb10-shared/checkpoints/sft-<slug>`, slug — имя run/out-каталога.
+- Проверка на GB10: свежий `--out evidence/sft-path-check` дал `sft-sft-path-check` (double prefix — косметика), старый `sft-smoke` **не тронут**; symlink и roundtrip ok, `tree_hash=caf6942a…`.
+- Journal статус `failed` только из-за проверки «loss упал» на 1 шаге (loss_first == loss_last); это честная фиксация, не дефект пути. Существующие чекпоинты не мигрируются.
+- Тесты: `tools/tests/test_sft_checkpoint_path.py` — 7/7.

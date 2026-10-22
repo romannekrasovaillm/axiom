@@ -112,3 +112,15 @@ A-прогон честно вернул `status=blocked` (не `complete`) им
   эквивалент `arch-ml control check`.
 - **Остаточное:** локальный `arch-be gate` даёт SKIP по command-правилам без
   GB10; на стенде проверка пройдена. Known-red снят.
+
+## Amendment 22.10.2026 (2) — Stop-хук и known-red
+
+- Stop-хук `spine-connect` в `~/.claude/settings.json` обновлён: `rc=3`
+  (SKIP-only) **без** `[FAIL]` допускается как known-red; `[FAIL]` или иной
+  non-zero по-прежнему блокирует завершение (`exit 2`).
+- Резервная копия: `~/.claude/settings.json.bak-20261022-known-red`.
+- Проверено fake-тестами: `rc=1` + `[FAIL]` → hook exit 2;
+  `rc=3` + `[SKIP]` → hook exit 0.
+- Причина: локальный `arch-be gate` без GB10 всегда даёт SKIP-only; после
+  закрытия AD-2/privacy это единственный источник non-zero. Реальные FAIL
+  не ослаблены.

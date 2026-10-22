@@ -179,3 +179,11 @@ LR 5e-4 на 20 шагах (seed 2027): domain 12.6874, W 10.8459 — domain в�
 - Чекпоинт: Orbax `tree_hash=7ae62134…`, roundtrip_ok, canonical `~/gb10-shared/checkpoints/sft-smoke` (2.7 ГБ); в репозитории — симлинк.
 - Preflight CL-017 OVERRIDDEN с причиной «smoke-only: eval-набор не подключён; вердикт не выносится»; обход зафиксирован фактом S-033.
 - Уроки: SFT l3-full требует ~82.5 ГиБ и MEM_FRACTION 0.85 (оценка ресурсов 15 ГиБ занижена); default `chunk_size=64` падает на persistent KDA — нужен 32.
+
+## 15. RL smoke (small, 5 шагов)
+
+- Цепочка: small SFT (10 шагов) → RL smoke: 5 шагов, K=2, inner_epochs=2, lr=1e-3, τ=0.2, β=1e-3.
+- `status=executed`, wall **1966.6 с**; `reward_mean_first/last = 0.0` — калибровка K3 (pass-rate 10–90%) не проводилась, вырожденные группы ожидаемы; это smoke, не вердикт.
+- `weights_changed=true`, `parameter_norm_delta=-0.0735`; checkpoint Orbax `tree_hash=6d1c31a4…`, 1.5 МБ, roundtrip ok.
+- `arch-ml` обязан быть в PATH (`~/.cargo/bin`), иначе `ArchMlUnavailable`.
+- **Дефект:** `run_sft_smoke` пишет canonical-чекпоинт в `~/gb10-shared/checkpoints/sft-smoke` независимо от `--out`; small SFT перезаписал l3-full SFT-чекпоинт (журнал l3-full с `tree_hash=7ae62134` остался, веса — уже small). Кандидат фикса: canonical-путь должен включать run/out.

@@ -1,0 +1,34 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# C-047 — карта согласованности «KPI-число в ADR-032 ↔ пин evidence/kpi-pins.json».
+#
+# Вторая карта C-047 (первая — adr_config_map.yaml: ADR-009 ↔ net/config.json).
+# Схема и загрузчик те же (tools/adr_config_map.py); страж принимает карту
+# через --map, правило C-047 в CONSTRAINTS.yaml прогоняет обе карты.
+#
+# Пин KPI (ADR-032 §4): носитель числа — evidence/kpi-pins.json (у числа один
+# носитель); ADR-032 текстуально дублирует порог 800 и базис 86. Карта связывает
+# текст с носителем: дрейф любой из сторон ловится стражем, а мутатор
+# (numeric_drift/config_drift по drift: true) строит на тех же соответствиях
+# задачи L2/L3.
+#
+# Паттерн не нашёлся в тексте ADR-032 → находка adr-unverifiable (fail-closed),
+# НЕ pass.
+# ─────────────────────────────────────────────────────────────────────────────
+version: 1
+
+adr_glob: "docs/adr/ADR-032-*.md"
+
+config: "evidence/kpi-pins.json"
+
+mappings:
+  - id: kpi_threshold
+    note: "§4: «Целевая лестница: ≥800 ток/с (10×, порог приёмки дельты WY/UT+батча)»"
+    adr_pattern: "≥(\\d+) ток/с"
+    config_field: "pins.0.threshold"
+    drift: true
+
+  - id: kpi_baseline
+    note: "§4: «Базис: 80–86 ток/с (l3-full@8192 B=1, до троттлинга)» — верх границы"
+    adr_pattern: "Базис: \\d+–(\\d+) ток/с"
+    config_field: "pins.0.kpi_tok_s_baseline"
+    drift: true

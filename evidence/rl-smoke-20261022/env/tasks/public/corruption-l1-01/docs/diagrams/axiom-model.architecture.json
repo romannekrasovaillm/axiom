@@ -1,0 +1,376 @@
+{
+ "schema_version": 1,
+ "diagram_type": "architecture",
+ "meta": {
+  "title": "Модель кейса AXIOM: данные → претрейн → пострейн → RL на собственном контуре",
+  "quality_profile": "showcase",
+  "viewBox": [
+   1140,
+   700
+  ],
+  "views": [
+   {
+    "id": "pretrain-path",
+    "label": "Путь претрейна",
+    "focus": [
+     "corpus",
+     "cmp001",
+     "cmp002",
+     "gb10",
+     "rental",
+     "shared"
+    ],
+    "note": "Корпус и токенизация → L3-скелет: обучение на стенде, масштабный класс — на аренде, чекпойнты — в общем хранилище."
+   },
+   {
+    "id": "posttrain-rl",
+    "label": "Пост-трейн и RL",
+    "focus": [
+     "cmp002",
+     "cmp003",
+     "cmp005",
+     "cmp006",
+     "spine"
+    ],
+    "note": "SFT → RL базы → MOPD; среды и верификаторы исполняет агентный харнесс контура arch-ml."
+   },
+   {
+    "id": "victory-axis",
+    "label": "Ось победы",
+    "focus": [
+     "cmp004",
+     "k3",
+     "cmp005",
+     "cmp006"
+    ],
+    "note": "Сравнение с K3 — на равном бюджете и пиннутых снапшотах, механическим вердиктом среды."
+   }
+  ]
+ },
+ "components": [
+  {
+   "id": "corpus",
+   "type": "database",
+   "label": "Пакованный корпус",
+   "sublabel": "tokens-v2, 8K",
+   "pos": [
+    40,
+    110
+   ],
+   "size": [
+    150,
+    62
+   ],
+   "tag": "20B токенов"
+  },
+  {
+   "id": "cmp001",
+   "type": "backend",
+   "label": "Данные и токенизация",
+   "sublabel": "CMP-001",
+   "pos": [
+    262,
+    110
+   ],
+   "size": [
+    150,
+    62
+   ],
+   "tag": "BPE 160K"
+  },
+  {
+   "id": "shared",
+   "type": "database",
+   "label": "Хранилище gb10-shared",
+   "sublabel": "веса, датасеты, чекпойнты",
+   "pos": [
+    40,
+    330
+   ],
+   "size": [
+    150,
+    62
+   ],
+   "tag": "C-032"
+  },
+  {
+   "id": "cmp002",
+   "type": "backend",
+   "label": "Претрейн-конвейер",
+   "sublabel": "CMP-002 · L3-скелет",
+   "pos": [
+    484,
+    110
+   ],
+   "size": [
+    150,
+    62
+   ],
+   "tag": "KDA/MLA/MoE"
+  },
+  {
+   "id": "gb10",
+   "type": "external",
+   "label": "Стенд GB10",
+   "sublabel": "DGX Spark · одна нагрузка",
+   "pos": [
+    706,
+    330
+   ],
+   "size": [
+    150,
+    62
+   ],
+   "tag": "AD-7"
+  },
+  {
+   "id": "rental",
+   "type": "external",
+   "label": "Аренда GPU-кластера",
+   "sublabel": "INT-001 · 8×GPU ≈ $200",
+   "pos": [
+    706,
+    550
+   ],
+   "size": [
+    150,
+    62
+   ],
+   "tag": "AD-8"
+  },
+  {
+   "id": "cmp003",
+   "type": "backend",
+   "label": "Пост-тренировка",
+   "sublabel": "CMP-003 · SFT → RL → MOPD",
+   "pos": [
+    706,
+    110
+   ],
+   "size": [
+    150,
+    62
+   ],
+   "tag": "лагуна-практики"
+  },
+  {
+   "id": "cmp004",
+   "type": "cloud",
+   "label": "Инференс на Spark",
+   "sublabel": "CMP-004 · контекст 1M",
+   "pos": [
+    262,
+    330
+   ],
+   "size": [
+    150,
+    62
+   ],
+   "tag": "NFR-004"
+  },
+  {
+   "id": "cmp005",
+   "type": "security",
+   "label": "RL-среда и верификаторы",
+   "sublabel": "CMP-005 · env/",
+   "pos": [
+    928,
+    110
+   ],
+   "size": [
+    150,
+    62
+   ],
+   "tag": "AD-2"
+  },
+  {
+   "id": "cmp006",
+   "type": "frontend",
+   "label": "Агентный харнесс",
+   "sublabel": "CMP-006",
+   "pos": [
+    928,
+    330
+   ],
+   "size": [
+    150,
+    62
+   ],
+   "tag": "общий для baseline"
+  },
+  {
+   "id": "spine",
+   "type": "external",
+   "label": "Spine AI/ML (arch-ml)",
+   "sublabel": "среда и верификаторы RL",
+   "pos": [
+    928,
+    550
+   ],
+   "size": [
+    150,
+    62
+   ],
+   "tag": "ADR-022"
+  },
+  {
+   "id": "k3",
+   "type": "external",
+   "label": "Kimi K3 (baseline)",
+   "sublabel": "ось победы",
+   "pos": [
+    484,
+    330
+   ],
+   "size": [
+    150,
+    62
+   ],
+   "tag": "AD-1"
+  }
+ ],
+ "connections": [
+  {
+   "id": "corpus-to-cmp001",
+   "from": "corpus",
+   "to": "cmp001",
+   "label": "тексты",
+   "variant": "emphasis"
+  },
+  {
+   "id": "cmp001-to-cmp002",
+   "from": "cmp001",
+   "to": "cmp002",
+   "label": "токены 20B",
+   "variant": "emphasis"
+  },
+  {
+   "id": "cmp002-to-cmp003",
+   "from": "cmp002",
+   "to": "cmp003",
+   "label": "чекпойнт L3",
+   "variant": "emphasis"
+  },
+  {
+   "id": "cmp003-to-cmp005",
+   "from": "cmp003",
+   "to": "cmp005",
+   "label": "RL-прогоны",
+   "variant": "emphasis"
+  },
+  {
+   "id": "cmp002-to-gb10",
+   "from": "cmp002",
+   "to": "gb10",
+   "label": "обучение (AD-7)",
+   "variant": "default"
+  },
+  {
+   "id": "gb10-to-rental",
+   "from": "gb10",
+   "to": "rental",
+   "label": "класс L1 (INT-001)",
+   "variant": "dashed",
+   "labelAt": [
+    781,
+    406
+   ]
+  },
+  {
+   "id": "cmp002-to-shared",
+   "from": "cmp002",
+   "to": "shared",
+   "label": "чекпойнты Orbax",
+   "variant": "dashed",
+   "fromSide": "bottom",
+   "toSide": "right"
+  },
+  {
+   "id": "shared-to-cmp004",
+   "from": "shared",
+   "to": "cmp004",
+   "label": "веса L3 (симлинки)",
+   "variant": "dashed",
+   "labelAt": [
+    226,
+    406
+   ]
+  },
+  {
+   "id": "cmp004-to-k3",
+   "from": "cmp004",
+   "to": "k3",
+   "label": "сравнение (ось)",
+   "variant": "security",
+   "labelAt": [
+    448,
+    406
+   ]
+  },
+  {
+   "id": "cmp006-to-cmp005",
+   "from": "cmp006",
+   "to": "cmp005",
+   "label": "среда и награда",
+   "variant": "default"
+  },
+  {
+   "id": "cmp006-to-spine",
+   "from": "cmp006",
+   "to": "spine",
+   "label": "верификаторы arch-ml",
+   "variant": "default",
+   "labelAt": [
+    1003,
+    406
+   ]
+  }
+ ],
+ "cards": [
+  {
+   "dot": "cyan",
+   "title": "Ось победы (AD-1 · C-013)",
+   "items": [
+    "Сравнение с K3 — только на равном бюджете и пиннутых снапшотах",
+    "Заявления вне объявленной оси запрещены",
+    "Сравнительный стенд — отчётность, не стадия обучения"
+   ]
+  },
+  {
+   "dot": "emerald",
+   "title": "Механический вердикт (AD-2 · C-039)",
+   "items": [
+    "Прохождение задачи и награда — детерминированные функции исполнения",
+    "LLM-судья — вне контура награды RL",
+    "Повторный прогон даёт тот же вердикт"
+   ]
+  },
+  {
+   "dot": "amber",
+   "title": "Пиннинг (AD-4 · C-038)",
+   "items": [
+    "Снапшоты, данные и веса — по содержимому",
+    "Манифест прогона A4 покрывает конвейер",
+    "Веса живут в gb10-shared, в рабочих каталогах — симлинки (C-032)"
+   ]
+  },
+  {
+   "dot": "rose",
+   "title": "Железо и дисциплина (AD-7/AD-8 · ADR-041)",
+   "items": [
+    "Одна модельная нагрузка за раз на GB10",
+    "XLA_PYTHON_CLIENT_MEM_FRACTION обязателен + префлайт-гейт",
+    "Лимит стоимости прогона — до запуска"
+   ]
+  },
+  {
+   "dot": "cyan",
+   "title": "Публикация и лицензии (ADR-004/ADR-030)",
+   "items": [
+    "HF Hub — канал публикации весов (ADR-030)",
+    "Претрейн-корпус публичен: карточка + sha256 шардов (ADR-004)",
+    "Приватный корпус в контур аренды не вывозится (AD-6, C-021)"
+   ]
+  }
+ ]
+}

@@ -1,0 +1,477 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "axiom net/ — сеть с нуля на JAX (скелет L3, ~1B MoE)",
+    "output": "axiom-net-architecture.html",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "net",
+        "label": "Архитектура сети",
+        "focus": [
+          "tok",
+          "img",
+          "vit",
+          "embed",
+          "attn",
+          "ffn",
+          "head",
+          "mtp",
+          "qat",
+          "opt",
+          "ckpt",
+          "gb10",
+          "infer",
+          "env"
+        ],
+        "note": "Токены/изображения → tied-эмбеддинг → 24 слоя (18 KDA + 6 MLA) → head + MTP → QAT/Muon → чекпойнты → RL-среда."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "tok",
+      "type": "external",
+      "label": "BPE-160K токенизатор",
+      "sublabel": "собственный · seed-пиннинг · RT 100%",
+      "tag": "tokenizer.py",
+      "pos": [
+        80,
+        60
+      ],
+      "size": [
+        200,
+        64
+      ]
+    },
+    {
+      "id": "img",
+      "type": "external",
+      "label": "Image-text native",
+      "sublabel": "interleaved · captions/OCR-min",
+      "tag": "data.py",
+      "pos": [
+        460,
+        60
+      ],
+      "size": [
+        200,
+        64
+      ]
+    },
+    {
+      "id": "vit",
+      "type": "backend",
+      "label": "ViT ~22M",
+      "sublabel": "patch 14 · проекция в hidden 1536",
+      "tag": "vit.py",
+      "pos": [
+        460,
+        200
+      ],
+      "size": [
+        200,
+        64
+      ]
+    },
+    {
+      "id": "embed",
+      "type": "backend",
+      "label": "Embedding tied",
+      "sublabel": "160K×1536 · вход=выход",
+      "tag": "model.py",
+      "pos": [
+        80,
+        220
+      ],
+      "size": [
+        200,
+        64
+      ]
+    },
+    {
+      "id": "attn",
+      "type": "backend",
+      "label": "Внимание ×24: 18 KDA + 6 MLA",
+      "sublabel": "SWA · пул кандидатов · top-k · NoPE",
+      "tag": "kda.py · mla.py · attn_sparse.py · topk_exact.py",
+      "pos": [
+        80,
+        360
+      ],
+      "size": [
+        210,
+        66
+      ]
+    },
+    {
+      "id": "ffn",
+      "type": "backend",
+      "label": "FFN ×24: dense + LatentMoE",
+      "sublabel": "latent 768 · 12+2 эксп · QB stop-grad",
+      "tag": "mlp.py · moe.py",
+      "pos": [
+        80,
+        500
+      ],
+      "size": [
+        210,
+        66
+      ]
+    },
+    {
+      "id": "mtp",
+      "type": "backend",
+      "label": "MTP ×1",
+      "sublabel": "aux-лосс предсказания токенов",
+      "tag": "mtp.py",
+      "pos": [
+        460,
+        500
+      ],
+      "size": [
+        200,
+        64
+      ]
+    },
+    {
+      "id": "head",
+      "type": "backend",
+      "label": "LM head → NTP-лосс",
+      "sublabel": "tied 160K → логиты",
+      "tag": "model.py",
+      "pos": [
+        80,
+        640
+      ],
+      "size": [
+        200,
+        64
+      ]
+    },
+    {
+      "id": "qat",
+      "type": "backend",
+      "label": "QAT MXFP4 fake-quant",
+      "sublabel": "straight-through · со стадии SFT",
+      "tag": "quant.py",
+      "pos": [
+        460,
+        360
+      ],
+      "size": [
+        200,
+        64
+      ]
+    },
+    {
+      "id": "opt",
+      "type": "backend",
+      "label": "Per-head Muon + clipping",
+      "sublabel": "cosine · 1% warmup · 8K→64K",
+      "tag": "optimizer.py · curriculum.py",
+      "pos": [
+        460,
+        640
+      ],
+      "size": [
+        210,
+        66
+      ]
+    },
+    {
+      "id": "ckpt",
+      "type": "database",
+      "label": "Orbax-чекпойнты",
+      "sublabel": "побитовый round-trip · хеш",
+      "tag": "checkpoint.py",
+      "pos": [
+        840,
+        220
+      ],
+      "size": [
+        200,
+        64
+      ]
+    },
+    {
+      "id": "gb10",
+      "type": "database",
+      "label": "gb10-shared",
+      "sublabel": "веса/датасеты · симлинки",
+      "tag": "C-032/C-033",
+      "pos": [
+        840,
+        60
+      ],
+      "size": [
+        200,
+        64
+      ]
+    },
+    {
+      "id": "infer",
+      "type": "backend",
+      "label": "infer.py → RL-среда",
+      "sublabel": "seed/temperature · детерминизм",
+      "tag": "infer.py · net_executor.py",
+      "pos": [
+        840,
+        380
+      ],
+      "size": [
+        210,
+        66
+      ]
+    },
+    {
+      "id": "env",
+      "type": "external",
+      "label": "RL-среда (env/)",
+      "sublabel": "fitness/trace/spine · награда",
+      "tag": "ENVIRONMENT-V1",
+      "pos": [
+        840,
+        540
+      ],
+      "size": [
+        200,
+        64
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "security-group",
+      "label": "Pure JAX: только собственные модули (REQ-001)",
+      "wraps": [
+        "attn",
+        "ffn",
+        "mtp",
+        "head",
+        "qat",
+        "opt"
+      ]
+    },
+    {
+      "kind": "security-group",
+      "label": "Хранилище в контуре (C-032/C-033)",
+      "wraps": [
+        "gb10"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "img-to-vit",
+      "from": "img",
+      "to": "vit",
+      "label": "patch 14",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        560,
+        162
+      ]
+    },
+    {
+      "id": "vit-to-embed",
+      "from": "vit",
+      "to": "embed",
+      "label": "проекции в hidden",
+      "fromSide": "left",
+      "toSide": "right"
+    },
+    {
+      "id": "tok-to-embed",
+      "from": "tok",
+      "to": "embed",
+      "label": "токены",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        180,
+        162
+      ]
+    },
+    {
+      "id": "embed-to-attn",
+      "from": "embed",
+      "to": "attn",
+      "label": "последовательность",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "attn-to-ffn",
+      "from": "attn",
+      "to": "ffn",
+      "label": "на каждом из 24 слоёв",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        185,
+        463
+      ]
+    },
+    {
+      "id": "ffn-to-head",
+      "from": "ffn",
+      "to": "head",
+      "label": "последний слой",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "ffn-to-mtp",
+      "from": "ffn",
+      "to": "mtp",
+      "label": "aux-голова",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelAt": [
+        420,
+        533
+      ]
+    },
+    {
+      "id": "ffn-to-qat",
+      "from": "ffn",
+      "to": "qat",
+      "label": "веса → MXFP4 (SFT)",
+      "fromSide": "right",
+      "toSide": "left",
+      "variant": "emphasis",
+      "labelAt": [
+        365,
+        392
+      ]
+    },
+    {
+      "id": "head-to-opt",
+      "from": "head",
+      "to": "opt",
+      "label": "NTP-градиенты",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelAt": [
+        375,
+        673
+      ]
+    },
+    {
+      "id": "mtp-to-opt",
+      "from": "mtp",
+      "to": "opt",
+      "label": "MTP-aux",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "opt-to-ckpt",
+      "from": "opt",
+      "to": "ckpt",
+      "label": "Orbax-чекпойнты",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelAt": [
+        755,
+        460
+      ]
+    },
+    {
+      "id": "ckpt-to-gb10",
+      "from": "ckpt",
+      "to": "gb10",
+      "label": "перенос · симлинки",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "ckpt-to-infer",
+      "from": "ckpt",
+      "to": "infer",
+      "label": "снапшот → генерация",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "infer-to-env",
+      "from": "infer",
+      "to": "env",
+      "label": "ответ исполнителя",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "env-to-opt",
+      "from": "env",
+      "to": "opt",
+      "label": "награда → RL (GRPO)",
+      "fromSide": "bottom",
+      "toSide": "bottom",
+      "via": [
+        [
+          940,
+          730
+        ],
+        [
+          565,
+          730
+        ]
+      ],
+      "variant": "emphasis",
+      "labelAt": [
+        750,
+        730
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Приёмка §6 (34 passed + 3 skip)",
+      "items": [
+        "KDA recurrent↔chunked ~6e-8; MLA reference ~1e-9",
+        "NoPE-экстраполяция 8K→16K: needle-recall ≥50%",
+        "Orbax round-trip побитово; QAT round-trip + смоук",
+        "GPU (RTX 4080 SUPER): tiny train 84 ток/с, forward 575k ток/с; полный 1B@8K — OOM на 16ГБ (честно, отчёт net/gpu-smoke-report.json)",
+        "Интеграция: сеть → env → вердикт → манифест; повтор с seed — идентичный манифест"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Инварианты",
+      "items": [
+        "Формулы — из k3_tech_report.pdf, ссылки :NNN (net/kda-formulas.md)",
+        "Отклонения помечены «наше» — config.deviations (13 записей)",
+        "QB — мониторинговый stop-gradient; балансировка bias Eq.14 (v1.4)",
+        "Active ≈0,47B: без tied-embedding/ViT/MTP (v1.3)",
+        "Веса/датасеты — симлинки на gb10-shared, копий нет (C-032/C-033)"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Наши отклонения от базы",
+      "items": [
+        "Эксперты 12+2 @ intermediate 384 (база: 896 @ 2,78T)",
+        "hidden 1536 / 24 слоя — масштабирование пропорций",
+        "SiTU-GLU/AttnRes — по формулам PDF, неоднозначности помечены",
+        "MaxText — слой отображения; вендоринг на L1 (ADR-008)",
+        "KDA-кернелы Pallas + QB-histogram all-reduce — L1-план"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Механика внимания (13.09.2026): SWA + пул + точный top-k",
+      "items": [
+        "ADR-009 D1/D2: SWA-ветка n_win=128 в каждом слое (KDA — на шаринге q/k/v) + sparse top_k=512 в 6 MLA-слоях",
+        "ADR-012: общий пул кандидатов — top-16 блоков × 64 записи (|P|=1024, не зависит от длины контекста); первый MLA-слой (full) строит пул, остальные (reindex) переоценивают скоры внутри него; reuse реализован и выключен",
+        "Фьюз сборки K/V: потребитель reindex доведён до паритета плотного слоя (1.216× → 1.005×); точное ядро top-k (тайлы+слияние) реализовано и оставлено A/B-ногой — в стеке оно медленнее lax.top_k",
+        "Плотный путь сохранён оракулом под флагом attn_dense_reference (критерий 13: при top_k ≥ T и окне 0 выходы совпадают с плотным до 1e-4)",
+        "Критерий 16 по методике ADR-015 (медиана 9 раундов, чередование порядка ног, частоты 2685 МГц): 8K 0.506×, 64K 0.111×; память 132 МБ / 161 МБ против 3221 МБ / 206 ГБ"
+      ]
+    }
+  ]
+}

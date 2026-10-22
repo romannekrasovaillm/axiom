@@ -1,0 +1,613 @@
+# model/sensors.yaml — реестр датчиков поведенческого слоя Spine (ADR-037, ADR-038).
+#
+# Датчик измеряет и пишет запись факта (evidence/facts/<S-id>.jsonl); вердикт
+# выносит предикат утверждения (model/claims.yaml, tools/check_claims.py).
+# Проверка исполнения реестра: python3 -m tools.sensors.probe
+# Происхождение до сырья: python3 -m tools.sensors.probe --raw (ADR-038, дельта F).
+#
+# Статусы:
+#   active  — датчик реализован; probe требует файл фактов по контракту;
+#   pending — датчик объявлен, но не исполнялся (нет источника/окна/линии);
+#             probe даёт unverified, а не подстановку (C-007).
+# freshness_max_h: null = факт привязан к пину предмета (git sha/хеш), а не ко
+#   времени; число = часы, после которых запись считается устаревшей.
+#
+# pack: доменный пакет (дельта G) — существующие датчики остаются в ядре и
+#   помечаются pack: ml; новые экспортёры живут в tools/sensors/packs/<pack>/.
+# raw: происхождение факта (дельта F) — {path, format, retention_days, in_git}
+#   или {note} для датчиков без отдельного сырья (derived/таймирование/обход ФС).
+#   path может быть glob; retention_days: null = бессрочно; in_git: false —
+#   тяжёлое сырьё вне git (C-032). Селектор фрагмента задаётся в записи факта
+#   (raw_ref.selector: 'lines A-B' | 'key <dotted>' | пусто = весь файл).
+
+- id: S-001
+  name: "исполняемый конфиг модели"
+  facts: [num_kda_layers, num_mla_layers, moe_top_k, moe_routed, moe_shared, vocab_size, kda_impl_selected]
+  context: "cpu | gpu-window | stand-sampler | rental | live-probe | repo"
+  producer: "python3 -m tools.sensors.runtime_config"
+  output: evidence/facts/S-001.jsonl
+  quality: measured
+  freshness_max_h: null
+  zone: line-1
+  status: active
+  pack: ml
+  level: end_to_end
+  raw: {path: net/config.json, format: json, retention_days: null, in_git: true}
+
+- id: S-002
+  name: "число параметров модели (всего и активных на токен)"
+  facts: [params_total, params_active]
+  context: "cpu | gpu-window | rental"
+  producer: "python3 -m tools.sensors.param_count"
+  output: evidence/facts/S-002.jsonl
+  quality: measured
+  freshness_max_h: null
+  zone: line-1
+  status: active
+  pack: ml
+  level: component
+  raw: {path: net/config.json, format: json, retention_days: null, in_git: true}
+
+- id: S-003
+  name: "байты реплики: параметры и состояние оптимизатора"
+  facts: [replica_bytes_params, replica_bytes_opt_state, replica_bytes_total]
+  context: "cpu"
+  producer: "python3 -m tools.sensors.replica_bytes"
+  output: evidence/facts/S-003.jsonl
+  quality: measured
+  freshness_max_h: null
+  zone: line-2
+  status: active
+  pack: ml
+  level: component
+  raw: {note: "чистая арифметика от объявленной конфигурации (S-001/S-002); отдельного сырья нет"}
+
+- id: S-004
+  name: "артефакт токенизатора: sha256 и словарь"
+  facts: [tokenizer_sha256, tokenizer_vocab_size, matches_config_hash]
+  context: "cpu | repo"
+  producer: "python3 -m tools.sensors.tokenizer_artifact"
+  output: evidence/facts/S-004.jsonl
+  quality: measured
+  freshness_max_h: null
+  zone: line-2
+  status: active
+  pack: ml
+  level: component
+  raw: {path: "~/gb10-shared/datasets/axiom-pretrain-l3/tokens-v2/tokenizer/tokenizer.model", format: text, retention_days: null, in_git: false}
+
+- id: S-005
+  name: "токены корпуса претрейна по шардам"
+  facts: [corpus_tokens_total, corpus_tokens_w, corpus_tokens_c, corpus_tokens_q, bins_spotcheck_ok]
+  context: "cpu | repo"
+  producer: "python3 -m tools.sensors.corpus_tokens"
+  output: evidence/facts/S-005.jsonl
+  quality: measured
+  freshness_max_h: null
+  zone: line-2
+  status: active
+  pack: ml
+  level: component
+  raw: {path: "~/gb10-shared/datasets/axiom-pretrain-l3/tokens-v2/**/manifest*.json", format: json, retention_days: null, in_git: false}
+
+- id: S-006
+  name: "объём снапшота чистого кейса"
+  facts: [snapshot_bytes]
+  context: "cpu | repo"
+  producer: "python3 -m tools.sensors.snapshot_size"
+  output: evidence/facts/S-006.jsonl
+  quality: measured
+  freshness_max_h: null
+  zone: line-2
+  status: active
+  pack: ml
+  level: component
+  raw: {note: "обход файловой системы снапшота; отдельного файла сырья нет"}
+
+- id: S-007
+  name: "выполнимость задач лесенки: доля сошедшихся"
+  facts: [feasibility_rate, n_tasks, infeasible_tasks]
+  context: "cpu"
+  producer: "python3 -m tools.sensors.task_feasibility"
+  output: evidence/facts/S-007.jsonl
+  quality: measured
+  freshness_max_h: null
+  zone: line-2
+  status: active
+  pack: ml
+  level: component
+  raw: {note: "исполняемая лесенка: сырьё — генератор задач env/ с сидом; отдельного файла нет"}
+
+- id: S-008
+  name: "время вердикта arch-ml на CPU"
+  facts: [verdict_seconds_p50, verdict_seconds_p90]
+  context: "cpu"
+  producer: "python3 -m tools.sensors.verifier_latency"
+  output: evidence/facts/S-008.jsonl
+  quality: measured
+  freshness_max_h: null
+  zone: line-2
+  status: active
+  pack: ml
+  level: diagnostic
+  raw: {note: "таймирование прогона стража; сырьё — сам прогон, файла нет"}
+
+- id: S-009
+  name: "детерминизм вердикта: совпадение канонизированного JSON"
+  facts: [verdict_identical]
+  context: "cpu"
+  producer: "python3 -m tools.sensors.verifier_determinism"
+  output: evidence/facts/S-009.jsonl
+  quality: measured
+  freshness_max_h: null
+  zone: line-2
+  status: active
+  pack: ml
+  level: end_to_end
+  raw: {note: "два прогона стража сравниваются между собой; отдельного файла нет"}
+
+- id: S-010
+  name: "доли коммитов по кучкам и коллизии нумерации ADR"
+  facts: [docs_share, behaviour_share, work_share, adr_numbering_collisions, collision_fix_commits]
+  context: "repo"
+  producer: "python3 -m tools.sensors.process_piles"
+  output: evidence/facts/S-010.jsonl
+  quality: measured
+  freshness_max_h: null
+  zone: line-2
+  status: active
+  pack: ml
+  level: component
+  raw: {path: ".git", format: text, retention_days: null, in_git: true}
+
+- id: S-011
+  name: "объём временных каталогов pytest/воркспейсов"
+  facts: [pytest_tmp_bytes, env_workspace_bytes, staging_bytes]
+  context: "cpu | repo"
+  producer: "python3 -m tools.sensors.disk_usage"
+  output: evidence/facts/S-011.jsonl
+  quality: measured
+  freshness_max_h: null
+  zone: line-2
+  status: active
+  pack: ml
+  level: diagnostic
+  raw: {note: "обход временных каталогов файловой системы; отдельного файла нет"}
+
+- id: S-012
+  name: "обёртка метрик претрейна: ток/с, шаг, MFU от объявленного пика"
+  facts: [tok_s_median_window, step_seconds_median, mfu_declared_peak, loss_median_window, loss_slope_window]
+  context: "repo | rental | gpu-window"
+  producer: "python3 -m tools.sensors.wrap_pretrain_metrics"
+  output: evidence/facts/S-012.jsonl
+  quality: wrapped
+  freshness_max_h: null
+  zone: line-1
+  status: active
+  pack: ml
+  level: end_to_end
+  fact_levels: {step_seconds_median: diagnostic, mfu_declared_peak: diagnostic, loss_median_window: component, loss_slope_window: component}
+  raw: {path: evidence/kda-wyut/metrics.jsonl, format: jsonl, retention_days: null, in_git: true}
+
+- id: S-013
+  name: "обёртка peak_rss_mb журнала: память ХОСТ-процесса"
+  facts: [host_rss_peak_mb]
+  context: "repo | rental | gpu-window"
+  producer: "python3 -m tools.sensors.wrap_rss"
+  output: evidence/facts/S-013.jsonl
+  quality: wrapped
+  freshness_max_h: null
+  zone: line-1
+  status: active
+  pack: ml
+  level: diagnostic
+  raw: {path: "runs/**/*.log", format: text, retention_days: null, in_git: false}
+
+- id: S-014
+  name: "обёртка бенчмарков block-merge и KDA WY/UT"
+  facts: [block_merge_cost_ratio, block_merge_recall, kda_component_speedup, kda_component_mem_ratio]
+  context: "repo"
+  producer: "python3 -m tools.sensors.wrap_bench"
+  output: evidence/facts/S-014.jsonl
+  quality: wrapped
+  freshness_max_h: null
+  zone: line-1
+  status: active
+  pack: ml
+  level: component
+  raw: {path: "evidence/block-merge-bench-*.json", format: json, retention_days: null, in_git: true}
+
+- id: S-015
+  name: "обёртка калибровки Track-2: pass_rate по уровням и дефекты"
+  facts: [pass_rate, model_checkpoint_sha256, defects]
+  context: "repo"
+  producer: "python3 -m tools.sensors.wrap_calibration"
+  output: evidence/facts/S-015.jsonl
+  quality: wrapped
+  freshness_max_h: null
+  zone: line-2
+  status: active
+  pack: ml
+  level: end_to_end
+  fact_levels: {model_checkpoint_sha256: diagnostic, defects: diagnostic}
+  raw: {path: "evidence/**/calibration*.json", format: json, retention_days: null, in_git: true}
+
+- id: S-016
+  name: "обёртка check_eval_leak: пересечение holdout и обучающего"
+  facts: [overlap_count, holdout_sha256]
+  context: "repo"
+  producer: "python3 -m tools.sensors.wrap_eval_leak"
+  output: evidence/facts/S-016.jsonl
+  quality: wrapped
+  freshness_max_h: null
+  zone: line-2
+  status: active
+  pack: ml
+  level: end_to_end
+  fact_levels: {holdout_sha256: diagnostic}
+  raw: {path: "~/gb10-shared/datasets/**/eval*/**", format: jsonl, retention_days: null, in_git: false}
+
+- id: S-017
+  name: "обёртка check_sft_structure: доли дефектов набора"
+  facts: [sft_defect_shares, dataset_sha256]
+  context: "repo"
+  producer: "python3 -m tools.sensors.wrap_sft_structure"
+  output: evidence/facts/S-017.jsonl
+  quality: wrapped
+  freshness_max_h: null
+  zone: line-2
+  status: active
+  pack: ml
+  level: component
+  raw: {path: "~/gb10-shared/datasets/sft_train_v12.jsonl", format: jsonl, retention_days: null, in_git: false}
+
+- id: S-018
+  name: "обёртка check_gb10_single_load: число загрузок модели"
+  facts: [model_loads_count, verdict_raw]
+  context: "repo | cpu"
+  producer: "python3 -m tools.sensors.wrap_gb10_load"
+  output: evidence/facts/S-018.jsonl
+  quality: wrapped
+  freshness_max_h: null
+  zone: line-1
+  status: active
+  pack: ml
+  level: end_to_end
+  raw: {path: "evidence/gb10-single-load-*.txt", format: text, retention_days: null, in_git: true}
+
+- id: S-019
+  name: "обёртка A5-drift: побитовая идентичность артефактов"
+  facts: [bitwise_identical]
+  context: "repo"
+  producer: "python3 -m tools.sensors.wrap_drift"
+  output: evidence/facts/S-019.jsonl
+  quality: wrapped
+  freshness_max_h: null
+  zone: line-1
+  status: active
+  pack: ml
+  level: end_to_end
+  raw: {path: "evidence/a5-drift-report-*.json", format: json, retention_days: null, in_git: true}
+
+- id: S-020
+  name: "внешний сэмплер стенда: мощность, частота, температура, утилизация"
+  facts: [power_draw_w, sm_clock_mhz, temperature_c, sm_util_pct]
+  context: "gpu-window | stand-sampler"
+  producer: "python3 -m tools.sensors.power_thermal"
+  output: evidence/facts/S-020.jsonl
+  quality: measured
+  freshness_max_h: 1
+  zone: line-1
+  status: pending  # окно GB10 (AD-7): на исполнителе только unverified-записи
+  pack: ml
+  level: diagnostic
+  raw: {path: evidence/power-thermal/, format: csv, retention_days: 90, in_git: false}
+
+- id: S-021
+  name: "память устройства по процессу (внешний сэмплер)"
+  facts: [device_mem_used_mb]
+  context: "gpu-window | stand-sampler"
+  producer: "python3 -m tools.sensors.device_memory_external"
+  output: evidence/facts/S-021.jsonl
+  quality: measured
+  freshness_max_h: 1
+  zone: line-1
+  status: pending  # окно GB10 (AD-7): на исполнителе только unverified-записи
+  pack: ml
+  level: diagnostic
+  raw: {path: evidence/power-thermal/, format: csv, retention_days: 90, in_git: false}
+
+- id: S-022
+  name: "расход аренды по API: spend, ставка, баланс, инстанс"
+  facts: [spend_usd, rate_usd_h, balance_usd, instance_id]
+  context: "rental"
+  producer: "tools/vast_watchdog.py (write_fact параллельно логу)"
+  output: evidence/facts/S-022.jsonl
+  quality: measured
+  freshness_max_h: 1
+  zone: line-1
+  status: pending
+  pack: ml
+  level: end_to_end
+  raw: {path: evidence/rental/, format: jsonl, retention_days: 180, in_git: false}
+
+- id: S-023
+  name: "фазы шага учебного цикла (встраиваемый таймер)"
+  facts: [step_phase_seconds, timer_overhead_pct]
+  context: "live-probe | gpu-window"
+  producer: "tools/sensors/inproc.py::PhaseTimer"
+  output: evidence/facts/S-023.jsonl
+  quality: measured
+  freshness_max_h: null
+  zone: line-1
+  status: pending
+  pack: ml
+  level: diagnostic
+  raw: {note: "встроенный таймер in-process; отдельного сырья нет"}
+
+- id: S-024
+  name: "память устройства JAX (peak/in-use)"
+  facts: [device_peak_bytes, device_bytes_in_use]
+  context: "live-probe | gpu-window"
+  producer: "tools/sensors/inproc.py::DeviceMemory"
+  output: evidence/facts/S-024.jsonl
+  quality: measured
+  freshness_max_h: null
+  zone: line-1
+  status: pending
+  pack: ml
+  level: diagnostic
+  raw: {note: "запрос памяти устройства in-process; отдельного сырья нет"}
+
+- id: S-025
+  name: "измеренный пик bf16-матмула (микробенч)"
+  facts: [measured_peak_tflops_bf16]
+  context: "gpu-window | rental"
+  producer: "python3 -m tools.sensors.peak_tflops_bench"
+  output: evidence/facts/S-025.jsonl
+  quality: measured
+  freshness_max_h: null
+  zone: line-1
+  status: active
+  pack: ml
+  level: component
+  raw: {note: "микробенч: измерение на устройстве, отдельного файла нет"}
+
+- id: S-026
+  name: "побитовая идентичность коротких прогонов (drift-проба)"
+  facts: [short_run_bitwise_identical]
+  context: "gpu-window"
+  producer: "python3 -m tools.sensors.drift_probe"
+  output: evidence/facts/S-026.jsonl
+  quality: measured
+  freshness_max_h: null
+  zone: line-1
+  status: active
+  pack: ml
+  level: end_to_end
+  raw: {note: "сравнение двух прогонов между собой; отдельного файла нет"}
+
+- id: S-027
+  name: "MFU по измеренному пику (производный)"
+  facts: [mfu_measured]
+  context: "cpu | repo"
+  producer: "python3 -m tools.sensors.derived_mfu"
+  output: evidence/facts/S-027.jsonl
+  quality: derived
+  freshness_max_h: null
+  zone: line-2
+  status: active
+  pack: ml
+  level: component
+  raw: {note: "derived: происхождение даёт inputs (S-012 + S-025)"}
+
+- id: S-028
+  name: "ETA прогона для заданной D и машины (производный)"
+  facts: [eta_hours]
+  context: "cpu | repo"
+  producer: "python3 -m tools.sensors.derived_eta"
+  output: evidence/facts/S-028.jsonl
+  quality: derived
+  freshness_max_h: null
+  zone: line-2
+  status: active
+  pack: ml
+  level: component
+  raw: {note: "derived: происхождение даёт inputs (S-002 + S-027)"}
+
+- id: S-029
+  name: "реплика помещается в устройство (производный)"
+  facts: [replica_fits_device]
+  context: "cpu | repo"
+  producer: "python3 -m tools.sensors.derived_fit"
+  output: evidence/facts/S-029.jsonl
+  quality: derived
+  freshness_max_h: null
+  zone: line-2
+  status: active
+  pack: ml
+  level: end_to_end
+  raw: {note: "derived: происхождение даёт inputs (S-003 + S-024/S-021)"}
+
+- id: S-030
+  name: "публичная карточка HF сходится с фактами (производный)"
+  facts: [public_card_matches_facts, public_card_mismatches]
+  context: "repo"
+  producer: "python3 -m tools.sensors.public_claims"
+  output: evidence/facts/S-030.jsonl
+  quality: derived
+  freshness_max_h: null
+  zone: line-2
+  status: active
+  pack: ml
+  level: end_to_end
+  raw: {note: "derived: сверка карточки HF с фактами; происхождение даёт inputs"}
+
+- id: S-031
+  name: "покрытие поведенческого слоя: две доли как факты и нерешённые кандидаты"
+  facts: [share_measurable_claims_with_sensor, share_incidents_guarded, untriaged_candidates, measurable_claims_numerator, measurable_claims_denominator, incidents_guarded_numerator, incidents_denominator]
+  context: "repo | cpu"
+  producer: "python3 -m tools.sensors.run_exporter --id S-031"
+  output: evidence/facts/S-031.jsonl
+  quality: derived
+  freshness_max_h: null
+  zone: line-2
+  status: active
+  pack: spine
+  level: end_to_end
+  raw: {note: "derived: происхождение даёт inputs (sha256 реестров claims/triage/incidents)"}
+
+- id: S-032
+  name: "понедельный тренд долей кучек (документы/поведение/работа)"
+  facts: [weekly_docs_share, weekly_behaviour_share, weekly_work_share, weeks, n_weeks]
+  context: "repo"
+  producer: "python3 -m tools.sensors.run_exporter --id S-032"
+  output: evidence/facts/S-032.jsonl
+  quality: measured
+  freshness_max_h: null
+  zone: line-2
+  status: active
+  pack: spine
+  level: component
+  raw: {path: ".git", format: text, retention_days: null, in_git: true}
+
+- id: S-033
+  name: "отчёт единого preflight по открывающему гейту"
+  facts: [gate_preflight]
+  context: "repo | cpu"
+  producer: "python3 tools/preflight.py <gate>"
+  output: evidence/facts/S-033.jsonl
+  quality: measured
+  freshness_max_h: null
+  zone: line-2
+  status: active
+  pack: spine
+  level: end_to_end
+  raw: {note: "отчёт по запуску preflight; отдельного файла сырья нет"}
+
+- id: S-034
+  name: "аудит fail-open стражей: пробы с отсутствующим входом"
+  facts: [fail_open, outcomes, guards_count, not_probed]
+  context: "repo"
+  producer: "python3 -m tools.sensors.run_exporter --id S-034"
+  output: evidence/facts/S-034.jsonl
+  quality: measured
+  freshness_max_h: null
+  zone: line-2
+  status: active
+  pack: spine
+  level: diagnostic
+  raw: {note: "пробы во временном каталоге: запуск стражей без входа (K4)"}
+
+- id: S-035
+  name: "шум железа: коэффициент вариации рядов и рекомендованный допуск"
+  facts: [cv_tok_s, cv_step_seconds, recommended_tolerance, window_n, k_sigma]
+  context: "repo | cpu | gpu-window"
+  producer: "python3 -m tools.sensors.run_exporter --id S-035"
+  output: evidence/facts/S-035.jsonl
+  quality: measured
+  freshness_max_h: null
+  zone: line-2
+  status: active
+  pack: ml
+  level: diagnostic
+  raw: {path: evidence/kda-wyut/metrics.jsonl, format: jsonl, retention_days: null, in_git: true}
+
+- id: S-036
+  name: "история вердиктов утверждений (каждый прогон --evaluate)"
+  facts: [claim_verdict_history]
+  context: "repo | cpu"
+  producer: "python3 tools/check_claims.py --evaluate"
+  output: evidence/facts/S-036.jsonl
+  quality: measured
+  freshness_max_h: null
+  zone: line-2
+  status: active
+  pack: spine
+  level: diagnostic
+  raw: {note: "запись вердиктов прогона --evaluate; отдельного файла сырья нет"}
+
+- id: S-037
+  name: "детектор флапания вердиктов"
+  facts: [flapping, switches, window_n, threshold]
+  context: "repo | cpu"
+  producer: "python3 -m tools.sensors.run_exporter --id S-037"
+  output: evidence/facts/S-037.jsonl
+  quality: derived
+  freshness_max_h: null
+  zone: line-2
+  status: active
+  pack: spine
+  level: diagnostic
+  raw: {note: "derived: история S-036 (происхождение даёт inputs)"}
+
+- id: S-038
+  name: "теневое согласие стражей и экземпляров шаблонов (full-миграция)"
+  facts: [guard_shadow_agreement]
+  context: "repo | cpu"
+  producer: "python3 -m tools.properties.shadow"
+  output: evidence/facts/S-038.jsonl
+  quality: measured
+  freshness_max_h: null
+  zone: line-2
+  status: active
+  pack: spine
+  level: component
+  raw: {note: "прогон исходного стража и шаблона на одном состоянии в git worktree; отдельного файла сырья нет"}
+
+- id: S-039
+  name: "мутационный счёт: убитые / все неэквивалентные мутанты (по утверждению и правилу)"
+  facts: [mutation_score]
+  context: "repo | cpu"
+  producer: "python3 -m tools.properties.mutate"
+  output: evidence/facts/S-039.jsonl
+  quality: derived
+  freshness_max_h: null
+  zone: line-2
+  status: active
+  pack: spine
+  level: diagnostic
+  raw: {note: "derived: факты утверждений и реестр свойств; происхождение даёт inputs"}
+
+- id: S-040
+  name: "сводка мутаций: распределение по шаблонам и список выживших"
+  facts: [mutation_summary]
+  context: "repo | cpu"
+  producer: "python3 -m tools.properties.mutate"
+  output: evidence/facts/S-040.jsonl
+  quality: derived
+  freshness_max_h: null
+  zone: line-2
+  status: active
+  pack: spine
+  level: diagnostic
+  raw: {note: "derived: результат мутационного исполнителя; происхождение даёт inputs"}
+
+- id: S-041
+  name: "матрица обнаружения возмущений: поймали бы мы это"
+  facts: [detection_matrix]
+  context: "repo | cpu"
+  producer: "python3 -m tools.properties.chaos"
+  output: evidence/facts/S-041.jsonl
+  quality: measured
+  freshness_max_h: null
+  zone: line-2
+  status: active
+  pack: spine
+  level: diagnostic
+  raw: {note: "сценарии в копии репо (git worktree); отдельного файла сырья нет"}
+
+- id: S-042
+  name: "признак промаха кампании MFU-55: MFU шага и ядровая занятость"
+  facts: [mfu_step, core_occupancy]
+  context: "gpu-window | live-probe"
+  producer: "python3 -m tools.sensors.mfu_campaign_miss"
+  output: evidence/facts/S-042.jsonl
+  quality: measured
+  freshness_max_h: null
+  zone: line-1
+  status: pending  # окно GB10 (AD-7): до прогона кампании unverified
+  pack: ml
+  level: end_to_end
+  fact_levels: {core_occupancy: diagnostic}
+  raw: {note: "измерение на устройстве в окне GB10 (tok/s прогона + nsys-профиль занятости); отдельного файла сырья нет"}

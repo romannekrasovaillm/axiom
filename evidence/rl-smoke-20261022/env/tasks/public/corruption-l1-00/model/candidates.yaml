@@ -1,0 +1,200 @@
+# model/candidates.yaml — реестр кандидатов-привязок (ADR-039, дельта G).
+#
+# Кандидат предложен генератором (source ∈ declared|observed|telemetry|incident|llm);
+# принимает кандидата ТОЛЬКО архитектор (status accepted + ref на CL-NNN).
+# Дедупликация по fp; отклонённые/deferred несут reason и повторно не предлагаются.
+# Перегенерация: python3 -m tools.properties.generate_candidates
+
+- fp: cdf2c12a3fff83e5ea86cce5c9069c06bc76d88e45594a680f9f678c44125640
+  source: declared
+  property: declared_equals_actual
+  params: {"actual": {"fact": "S-001.moe_top_k"}, "declared": {"file": "net/config.json", "key": "moe_top_k"}}
+  evidence: ["net/config.json"]
+  status: proposed
+  ref: null
+  reason: null
+- fp: 377df2651ea7e9386d6edc13b96966742a0b51193e25e09cfee3aeb2df2510be
+  source: declared
+  property: declared_equals_actual
+  params: {"actual": {"fact": "S-001.num_kda_layers"}, "declared": {"file": "net/config.json", "key": "num_kda_layers"}}
+  evidence: ["net/config.json"]
+  status: proposed
+  ref: null
+  reason: null
+- fp: 5f1fc69ebac5d703ef7c19dd4ddd9c9c5be6a111b63dd6d860c7c5284e2fd4e0
+  source: declared
+  property: declared_equals_actual
+  params: {"actual": {"fact": "S-001.num_mla_layers"}, "declared": {"file": "net/config.json", "key": "num_mla_layers"}}
+  evidence: ["net/config.json"]
+  status: proposed
+  ref: null
+  reason: null
+- fp: 259af30c83ac38be5a7b2013ecdaf6eb5af3987e07073816f1fd52068afc1ca4
+  source: declared
+  property: declared_equals_actual
+  params: {"actual": {"fact": "S-001.vocab_size"}, "declared": {"file": "net/config.json", "key": "vocab_size"}}
+  evidence: ["net/config.json"]
+  status: proposed
+  ref: null
+  reason: null
+- fp: a02696d26e4d2222b89809cc917686584f6a9d09d914561c9130f256ef840358
+  source: declared
+  property: bounds
+  params: {"fact": "S-012.tok_s_median_window", "min": 800, "tolerance_source": {"decision": "evidence/kpi-pins.json"}}
+  evidence: ["evidence/kpi-pins.json", "run=kda-wyut-delta"]
+  status: proposed
+  ref: null
+  reason: null
+- fp: fb7eb99f355f736fe7654518c2d915cbda7d06e84d6a24a26aeb38ce1c2fc917
+  source: declared
+  property: bounds
+  params: {"fact": "S-022.spend_usd", "max": 2.0}
+  evidence: ["evidence/budget/a4-gb10.json"]
+  status: proposed
+  ref: null
+  reason: null
+- fp: 2e60f83d7bc1b4e51d4b9f5e46a8b5bf6f7407e9322922e432d3d67d74e4aae4
+  source: declared
+  property: bounds
+  params: {"fact": "S-022.spend_usd", "max": 3.0}
+  evidence: ["evidence/budget/a5-rerun.json"]
+  status: proposed
+  ref: null
+  reason: null
+- fp: 9df0e3d51fa1ef860fd5d8b277bf2ad70b393b6f09e260d1038f4867c672ca6e
+  source: declared
+  property: bounds
+  params: {"fact": "S-022.spend_usd", "max": 0.5}
+  evidence: ["evidence/budget/pretokenize-w-c.json"]
+  status: proposed
+  ref: null
+  reason: null
+- fp: 17bc2144dbb3cde6e254898482d68fda18f80a355516a7d81f3adc0d284f259d
+  source: declared
+  property: bounds
+  params: {"fact": "S-022.spend_usd", "max": 260}
+  evidence: ["evidence/budget/pretreain-l3.json"]
+  status: proposed
+  ref: null
+  reason: null
+- fp: 8474cd22a16721f5abb0e12d94654e0e2531c446eac5f32380bd47dc33121865
+  source: declared
+  property: bounds
+  params: {"fact": "S-022.spend_usd", "max": 1.0}
+  evidence: ["evidence/budget/sft-smoke.json"]
+  status: proposed
+  ref: null
+  reason: null
+- fp: 0dc2c2647cea711e8791829e1d5623d2c81122613c114b137c0ad8a2127cbb5d
+  source: telemetry
+  property: bounds
+  params: {"fact": "gpu_hours", "max": 0.044408823788166046, "min": 0.026478485325972242, "tolerance_source": {"decision": "телеметрия (OpenMetrics/JSONL, ADR-039 G3)"}}
+  evidence: ["gpu_hours"]
+  support: 30
+  status: proposed
+  ref: null
+  reason: null
+- fp: 8e10acf751dacd6da367cad9d5b9a65f0c35daeefb15e7a03c16f76eac08b007
+  source: telemetry
+  property: bounds
+  params: {"fact": "loss", "max": 7.809460639953613, "min": 5.980420112609863, "tolerance_source": {"decision": "телеметрия (OpenMetrics/JSONL, ADR-039 G3)"}}
+  evidence: ["loss"]
+  support: 30
+  status: proposed
+  ref: null
+  reason: null
+- fp: 2409bd920e5d70e345042224ffbc43d33d9008eb139c1923b06d46843ed71887
+  source: telemetry
+  property: bounds
+  params: {"fact": "lr", "max": 0.011, "min": -0.001, "tolerance_source": {"decision": "телеметрия (OpenMetrics/JSONL, ADR-039 G3)"}}
+  evidence: ["lr"]
+  support: 30
+  status: proposed
+  ref: null
+  reason: null
+- fp: 8aea31786cc119df316dcd4f3196fd5c8ff11eaa3c4b4eb2fe1ce7f23b07b6b0
+  source: telemetry
+  property: bounds
+  params: {"fact": "step", "max": 32.9, "min": -1.9000000000000004, "tolerance_source": {"decision": "телеметрия (OpenMetrics/JSONL, ADR-039 G3)"}}
+  evidence: ["step"]
+  support: 30
+  status: proposed
+  ref: null
+  reason: null
+- fp: 1c9fa2efd597e14fb489119d671b4d5eaec4aa48f0a12b88a9dde085a9d9d2c3
+  source: telemetry
+  property: bounds
+  params: {"fact": "step_seconds", "max": 109.65466997623443, "min": -8.459186053276063, "tolerance_source": {"decision": "телеметрия (OpenMetrics/JSONL, ADR-039 G3)"}}
+  evidence: ["step_seconds"]
+  support: 30
+  status: proposed
+  ref: null
+  reason: null
+- fp: 517a9c764e02c8d859fca46b177efce60991224613debecd02a740a8ff135431
+  source: telemetry
+  property: bounds
+  params: {"fact": "tflops_achieved", "max": 0.0076031521155329245, "min": -0.0005865366094357119, "tolerance_source": {"decision": "телеметрия (OpenMetrics/JSONL, ADR-039 G3)"}}
+  evidence: ["tflops_achieved"]
+  support: 30
+  status: proposed
+  ref: null
+  reason: null
+- fp: e34e6f98c1f5f4c41dea24fafb808e044508a1fc5e34b00aeb15036296d1fd48
+  source: telemetry
+  property: bounds
+  params: {"fact": "tokens", "max": 8192.0, "min": 8192.0, "tolerance_source": {"decision": "телеметрия (OpenMetrics/JSONL, ADR-039 G3)"}}
+  evidence: ["tokens"]
+  support: 30
+  status: proposed
+  ref: null
+  reason: null
+- fp: 0c57b2ba2211f8bcd5cec691a8e7ba3f0bc405f232d4f360abaf9de20b1c61cc
+  source: telemetry
+  property: bounds
+  params: {"fact": "tokens_per_sec", "max": 6504.49147027219, "min": -501.7816709576048, "tolerance_source": {"decision": "телеметрия (OpenMetrics/JSONL, ADR-039 G3)"}}
+  evidence: ["tokens_per_sec"]
+  support: 30
+  status: proposed
+  ref: null
+  reason: null
+- fp: edd02aa68ce024f5868cea4ae49f40a64c733b0ed6878b4cec8715e6b9fdbd37
+  source: telemetry
+  property: bounds
+  params: {"fact": "tokens_seen", "max": 269516.8, "min": -15564.800000000003, "tolerance_source": {"decision": "телеметрия (OpenMetrics/JSONL, ADR-039 G3)"}}
+  evidence: ["tokens_seen"]
+  support: 30
+  status: proposed
+  ref: null
+  reason: null
+- fp: 0850b6a60feb935df6046e1dfbd5888d630d072ec5ffcd2e42bf4c7f8fcfa599
+  source: incident
+  property: bounds
+  params: {}
+  evidence: ["evidence/incidents.yaml#INC-001"]
+  status: proposed
+  ref: null
+  reason: "guard: pending — шаблон предложен как страж инцидента, привязка параметров ждёт архитектора"
+- fp: b263ce5486ee494cbef345338beb64b2ce0c842c20b50e256c0f23b2e3f2e5fc
+  source: incident
+  property: identity
+  params: {}
+  evidence: ["evidence/incidents.yaml#INC-003"]
+  status: proposed
+  ref: null
+  reason: "guard: pending — шаблон предложен как страж инцидента, привязка параметров ждёт архитектора"
+- fp: daa69dc8e8a690e036b9afe5321a09029415e9a883de9ab75dad5e371d41d3a9
+  source: incident
+  property: safety
+  params: {}
+  evidence: ["evidence/incidents.yaml#INC-004"]
+  status: proposed
+  ref: null
+  reason: "guard: pending — шаблон предложен как страж инцидента, привязка параметров ждёт архитектора"
+- fp: ad8a38ebb7b4b5c97b3896df8a214e49e7abcc36009253c50433dc9fc75d0701
+  source: incident
+  property: differential
+  params: {}
+  evidence: ["evidence/incidents.yaml#INC-006"]
+  status: proposed
+  ref: null
+  reason: "guard: pending — шаблон предложен как страж инцидента, привязка параметров ждёт архитектора"

@@ -1,0 +1,13 @@
+constraints:
+- id: H-001
+  name: 'Holdout: каждый NFR имеет измеримую цель (measure)'
+  type: each_file_must_contain
+  glob: model/NFR-*.md
+  pattern: 'measure:'
+  severity: critical
+- id: H-002
+  name: 'Holdout: spine фиксирует механический вердикт'
+  type: must_contain
+  glob: ARCHITECTURE-SPINE.md
+  pattern: механический вердикт|детерминирован
+  severity: critical

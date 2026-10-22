@@ -1,0 +1,71 @@
+{
+  "run_id": "rl-before-corruption-l1-01",
+  "task_id": "corruption-l1-01",
+  "env_version": "environment-v1",
+  "gates_version": {
+    "arch_ml_build": "3b2d9e615c5dc01efc6c08b083d4528a366c3ae2faddc616295c2066f2faf4ca",
+    "constraints_sha256": "2efc1a87029b0ff4ef5c241109be2ac153a35a2e4716fbac4f9810e65d7f44ad",
+    "hidden_constraints_sha256": "fa7a348278d67bfd6b4a77f113a043800346c10f7cbc286b8359d3192ea2d488",
+    "excluded_infra_rules": [
+      "C-032",
+      "C-033",
+      "C-034",
+      "C-035",
+      "C-036",
+      "C-037",
+      "C-038",
+      "C-039",
+      "C-040",
+      "C-041",
+      "C-042",
+      "C-043",
+      "C-044",
+      "C-045",
+      "C-046",
+      "C-047",
+      "C-048",
+      "C-050",
+      "C-051",
+      "C-052"
+    ]
+  },
+  "workspace_sha256": "1fec107cf857767721253d55697775f28b19dadfb8f0f8ef025f783868f9b484",
+  "model": {
+    "snapshot_sha256": "7f4b9d9ab6b0a3834ade7adc589cb950787e5beaa37aa8432f745422013bf166",
+    "base": "net-l3-skeleton-rl-smoke",
+    "routing_seed": 0
+  },
+  "decoding": {
+    "temperature": 0.0,
+    "top_p": 0.95,
+    "seed": 13371101
+  },
+  "budget": {
+    "max_tokens": 131072,
+    "thinking_budget": 8192,
+    "attempts_allowed": 2,
+    "attempts_used": 1
+  },
+  "usage": {
+    "tokens_in": 252,
+    "tokens_out": 32,
+    "cost_usd": 0.0,
+    "host": "net-executor"
+  },
+  "timing": {
+    "started": "2026-10-22T00:00:00+00:00",
+    "finished": "2026-10-22T00:00:01+00:00",
+    "resume_count": 0
+  },
+  "verdict": {
+    "pass": false,
+    "reward": {
+      "pass_component": 0.0,
+      "soft": 0.0,
+      "new_violations": 0,
+      "effort_penalty": 0.0,
+      "total": 0.0
+    },
+    "issues_warn": []
+  }
+}

@@ -1,0 +1,59 @@
+{
+  "report": "gpu-smoke",
+  "spec": "MODEL-L3-SKELETON.md §6.10 / §7",
+  "generated_at": "2026-09-12T09:53:16+00:00",
+  "hardware": {
+    "accelerator": "NVIDIA GeForce RTX 4080 SUPER",
+    "vram_total_mb": 16376,
+    "driver": "560.35.03"
+  },
+  "versions": {
+    "python": "3.11.8",
+    "jax": "0.10.2",
+    "jaxlib": "0.10.2",
+    "jax_cuda12_plugin": "0.10.2",
+    "jax_cuda12_pjrt": "0.10.2"
+  },
+  "devices": [
+    "gpu:NVIDIA GeForce RTX 4080 SUPER"
+  ],
+  "results": {
+    "tiny": {
+      "params": 60124,
+      "train": {
+        "batch": 2,
+        "seq_len": 128,
+        "steps": 10,
+        "tok_s": 84.0
+      },
+      "forward": {
+        "batch": 2,
+        "seq_len": 2048,
+        "steps": 10,
+        "tok_s": 575545.8
+      },
+      "vram_peak_mb": 165.3
+    },
+    "full": {
+      "params": 979748472,
+      "oom": true,
+      "note": "",
+      "attempts": [
+        {
+          "seq_len": 8192,
+          "error": "JaxRuntimeError: RESOURCE_EXHAUSTED: Out of memory while trying to allocate 4.88GiB. [executable_name='jit__lambda'] [tf-allocator-allocation-error='']"
+        },
+        {
+          "seq_len": 2048,
+          "error": "JaxRuntimeError: RESOURCE_EXHAUSTED: Out of memory while trying to allocate 1.22GiB. [executable_name='jit__lambda'] [tf-allocator-allocation-error='']"
+        }
+      ],
+      "mode": "shape-only",
+      "vram_peak_mb": 11260.5
+    }
+  },
+  "deviations": [
+    "полный 1B-конфиг: forward не влез в VRAM — зафиксирован OOM, замер только shape-only (честная фиксация по задаче)"
+  ],
+  "status": "partial"
+}

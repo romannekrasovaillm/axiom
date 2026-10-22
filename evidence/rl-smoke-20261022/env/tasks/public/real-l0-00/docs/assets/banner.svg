@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="300" viewBox="0 0 1200 300" role="img" aria-label="AXIOM — LLM from scratch on JAX">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0d1117"/>
+      <stop offset="0.55" stop-color="#0b1e3a"/>
+      <stop offset="1" stop-color="#123b63"/>
+    </linearGradient>
+    <linearGradient id="acc" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#58a6ff"/>
+      <stop offset="1" stop-color="#d2a8ff"/>
+    </linearGradient>
+    <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="4" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <rect width="1200" height="300" fill="url(#bg)"/>
+  <g stroke="#1f6feb" stroke-opacity="0.28" fill="none" stroke-width="1.4">
+    <path d="M60 250 L170 180 L290 235 L400 150 L520 210"/>
+    <path d="M170 180 L240 90 L400 150"/>
+    <path d="M240 90 L380 60 L520 210 L640 120 L760 180"/>
+    <path d="M380 60 L500 40 L640 120"/>
+    <path d="M520 210 L660 250 L760 180 L900 90 L1040 160 L1140 70"/>
+  </g>
+  <g fill="url(#acc)" filter="url(#glow)">
+    <circle cx="60" cy="250" r="5"/><circle cx="170" cy="180" r="7"/>
+    <circle cx="290" cy="235" r="4"/><circle cx="400" cy="150" r="8"/>
+    <circle cx="240" cy="90" r="5"/><circle cx="380" cy="60" r="6"/>
+    <circle cx="500" cy="40" r="4"/><circle cx="520" cy="210" r="7"/>
+    <circle cx="640" cy="120" r="9"/><circle cx="660" cy="250" r="4"/>
+    <circle cx="760" cy="180" r="6"/><circle cx="900" cy="90" r="8"/>
+    <circle cx="1040" cy="160" r="5"/><circle cx="1140" cy="70" r="7"/>
+  </g>
+  <text x="620" y="140" text-anchor="middle" font-family="Verdana, DejaVu Sans, sans-serif" font-size="84" font-weight="bold" fill="#e6edf3" letter-spacing="14">AXIOM</text>
+  <text x="620" y="188" text-anchor="middle" font-family="Verdana, DejaVu Sans, sans-serif" font-size="24" fill="url(#acc)" letter-spacing="2">LLM FROM SCRATCH ON JAX</text>
+  <text x="620" y="236" text-anchor="middle" font-family="Verdana, DejaVu Sans, sans-serif" font-size="17" fill="#8b949e">pretrain &#8594; SFT &#8594; RL &#8594; agents &#183; mechanical fitness gates &#183; single-box skeleton</text>
+</svg>

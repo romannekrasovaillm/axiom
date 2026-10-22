@@ -1,0 +1,207 @@
+{
+  "module": "kda_ut_solve.py",
+  "case_index": 0,
+  "case": {
+    "H": 12,
+    "C": 64,
+    "dk": 128,
+    "dv": 128,
+    "dtype": "float32"
+  },
+  "params": {
+    "bn": 128,
+    "num_warps": 8,
+    "num_stages": 1
+  },
+  "best_t_us": 60.91510003898293,
+  "results": [
+    {
+      "params": {
+        "bn": 32,
+        "num_warps": 4,
+        "num_stages": 1
+      },
+      "compile_s": 4.08,
+      "max_abs": 2.86102294921875e-06,
+      "status": "OK",
+      "t_us": 240.76920235529542,
+      "t_min_us": 214.73010128829628
+    },
+    {
+      "params": {
+        "bn": 32,
+        "num_warps": 4,
+        "num_stages": 2
+      },
+      "compile_s": 4.13,
+      "max_abs": 2.86102294921875e-06,
+      "status": "OK",
+      "t_us": 260.94570057466626,
+      "t_min_us": 244.0971991745755
+    },
+    {
+      "params": {
+        "bn": 32,
+        "num_warps": 8,
+        "num_stages": 1
+      },
+      "compile_s": 1.83,
+      "max_abs": 2.86102294921875e-06,
+      "status": "OK",
+      "t_us": 156.98939969297498,
+      "t_min_us": 153.370201587677
+    },
+    {
+      "params": {
+        "bn": 32,
+        "num_warps": 8,
+        "num_stages": 2
+      },
+      "compile_s": 1.88,
+      "max_abs": 2.86102294921875e-06,
+      "status": "OK",
+      "t_us": 206.3937979983166,
+      "t_min_us": 176.89399828668684
+    },
+    {
+      "params": {
+        "bn": 32,
+        "num_warps": 16,
+        "num_stages": 1
+      },
+      "compile_s": 1.23,
+      "max_abs": 2.86102294921875e-06,
+      "status": "OK",
+      "t_us": 910.7375022722408,
+      "t_min_us": 871.4260999113321
+    },
+    {
+      "params": {
+        "bn": 32,
+        "num_warps": 16,
+        "num_stages": 2
+      },
+      "compile_s": 1.22,
+      "max_abs": 2.86102294921875e-06,
+      "status": "OK",
+      "t_us": 939.8933005286381,
+      "t_min_us": 895.1066003646702
+    },
+    {
+      "params": {
+        "bn": 64,
+        "num_warps": 8,
+        "num_stages": 1
+      },
+      "compile_s": 0.02,
+      "max_abs": 2.86102294921875e-06,
+      "status": "OK",
+      "t_us": 131.06880069244653,
+      "t_min_us": 109.33380108326674
+    },
+    {
+      "params": {
+        "bn": 64,
+        "num_warps": 8,
+        "num_stages": 2
+      },
+      "compile_s": 2.04,
+      "max_abs": 2.86102294921875e-06,
+      "status": "OK",
+      "t_us": 151.63079951889813,
+      "t_min_us": 135.21930086426437
+    },
+    {
+      "params": {
+        "bn": 64,
+        "num_warps": 16,
+        "num_stages": 1
+      },
+      "compile_s": 1.43,
+      "max_abs": 2.86102294921875e-06,
+      "status": "OK",
+      "t_us": 499.2808011593297,
+      "t_min_us": 458.4703012369573
+    },
+    {
+      "params": {
+        "bn": 64,
+        "num_warps": 16,
+        "num_stages": 2
+      },
+      "compile_s": 1.31,
+      "max_abs": 2.86102294921875e-06,
+      "status": "OK",
+      "t_us": 493.0502007482573,
+      "t_min_us": 470.9056986030191
+    },
+    {
+      "params": {
+        "bn": 128,
+        "num_warps": 8,
+        "num_stages": 1
+      },
+      "compile_s": 2.05,
+      "max_abs": 2.86102294921875e-06,
+      "status": "OK",
+      "t_us": 60.91510003898293,
+      "t_min_us": 59.32940111961216
+    },
+    {
+      "params": {
+        "bn": 128,
+        "num_warps": 8,
+        "num_stages": 2
+      },
+      "compile_s": 2.16,
+      "max_abs": 2.86102294921875e-06,
+      "status": "OK",
+      "t_us": 81.2211015727371,
+      "t_min_us": 80.49150055740029
+    },
+    {
+      "params": {
+        "bn": 128,
+        "num_warps": 16,
+        "num_stages": 1
+      },
+      "compile_s": 1.34,
+      "max_abs": 2.86102294921875e-06,
+      "status": "OK",
+      "t_us": 167.1016012551263,
+      "t_min_us": 162.58149989880621
+    },
+    {
+      "params": {
+        "bn": 128,
+        "num_warps": 16,
+        "num_stages": 2
+      },
+      "compile_s": 1.35,
+      "max_abs": 2.86102294921875e-06,
+      "status": "OK",
+      "t_us": 165.9511006437242,
+      "t_min_us": 155.20369925070554
+    },
+    {
+      "params": {
+        "bn": 256,
+        "num_warps": 16,
+        "num_stages": 1
+      },
+      "status": "ERROR",
+      "error": "JaxRuntimeError: RESOURCE_EXHAUSTED: Shared memory size limit exceeded: requested 114688, available: 101376, context: []"
+    },
+    {
+      "params": {
+        "bn": 256,
+        "num_warps": 16,
+        "num_stages": 2
+      },
+      "status": "ERROR",
+      "error": "JaxRuntimeError: RESOURCE_EXHAUSTED: Shared memory size limit exceeded: requested 114688, available: 101376, context: []"
+    }
+  ],
+  "timestamp": "2026-10-10T01:55:57",
+  "jax": "0.10.2"
+}

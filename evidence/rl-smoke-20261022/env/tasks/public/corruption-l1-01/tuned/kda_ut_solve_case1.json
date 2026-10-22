@@ -1,0 +1,213 @@
+{
+  "module": "kda_ut_solve.py",
+  "case_index": 1,
+  "case": {
+    "H": 12,
+    "C": 64,
+    "dk": 128,
+    "dv": 128,
+    "dtype": "bfloat16"
+  },
+  "params": {
+    "bn": 32,
+    "num_warps": 8,
+    "num_stages": 2
+  },
+  "best_t_us": 52.48920060694218,
+  "results": [
+    {
+      "params": {
+        "bn": 32,
+        "num_warps": 4,
+        "num_stages": 1
+      },
+      "compile_s": 0.88,
+      "max_abs": 0.03125,
+      "status": "OK",
+      "t_us": 64.24309976864606,
+      "t_min_us": 30.44390177819878
+    },
+    {
+      "params": {
+        "bn": 32,
+        "num_warps": 4,
+        "num_stages": 2
+      },
+      "compile_s": 0.79,
+      "max_abs": 0.03125,
+      "status": "OK",
+      "t_us": 80.85629960987717,
+      "t_min_us": 52.44920030236244
+    },
+    {
+      "params": {
+        "bn": 32,
+        "num_warps": 8,
+        "num_stages": 1
+      },
+      "compile_s": 0.73,
+      "max_abs": 0.03125,
+      "status": "OK",
+      "t_us": 61.61589990369976,
+      "t_min_us": 61.326200375333435
+    },
+    {
+      "params": {
+        "bn": 32,
+        "num_warps": 8,
+        "num_stages": 2
+      },
+      "compile_s": 0.75,
+      "max_abs": 0.03125,
+      "status": "OK",
+      "t_us": 52.48920060694218,
+      "t_min_us": 44.67309918254614
+    },
+    {
+      "params": {
+        "bn": 32,
+        "num_warps": 16,
+        "num_stages": 1
+      },
+      "compile_s": 0.77,
+      "max_abs": 0.03125,
+      "status": "OK",
+      "t_us": 184.81550214346498,
+      "t_min_us": 163.26150216627866
+    },
+    {
+      "params": {
+        "bn": 32,
+        "num_warps": 16,
+        "num_stages": 2
+      },
+      "compile_s": 0.77,
+      "max_abs": 0.03125,
+      "status": "OK",
+      "t_us": 155.11399833485484,
+      "t_min_us": 131.51669991202652
+    },
+    {
+      "params": {
+        "bn": 64,
+        "num_warps": 8,
+        "num_stages": 1
+      },
+      "compile_s": 0.82,
+      "max_abs": 0.03125,
+      "status": "OK",
+      "t_us": 73.90569953713566,
+      "t_min_us": 49.56430057063699
+    },
+    {
+      "params": {
+        "bn": 64,
+        "num_warps": 8,
+        "num_stages": 2
+      },
+      "compile_s": 0.8,
+      "max_abs": 0.03125,
+      "status": "OK",
+      "t_us": 57.252502301707864,
+      "t_min_us": 56.887700338847935
+    },
+    {
+      "params": {
+        "bn": 64,
+        "num_warps": 16,
+        "num_stages": 1
+      },
+      "compile_s": 0.92,
+      "max_abs": 0.03125,
+      "status": "OK",
+      "t_us": 104.79280026629567,
+      "t_min_us": 92.6069013075903
+    },
+    {
+      "params": {
+        "bn": 64,
+        "num_warps": 16,
+        "num_stages": 2
+      },
+      "compile_s": 0.78,
+      "max_abs": 0.03125,
+      "status": "OK",
+      "t_us": 107.14649979490787,
+      "t_min_us": 78.75539886299521
+    },
+    {
+      "params": {
+        "bn": 128,
+        "num_warps": 8,
+        "num_stages": 1
+      },
+      "compile_s": 0.41,
+      "max_abs": 0.03125,
+      "status": "OK",
+      "t_us": 75.60649828519672,
+      "t_min_us": 35.591202322393656
+    },
+    {
+      "params": {
+        "bn": 128,
+        "num_warps": 8,
+        "num_stages": 2
+      },
+      "compile_s": 0.36,
+      "max_abs": 0.03125,
+      "status": "OK",
+      "t_us": 77.11059879511595,
+      "t_min_us": 43.9305993495509
+    },
+    {
+      "params": {
+        "bn": 128,
+        "num_warps": 16,
+        "num_stages": 1
+      },
+      "compile_s": 0.34,
+      "max_abs": 0.03125,
+      "status": "OK",
+      "t_us": 63.85750020854175,
+      "t_min_us": 46.871500671841204
+    },
+    {
+      "params": {
+        "bn": 128,
+        "num_warps": 16,
+        "num_stages": 2
+      },
+      "compile_s": 0.35,
+      "max_abs": 0.03125,
+      "status": "OK",
+      "t_us": 106.22479894664139,
+      "t_min_us": 51.34990205988288
+    },
+    {
+      "params": {
+        "bn": 256,
+        "num_warps": 16,
+        "num_stages": 1
+      },
+      "compile_s": 0.39,
+      "max_abs": 0.03125,
+      "status": "OK",
+      "t_us": 77.83860201016068,
+      "t_min_us": 23.691801470704377
+    },
+    {
+      "params": {
+        "bn": 256,
+        "num_warps": 16,
+        "num_stages": 2
+      },
+      "compile_s": 0.38,
+      "max_abs": 0.03125,
+      "status": "OK",
+      "t_us": 127.30529997497797,
+      "t_min_us": 48.70510019827634
+    }
+  ],
+  "timestamp": "2026-10-10T01:56:12",
+  "jax": "0.10.2"
+}

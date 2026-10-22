@@ -1,0 +1,95 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# C-047 — карта согласованности «число в ADR-009 ↔ поле net/config.json».
+#
+# План: ENVIRONMENT-V1 §9 «Страж согласованности ADR↔config (C-047, план)».
+#
+# Декларация, а не код: соответствия правятся ЗДЕСЬ, вместе с net/config.json;
+# страж (tools/check_adr_config_consistency.py) их только исполняет. Паттерны
+# построены ПО ФАКТУ текста docs/adr/ADR-009-*.md — канонические формулировки
+# чисел (поле note называет фразу-источник). Паттерн не нашёлся в тексте ADR →
+# находка adr-unverifiable, НЕ pass: дрейф текста ломает страж громко
+# (fail-closed), а не переводит его в молчаливый зелёный.
+#
+# Две стороны одного рассинхрона читает один страж: мутатор правит либо число в
+# ADR (атомы numeric_drift/term_swap), либо число в config (config_drift) —
+# обе стороны нарушают одно и то же соответствие.
+#
+# Формат — ограниченное подмножество YAML, читаемое stdlib-загрузчиком
+# tools/adr_config_map.py: «key: value», список словарей с отступом в 2 пробела,
+# скаляры в двойных кавычках (JSON-escape), inline-списки ["a", "b"], целые,
+# true/false. Полнострочные комментарии (#) поддержаны; значение, содержащее
+# «:», обязано быть в кавычках.
+# ─────────────────────────────────────────────────────────────────────────────
+version: 1
+
+# Файл решения. Glob (может смениться суффикс слага при переименовании), но
+# обязан разрешаться ровно в один файл — иначе страж краснеет, а не выбирает
+# «любой подходящий».
+adr_glob: "docs/adr/ADR-009-*.md"
+
+# Конфиг, с которым сверяются числа ADR.
+config: "net/config.json"
+
+# Соответствия «паттерн в ADR → поле config». Группа 1 паттерна — число.
+#   drift: true  — поле участвует в numeric_drift/config_drift (выбор по seed);
+#   drift: false — поле закреплено за свопом term_swap (см. swaps).
+mappings:
+  - id: swa_window
+    note: "D1/SWA: «n_win = 128» — окно скользящего внимания (Context п.1 и Decision D1)"
+    adr_pattern: "n_win = (\\d+)"
+    config_field: "swa_window"
+    drift: true
+
+  - id: mla_top_k
+    note: "D2/Sparse: «выбирает `top_k` (512 — целевое значение источника)»"
+    adr_pattern: "`top_k` \\((\\d+)"
+    config_field: "mla_top_k"
+    drift: true
+
+  - id: mla_latent_dim
+    note: "«Латент MLA в скелете — `mla_latent_dim: 512`» — совпадение геометрии с источником"
+    adr_pattern: "`mla_latent_dim: (\\d+)`"
+    config_field: "mla_latent_dim"
+    drift: false
+
+  - id: mla_head_dim
+    note: "«Число голов (12) и `head_dim` (128) дают дешёвый indexer» — геометрия голов"
+    adr_pattern: "`head_dim` \\((\\d+)\\)"
+    config_field: "mla_head_dim"
+    drift: true
+
+  - id: mla_index_dim
+    note: "D2/indexer: «Лёгкий indexer (1–2 головы, дом 128)»"
+    adr_pattern: "головы, дом (\\d+)"
+    config_field: "mla_index_dim"
+    drift: false
+
+  - id: num_layers
+    note: "Рамка: «24 слоя, паттерн `[KDA, KDA, KDA, Gated-MLA] × 6`»"
+    adr_pattern: "(\\d+) слоя, паттерн"
+    config_field: "num_layers"
+    drift: true
+
+  - id: num_kda_layers
+    note: "Alternatives/CED: «а у 18 из 24 слоёв KV нет вообще»"
+    adr_pattern: "(\\d+) из \\d+ слоёв"
+    config_field: "num_kda_layers"
+    drift: true
+
+  - id: num_mla_layers
+    note: "Alternatives/CSA2: «storage не является связывающим ограничением (6 слоёв × 512 каналов латента)»"
+    adr_pattern: "\\((\\d+) слоёв × \\d+ каналов латента\\)"
+    config_field: "num_mla_layers"
+    drift: true
+
+# Свопы term_swap: значения двух полей меняются местами в ТЕКСТЕ ADR.
+# Оба поля обязаны существовать в mappings и иметь drift: false.
+swaps:
+  - id: latent_index
+    note: "латент MLA ↔ размерность indexer'а (512 ↔ 128): числа одного класса, обмен невидим глазами и ловится только сверкой с config"
+    between: ["mla_latent_dim", "mla_index_dim"]
+
+# Поля config.json, которые смысловая порча не трогает никогда: tokenizer_hash —
+# пин генератора (net/config.json), его дрейф ломает словарь, а не архитектуру.
+frozen_config_fields:
+  - "tokenizer_hash"

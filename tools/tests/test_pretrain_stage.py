@@ -181,15 +181,20 @@ def test_stage_journal_block_is_exactly_the_contract(argv, expected):
     ],
 )
 def test_execute_journal_carries_stage_and_policy(
-    tmp_path: Path, stage_argv, expected_stage, expected_policy
+    tmp_path: Path, monkeypatch, stage_argv, expected_stage, expected_policy
 ):
     """Отказ по смете пишется в журнал уже со stage=argv и блоком policy.
 
     Сметы нет — прогон не стартует (AD-8), но заголовок журнала собран раньше
     отказа: именно по нему приёмка отличает мидтрейн-прогон от претрейн-прогона.
     Претрейн-ветка заодно пинит прежние дефолты (stage/lr) побитово.
+
+    Preflight стенда мокается только здесь: предмет теста — отказ по смете, а на
+    стенде с живым vLLM ``gate_or_exit`` отказал бы по чужому compute-процессу
+    раньше. Production-гейт остаётся fail-closed (ADR-041).
     """
     cli = _cli()
+    monkeypatch.setattr(cli.jax_preflight, "gate_or_exit", lambda *a, **k: None)
     out_dir = tmp_path / "out"
     code = cli.main(
         [

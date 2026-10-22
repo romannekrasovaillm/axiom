@@ -168,3 +168,4 @@ tools/pretrain_run.py --model-preset l3-full --grad-checkpointing \
 
 20 шагов дают лучший домен, но на seed 2027 W упирается в верхнюю границу 11.1.
 Дефолт — **10 шагов**; 20 — только domain-first с holdout-проверкой W ≤ +0.2.
+Replay 10 % на 20 шагах (seed 2027, K=0.9/W=0.1): domain 11.6914, W 11.0546 против 11.6649 / 11.0610 без replay — нейтрально (Δdomain +0.0265, ΔW −0.0064); край W не снимает.

@@ -150,3 +150,11 @@ tools/pretrain_run.py --model-preset l3-full --grad-checkpointing \
 ## 11. Честные границы
 
 Два seed (1337, 2027) для baseline/lowlr, один — для replay-плеч; один стенд, одна модель; B=4 и B=2 смешаны; мидтрейн-корпус — доменный K/D/S, не продолжение W; XLA-детерминизм не пиннился (`NET_GATE_PROFILE=1`), побитовая воспроизводимость не гарантируется. Демо доказывает провод стадий и работоспособность стека, но не является KPI-вердиктом.
+
+## 12. Smoke интегрированного `--stage midtrain`
+
+1 шаг от pretrain step-10 (B=2, K/D/S, `--resume`, без `--lr`): журнал
+`stage=midtrain`, `policy={"name":"ADR-055","checkpoint_selection":"holdout","leak_check_required":true,"lr":0.001}`,
+`resume.from_step=10`, `status=executed`; loss 15.8316, checkpoint не сохранялся
+(`checkpoint-every 0`). Подтверждает, что политика ADR-055 исполняется на
+интегрированном коде GB10, а не только в тестах.

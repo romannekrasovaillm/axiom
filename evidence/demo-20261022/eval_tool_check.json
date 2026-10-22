@@ -1,0 +1,49 @@
+{
+  "schema": "axiom-eval-checkpoint/1",
+  "seq": 2048,
+  "max_tokens": 131072,
+  "checkpoints": {
+    "seed1337_pretrain": {
+      "path": "/home/roman/gb10-shared/runs/axiom-demo-20261022/pretrain/checkpoints/step-00000010",
+      "domain": {
+        "loss": 15.640951347351074,
+        "ppl": 6205529.747993235,
+        "windows": 60,
+        "pred_tokens": 122820
+      },
+      "w_holdout": {
+        "loss": 10.936672568321228,
+        "ppl": 56200.029923104805,
+        "windows": 64,
+        "pred_tokens": 131008
+      }
+    },
+    "seed1337_lowlr": {
+      "path": "/home/roman/gb10-shared/runs/axiom-demo-20261022/policy/lowlr/checkpoints/step-00000020",
+      "domain": {
+        "loss": 12.458403476079305,
+        "ppl": 257404.35059487197,
+        "windows": 60,
+        "pred_tokens": 122820
+      },
+      "w_holdout": {
+        "loss": 10.772830069065094,
+        "ppl": 47706.840297810064,
+        "windows": 64,
+        "pred_tokens": 131008
+      }
+    }
+  },
+  "meta": {
+    "w_shard": "W-00051.bin",
+    "w_shard_bytes": 63438848,
+    "domain_ids_sha256": "5485e5e3b255570ddd23b096f511669ba55fc42703a6bff8ff53fe49cc3f90f1",
+    "git_sha": "8e69c53a474c92d893a73b94886bf7bd669ede55",
+    "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac",
+    "config_sha256": "4b378782e4b263492d70b3fbfe85d4edb7a245b2bd3afab8bb9f7a0f988e4fcc",
+    "domain_tokens": 124790,
+    "domain_tail_tokens": 1910,
+    "w_tokens": 131072,
+    "w_tail_tokens": 0
+  }
+}

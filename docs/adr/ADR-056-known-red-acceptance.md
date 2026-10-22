@@ -95,3 +95,20 @@ A-прогон честно вернул `status=blocked` (не `complete`) им
   delta_guard pass, 0 новых error.
 - Интеграция на GB10: `51aeb02f` (stage preset), `fabf2161` (tests), `5d8952d1`
   (eval tool); тесты 44/44 на свободном стенде.
+
+## Amendment 22.10.2026 — known-red долг закрыт
+
+- **AD-2:** `e166767` — `tools/mosaic/reference/_test_mma_case.py` и
+  `_test_mma_harness.py` переименованы в `.py.txt` (R100, содержимое сохранено);
+  `check_reward_isolation` — PASS.
+- **Приватность:** `28cc8c2` — абсолютные домашние пути заменены на `~/` в
+  ADR-052, `model/ADR-052`, `changes/jax-0112-candidate/DELTA.md` и
+  `.arch-handoff.stale-mosaic-20261012/`.
+- **Крупные evidence:** nsys-профили >500 МБ вынесены в
+  `~/gb10-shared/evidence/...`, в репозитории — симлинки; правило «крупные
+  файлы» больше не срабатывает.
+- **Операторский гейт GB10:** `arch-ml control check .` при остановленном vLLM —
+  `passed: true`, rc=0. `arch-be` на GB10 не установлен, использован
+  эквивалент `arch-ml control check`.
+- **Остаточное:** локальный `arch-be gate` даёт SKIP по command-правилам без
+  GB10; на стенде проверка пройдена. Known-red снят.

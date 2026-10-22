@@ -63,6 +63,7 @@ import json
 import os
 import platform
 import random
+import re
 import subprocess
 import sys
 import time
@@ -93,8 +94,17 @@ DEFAULT_DATA = "data/datasets/sft_train_v12.jsonl"
 #: Канонический сетевой диск (net/data.py:GB10_SHARED — та же переменная).
 SHARED_ROOT_ENV = "GB10_SHARED"
 
-#: Каталог канонического хранения чекпойнтов стадии на сетевом диске.
-CHECKPOINT_SUBDIR = "checkpoints/sft-smoke"
+#: Корневой каталог канонического хранения чекпойнтов стадии на сетевом диске.
+CHECKPOINT_SUBDIR = "checkpoints"
+
+#: Префикс каталога чекпойнта стадии SFT в общем корне.
+CHECKPOINT_PREFIX = "sft-"
+
+#: Символы вне ``[A-Za-z0-9._-]`` недопустимы в slug'е run/out-каталога.
+_CHECKPOINT_SLUG_INVALID = re.compile(r"[^A-Za-z0-9._-]+")
+
+#: Предел длины slug'а: ``NAME_MAX`` (255) минус префикс стадии и запас.
+_CHECKPOINT_SLUG_MAX = 128
 
 #: Численные пресеты смоук-конфигов приёмки сети (``net/tests/conftest.py``).
 #: Заморожены: их поля сверяются тестами дельты ``l3-full`` и не меняются.
@@ -916,23 +926,77 @@ def run_training(
 # ---------------------------------------------------------------------------
 
 
+def _checkpoint_slug(ckpt_dir: Path) -> str:
+    """Slug run/out-каталога, из которого смонтирован чекпойнт.
+
+    Имя родительского каталога ``ckpt_dir`` (каталог прогона/``--out``)
+    приводится к ``[A-Za-z0-9._-]``: пробелы, слэши и прочие символы
+    заменяются на ``-``.  Пустое или подозрительное имя (нет букв/цифр,
+    ``.``/``..``, слишком длинное) как компонент пути не годится — тогда slug
+    это короткий sha256 самого пути: стабилен между вызовами и различает
+    прогоны.  Симлинк не разыменовывается: повторный прогон с уже
+    смонтированным ``ckpt_dir`` обязан дать тот же slug (имя прогона), а не
+    имя канонического каталога.
+    """
+    raw = Path(ckpt_dir).parent.name
+    slug = _CHECKPOINT_SLUG_INVALID.sub("-", raw).strip("-")
+    usable = (
+        bool(slug)
+        and any(ch.isalnum() for ch in slug)
+        and slug not in {".", ".."}
+        and len(slug) <= _CHECKPOINT_SLUG_MAX
+    )
+    if not usable:
+        digest = hashlib.sha256(str(Path(ckpt_dir)).encode("utf-8")).hexdigest()
+        return digest[:12]
+    return slug
+
+
+def canonical_checkpoint_dir(shared: Path, ckpt_dir: Path) -> Path:
+    """Канонический каталог чекпойнта для конкретного run/out.
+
+    ``shared/checkpoints/sft-<slug>``: slug выведен из родительского каталога
+    ``ckpt_dir`` (каталог прогона/``--out``), поэтому два смоука с разными
+    ``--out`` пишут в разные каталоги и не перезаписывают веса друг друга.
+    Функция чистая: файловая система не читается и не меняется.  Существующие
+    каталоги ``checkpoints/sft-smoke`` не мигрируются — новые прогоны
+    используют новую схему (C-032: веса канонически на ``~/gb10-shared``, в
+    рабочем каталоге — только симлинк).
+    """
+    return (
+        Path(shared)
+        / CHECKPOINT_SUBDIR
+        / f"{CHECKPOINT_PREFIX}{_checkpoint_slug(ckpt_dir)}"
+    )
+
+
 def save_stage_checkpoint(params, ckpt_dir: Path, shared: Path, tree_digest: str):
     """Orbax-чекпойнт: канонически на сетевом диске, в репозитории — симлинк.
 
     Копия весов в рабочем каталоге запрещена (C-032), поэтому запись идёт в
     канонический каталог на ``~/gb10-shared``, а ``ckpt_dir`` — симлинк на него
     (не наоборот: orbax при ``force=True`` сам очищает целевой каталог, а
-    ``shutil.rmtree`` отказывается работать с симлинком).  Round-trip
+    ``shutil.rmtree`` отказывается работать с симлинком).  Канонический
+    каталог — :func:`canonical_checkpoint_dir`, то есть свой для каждого
+    run/out: фиксированный ``checkpoints/sft-smoke`` больше не общий.  Round-trip
     проверяется здесь же.  Возвращает описание чекпойнта для журнала.
     """
     from net import checkpoint as checkpoint_mod
 
     shared = Path(shared)
-    canonical = shared / CHECKPOINT_SUBDIR
-    canonical.mkdir(parents=True, exist_ok=True)
     ckpt_dir = Path(ckpt_dir)
+    canonical = canonical_checkpoint_dir(shared, ckpt_dir)
+    canonical.mkdir(parents=True, exist_ok=True)
     if ckpt_dir.is_symlink():
-        pass  # повторный прогон: симлинк уже смонтирован
+        # Повторный прогон: симлинк уже смонтирован.  Если он ведёт на
+        # канонический каталог прежней (фиксированной) схемы — перевешиваем на
+        # вычисленный: веса не копируются (C-032), старый каталог не
+        # мигрируется, но ссылка рабочего каталога перестаёт врать о цели.
+        current = Path(os.path.realpath(str(ckpt_dir)))
+        wanted = Path(os.path.realpath(str(canonical)))
+        if current != wanted:
+            ckpt_dir.unlink()
+            ckpt_dir.symlink_to(canonical)
     elif ckpt_dir.exists():
         raise StageError(
             f"каталог чекпойнта {repo_rel(ckpt_dir, detect_repo_root())} — не "

@@ -115,23 +115,86 @@ def test_stage_journal_fields_carries_the_resolved_lr():
     assert _cli().stage_journal_fields(args)["policy"]["lr"] == 5e-4
 
 
+@pytest.mark.parametrize(
+    ("argv", "expected"),
+    [
+        (
+            [],
+            {
+                "stage": "pretrain",
+                "policy": {
+                    "name": None,
+                    "checkpoint_selection": "train",
+                    "leak_check_required": False,
+                    "lr": 1e-2,
+                },
+            },
+        ),
+        (
+            ["--stage", "midtrain"],
+            {
+                "stage": "midtrain",
+                "policy": {
+                    "name": "ADR-055",
+                    "checkpoint_selection": "holdout",
+                    "leak_check_required": True,
+                    "lr": 1e-3,
+                },
+            },
+        ),
+    ],
+)
+def test_stage_journal_block_is_exactly_the_contract(argv, expected):
+    """Блок policy — ровно контракт ADR-055: без лишних и без пропущенных ключей."""
+    cli = _cli()
+    assert cli.stage_journal_fields(cli.parse_args(argv)) == expected
+
+
 # ---------------------------------------------------------------------------
 # Проводка: журнал прогона несёт stage из argv и блок policy
 # ---------------------------------------------------------------------------
 
 
-def test_execute_journal_carries_stage_and_policy(tmp_path: Path):
+@pytest.mark.parametrize(
+    ("stage_argv", "expected_stage", "expected_policy"),
+    [
+        (
+            [],
+            "pretrain",
+            {
+                "name": None,
+                "checkpoint_selection": "train",
+                "leak_check_required": False,
+                "lr": 1e-2,
+            },
+        ),
+        (
+            ["--stage", "midtrain"],
+            "midtrain",
+            {
+                "name": "ADR-055",
+                "checkpoint_selection": "holdout",
+                "leak_check_required": True,
+                "lr": 1e-3,
+            },
+        ),
+    ],
+)
+def test_execute_journal_carries_stage_and_policy(
+    tmp_path: Path, stage_argv, expected_stage, expected_policy
+):
     """Отказ по смете пишется в журнал уже со stage=argv и блоком policy.
 
     Сметы нет — прогон не стартует (AD-8), но заголовок журнала собран раньше
     отказа: именно по нему приёмка отличает мидтрейн-прогон от претрейн-прогона.
+    Претрейн-ветка заодно пинит прежние дефолты (stage/lr) побитово.
     """
     cli = _cli()
     out_dir = tmp_path / "out"
     code = cli.main(
         [
-            "--run-ref", "нет-такой-сметы-midtrain",
-            "--stage", "midtrain",
+            "--run-ref", f"нет-такой-сметы-{expected_stage}",
+            *stage_argv,
             "--shard-root", str(tmp_path / "ds"),
             "--no-packed",
             "--out", str(out_dir),
@@ -141,10 +204,5 @@ def test_execute_journal_carries_stage_and_policy(tmp_path: Path):
     )
     assert code == 1
     journal = json.loads((out_dir / "journal.json").read_text(encoding="utf-8"))
-    assert journal["stage"] == "midtrain"
-    assert journal["policy"] == {
-        "name": "ADR-055",
-        "checkpoint_selection": "holdout",
-        "leak_check_required": True,
-        "lr": 1e-3,
-    }
+    assert journal["stage"] == expected_stage
+    assert journal["policy"] == expected_policy

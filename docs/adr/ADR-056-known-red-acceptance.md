@@ -124,3 +124,8 @@ A-прогон честно вернул `status=blocked` (не `complete`) им
 - Причина: локальный `arch-be gate` без GB10 всегда даёт SKIP-only; после
   закрытия AD-2/privacy это единственный источник non-zero. Реальные FAIL
   не ослаблены.
+
+**Тест journal (22.10.2026):** `cc777d8` — `test_execute_journal_carries_stage_and_policy`
+мокает `jax_preflight.gate_or_exit` через `monkeypatch`; на GB10 с живым vLLM
+**13/13 passed**, production-preflight не изменён и остаётся fail-closed.
+Env-зависимость теста из раздела Consequences снята.

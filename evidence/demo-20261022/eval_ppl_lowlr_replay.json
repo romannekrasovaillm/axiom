@@ -1,0 +1,53 @@
+{
+ "seq": 2048,
+ "max_tokens": 131072,
+ "w_shard": "W-00051.bin",
+ "datasets": {},
+ "checkpoints": {
+  "seed1337_baseline_step20": {
+   "path": "/home/roman/gb10-shared/runs/axiom-demo-20261022/midtrain/checkpoints/step-00000020",
+   "domain": {
+    "loss": 12.176058212916056,
+    "ppl": 194086.3055167343,
+    "windows": 60,
+    "pred_tokens": 122820
+   },
+   "w_holdout": {
+    "loss": 11.302532468523298,
+    "ppl": 81026.57518292149,
+    "windows": 63,
+    "pred_tokens": 128961
+   }
+  },
+  "seed1337_lowlr_step20": {
+   "path": "/home/roman/gb10-shared/runs/axiom-demo-20261022/policy/lowlr/checkpoints/step-00000020",
+   "domain": {
+    "loss": 12.456989955902099,
+    "ppl": 257040.76138248836,
+    "windows": 60,
+    "pred_tokens": 122820
+   },
+   "w_holdout": {
+    "loss": 10.76300421215239,
+    "ppl": 47240.37517406296,
+    "windows": 63,
+    "pred_tokens": 128961
+   }
+  },
+  "seed1337_lowlr_replay_step20": {
+   "path": "/home/roman/gb10-shared/runs/axiom-demo-20261022/policy/lowlr_replay/checkpoints/step-00000020",
+   "domain": {
+    "loss": 12.454011964797974,
+    "ppl": 256276.43492525368,
+    "windows": 60,
+    "pred_tokens": 122820
+   },
+   "w_holdout": {
+    "loss": 10.758822562202575,
+    "ppl": 47043.2449137135,
+    "windows": 63,
+    "pred_tokens": 128961
+   }
+  }
+ }
+}

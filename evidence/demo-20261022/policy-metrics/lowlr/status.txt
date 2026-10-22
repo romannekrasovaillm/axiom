@@ -1,0 +1,1 @@
+[policy-lowlr] START 2026-10-22T06:54:17Z streams=K mix=K=1.0 lr=1e-3

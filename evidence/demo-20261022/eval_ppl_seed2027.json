@@ -1,0 +1,98 @@
+{
+ "seq": 2048,
+ "max_tokens": 131072,
+ "w_shard": "W-00051.bin",
+ "datasets": {},
+ "checkpoints": {
+  "seed1337_pretrain_step10": {
+   "path": "/home/roman/gb10-shared/runs/axiom-demo-20261022/pretrain/checkpoints/step-00000010",
+   "domain": {
+    "loss": 15.641431903839111,
+    "ppl": 6208512.5722257085,
+    "windows": 60,
+    "pred_tokens": 122820
+   },
+   "w_holdout": {
+    "loss": 10.925151507059732,
+    "ppl": 55556.26150401984,
+    "windows": 63,
+    "pred_tokens": 128961
+   }
+  },
+  "seed1337_baseline_step20": {
+   "path": "/home/roman/gb10-shared/runs/axiom-demo-20261022/midtrain/checkpoints/step-00000020",
+   "domain": {
+    "loss": 12.17582820256551,
+    "ppl": 194041.66879121755,
+    "windows": 60,
+    "pred_tokens": 122820
+   },
+   "w_holdout": {
+    "loss": 11.301105756608267,
+    "ppl": 80911.05602854589,
+    "windows": 63,
+    "pred_tokens": 128961
+   }
+  },
+  "seed1337_lowlr_step20": {
+   "path": "/home/roman/gb10-shared/runs/axiom-demo-20261022/policy/lowlr/checkpoints/step-00000020",
+   "domain": {
+    "loss": 12.45780782699585,
+    "ppl": 257251.07358355052,
+    "windows": 60,
+    "pred_tokens": 122820
+   },
+   "w_holdout": {
+    "loss": 10.763263278537327,
+    "ppl": 47252.61515269739,
+    "windows": 63,
+    "pred_tokens": 128961
+   }
+  },
+  "seed2027_pretrain_step10": {
+   "path": "/home/roman/gb10-shared/runs/axiom-demo-20261022/seed2027/pretrain/checkpoints/step-00000010",
+   "domain": {
+    "loss": 15.293354431788126,
+    "ppl": 4383484.1395497015,
+    "windows": 60,
+    "pred_tokens": 122820
+   },
+   "w_holdout": {
+    "loss": 10.889290083022345,
+    "ppl": 53599.2354530938,
+    "windows": 63,
+    "pred_tokens": 128961
+   }
+  },
+  "seed2027_baseline_step20": {
+   "path": "/home/roman/gb10-shared/runs/axiom-demo-20261022/seed2027/baseline/checkpoints/step-00000020",
+   "domain": {
+    "loss": 12.138106743494669,
+    "ppl": 186858.4661001592,
+    "windows": 60,
+    "pred_tokens": 122820
+   },
+   "w_holdout": {
+    "loss": 11.527301909431579,
+    "ppl": 101448.02825498061,
+    "windows": 63,
+    "pred_tokens": 128961
+   }
+  },
+  "seed2027_lowlr_step20": {
+   "path": "/home/roman/gb10-shared/runs/axiom-demo-20261022/seed2027/lowlr/checkpoints/step-00000020",
+   "domain": {
+    "loss": 12.124499130249024,
+    "ppl": 184332.99018105344,
+    "windows": 60,
+    "pred_tokens": 122820
+   },
+   "w_holdout": {
+    "loss": 10.738337834676107,
+    "ppl": 46089.38004580752,
+    "windows": 63,
+    "pred_tokens": 128961
+   }
+  }
+ }
+}

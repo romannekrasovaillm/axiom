@@ -1,0 +1,20 @@
+{
+  "schema": "axiom-eval-leak/1",
+  "verdict": "clean",
+  "eval_files": [
+    "/home/roman/gb10-shared/runs/axiom-demo-20261022/domain_eval_v3_clean.jsonl"
+  ],
+  "eval_docs": 199,
+  "ngram": 12,
+  "sources": [
+    {
+      "path": "/home/roman/gb10-shared/datasets/axiom-domain-ds-v1/cpt-kds-v0.1-00000.jsonl.zst",
+      "kind": "text",
+      "docs_overlap": false,
+      "ngram_overlap": 0.0,
+      "examples": [],
+      "records": 102395
+    }
+  ],
+  "exit_code": 0
+}

@@ -1,0 +1,77 @@
+[
+ {
+  "name": "pretrain B=4, steps 2-10 (clean)",
+  "steps": [
+   2,
+   10
+  ],
+  "n": 9,
+  "tok_s": 1423.1,
+  "step_s": 23.027,
+  "mfu98": 4.368,
+  "mfu77": 5.549,
+  "loss_first": 13.542105674743652,
+  "loss_last": 11.936981201171875,
+  "nan": 0
+ },
+ {
+  "name": "pretrain B=4, steps 11-13 (after ckpt save)",
+  "steps": [
+   11,
+   13
+  ],
+  "n": 3,
+  "tok_s": 288.4,
+  "step_s": 113.618,
+  "mfu98": 0.885,
+  "mfu77": 1.125,
+  "loss_first": 13.542105674743652,
+  "loss_last": 11.936981201171875,
+  "nan": 0
+ },
+ {
+  "name": "pretrain B=2, steps 12-20",
+  "steps": [
+   12,
+   20
+  ],
+  "n": 9,
+  "tok_s": 1305.4,
+  "step_s": 12.551,
+  "mfu98": 4.007,
+  "mfu77": 5.091,
+  "loss_first": 11.79904842376709,
+  "loss_last": 11.654023170471191,
+  "nan": 0
+ },
+ {
+  "name": "midtrain B=2, steps 12-30 (clean, no ckpt)",
+  "steps": [
+   12,
+   30
+  ],
+  "n": 19,
+  "tok_s": 1192.9,
+  "step_s": 13.735,
+  "mfu98": 3.662,
+  "mfu77": 4.652,
+  "loss_first": 15.83157730102539,
+  "loss_last": 9.33504867553711,
+  "nan": 0
+ },
+ {
+  "name": "midtrain B=2, steps 21-29 (ckpt run, excl. save)",
+  "steps": [
+   21,
+   29
+  ],
+  "n": 9,
+  "tok_s": 1085.2,
+  "step_s": 15.097,
+  "mfu98": 3.331,
+  "mfu77": 4.232,
+  "loss_first": 10.101581573486328,
+  "loss_last": 9.35039234161377,
+  "nan": 0
+ }
+]

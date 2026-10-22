@@ -1,0 +1,249 @@
+{
+ "schema": "pretrain-run-journal/v1",
+ "stage": "pretrain",
+ "status": "executed",
+ "scale": "smoke",
+ "run_ref": "demo-policy-lowlr",
+ "started_at": "2026-10-22T06:54:18.615565+00:00",
+ "seed": 1337,
+ "paths": {
+  "shard_root": "~/axiom-run/domain-cpt",
+  "tokens_root": "~/gb10-shared/datasets/axiom-demo-mix/tokens",
+  "out_dir": "~/gb10-shared/runs/axiom-demo-20261022/policy/lowlr",
+  "checkpoints": "~/gb10-shared/runs/axiom-demo-20261022/policy/lowlr/checkpoints",
+  "metrics": "~/gb10-shared/runs/axiom-demo-20261022/policy/lowlr/metrics.jsonl",
+  "journal": "~/gb10-shared/runs/axiom-demo-20261022/policy/lowlr/journal.json"
+ },
+ "tokenizer": {
+  "hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac",
+  "source": "packed manifest tokens/ (токенизатор, которым собраны .bin)",
+  "vocab_size": 160000,
+  "model_vocab_size": 160000,
+  "canonical_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac",
+  "canonical_source": "net/config.json",
+  "matches_canonical": true,
+  "streams": [
+   "K"
+  ],
+  "note": "model_vocab_size выведен из манифеста tokens/ — покрывает фактические id в .bin, а не диапазон id канонического BPE (иначе embedding по чужим индексам). matches_canonical сверяет данные с каноном (пин net/config.json): расхождение — контракт данных, не гигиена"
+ },
+ "model": {
+  "preset": "l3-full",
+  "vocab_size": 160000,
+  "hidden": 1536,
+  "num_layers": 24,
+  "param_dtype": "bfloat16",
+  "chunk_size": 32
+ },
+ "backend": {
+  "platform": "gpu",
+  "devices": [
+   {
+    "platform": "gpu",
+    "kind": "NVIDIA GB10"
+   }
+  ],
+  "device_kind": "NVIDIA GB10",
+  "jax_version": "0.11.2",
+  "matmul_precision": "highest",
+  "gate_profile": false,
+  "determinism_pinned": false,
+  "python": "3.12.3",
+  "xla_flags": "--xla_gpu_autotune_level=1",
+  "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac",
+  "vocab_size": 160000,
+  "note": "детерминизм XLA включается гейтовым профилем (NET_GATE_PROFILE=1, ADR-013): без него побитовая воспроизводимость между процессами на GPU не гарантируется — расхождение на 1e-4 после нескольких шагов это выбор ядер, а не ошибка resume"
+ },
+ "resume": {
+  "from_step": 10,
+  "cursor_restored": true,
+  "run_pinned": {
+   "seed": 1337,
+   "total_steps": 20,
+   "warmup_ratio": 0.01,
+   "decay_ratio": 0.05,
+   "param_dtype": "bfloat16",
+   "data_kind": "packed",
+   "optimizer_classification": "adr-048"
+  }
+ },
+ "data": {
+  "kind": "packed",
+  "shard_root": "~/axiom-run/domain-cpt",
+  "tokens_root": "~/gb10-shared/datasets/axiom-demo-mix/tokens",
+  "streams": [
+   {
+    "name": "K",
+    "kind": "packed",
+    "manifest": "~/gb10-shared/datasets/axiom-domain-ds-v1/tokens/K/manifest-k.json",
+    "source": {
+     "file": "tokenizer.model",
+     "path": "~/gb10-shared/datasets/axiom-pretrain-l3/tokenizer-v2/tokenizer.model",
+     "sha256": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac",
+     "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac",
+     "vocab_size": 160000,
+     "code_prefix": "<|code|>",
+     "code_prefix_id": 3,
+     "eos_id": 2,
+     "bos_id": 1,
+     "pad_id": 0
+    },
+    "shards": 1,
+    "records": 5719,
+    "slots": 46850048,
+    "stream_tokens": 46837699,
+    "seq_len": 8192,
+    "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac",
+    "pinned": [
+     {
+      "file": "K-00000.bin",
+      "source": "K-00000.jsonl.zst",
+      "source_sha256": "286f0a29e1d6f5cdfe5fcc4dcd197493e2d0ae8502fc7ef9eb5c9e7358ec531e",
+      "records": 5719,
+      "sha256": "c2ce7347e4dea246341dc15b36dda9aea123957594ce20cb762b5514e5ab6538",
+      "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+     }
+    ]
+   }
+  ],
+  "mix_declared": {
+   "K": 1.0
+  },
+  "shuffle_window": null,
+  "streaming": true,
+  "seq_len": 8192,
+  "batch_size": 2,
+  "loader_batch": 2,
+  "micro_batch": 2,
+  "accum_tokens": 0,
+  "planned_batch": 2,
+  "decay": null
+ },
+ "loop": {
+  "steps_requested": 10,
+  "total_steps": 20,
+  "schedule": "wsd",
+  "lr": 0.001,
+  "warmup_ratio": 0.01,
+  "decay_ratio": 0.05,
+  "decay_ratio_requested": null,
+  "decay_ratio_explicit": false,
+  "decay_stream": null,
+  "decay_start": null,
+  "grad_checkpointing": true,
+  "grad_checkpointing_policy": "full",
+  "grad_ckpt_policy": "per_layer_block",
+  "remat_policy": "none",
+  "remat_policy_requested": "none",
+  "ce_chunk_tokens": 2048,
+  "ce_chunk_tokens_requested": 2048,
+  "loss_impl": "chunked_ce",
+  "param_dtype": "bfloat16",
+  "checkpoint_every": 10,
+  "checkpoint_every_min": null,
+  "stop_file": "~/axiom-run/demo-20261022/STOP",
+  "resume": true,
+  "data_kind": "packed",
+  "micro_batch": 2,
+  "accum_tokens": 0,
+  "planned_batch": 2,
+  "tokens_per_step": 16384,
+  "ns_steps": 5,
+  "legacy_muon_all_2d": false,
+  "optimizer_classification": "adr-048",
+  "phase_profile": false
+ },
+ "gpu": {
+  "peak_tflops": 98.2,
+  "peak_tflops_source": "",
+  "peak_declared_not_measured": true
+ },
+ "steps_done": 10,
+ "start_step": 10,
+ "tokens_seen": 491520,
+ "loss_first": 15.83157730102539,
+ "loss_last": 11.744555473327637,
+ "lr_first": 0.001,
+ "lr_last": 0.001,
+ "tree_hash": "95596b8d73ab22d7cd1958e516ce25699a282df6567ab730a1b5b32bf1c544ba",
+ "tree_hash_master": "95596b8d73ab22d7cd1958e516ce25699a282df6567ab730a1b5b32bf1c544ba",
+ "tree_hash_note": "tree_hash — обслуживаемые веса (params); tree_hash_master — fp32-мастер, он же лежит в чекпойнте. При param_dtype=float32 веса и мастер совпадают и хеши равны",
+ "timings": {
+  "first_step_seconds": 56.0077,
+  "step_seconds_mean_tail": 15.362622,
+  "wall_seconds": 217.172
+ },
+ "wall_clock_s": 239.916,
+ "data_consumed": {
+  "kind": "packed",
+  "token_share": {
+   "K": 1.0
+  },
+  "phase": "stable",
+  "decay_start": null,
+  "peak_rss_mb": 30236.6,
+  "streams": {
+   "K": {
+    "shard_index": 0,
+    "shards": 1,
+    "slots": 163840,
+    "records": 20,
+    "stream_tokens": 46837699,
+    "exhausted": false,
+    "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac"
+   }
+  },
+  "records_total": 20,
+  "slots_total": 163840,
+  "dropped_tail_records": {
+   "K": 0
+  }
+ },
+ "budget": {
+  "run_ref": "demo-policy-lowlr",
+  "estimate_present": false,
+  "estimate_path": "evidence/budget/demo-policy-lowlr.json",
+  "target_tokens": null,
+  "gpu_hours_estimate": null,
+  "limit_usd": 5.0,
+  "gpu_hours_actual": 0.149757,
+  "gpu_hours_leg": 0.060326,
+  "gpu_hours_resumed_base": 0.090033,
+  "tokens_seen_total": 491520,
+  "tokens_seen_resumed_base": 327680,
+  "usd_spent": 0.0,
+  "usd_rate_declared": false,
+  "stop_reason": null
+ },
+ "checkpoint": {
+  "step": 20,
+  "path": "~/gb10-shared/runs/axiom-demo-20261022/policy/lowlr/checkpoints/step-00000020",
+  "tree_hash": "95596b8d73ab22d7cd1958e516ce25699a282df6567ab730a1b5b32bf1c544ba",
+  "optimizer_state_hash": "e675321fe38d00cb9c943de23953ed020ca9cabb5dc62d2d25b0922161962ed8",
+  "master_dtype": "bf16",
+  "master_comp": "kahan"
+ },
+ "stop": {
+  "reason": null,
+  "stopped_by_budget": false
+ },
+ "metrics_summary": {
+  "path": "~/gb10-shared/runs/axiom-demo-20261022/policy/lowlr/metrics.jsonl",
+  "rows": 10,
+  "first_step_excluded": true,
+  "kpi_rows": 9,
+  "loss_first": 15.83157730102539,
+  "loss_last": 11.744555473327637,
+  "loss_median_tail": 12.365669250488281,
+  "tokens_per_sec_median": 1323.7007954207925,
+  "mfu_median": 0.04063296955063127,
+  "mfu_params_only": true,
+  "mfu_note": "MFU считается по параметрической части (6·N_active·tokens); вклад внимания (квадратичный по T) не входит — число неполное по построению"
+ },
+ "notes": [
+  "mfu_params_only: MFU по параметрической части (6·N_active·tokens), вклад внимания не входит; N для MFU — active_param_count, не N_total",
+  "mfu: доля от ОБЪЯВЛЕННОГО пика; на смоуке с крошечной моделью число мало по построению и не является замером эффективности железа (на H800 калибровка ~35% — ожидаемый порядок, не гарантия)",
+  "token_share: фактическая доля потоков в израсходованном окне корпуса; для packed — по слотам записей",
+  "first_step_excluded: KPI-медианы (tokens_per_sec_median, mfu_median) считаются без первого (компилирующего) шага ноги; построчные значения в metrics.jsonl сохранены (ADR-048 Amendment)"
+ ]
+}

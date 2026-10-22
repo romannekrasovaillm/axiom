@@ -1,0 +1,26 @@
+{
+  "schema": "axiom-eval-leak/1",
+  "verdict": "leak",
+  "eval_files": [
+    "/home/roman/gb10-shared/runs/axiom-demo-20261022/domain_eval_v3.jsonl"
+  ],
+  "eval_docs": 200,
+  "ngram": 12,
+  "sources": [
+    {
+      "path": "/home/roman/gb10-shared/datasets/axiom-domain-ds-v1/cpt-kds-v0.1-00000.jsonl.zst",
+      "kind": "text",
+      "docs_overlap": false,
+      "ngram_overlap": 0.0027397260273972603,
+      "examples": [
+        {
+          "eval_doc": 169,
+          "check": "ngram",
+          "detail": "окно слов: в 2025–2026 годах совершила фундаментальный поворот: от гонки за размером базовых моделей"
+        }
+      ],
+      "records": 102395
+    }
+  ],
+  "exit_code": 1
+}

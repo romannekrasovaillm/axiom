@@ -1,0 +1,83 @@
+{
+ "seq": 2048,
+ "max_tokens": 131072,
+ "w_shard": "W-00051.bin",
+ "datasets": {},
+ "checkpoints": {
+  "pretrain_step10": {
+   "path": "/home/roman/gb10-shared/runs/axiom-demo-20261022/pretrain/checkpoints/step-00000010",
+   "domain": {
+    "loss": 15.640391731262207,
+    "ppl": 6202058.005218481,
+    "windows": 60,
+    "pred_tokens": 122820
+   },
+   "w_holdout": {
+    "loss": 10.92449851263137,
+    "ppl": 55519.99541686216,
+    "windows": 63,
+    "pred_tokens": 128961
+   }
+  },
+  "baseline_step20_lr2e-3": {
+   "path": "/home/roman/gb10-shared/runs/axiom-demo-20261022/midtrain/checkpoints/step-00000020",
+   "domain": {
+    "loss": 12.17688643137614,
+    "ppl": 194247.1179625385,
+    "windows": 60,
+    "pred_tokens": 122820
+   },
+   "w_holdout": {
+    "loss": 11.30219182514009,
+    "ppl": 80998.97871676511,
+    "windows": 63,
+    "pred_tokens": 128961
+   }
+  },
+  "baseline_step30_lr2e-3": {
+   "path": "/home/roman/gb10-shared/runs/axiom-demo-20261022/midtrain/checkpoints/step-00000030",
+   "domain": {
+    "loss": 12.307004992167155,
+    "ppl": 221240.3601919647,
+    "windows": 60,
+    "pred_tokens": 122820
+   },
+   "w_holdout": {
+    "loss": 11.8955444457039,
+    "ppl": 146611.93039309123,
+    "windows": 63,
+    "pred_tokens": 128961
+   }
+  },
+  "replay_step20_lr2e-3": {
+   "path": "/home/roman/gb10-shared/runs/axiom-demo-20261022/policy/replay/checkpoints/step-00000020",
+   "domain": {
+    "loss": 12.197756052017212,
+    "ppl": 198343.57873586516,
+    "windows": 60,
+    "pred_tokens": 122820
+   },
+   "w_holdout": {
+    "loss": 11.304420107886905,
+    "ppl": 81179.66858284075,
+    "windows": 63,
+    "pred_tokens": 128961
+   }
+  },
+  "lowlr_step20_lr1e-3": {
+   "path": "/home/roman/gb10-shared/runs/axiom-demo-20261022/policy/lowlr/checkpoints/step-00000020",
+   "domain": {
+    "loss": 12.457114760080973,
+    "ppl": 257072.8431455773,
+    "windows": 60,
+    "pred_tokens": 122820
+   },
+   "w_holdout": {
+    "loss": 10.764034135001046,
+    "ppl": 47289.05417934068,
+    "windows": 63,
+    "pred_tokens": 128961
+   }
+  }
+ }
+}

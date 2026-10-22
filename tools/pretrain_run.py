@@ -70,6 +70,10 @@ import run_sft_smoke as sft_stage  # noqa: E402 — источник общих 
 #: Схема журнала прогона.
 JOURNAL_SCHEMA = "pretrain-run-journal/v1"
 
+#: Дефолтный пиковый LR по стадии (ADR-055): pretrain — прежний 1e-2,
+#: midtrain — политика мидтрейна 1e-3.  Явный ``--lr`` сильнее дефолта.
+STAGE_DEFAULT_LR = {"pretrain": 1e-2, "midtrain": 1e-3}
+
 #: Подкаталог шард-наборов на каноническом диске (ADR-021).
 DEFAULT_SHARD_SUBDIR = "datasets/axiom-pretrain-l3"
 
@@ -169,7 +173,21 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
                         help="окно детерминированного шаффла (документов)")
     parser.add_argument("--max-doc-tokens", type=int, default=None,
                         help="обрезка документа в токенах (по умолчанию — без обрезки)")
-    parser.add_argument("--lr", type=float, default=1e-2, help="пиковый LR")
+    parser.add_argument(
+        "--stage",
+        choices=("pretrain", "midtrain"),
+        default="pretrain",
+        help="стадия прогона (ADR-055): pretrain — прежний режим (LR 1e-2); "
+             "midtrain — политика мидтрейна (LR 1e-3, holdout-отбор чекпойнта, "
+             "обязательный leak-check); в журнал уезжает стадия и блок policy",
+    )
+    parser.add_argument(
+        "--lr",
+        type=float,
+        default=None,
+        help="пиковый LR; по умолчанию — по стадии (pretrain 1e-2, midtrain 1e-3, "
+             "ADR-055); явное значение сильнее дефолта",
+    )
     parser.add_argument("--schedule", choices=("wsd", "cosine"), default="wsd")
     parser.add_argument("--warmup-ratio", type=float, default=0.01)
     parser.add_argument("--decay-ratio", type=float, default=None,
@@ -267,7 +285,36 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
                         help="откуда взято число пика (для журнала)")
     parser.add_argument("--log-every", type=int, default=0, help="печатать каждый N-й шаг")
     parser.add_argument("--json", action="store_true", help="печать журнала в stdout")
-    return parser.parse_args(list(argv) if argv is not None else None)
+    args = parser.parse_args(list(argv) if argv is not None else None)
+    # Резолвинг LR после разбора argv: None — флаг не задан, дефолт стадии
+    # (ADR-055); явный --lr доезжает сюда уже числом и не подменяется.
+    if args.lr is None:
+        args.lr = STAGE_DEFAULT_LR[args.stage]
+    return args
+
+
+def stage_journal_fields(args: argparse.Namespace) -> dict[str, Any]:
+    """Поля журнала стадии: ``stage`` из argv + блок политики (ADR-055).
+
+    Чистая функция без запуска обучения: заголовок журнала обязан называть
+    стадию и её политику отбора чекпойнта до того, как прогон что-либо сделал, —
+    иначе мидтрейн-прогон неотличим от претрейн-прогона по следу.
+    """
+    if args.stage == "midtrain":
+        policy: dict[str, Any] = {
+            "name": "ADR-055",
+            "checkpoint_selection": "holdout",
+            "leak_check_required": True,
+            "lr": args.lr,
+        }
+    else:
+        policy = {
+            "name": None,
+            "checkpoint_selection": "train",
+            "leak_check_required": False,
+            "lr": args.lr,
+        }
+    return {"stage": args.stage, "policy": policy}
 
 
 # ---------------------------------------------------------------------------
@@ -964,7 +1011,9 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
 
     journal: dict[str, Any] = {
         "schema": JOURNAL_SCHEMA,
-        "stage": "pretrain",
+        # Стадия из argv + блок политики (ADR-055): прежние ключи журнала
+        # сохранены, policy — аддитивное поле.
+        **stage_journal_fields(args),
         "status": "absent",
         "scale": "smoke",
         "run_ref": args.run_ref,

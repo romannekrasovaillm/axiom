@@ -171,3 +171,11 @@ tools/pretrain_run.py --model-preset l3-full --grad-checkpointing \
 Replay 10 % на 20 шагах (seed 2027, K=0.9/W=0.1): domain 11.6914, W 11.0546 против 11.6649 / 11.0610 без replay — нейтрально (Δdomain +0.0265, ΔW −0.0064); край W не снимает.
 LR 5e-4 на 20 шагах (seed 2027): domain 12.6874, W 10.8459 — domain выше порога 12.6, W не лучше 10 шагов (10.7468); вариант отклонён.
 Третий seed (42, 20 шагов LR1e-3): domain 11.8348, W 11.1209 — выше 11.1, гейт не пройден. На трёх seed 20 шагов W = 10.8498 / 11.0597 / 11.1209; дефолт 10 шагов подтверждён окончательно (domain 12.09–12.46, W 10.75–10.83).
+
+## 14. SFT smoke (l3-full, 20 шагов)
+
+- Данные: `sft_train_v12-normalized.jsonl` (симлинк на `~/gb10-shared`), карточка: 44 949 строк, 486 390 312 Б, sha256 `fd7908bc…`, 13 блоков.
+- 20 шагов, QAT=on, C=32, MEM_FRACTION=0.85; **loss 7.5669 → 2.1787**, wall 387 с (14.2 с/шаг на финише).
+- Чекпоинт: Orbax `tree_hash=7ae62134…`, roundtrip_ok, canonical `~/gb10-shared/checkpoints/sft-smoke` (2.7 ГБ); в репозитории — симлинк.
+- Preflight CL-017 OVERRIDDEN с причиной «smoke-only: eval-набор не подключён; вердикт не выносится»; обход зафиксирован фактом S-033.
+- Уроки: SFT l3-full требует ~82.5 ГиБ и MEM_FRACTION 0.85 (оценка ресурсов 15 ГиБ занижена); default `chunk_size=64` падает на persistent KDA — нужен 32.

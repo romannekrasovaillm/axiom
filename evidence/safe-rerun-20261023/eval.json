@@ -1,0 +1,49 @@
+{
+  "schema": "axiom-eval-checkpoint/1",
+  "seq": 2048,
+  "max_tokens": 131072,
+  "checkpoints": {
+    "pretrain": {
+      "path": "~/gb10-shared/runs/axiom-safe-rerun-20261023/pretrain/pinned/step-00000100",
+      "domain": {
+        "loss": 14.22038402557373,
+        "ppl": 1499112.8017290316,
+        "windows": 60,
+        "pred_tokens": 122820
+      },
+      "w_holdout": {
+        "loss": 8.455506898462772,
+        "ppl": 4700.888904641794,
+        "windows": 64,
+        "pred_tokens": 131008
+      }
+    },
+    "midtrain": {
+      "path": "~/gb10-shared/runs/axiom-safe-rerun-20261023/midtrain/checkpoints/step-00000110",
+      "domain": {
+        "loss": 13.04444244702657,
+        "ppl": 462518.7830114252,
+        "windows": 60,
+        "pred_tokens": 122820
+      },
+      "w_holdout": {
+        "loss": 8.52990360558033,
+        "ppl": 5063.9576740308785,
+        "windows": 64,
+        "pred_tokens": 131008
+      }
+    }
+  },
+  "meta": {
+    "w_shard": "W-00051.bin",
+    "w_shard_bytes": 63438848,
+    "domain_ids_sha256": "5485e5e3b255570ddd23b096f511669ba55fc42703a6bff8ff53fe49cc3f90f1",
+    "git_sha": "dd9b4dab0bb70373489f72d09c02ee0fcb0a9c95",
+    "tokenizer_hash": "16e4a5325f38df9dd6f4f5de55dd40c96da04f08d3e20549ebb6e9009cc00fac",
+    "config_sha256": "4b378782e4b263492d70b3fbfe85d4edb7a245b2bd3afab8bb9f7a0f988e4fcc",
+    "domain_tokens": 124790,
+    "domain_tail_tokens": 1910,
+    "w_tokens": 131072,
+    "w_tail_tokens": 0
+  }
+}

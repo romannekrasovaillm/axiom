@@ -1997,6 +1997,74 @@ class MetricsWriter:
         return rows
 
 
+# ---------------------------------------------------------------------------
+# 9-тер. Диагностика градиента: глобальная норма и поля строки метрик
+# ---------------------------------------------------------------------------
+#
+# Зачем: на длинном прогоне loss может устойчиво сдвинуться без видимой
+# причины в данных/конфиге (наблюдение шага ~14391: медиана 100 шагов
+# 4.54 -> 4.78).  Без нормы градиента нельзя отличить численный сдвиг
+# оптимизатора от локальной особенности данных, поэтому каждая строка
+# ``pretrain-metrics/v1`` несёт три аддитивных поля.
+#
+# Клиппинга градиента в цикле НЕТ — проверено по коду, а не предположено:
+# ``net/optimizer.py`` клиппит ВЕСА после обновления (``weight_clip``), а Muon
+# нормирует матрицу внутри Newton-Schulz; глобального clip-by-norm градиента
+# ни в одном пути шага нет.  Поэтому ``grad_norm_postclip`` равен
+# ``grad_norm_preclip``, а ``grad_clip_coeff`` — ``1.0``: это фактическое
+# поведение, а не заглушка.  Появление клиппинга будет видно как отличие
+# ``grad_clip_coeff`` от 1.0, а не как новая схема журнала.
+
+#: Поля диагностики градиента (аддитивные ключи ``pretrain-metrics/v1``).
+GRAD_NORM_FIELDS = ("grad_norm_preclip", "grad_norm_postclip", "grad_clip_coeff")
+
+
+def tree_l2_norm(tree) -> Any:
+    """Глобальная L2-норма pytree: ``sqrt(Σ_листья Σ_элементы x²)``.
+
+    Считается **на устройстве**: наружу уезжает один скаляр, а не дерево
+    градиентов (иначе диагностика стоила бы host-копии всех весов).  Квадраты
+    накапливаются в fp32: bf16-градиенты (bf16-мастер, ADR-054 Am.13) иначе
+    теряли бы точность, а большие значения могли бы переполнить bf16.
+
+    Шардирование: внутри ``jit`` ``jnp.sum`` по глобально-формному массиву —
+    глобальная редукция (XLA сам собирает сумму через устройства), а не
+    локальная сумма одного шарда.  Делить на число устройств нельзя: это дало
+    бы среднюю по устройствам, а не глобальную норму; при реплицированных
+    градиентах (DP, ADR-034) сумма по каждой реплике одинакова и не удваивается.
+
+    Нечисловая норма (nan/inf) возвращается как есть — это диагностический
+    сигнал, а не повод подменить его нулём.
+    """
+    import jax
+    import jax.numpy as jnp
+
+    leaves = jax.tree_util.tree_leaves(tree)
+    if not leaves:
+        return jnp.zeros((), dtype=jnp.float32)
+    total = jnp.zeros((), dtype=jnp.float32)
+    for leaf in leaves:
+        squared = jnp.square(jnp.asarray(leaf, dtype=jnp.float32))
+        total = total + jnp.sum(squared)
+    return jnp.sqrt(total)
+
+
+def grad_norm_fields(preclip: float) -> dict[str, float]:
+    """Три поля диагностики по норме градиента ДО применения оптимизатора.
+
+    Клиппинга в цикле нет (см. раздел 9-тер), поэтому норма после клиппинга
+    равна норме до него, а коэффициент клиппинга — ``1.0``.  Значения не
+    подменяются: ``nan``/``inf`` остаются собой (``json.dumps`` пишет их как
+    ``NaN``/``Infinity`` — расширение Python JSON, читаемое его же парсером).
+    """
+    value = float(preclip)
+    return {
+        "grad_norm_preclip": value,
+        "grad_norm_postclip": value,
+        "grad_clip_coeff": 1.0,
+    }
+
+
 def step_flops(active_params: int, tokens: int, *, factor: float = 6.0) -> float:
     """FLOPs шага обучения: ``factor · N_active · tokens`` (forward+backward).
 
@@ -3025,6 +3093,10 @@ class _PendingMetricsStep:
     samples: list[Any]
     weights: list[float] | None = None
     total: float | None = None
+    #: Device-скаляр глобальной нормы градиента шага (``None`` — журнала нет
+    #: или диагностика не включена).  На хост уезжает на границе сброса окна
+    #: ВМЕСТЕ с loss-сэмплами — одной синхронизацией, как Am.21.
+    grad_norm: Any | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -3470,6 +3542,11 @@ def train(
     params = working_params(master)
     active_params = model.active_param_count(cfg)
     metrics = MetricsWriter(train_config.metrics_path) if train_config.metrics_path else None
+    # Диагностика градиента (раздел 9-тер) живёт в журнале метрик: без журнала
+    # не строится ни jit-функции нормы, ни host-копии — дефолтный путь (и
+    # SFT/RL-смоуки без ``metrics_path``) за неё не платит.  Jit — отдельный,
+    # поверх готового дерева градиентов: граф шага не трогается.
+    grad_norm_fn = jax.jit(tree_l2_norm) if metrics is not None else None
     # ADR-048: режим классификации — условие прогона, а не деталь кода.  Метка
     # едет в каждую строку ``pretrain-metrics/v1``, чтобы A/B-ноги различались по
     # журналу без догадок (поле опциональное, схему не ломает).
@@ -3543,9 +3620,25 @@ def train(
             return
         # Один стек + один ``device_get``: K шагов (и N микробатчей Python-ветки)
         # стоят одной синхронизации.  Значения — бит-в-бит те, что вернул jit:
-        # стек — копия, не арифметика.
+        # стек — копия, не арифметика.  Норма градиента шага (раздел 9-тер) —
+        # такой же device-скаляр: едет тем же стеком и той же синхронизацией,
+        # поэтому async-режим не платит per-step копией за диагностику.
         samples = [sample for step in metric_window for sample in step.samples]
-        values = np.asarray(jax.device_get(jnp.stack(samples)))
+        # Наличие нормы одинаково для всего окна: журнал (а с ним и диагностика
+        # градиента) — условие НОГИ, а не шага; ``row is None`` без журнала.
+        has_grad_norm = metric_window[0].grad_norm is not None
+        if has_grad_norm:
+            values, norm_values = jax.device_get(
+                (
+                    jnp.stack(samples),
+                    jnp.stack([step.grad_norm for step in metric_window]),
+                )
+            )
+            values = np.asarray(values)
+            norm_values = np.asarray(norm_values)
+        else:
+            values = np.asarray(jax.device_get(jnp.stack(samples)))
+            norm_values = None
         window_values: list[float] = []
         cursor = 0
         for step in metric_window:
@@ -3564,9 +3657,13 @@ def train(
                 window_values.append(acc / step.total)
             cursor += count
         losses.extend(window_values)
-        for step, value in zip(metric_window, window_values):
+        for position, (step, value) in enumerate(zip(metric_window, window_values)):
             if step.row is not None:
                 step.row["loss"] = value
+                if norm_values is not None:
+                    step.row.update(
+                        grad_norm_fields(float(norm_values[position]))
+                    )
                 metrics.log(step.row)
         if train_config.log_every:
             try:
@@ -3717,6 +3814,22 @@ def train(
                     loss_total = total
                 else:
                     loss_value = loss_acc / total
+        if use_bf16:
+            # bf16-рабочая копия: оптимизатор получает fp32-градиенты — норма
+            # (раздел 9-тер) считается по тем же числам, что уходят в шаг.
+            # Перенос каста из ветки ниже арифметику не меняет.
+            grads = jax.tree_util.tree_map(
+                lambda leaf: leaf.astype(jnp.float32), grads
+            )
+        # Диагностика градиента (раздел 9-тер): ОТДЕЛЬНЫЙ jit поверх готового
+        # дерева, а не ещё один выход ``grad_fn`` — граф шага не меняется,
+        # значит loss/tree_hash побитово прежние.  Считается ДО ``step_fn``:
+        # он донирует ``grads`` (ADR-054), после вызова дерево читать нельзя.
+        # Наружу — один скаляр; в sync-пути он копируется на хост после
+        # ``elapsed``, в async — на границе сброса окна.
+        grad_norm_sample = (
+            grad_norm_fn(grads) if grad_norm_fn is not None else None
+        )
         if use_bf16_master:
             # Am.13: grads — bf16, рабочей копии нет, второго выхода шага тоже
             # (каст-в-шаг цикл-4 в этом режиме упразднён: params и есть мастер).
@@ -3732,7 +3845,6 @@ def train(
             )
             params = master
         elif use_bf16:
-            grads = jax.tree_util.tree_map(lambda leaf: leaf.astype(jnp.float32), grads)
             # ADR-054 (цикл-4, Am.10 п.1): bf16-рабочая копия — третий выход
             # того же jitted-шага (каст в его графе); отдельного
             # ``working_params(master)`` вне jit на шаг больше нет.
@@ -3747,6 +3859,13 @@ def train(
             # путь; в bf16 её вернул шаг выше.
             params = working_params(master)
         elapsed = time.time() - tick
+        # Диагностика градиента: host-копия одного скаляра — ПОСЛЕ ``elapsed``,
+        # чтобы она не попадала в измеренное время шага (как сброс окна
+        # async-метрик).  В async-режиме копии здесь нет вовсе — скаляр уезжает
+        # на границе сброса вместе с loss (Am.21).
+        grad_norm_value = None
+        if grad_norm_sample is not None and not async_metrics:
+            grad_norm_value = float(grad_norm_sample)
         if index == 0:
             first_tick = elapsed
 
@@ -3797,6 +3916,16 @@ def train(
                 "tokens": batch_tokens,
                 "tokens_seen": tokens_seen,
                 "step_seconds": elapsed,
+                # Раздел 9-тер: глобальная L2-норма градиента, который получил
+                # оптимизатор (норма до клиппинга; клиппинга в цикле нет, поэтому
+                # postclip == preclip и coeff == 1.0).  Под async-гейтом значения
+                # заполняет сброс окна — тем же device_get, что и loss; заглушка
+                # до диска не доходит (строка пишется на сбросе).
+                **(
+                    grad_norm_fields(grad_norm_value)
+                    if grad_norm_value is not None
+                    else {}
+                ),
                 "tokens_per_sec": batch_tokens / elapsed if elapsed > 0 else None,
                 "tflops_achieved": tflops_achieved(
                     step_flops(active_params, batch_tokens), seconds=elapsed
@@ -3879,6 +4008,10 @@ def train(
                     samples=loss_samples,
                     weights=loss_weights,
                     total=loss_total,
+                    # Раздел 9-тер: device-скаляр нормы едет в окне и
+                    # копируется на хост на границе сброса — без per-step
+                    # синхронизации (Am.21).
+                    grad_norm=grad_norm_sample,
                 )
             )
             if absolute % flush_every == 0:
@@ -4233,6 +4366,7 @@ __all__ = [
     "DECAY_SHARD",
     "DECLARED_BACKENDS",
     "EOS_ID",
+    "GRAD_NORM_FIELDS",
     "METRICS_SCHEMA",
     "Budget",
     "CheckpointManager",
@@ -4267,6 +4401,7 @@ __all__ = [
     "declared_backend",
     "decay_start_step",
     "decay_window_plan",
+    "grad_norm_fields",
     "iter_shard_docs",
     "load_budget",
     "load_packed_shard_set",
@@ -4280,6 +4415,7 @@ __all__ = [
     "step_flops",
     "tflops_achieved",
     "train",
+    "tree_l2_norm",
     "window_permutation",
     "wsd_schedule",
 ]

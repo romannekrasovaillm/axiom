@@ -1,36 +1,31 @@
 {
-  "created_at": "2026-10-20T04:57:06.507182731+00:00",
-  "task": "Цикл-36 кампании MFU-55 (ADR-054 Am.59): починить fused dispatch-путь MoE. Стендовый A/B `AXIOM_MOE_DISPATCH=fused` (вместе с `AXIOM_GEMM_FP8=1` и `AXIOM_MOE_BWD=fused`) упал на первом шаге: `sum requires ndarray or scalar arguments, got <class 'tuple'> at position 0`. Dispatch-кернел проверен на GPU (bitwise exact, Am.59), подозреваемые — `moe_dispatch.combine`/`scatter` (`_combine_run`/`_scatter_run`): `jnp.sum` на tuple/распаковка. CPU-тесты `test_55` 46 passed, но **модельный композит с fused-гейтом не проверялся** — это обязательный гейт цикла-36.\n\nОКРУЖЕНИЕ: CPU-интерпретатор `/home/roman/venv-axiom-0112cpu-py312/bin/python`; `NET_JAX_BACKEND=cpu JAX_PLATFORMS=cpu`; по одному файлу pytest. GPU-чек — архитектор (стенд); до него паритет не заявлять.\n\n1) Диагностика/фикс `net/kernels/moe_dispatch.py`:\n   - Найти `sum(...)`/возврат tuple в `_combine_run`/`_scatter_run` (и их обвязке `combine`/`scatter`); привести к ndarray: `de_grouped`, `dsel_p`, `dz` — по одному массиву; распаковку — явную.\n   - Проверить формы/оси: `de_grouped[row] = du[token]·sel_p[token,slot]` (rows×latent); `dsel_p[token,slot] = <du[token], e_grouped[row]>` (tokens×k, fp32-аккум); `dz = Σ_k dz_grouped.reshape(tokens,k,latent)` по фиксированной оси 1.\n   - Если fused combine/scatter починить не удаётся без риска — **допустимый компромисс**: в fused-пути оставить только dispatch-кернел, а combine/scatter вести jnp-`reference_combine`/`reference_scatter` (XLA), честно указав это в docstring/отчёте; гейт остаётся, семантика та же.\n2) **Обязательный модельный композит-тест** `net/tests/test_56_moe_compose.py` (CPU, швы = jnp-reference и/или подмена kernel-швов):\n   - `moe.apply` с `AXIOM_MOE_DISPATCH=fused` (и отдельно с `AXIOM_MOE_BWD=fused`): forward-выход и градиенты по параметрам/x == off-путь в scale-relative ≤2e-2 (для dispatch-only — побитово/≤1e-6, т.к. это перестановка);\n   - прогон `compute_loss`/`jax.grad` на малой модели (l1/tiny-подобной) с fused-гейтом — **без исключений**, форма градиентов;\n   - регресс: off-путь побитово прежний.\n3) Прогони: `test_56_moe_compose.py`, `test_55_moe_dispatch.py`, `test_32_moe_grouped_topk`, `test_54_moe_bwd_fused`.\n4) Ограничения: без unsafe; `net/config.json` не трогать; default `jax`; при off — побитово; порядок/канон forward сохранить; стиль русских docstring.\n5) В отчёте явно: реальный GPU-чек и стендовый A/B — за архитектором; если выбран компромисс dispatch-only, назвать его и ожидаемый потолок (снимается только часть XLA-части).\nJSON-контракт результата обязателен. Финальный git-коммит обязателен.",
+  "created_at": "2026-10-31T10:31:56.276644563+00:00",
+  "task": "Добавить в per-step метрики pretrain-прогона диагностику градиента — без изменения поведения обучения.\n\nЗАЧЕМ: на шаге ~14391 длинного прогона loss устойчиво вырос (медиана 100: 4.54 → 4.78), данные и конфиг исключены. В метриках нет grad_norm, поэтому нельзя отличить численный сдвиг оптимизатора от локальной особенности данных. Нужна наблюдаемость.\n\nЧТО СДЕЛАТЬ:\n1. В цикле обучения (net/train_loop.py, место вычисления градиентов до применения оптимизатора) вычислить глобальную L2-норму градиента по всему PyTree: sqrt(sum(x^2) по всем листьям). Учесть, что массивы могут быть шардированы: норма должна быть глобальной, не средней по устройствам.\n2. Если в цикле есть клиппинг (проверить фактически; не выдумывать), вычислить:\n   - grad_norm_preclip — норма до клиппинга;\n   - grad_norm_postclip — норма после клиппинга (если клиппинга нет — равно preclip);\n   - grad_clip_coeff — clip_norm / max(grad_norm_preclip, eps), 1.0 если клиппинга нет.\n3. Записать эти поля в JSONL метрик рядом с step/loss/step_seconds. Схема pretrain-metrics/v1 расширяется обратносовместимо: существующие поля и их типы не меняются, новые ключи добавляются.\n4. Значения — конечные float; если норма не конечна, писать фактическое значение (это диагностический сигнал), не подменять нулём.\n5. Стоимость: не добавлять лишних device-синхронизаций на каждом шаге сверх необходимого; вычисление нормы не должно заметно менять время шага.\n\nТЕСТЫ (обязательны):\n- unit: норма pytree (один лист, несколько листьев, нулевой градиент);\n- unit: отсутствие клиппинга → postclip == preclip, coeff == 1.0;\n- интеграционный на моке шага: поля присутствуют в записанной строке метрик;\n- обратная совместимость: старый парсер метрик не падает на новых ключах.\n\nДОКУМЕНТАЦИЯ: коротко в docs — что означают три поля и как их читать (одна страница/секция, без переписывания существующих доков).\n\nГРАНИЦЫ:\n- НЕ менять порядок операций, оптимизатор, клиппинг, RNG, данные, гиперпараметры.\n- НЕ запускать длинные GPU-прогоны; тесты — CPU/моки.\n- НЕ менять формат существующих полей метрик и не ломать потребителей.\n- НЕ трогать код вне net/ и tools/ (кроме docs и тестов).",
   "model": "deepseek",
   "sources": [
-    "/home/roman/axiom/ARCHITECTURE-SPINE.md",
-    "/home/roman/axiom/docs/adr/ADR-054-ispolnenie-shaga-donate-argumenty-jit-ustranenie-dtod-kopiy-fyuzing-put-g1-g4.md",
-    "/home/roman/axiom/net/moe.py",
-    "/home/roman/axiom/net/kernels/moe_dispatch.py",
-    "/home/roman/axiom/net/tests/test_55_moe_dispatch.py"
+    "/home/roman/.arch-ml/worktrees/axiom-43e236d789188868/grad-norm-metrics/ARCHITECTURE-SPINE.md",
+    "/home/roman/.arch-ml/worktrees/axiom-43e236d789188868/grad-norm-metrics/docs/adr/ADR-048-optimizator-kak-dominanta-shaga-muon-ns5-ne-primenyaetsya-k-embeddings-lm-head-chislo-ns-iteraciy-parametrizuetsya.md",
+    "/home/roman/.arch-ml/worktrees/axiom-43e236d789188868/grad-norm-metrics/docs/adr/ADR-013-determinizm-vychisleniy-na-gpu-dlya-a5-xla-gpu-deterministic-ops-v-geytovom-profile.md"
   ],
   "epic_context_chars": 6000,
   "epic_context_tokens": 1500,
   "route": "Standard",
   "recommended_timeout_secs": 3600,
-  "baseline_commit": "290d820",
+  "baseline_commit": "8f09370",
   "scope": {
     "write_allow": [
-      "net/**"
+      "net/",
+      "tools/",
+      "docs/"
     ],
     "write_deny": [
       "model/",
       "ARCHITECTURE-SPINE.md",
       "CONSTRAINTS.yaml"
     ],
-    "exec_allow": [
-      "python3",
-      "python",
-      "pytest",
-      "/home/roman/venv-axiom-0112cpu-py312/bin/python*"
-    ],
+    "exec_allow": [],
     "net": "none"
   },
-  "scope_hash": "688f8b3c900b420a956395ea3ef4eccef663b4dc116f744ba220a053dd98c417",
-  "rollback_plan": "Откат: git reset --hard <baseline_commit из .arch-handoff/MANIFEST.json> (гейт `AXIOM_MOE_DISPATCH` default `jax` — побитово прежний путь). Признак регрессии: off-путь перестал быть побитовым, модельный композит не совпадает, новые красные."
+  "scope_hash": "1d3bee76e6e5a9d2dd0f250cd3fe3eb69b3c7588875baf5df8eb82187aa7ae32",
+  "rollback_plan": "Откат: `git reset --hard 8f09370` (baseline — последний коммит до работы исполнителя; вся его работа приходит одним коммитом поверх).\nСигналы отката: провал fitness-гейта (`arch-ml control check`), непустой `conflicts_with_prior_decisions`, статус `blocked`.\nВладелец решения об откате — solution-архитектор; исполнитель откат не выполняет и не маскирует проблему обходным редизайном.\nОбратимость: полная — единая точка изменений, коммит исполнителя."
 }

@@ -1,15 +1,13 @@
 # Архитектурный контекст (epic-context)
 
-Собран: 2026-10-20T04:56:56.475757146+00:00
+Собран: 2026-10-31T10:31:46.261023839+00:00
 
 Источники:
-- /home/roman/axiom/ARCHITECTURE-SPINE.md
-- /home/roman/axiom/docs/adr/ADR-054-ispolnenie-shaga-donate-argumenty-jit-ustranenie-dtod-kopiy-fyuzing-put-g1-g4.md
-- /home/roman/axiom/net/moe.py
-- /home/roman/axiom/net/kernels/moe_dispatch.py
-- /home/roman/axiom/net/tests/test_55_moe_dispatch.py
+- /home/roman/.arch-ml/worktrees/axiom-43e236d789188868/grad-norm-metrics/ARCHITECTURE-SPINE.md
+- /home/roman/.arch-ml/worktrees/axiom-43e236d789188868/grad-norm-metrics/docs/adr/ADR-048-optimizator-kak-dominanta-shaga-muon-ns5-ne-primenyaetsya-k-embeddings-lm-head-chislo-ns-iteraciy-parametrizuetsya.md
+- /home/roman/.arch-ml/worktrees/axiom-43e236d789188868/grad-norm-metrics/docs/adr/ADR-013-determinizm-vychisleniy-na-gpu-dlya-a5-xla-gpu-deterministic-ops-v-geytovom-profile.md
 
-<!-- источник: /home/roman/axiom/ARCHITECTURE-SPINE.md -->
+<!-- источник: /home/roman/.arch-ml/worktrees/axiom-43e236d789188868/grad-norm-metrics/ARCHITECTURE-SPINE.md -->
 
 # ARCHITECTURE-SPINE — кейс «axiom» (модель с нуля против Kimi K3)
 
@@ -54,9 +52,6 @@
 - **Rule**: каждый прогон ссылается на хеш/дату весов модели, хеш датасета, версию среды (`environment v1`) и версию архитектурной базы. Прогон без пиннинга не считается доказательством. Манифест несёт состав исполненных стадий конвейера (схема `v2`, `stage_set v1`: `pretrain_checkpoint`, `spark_inference`, `rl_environment`, `sft`, `rl_base_scheme`) и **вычисляемое** поле `pipeline_complete`; пути в манифесте — **относительные от корня репозитория**, абсолютные запрещены (K11–K12); гейт A4 закрывается только при полном покрытии, частичный прогон даёт красный гейт с поимённым списком непокрытых стадий (ADR-014, дельта `docs/specs/A4-RUN.delta.md`). Страж: C-038 (behavioural: манифест прогона A4, `evidence/a4-skeleton-run-manifest.json`).
 - **Статус**: [PROPOSED]
 
-## AD-5: Архитектурная база — опубликованный дизайн; отклонения только через ADR
-
-- **Binds**: код модели ↔ техотчёт K3 (`k3_tech_report.pdf`, проверен 11.09.2026)
-- **Prevents**: самовольные архитектурные эксперименты на бюджете претрейна (22k H800-ч как цена о
+## AD-5: Архитекту
 
 > **Контекст усечён** до 6000 символов; полные тексты — в файлах-источниках (см. MANIFEST.json).

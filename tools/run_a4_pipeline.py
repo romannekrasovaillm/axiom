@@ -503,10 +503,16 @@ def run_rl_environment(
     tasks: int,
     out_dir: Path,
     repo_root: Path,
+    *,
+    baseline_model: Optional[str] = None,
+    baseline_snapshot_sha256: Optional[str] = None,
+    victory_axis: Optional[str] = None,
 ) -> tuple[list[dict], Path]:
     """≥`tasks` задач через env/net_executor.py → вердикты + Run Manifest среды.
 
     Пути манифестов задач в сводке — относительные от корня репозитория.
+    Без ``baseline_*`` манифесты среды пишутся в явной legacy-форме v1
+    (ADR-058): исторический артефакт A4, доказательством не является.
     """
     from env import generate as env_generate
     from env import manifest as env_manifest
@@ -539,8 +545,16 @@ def run_rl_environment(
             run_id=run_id, started=started, finished=finished,
             model_base="net-l3-skeleton-small-untrained",
             host="net-executor",
+            baseline_model=baseline_model,
+            baseline_snapshot_sha256=baseline_snapshot_sha256,
+            victory_axis=victory_axis,
+            allow_legacy_manifest=True,
         )
-        env_manifest.dump_manifest(manifest, manifests_dir / f"{task_id}.json")
+        env_manifest.dump_manifest(
+            manifest, manifests_dir / f"{task_id}.json",
+            package_path=CASE_DIR / "docs" / "DECISION-PACKAGE.json",
+            allow_legacy="schema_version" not in manifest,
+        )
         verdicts.append(
             {
                 "task_id": task_id,
@@ -812,6 +826,24 @@ def main(argv: Optional[list[str]] = None) -> int:
         default=None,
         help="аварийный обход preflight гейта с причиной (пишется фактом S-033)",
     )
+    parser.add_argument(
+        "--baseline-model",
+        default=None,
+        help="baseline-модель сравнения для Run Manifest v2 (ADR-058); без "
+        "--baseline-model и --baseline-snapshot манифесты среды пишутся как "
+        "legacy v1 — исторический артефакт, не доказательство",
+    )
+    parser.add_argument(
+        "--baseline-snapshot",
+        default=None,
+        help="sha256 снапшота baseline для Run Manifest v2 (ADR-058)",
+    )
+    parser.add_argument(
+        "--victory-axis",
+        default=None,
+        help="ось победы для Run Manifest v2; по умолчанию — "
+        "docs/DECISION-PACKAGE.json#/choice/victory_axis",
+    )
     args = parser.parse_args(argv)
 
     repo_root = detect_repo_root()
@@ -877,6 +909,15 @@ def main(argv: Optional[list[str]] = None) -> int:
         )
         return 2
 
+    has_baseline = bool(args.baseline_model) and bool(args.baseline_snapshot)
+    if not has_baseline:
+        print(
+            "предупреждение: манифесты среды A4 пишутся в legacy-форме v1 без "
+            "baseline (не заданы --baseline-model/--baseline-snapshot): "
+            "доказательством превосходства они не являются (ADR-058).",
+            file=sys.stderr,
+        )
+
     out_dir.mkdir(parents=True, exist_ok=True)
 
     if args.manifest_out:
@@ -938,7 +979,10 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     # --- доступная стадия: rl_environment -----------------------------------
     env_verdicts, env_summary = run_rl_environment(
-        cfg, params, tokenizer, args.seed, args.tasks, out_dir, repo_root
+        cfg, params, tokenizer, args.seed, args.tasks, out_dir, repo_root,
+        baseline_model=args.baseline_model,
+        baseline_snapshot_sha256=args.baseline_snapshot,
+        victory_axis=args.victory_axis,
     )
 
     # --- сборка стадий и журнала прогона ------------------------------------

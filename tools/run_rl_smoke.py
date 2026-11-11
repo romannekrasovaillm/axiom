@@ -698,12 +698,26 @@ def execute_rollout(spec: dict, base_ws: Path, ws_dir: Path, *, policy_params, c
 
 def write_attempt_manifest(path: Path, *, spec: dict, ws_dir: Path, net_run, verdict,
                            reward, cfg, decoding: dict, bin_path: str, run_id: str,
-                           started: str, finished: str, repo_root: Optional[Path]) -> dict:
-    """Run Manifest §8 для вердиктного прогона (temperature = 0)."""
+                           started: str, finished: str, repo_root: Optional[Path],
+                           baseline_model: Optional[str] = None,
+                           baseline_snapshot_sha256: Optional[str] = None,
+                           victory_axis: Optional[str] = None) -> dict:
+    """Run Manifest §8 (v2) для вердиктного прогона (temperature = 0).
+
+    ``baseline_model``/``baseline_snapshot_sha256`` обязательны (ADR-058):
+    сравнение без запиннутого baseline доказательством не является.
+    """
     from env import manifest as manifest_mod
     from env.net_executor import manifest_mod_sha256, model_snapshot_sha256
     from env.util import tree_sha256, write_json
     from env.verifier import arch_ml_build_hash
+
+    if not baseline_model or not baseline_snapshot_sha256:
+        raise StageError(
+            "Run Manifest v2 (ADR-058): обязательны --baseline-model и "
+            "--baseline-snapshot — baseline сравнения должен быть запиннут; "
+            "без него манифест доказательством не является"
+        )
 
     manifest = manifest_mod.build_manifest(
         run_id=run_id,
@@ -714,6 +728,9 @@ def write_attempt_manifest(path: Path, *, spec: dict, ws_dir: Path, net_run, ver
         workspace_sha256=tree_sha256(ws_dir),
         model_base="net-l3-skeleton-rl-smoke",
         model_snapshot_sha256=model_snapshot_sha256(cfg),
+        baseline_model=baseline_model,
+        baseline_snapshot_sha256=baseline_snapshot_sha256,
+        victory_axis=victory_axis,
         decoding=decoding,
         attempts_used=1,
         usage={
@@ -730,7 +747,9 @@ def write_attempt_manifest(path: Path, *, spec: dict, ws_dir: Path, net_run, ver
         },
     )
     manifest["model"]["routing_seed"] = int(cfg.routing_seed)
-    for message in manifest_mod.full_validate(manifest):
+    for message in manifest_mod.full_validate(
+        manifest, package_path=manifest_mod.DEFAULT_PACKAGE_PATH
+    ):
         raise StageError(f"Run Manifest вердиктного прогона не валиден: {message}")
     write_json(path, manifest)
     sft = _load_sft_runner()
@@ -881,6 +900,14 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
                         help="аварийный обход preflight гейта с причиной (пишется фактом)")
     parser.add_argument("--no-preflight", action="store_true",
                         help="не вызывать preflight (осознанно; по умолчанию вызывается)")
+    parser.add_argument("--baseline-model", default=None,
+                        help="baseline-модель сравнения для Run Manifest v2 (ADR-058; "
+                             "обязателен для вердиктного манифеста)")
+    parser.add_argument("--baseline-snapshot", default=None,
+                        help="sha256 снапшота baseline (ADR-058; обязателен)")
+    parser.add_argument("--victory-axis", default=None,
+                        help="ось победы; по умолчанию — "
+                             "docs/DECISION-PACKAGE.json#/choice/victory_axis")
     args = parser.parse_args(list(argv) if argv is not None else None)
     if args.steps > 100:
         parser.error("смоук-режим: --steps <= 100 (спека §3.2); полный прогон — "
@@ -1094,6 +1121,9 @@ def run_stage(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
                 bin_path=bin_path, run_id=f"rl-{phase}-{spec['id']}",
                 started=f"{run_date}T00:00:00+00:00",
                 finished=f"{run_date}T00:00:01+00:00", repo_root=repo_root,
+                baseline_model=args.baseline_model,
+                baseline_snapshot_sha256=args.baseline_snapshot,
+                victory_axis=args.victory_axis,
             )
             entry = {
                 "task_id": spec["id"],

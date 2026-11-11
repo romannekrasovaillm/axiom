@@ -12,6 +12,8 @@ from typing import Any
 from .util import is_sha256_hex
 
 ENV_VERSION = "environment-v1"
+#: Единственная доказательная схема Run Manifest (§8, ADR-058).
+MANIFEST_SCHEMA = "environment-v1/manifest-v2"
 _SLUG = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 _SOURCES = ("real", "corruption", "holdout")
 _OBJECTIVE_KINDS = ("restore-gates", "keep-gates-implement")
@@ -134,15 +136,38 @@ def _validate_verdict(verdict: Any, path: str, e: list[str]) -> None:
     _errs(e, f"{path}.issues_warn", isinstance(verdict.get("issues_warn"), list), "issues_warn — список")
 
 
-def validate_manifest(manifest: Any) -> list[str]:
-    """Структурная валидация Run Manifest (§8) без проверки пиннинга."""
+def _is_v2(manifest: Any) -> bool:
+    """Манифест объявляет доказательную схему v2 (ADR-058)."""
+    return isinstance(manifest, dict) and manifest.get("schema_version") == MANIFEST_SCHEMA
+
+
+def validate_manifest(manifest: Any, *, allow_legacy: bool = False) -> list[str]:
+    """Структурная валидация Run Manifest (§8) без проверки пиннинга.
+
+    Схема v2 (``environment-v1/manifest-v2``, ADR-058) — единственная
+    доказательная форма: ось победы, ``model.is_stub`` и ``baseline.*``
+    обязательны.  ``allow_legacy=True`` разрешает исторический манифест без
+    ``schema_version`` (v1): v2-поля в нём не требуются, но доказательством
+    такой манифест не является (пиннинг v1 — ``PINNING_PATHS_LEGACY``).
+    """
     e: list[str] = []
     if not isinstance(manifest, dict):
         return ["manifest: должен быть объектом"]
 
+    legacy_view = allow_legacy and not _is_v2(manifest)
+    schema_version = manifest.get("schema_version")
+    if schema_version is not None and not _is_v2(manifest) and not allow_legacy:
+        e.append(f"schema_version: ожидается {MANIFEST_SCHEMA} (ADR-058)")
+
     _errs(e, "run_id", _is_str(manifest.get("run_id")), "run_id — непустая строка")
     _errs(e, "task_id", _is_str(manifest.get("task_id")), "task_id — непустая строка")
     _errs(e, "env_version", manifest.get("env_version") == ENV_VERSION, f"env_version = {ENV_VERSION}")
+
+    if not legacy_view:
+        _errs(
+            e, "victory_axis", _is_str(manifest.get("victory_axis")),
+            "victory_axis — непустая строка (ADR-058)",
+        )
 
     gv = manifest.get("gates_version")
     if isinstance(gv, dict):
@@ -165,8 +190,27 @@ def validate_manifest(manifest: Any) -> list[str]:
     if isinstance(model, dict):
         _errs(e, "model.snapshot_sha256", is_sha256_hex(model.get("snapshot_sha256")), "model.snapshot_sha256 — sha256")
         _errs(e, "model.base", _is_str(model.get("base")), "model.base — непустая строка")
+        if not legacy_view:
+            _errs(
+                e, "model.is_stub", isinstance(model.get("is_stub"), bool),
+                "model.is_stub — bool (ADR-058: заглушка доказательством не является)",
+            )
     else:
         e.append("model: должен быть объектом")
+
+    if not legacy_view:
+        baseline = manifest.get("baseline")
+        if isinstance(baseline, dict):
+            _errs(
+                e, "baseline.model", _is_str(baseline.get("model")),
+                "baseline.model — непустая строка (ADR-058)",
+            )
+            _errs(
+                e, "baseline.snapshot_sha256", is_sha256_hex(baseline.get("snapshot_sha256")),
+                "baseline.snapshot_sha256 — sha256 (ADR-058)",
+            )
+        else:
+            e.append("baseline: должен быть объектом (ADR-058: baseline обязателен)")
 
     dec = manifest.get("decoding")
     if isinstance(dec, dict):
@@ -208,7 +252,11 @@ def validate_manifest(manifest: Any) -> list[str]:
 # ── Пиннинг (AD-4) ──────────────────────────────────────────────────────────
 
 # Поля, отсутствие/пустота которых лишает прогон статуса доказательства (AD-4).
+# Схема v2 (ADR-058): ось победы копируется из пакета решения, baseline
+# пиннится наравне с моделью, а версия схемы отличает доказательство от
+# исторического v1.
 PINNING_PATHS = (
+    ("schema_version",),
     ("gates_version", "arch_ml_build"),
     ("gates_version", "constraints_sha256"),
     ("gates_version", "hidden_constraints_sha256"),
@@ -216,14 +264,44 @@ PINNING_PATHS = (
     # вердикта, без него прогон не воспроизводим (AD-4).
     ("gates_version", "excluded_infra_rules"),
     ("workspace_sha256",),
+    ("victory_axis",),
+    ("model", "snapshot_sha256"),
+    ("model", "base"),
+    ("baseline", "model"),
+    ("baseline", "snapshot_sha256"),
+)
+
+#: Прежний набор v1 — только для исторического аудита (``allow_legacy=True``).
+#: Доказательством не является: ось, baseline и версия схемы не проверяются.
+PINNING_PATHS_LEGACY = (
+    ("gates_version", "arch_ml_build"),
+    ("gates_version", "constraints_sha256"),
+    ("gates_version", "hidden_constraints_sha256"),
+    ("gates_version", "excluded_infra_rules"),
+    ("workspace_sha256",),
     ("model", "snapshot_sha256"),
 )
 
 
-def missing_pinning(manifest: Any) -> list[str]:
-    """Список недостающих/пустых полей пиннинга (AD-4). Пусто = пиннинг полон."""
+def missing_pinning(manifest: Any, *, allow_legacy: bool = False) -> list[str]:
+    """Список недостающих/пустых полей пиннинга (AD-4). Пусто = пиннинг полон.
+
+    По умолчанию действует набор v2 (ADR-058).  ``allow_legacy=True`` для
+    манифеста без схемы v2 переключает на исторический набор v1 — такой
+    манифест пригоден для аудита, но не для заявлений о превосходстве.
+    Заглушка не доказательство: ``model.is_stub``, отличный от ``False``
+    (включая отсутствие поля), добавляет ``model.is_stub`` в недостающие.
+    """
+    doc = manifest if isinstance(manifest, dict) else {}
+    schema_version = doc.get("schema_version")
+    is_v2 = schema_version == MANIFEST_SCHEMA
+    if allow_legacy and not is_v2:
+        paths, require_schema, require_is_stub = PINNING_PATHS_LEGACY, False, False
+    else:
+        paths, require_schema, require_is_stub = PINNING_PATHS, not is_v2, True
+
     missing: list[str] = []
-    for path in PINNING_PATHS:
+    for path in paths:
         cur: Any = manifest
         ok = True
         for key in path:
@@ -233,4 +311,15 @@ def missing_pinning(manifest: Any) -> list[str]:
             cur = cur[key]
         if not ok or cur is None or cur == "":
             missing.append(".".join(path))
+
+    # Схема не v2 (поле отсутствует или названо иначе) — это недостающий пин.
+    if require_schema and "schema_version" not in missing:
+        missing.append("schema_version")
+
+    # ADR-058: поле обязательно; отсутствие не доказывает, что прогон не от
+    # заглушки, поэтому «не False» — тоже недостающий пин.
+    if require_is_stub and "model.is_stub" not in missing:
+        model = doc.get("model")
+        if not isinstance(model, dict) or model.get("is_stub") is not False:
+            missing.append("model.is_stub")
     return missing

@@ -77,6 +77,11 @@ RUNNER = CASE_DIR / "tools" / "run_rl_smoke.py"
 #: Модельный vocab смоука: тот же, что посчитает стадия из канонического BPE.
 MODEL_VOCAB = 1024
 
+#: Baseline манифеста v2 (ADR-058). Это фикстура провода, не измерение K3:
+#: весов baseline на CPU-смоуке нет, поэтому снапшот — константа теста.
+BASELINE_MODEL = "kimi-k3-test-fixture"
+BASELINE_SNAPSHOT_SHA256 = "b" * 64
+
 _tmp_counter = [0]
 
 
@@ -194,6 +199,10 @@ def _run_stage(
         "--group-size", str(group),
         "--max-new-tokens", "2",
         "--model-preset", "tiny",
+        # Run Manifest v2 (ADR-058): вердиктный манифест требует baseline;
+        # ось победы читается из docs/DECISION-PACKAGE.json.
+        "--baseline-model", BASELINE_MODEL,
+        "--baseline-snapshot", BASELINE_SNAPSHOT_SHA256,
         *extra,
     ]
     return subprocess.run(

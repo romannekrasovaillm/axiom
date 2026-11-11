@@ -170,12 +170,23 @@ def run_net_task(
     finished: Optional[str] = None,
     model_base: str = "net-l3-skeleton-untrained",
     host: str = "net-executor",
+    baseline_model: Optional[str] = None,
+    baseline_snapshot_sha256: Optional[str] = None,
+    victory_axis: Optional[str] = None,
+    allow_legacy_manifest: bool = False,
+    model_is_stub: bool = False,
 ) -> tuple[run_mod.RunResult, dict]:
     """Сквозной прогон: исполнитель → вердикт/награда → Run Manifest §8.
 
     ``run_id``/``started``/``finished`` инъецируемы — детерминированные
     прогоны (A5: повтор с тем же seed → идентичный манифест) передают
     фиксированные значения.
+
+    Манифест — v2 (ADR-058): ``baseline_model`` + ``baseline_snapshot_sha256``
+    обязательны.  ``allow_legacy_manifest=True`` — явное исключение только для
+    исторических wire-прогонов A4: v2-поля из манифеста удаляются, и
+    записывать его можно только с ``dump_manifest(..., allow_legacy=True)``
+    (доказательством превосходства он не является).
     """
     # A5: до первого подпроцесса (гейты исполняют command_succeeds внутри
     # workspace) запрещаем запись байткода — иначе в снапшоте появится
@@ -201,6 +212,13 @@ def run_net_task(
         "seed": int(decoding["seed"]),
         "max_new_tokens": int(max_new_tokens),
     }
+    has_baseline = bool(baseline_model) and bool(baseline_snapshot_sha256)
+    if not has_baseline and not allow_legacy_manifest:
+        raise ValueError(
+            "Run Manifest v2 (ADR-058) требует baseline_model и "
+            "baseline_snapshot_sha256; без них допустим только явный "
+            "allow_legacy_manifest=True (исторический артефакт, не доказательство)"
+        )
     m = manifest_mod.build_manifest(
         run_id=run_id or str(uuid.uuid4()),
         task_spec=task_spec,
@@ -210,6 +228,11 @@ def run_net_task(
         workspace_sha256=tree_sha256(out_dir),
         model_base=model_base,
         model_snapshot_sha256=model_snapshot_sha256(cfg),
+        baseline_model=baseline_model or "",
+        baseline_snapshot_sha256=baseline_snapshot_sha256 or "",
+        # legacy-прогону ось не нужна: значение не попадёт в манифест ниже.
+        victory_axis=victory_axis or ("legacy-manifest" if not has_baseline else None),
+        model_is_stub=model_is_stub,
         decoding=dec,
         attempts_used=1,
         usage={
@@ -230,6 +253,12 @@ def run_net_task(
         },
     )
     m["model"]["routing_seed"] = int(cfg.routing_seed)
+    if not has_baseline:
+        # Явная legacy-форма v1 (ADR-058): v2-поля удалены, писать можно
+        # только dump_manifest(..., allow_legacy=True).
+        for key in ("schema_version", "victory_axis", "baseline"):
+            m.pop(key, None)
+        m["model"].pop("is_stub", None)
     return rr, m
 
 

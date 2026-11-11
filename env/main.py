@@ -18,7 +18,7 @@ from . import calibrate as calibrate_mod
 from . import generate as generate_mod
 from . import manifest as manifest_mod
 from . import run as run_mod
-from .util import read_json, sha256_file, sha256_text, tree_sha256
+from .util import read_json, sha256_file, tree_sha256
 from .verifier import arch_ml_bin, arch_ml_build_hash
 
 CASE_DIR = Path(__file__).resolve().parent.parent
@@ -56,7 +56,34 @@ def _evaluate(args, spec: dict):
     )
 
 
+#: Поля пиннинга, которые обязаны прийти явно для Run Manifest v2 (ADR-058):
+#: заглушка/молчаливый дефолт не доказательство.
+MANIFEST_REQUIRED_ARGS = (
+    ("model_base", "--model-base"),
+    ("model_snapshot", "--model-snapshot"),
+    ("baseline_model", "--baseline-model"),
+    ("baseline_snapshot", "--baseline-snapshot"),
+)
+
+
+def _manifest_missing_args(args) -> list[str]:
+    return [flag for attr, flag in MANIFEST_REQUIRED_ARGS if not getattr(args, attr, None)]
+
+
 def cmd_verify(args) -> int:
+    # Fail-closed до вердикта: без явного пиннинга модели и baseline манифест
+    # не пишется вовсе (ADR-058), даже если вердикт был бы вычислен.
+    if args.manifest_out is not None:
+        missing = _manifest_missing_args(args)
+        if missing:
+            print(
+                "ошибка: Run Manifest v2 (ADR-058) требует явные пиннинги: "
+                + ", ".join(missing)
+                + "; манифест не пишется (заглушка/дефолт доказательством не является).",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
+
     spec = _load_task(args.task)
     rr = _evaluate(args, spec)
     verdict = rr.verdict
@@ -73,7 +100,6 @@ def cmd_verify(args) -> int:
     if args.manifest_out is not None:
         bin = arch_ml_bin()
         constraints_path = args.state / spec["verifier"]["constraints"]
-        model_snapshot = args.model_snapshot or sha256_text("stub-model")
         run_id = args.run_id or str(uuid.uuid4())
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
         manifest = manifest_mod.build_manifest(
@@ -90,7 +116,11 @@ def cmd_verify(args) -> int:
                 if verdict.fitness_report else None
             ),
             model_base=args.model_base,
-            model_snapshot_sha256=model_snapshot,
+            model_snapshot_sha256=args.model_snapshot,
+            baseline_model=args.baseline_model,
+            baseline_snapshot_sha256=args.baseline_snapshot,
+            victory_axis=args.victory_axis,
+            model_is_stub=args.allow_stub,
             decoding=_decode_default(spec),
             attempts_used=1,
             usage={"tokens_in": 0, "tokens_out": args.spent_tokens, "cost_usd": 0.0, "host": args.model_base},
@@ -101,7 +131,20 @@ def cmd_verify(args) -> int:
                 "issues_warn": verdict.warn_issues,
             },
         )
-        manifest_mod.dump_manifest(manifest, args.manifest_out)
+        try:
+            manifest_mod.dump_manifest(
+                manifest, args.manifest_out,
+                package_path=CASE_DIR / "docs" / "DECISION-PACKAGE.json",
+            )
+        except manifest_mod.ManifestError as exc:
+            if args.allow_stub:
+                print(
+                    "ошибка: манифест заглушки не является доказательством "
+                    f"(ADR-058): {exc}",
+                    file=sys.stderr,
+                )
+                return 2
+            raise
         out["manifest"] = str(args.manifest_out)
     _print_json(out)
     return 0
@@ -189,8 +232,30 @@ def build_parser() -> argparse.ArgumentParser:
     v.add_argument("--hidden-constraints", type=Path, default=None)
     v.add_argument("--manifest-out", type=Path, default=None, help="записать Run Manifest")
     v.add_argument("--run-id", default=None)
-    v.add_argument("--model-base", default="stub")
-    v.add_argument("--model-snapshot", default=None)
+    v.add_argument(
+        "--model-base", default=None,
+        help="имя/версия пиннутой модели (обязателен для --manifest-out, ADR-058)",
+    )
+    v.add_argument(
+        "--model-snapshot", default=None,
+        help="sha256 снапшота модели (обязателен для --manifest-out, ADR-058)",
+    )
+    v.add_argument(
+        "--baseline-model", default=None,
+        help="baseline-модель сравнения (обязателен для --manifest-out, ADR-058)",
+    )
+    v.add_argument(
+        "--baseline-snapshot", default=None,
+        help="sha256 снапшота baseline (обязателен для --manifest-out, ADR-058)",
+    )
+    v.add_argument(
+        "--victory-axis", default=None,
+        help="ось победы; по умолчанию — docs/DECISION-PACKAGE.json#/choice/victory_axis",
+    )
+    v.add_argument(
+        "--allow-stub", action="store_true",
+        help="отладочная заглушка: model.is_stub=true; манифест не пишется (ADR-058)",
+    )
     v.set_defaults(fn=cmd_verify)
 
     r = sub.add_parser("reward", help="только награда по финальному состоянию")

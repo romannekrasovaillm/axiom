@@ -32,10 +32,13 @@ def valid_task_spec() -> dict:
 
 
 def valid_manifest() -> dict:
+    """Валидный Run Manifest v2 (ADR-058)."""
     return {
+        "schema_version": schemas.MANIFEST_SCHEMA,
         "run_id": "run-1",
         "task_id": "corruption-l0-00",
         "env_version": "environment-v1",
+        "victory_axis": "победа по оси: фитнес-гейт на задачах K3",
         "gates_version": {
             "arch_ml_build": "buildhash",
             "constraints_sha256": HASH,
@@ -43,10 +46,11 @@ def valid_manifest() -> dict:
             "excluded_infra_rules": ["C-032", "C-045"],
         },
         "workspace_sha256": HASH,
-        "model": {"snapshot_sha256": HASH, "base": "stub"},
+        "model": {"snapshot_sha256": HASH, "base": "net-test", "is_stub": False},
+        "baseline": {"model": "kimi-k3", "snapshot_sha256": HASH},
         "decoding": {"temperature": 0.7, "top_p": 0.95, "seed": 42},
         "budget": {"max_tokens": 131072, "thinking_budget": 8192, "attempts_allowed": 1, "attempts_used": 1},
-        "usage": {"tokens_in": 0, "tokens_out": 10, "cost_usd": 0.0, "host": "stub"},
+        "usage": {"tokens_in": 0, "tokens_out": 10, "cost_usd": 0.0, "host": "net-test"},
         "timing": {"started": "2026-09-12T00:00:00Z", "finished": "2026-09-12T00:01:00Z", "resume_count": 0},
         "verdict": {
             "pass": True,
@@ -54,6 +58,15 @@ def valid_manifest() -> dict:
             "issues_warn": [],
         },
     }
+
+
+def valid_manifest_v1() -> dict:
+    """Исторический манифест v1: только для аудита с allow_legacy=True."""
+    m = valid_manifest()
+    for key in ("schema_version", "victory_axis", "baseline"):
+        m.pop(key)
+    m["model"].pop("is_stub")
+    return m
 
 
 def test_task_spec_valid():
@@ -140,6 +153,53 @@ def test_manifest_missing_pinning_field():
     m = valid_manifest()
     del m["model"]["snapshot_sha256"]
     assert "model.snapshot_sha256" in schemas.missing_pinning(m)
+
+
+# ── v2 (ADR-058): ось, baseline, запрет заглушки ────────────────────────────
+def test_manifest_empty_missing_pinning_names_v2_fields():
+    missing = schemas.missing_pinning({})
+    for name in ("schema_version", "victory_axis", "baseline.snapshot_sha256", "model.is_stub"):
+        assert name in missing, missing
+
+
+def test_manifest_requires_victory_axis():
+    m = valid_manifest()
+    del m["victory_axis"]
+    errs = schemas.validate_manifest(m)
+    assert any("victory_axis" in e for e in errs)
+
+
+def test_manifest_requires_baseline():
+    m = valid_manifest()
+    del m["baseline"]
+    errs = schemas.validate_manifest(m)
+    assert any("baseline" in e for e in errs)
+
+
+def test_manifest_requires_is_stub_bool():
+    m = valid_manifest()
+    del m["model"]["is_stub"]
+    errs = schemas.validate_manifest(m)
+    assert any("is_stub" in e for e in errs)
+
+
+def test_manifest_stub_is_not_pinning():
+    m = valid_manifest()
+    m["model"]["is_stub"] = True
+    # Структурно bool валиден, но доказательством не является (ADR-058).
+    assert schemas.validate_manifest(m) == []
+    assert "model.is_stub" in schemas.missing_pinning(m)
+    # отсутствие поля — тоже неполный пин (не доказано, что не заглушка)
+    del m["model"]["is_stub"]
+    assert "model.is_stub" in schemas.missing_pinning(m)
+
+
+def test_manifest_v1_requires_allow_legacy():
+    v1 = valid_manifest_v1()
+    assert schemas.validate_manifest(v1)  # v2-поля обязательны без послабления
+    assert schemas.validate_manifest(v1, allow_legacy=True) == []
+    assert schemas.missing_pinning(v1)  # v2-набор пиннинга
+    assert schemas.missing_pinning(v1, allow_legacy=True) == []
 
 
 def test_manifest_empty_pinning_field():

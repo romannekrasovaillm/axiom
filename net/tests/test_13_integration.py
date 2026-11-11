@@ -37,6 +37,13 @@ CASE_DIR = Path(__file__).resolve().parents[2]
 MAX_NEW_TOKENS = 32
 DECODING_DEFAULT = {"temperature": 0.7, "top_p": 0.95}
 
+#: Baseline манифеста v2 (ADR-058). Это фикстура провода, не измерение K3:
+#: весов baseline в CI нет, поэтому снапшот — детерминированная константа
+#: теста. Ось победы не задаётся — build_manifest читает её из пакета решения
+#: (docs/DECISION-PACKAGE.json#/choice/victory_axis).
+BASELINE_MODEL = "kimi-k3-test-fixture"
+BASELINE_SNAPSHOT_SHA256 = "b" * 64
+
 
 def _find_bin() -> str | None:
     env = os.environ.get("ENV_ARCH_ML_BIN")
@@ -84,6 +91,10 @@ def _run_task(spec, base_ws, out_dir, cfg, tok, params, bin):
         finished="2026-09-12T00:00:01+00:00",
         model_base="net-l3-skeleton-tiny-untrained",
         host="test-host",
+        # v2 (ADR-058): baseline — фикстура провода; весов K3 в CI нет,
+        # поэтому снапшот baseline — константа теста, ось берётся из пакета.
+        baseline_model=BASELINE_MODEL,
+        baseline_snapshot_sha256=BASELINE_SNAPSHOT_SHA256,
     )
 
 

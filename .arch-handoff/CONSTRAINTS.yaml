@@ -180,6 +180,8 @@ constraints:
     severity: critical
     scope: case
     kind: structural
+    infra: false
+    adr: ADR-058
     evidence: "tools/check_victory_axis.py: путь docs/DECISION-PACKAGE.json#/choice/victory_axis непуст, top-level victory_axis отсутствует, спайн AD-1 и model/AD-1 ссылаются на тот же путь; selftest с мутантами (удаление поля, перенос на top-level, подмена значения — красные). Прежний must_contain по подстроке снят (ADR-058)"
     owner: "архитектор"
     expiry: "2027-01-31"
@@ -758,6 +760,7 @@ constraints:
     severity: critical
     scope: case
     kind: structural
+    adr: ADR-058
     evidence: "env/schemas.py::PINNING_PATHS + tools/check_manifest_v2.py::selftest: мутанты «нет victory_axis» / «нет baseline.snapshot_sha256» / «model.is_stub=true» / «ось не совпала с пакетом» → красный, валидный manifest-v2 → зелёный"
     owner: "архитектор"
     expiry: "2027-01-31"
@@ -771,6 +774,7 @@ constraints:
     severity: critical
     scope: case
     kind: behavioural
+    adr: ADR-058
     evidence: "evidence/**/calibration-*.json: model != stub, pass_rate ∈ [0.10, 0.90], полный пиннинг (AD-4), ссылка на отчёт из RL-precondition-артефакта; отсутствие отчёта K3 — красный гейт, а не SKIP (ADR-058, долг с триггером «прогон K3 на GB10»)"
     owner: "архитектор"
     expiry: "2027-01-31"

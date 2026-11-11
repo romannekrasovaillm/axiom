@@ -1,7 +1,7 @@
 ---
 id: ADR-058
 title: "Манифест прогона environment v2: ось победы, baseline K3 и запрет фиктивного пиннинга"
-status: Proposed
+status: Accepted
 date: "2026-11-11"
 depends_on: [ADR-002, ADR-004, ADR-006, ADR-014, ADR-037, ADR-056]
 affects: [env/schemas.py, env/manifest.py, env/main.py, tools/check_victory_axis.py, tools/check_rl_precondition.py, CONSTRAINTS.yaml, docs/specs/ENVIRONMENT-V1.md]
@@ -11,7 +11,8 @@ spec_files: [ARCHITECTURE-SPINE.md, model/AD-1-os-pobedy-odna.md]
 # ADR-058. Манифест прогона environment v2: ось победы, baseline K3 и запрет фиктивного пиннинга
 
 - Date: 2026-11-11
-- Status: Proposed
+- Status: Accepted (2026-11-11; дельты приняты приёмочной командой. C-056 остаётся
+  known-red до прогона K3 на GB10 — объявленный долг P-7, не снимает решение)
 - Маршрут: Standard (3 триггера: api_contract_change, data_contract_change, significant_nfr)
 - Модель-автор: spine-arch
 
@@ -127,6 +128,21 @@ K3-калибровка (precondition RL, `ENVIRONMENT-V1.md:181`: pass-rate ∈
 - **Риск ложного Comfort:** сравнение оси по нормализованной строке — не
   семантическое; переформулировка оси в пакете без переформулировки в манифесте
   даст красный гейт (это желаемое поведение), обратное — нет.
+
+## Реализация (факт, 2026-11-11)
+
+- Код: `env/axis.py`, `env/schemas.py`, `env/manifest.py`, `env/main.py`,
+  `tools/check_victory_axis.py`, `tools/check_manifest_v2.py`,
+  `tools/check_rl_precondition.py`; `EXCLUDED_INFRA_RULES` = 22 (C-055/C-056
+  инфраструктурные, C-013 — `infra: false`, исполняется в воркспейсе).
+- Приёмка: `pytest env/tests -k "manifest or schemas or r1_workspace_ruleset"`
+  — 47 passed, 1 skipped; `test_stub_branch_matches_frozen_baseline` зелёный
+  после перегенерации фикстуры `env/tests/fixtures/calibrate-stub-baseline.json`
+  (pass_rate 0.45 — штатное поведение заглушки с `restore_probability=0.5`,
+  это НЕ регрессия вердикта; `evidence/calibration-stub.json` с pass_rate 0.0 —
+  другой артефакт, отчёт заглушки на пуле `env/data`).
+- C-056: `python3 tools/check_rl_precondition.py` → exit 1, «K3-калибровка не
+  найдена» — единственное намеренно красное правило (P-7).
 
 ## Reversibility
 

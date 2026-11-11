@@ -2,7 +2,7 @@
 id: ADR-058
 type: adr
 title: "Манифест прогона environment v2: ось победы, baseline K3 и запрет фиктивного пиннинга"
-status: "proposed"
+status: "accepted"
 affects: [CMP-005, CMP-006, NFR-002]
 source: "docs/adr/ADR-058-manifest-progona-environment-v2-os-pobedy.md"
 ---

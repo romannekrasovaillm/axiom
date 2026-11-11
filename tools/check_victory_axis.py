@@ -27,17 +27,60 @@ import json
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from env import axis  # noqa: E402
-
 PACKAGE_REL = "docs/DECISION-PACKAGE.json"
 SPINE_REL = "ARCHITECTURE-SPINE.md"
 AD1_REL = "model/AD-1-os-pobedy-odna.md"
 AXIS_REF = "choice.victory_axis"
+
+#: Путь оси в пакете решения — та же константа, что ``env/axis.py`` (ADR-058).
+AXIS_PATH = ("choice", "victory_axis")
+_AXIS_POINTER = "#/" + "/".join(AXIS_PATH)
+
+
+class AxisError(ValueError):
+    """Ось не читается: нет файла, нет ключа, пусто или не строка."""
+
+
+def load_axis(package_path: Path) -> str:
+    """Непустая ось из пакета решения; :class:`AxisError` — диагностика.
+
+    Копия :func:`env.axis.load_axis` (нормативная реализация для манифеста v2)
+    в объёме, нужном стражу. ``env/`` не копируется в снапшот воркспейса, а
+    C-013 — не инфраструктурное правило (``infra: false``) и обязан исполняться
+    В ВОРКСПЕЙСЕ: импорт ``env`` сделал бы страж неисполнимым в песочнице.
+    Сообщения совпадают с ``env/axis.py``.
+    """
+    path = Path(package_path)
+    try:
+        doc: Any = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise AxisError(f"{path}: пакет решения не найден") from exc
+    except OSError as exc:
+        raise AxisError(f"{path}: пакет решения не читается: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise AxisError(f"{path}: пакет решения не JSON: {exc}") from exc
+    if not isinstance(doc, dict):
+        raise AxisError(f"{path}: пакет решения — не JSON-объект")
+
+    current: Any = doc
+    for key in AXIS_PATH:
+        if not isinstance(current, dict) or key not in current:
+            raise AxisError(f"{path}{_AXIS_POINTER}: ключ оси отсутствует")
+        current = current[key]
+    if not isinstance(current, str) or not current.strip():
+        raise AxisError(f"{path}{_AXIS_POINTER}: ось пуста или не строка")
+    return current
+
+
+def has_top_level_axis(doc: dict) -> bool:
+    """Есть ли ``victory_axis`` на верхнем уровне (двусмысленность — ошибка)."""
+    return isinstance(doc, dict) and "victory_axis" in doc
 
 EXIT_PASS = 0
 EXIT_FAIL = 1
@@ -64,11 +107,11 @@ def evaluate(root: Path) -> list[str]:
                 doc = None
     if doc is not None:
         try:
-            axis.load_axis(package)
-        except axis.AxisError as exc:
+            load_axis(package)
+        except AxisError as exc:
             errors.append(str(exc))
         # 2. Ось только в choice: верхний уровень — двусмысленность.
-        if axis.has_top_level_axis(doc):
+        if has_top_level_axis(doc):
             errors.append(
                 f"{PACKAGE_REL}: victory_axis на верхнем уровне — двусмысленность, "
                 f"ось объявляется только в choice.victory_axis"

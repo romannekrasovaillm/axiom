@@ -116,20 +116,24 @@ LLM-судья не участвует в награде ни в какой ро
 - Веса кандидатов — симлинки на `~/gb10-shared`, копий нет (C-032); хеш пиннинга — по содержимому (AD-4).
 - **Снапшот воркспейса (архитектор 05.10; E-1.5 `2992b5a`; R-1' ревизия по blocked-диагностике E-2.5):** снапшот кейса строится по исключению тяжёлых и нерантайм-путей + глобальному капу объёма. Исключаются: верхнеуровневый `data/` кейса (датасеты не нужны агенту для ремонта/гейтов; вложенные `data/` под `tools/` и т.п. сохраняются; если задаче данные нужны — симлинк на общий ресурс, не копия — C-032), `benchmarks/`, `evidence/`, `runs/`, `runs-*`, `.git`, `.arch-handoff`, каталог `env/` целиком, `docs/*.html` (тяжёлые Archify-артефакты), файлы `*.safetensors *.gguf *.pt *.pth *.ckpt *.zst *.parquet`. Копируются: `tools/`, `docs/`, `model/`, `net/` (код), `ARCHITECTURE-SPINE.md`, `README.md`, манифесты задачи. **R-1' (ревизия): CONSTRAINTS.yaml в воркспейсе — ПОЛНЫЙ кейсовый ruleset; подмена workspace-ruleset (5 правил) отклонена — ломала trace (12× ad-not-verified; §9: редукция R<10 запрещена) и делала атомы remove_adr_section/break_affects невидимыми песочнице. Машинонезависимость вердикта достигается фильтром: `env/verifier.py` исключает из FitnessReport инфраструктурные правила = ВСЕ `command_succeeds`-правила кейса (C-032…C-045, 14 шт. — проверяют контур вне воркспейса: стражи tools/, evidence/, .arch-handoff, стенд GB10, сетевой диск); список `excluded_infra_rules` пиннуется в `gates_version` манифеста.** Контентные правила (31: must_contain / each_file_must_contain / file_exists) исполняются в песочнице — их артефакты в снапшоте. Вердикт: fitness(после фильтра) ∧ spine ∧ trace ∧ tests; все атомы порчи детектируемы. Кап: суммарный объём воркспейса ≤ 64 МБ — превышение = дефект генерации (ValueError с топ-5 путей; тест гейта). Эталон: пул 64.4 MiB/70 задач ≈ 3.9 МБ/воркспейс. `workspace_sha256` — по снапшоту после исключений; старые воркспейсы (35 ГБ, `env/data/public/`) и evidence-прогоны по ним — `legacy-not-checked`; чистку старых выполняет оператор (страж R4).
 
-## 8. Run manifest (AD-3, AD-4)
+## 8. Run manifest (AD-1, AD-3, AD-4)
 
 ```json
 {
+  "schema_version": "environment-v1/manifest-v2",
   "run_id": "uuid",
   "task_id": "id из §2",
   "env_version": "environment-v1",
   "gates_version": {
     "arch_ml_build": "хеш сборки CLI",
     "constraints_sha256": "…",
-    "hidden_constraints_sha256": "…"
+    "hidden_constraints_sha256": "…",
+    "excluded_infra_rules": ["C-032", "…"]
   },
   "workspace_sha256": "sha256 финального состояния",
-  "model": { "snapshot_sha256": "…", "base": "имя/вес модели" },
+  "victory_axis": "копия docs/DECISION-PACKAGE.json#/choice/victory_axis",
+  "model": { "snapshot_sha256": "…", "base": "имя/вес модели", "is_stub": false },
+  "baseline": { "model": "kimi-k3", "snapshot_sha256": "…" },
   "decoding": { "temperature": 0.7, "top_p": 0.95, "seed": 42 },
   "budget": { "max_tokens": 131072, "thinking_budget": "…", "attempts_allowed": 3, "attempts_used": 1 },
   "usage": { "tokens_in": 0, "tokens_out": 0, "cost_usd": 0.0, "host": "dgx-spark-01" },
@@ -138,7 +142,27 @@ LLM-судья не участвует в награде ни в какой ро
 }
 ```
 
-Прогон без полного пиннинга не считается доказательством (AD-4) и отклоняется загрузчиком манифестов.
+**Схема v2 (ADR-058) — единственная доказательная форма.** Обязательный пиннинг
+(`env/schemas.py::PINNING_PATHS`): `schema_version`, `gates_version.{arch_ml_build,
+constraints_sha256, hidden_constraints_sha256, excluded_infra_rules}`,
+`workspace_sha256`, `model.{snapshot_sha256, base}`, `baseline.{model,
+snapshot_sha256}`, `victory_axis`.
+
+- **Ось победы (AD-1).** `victory_axis` непуст и **совпадает** (после нормализации
+  пробелов) с `docs/DECISION-PACKAGE.json#/choice/victory_axis`; расхождение —
+  ошибка загрузчика. Заявление о превосходстве допустимо только по манифесту,
+  где ось совпала и `baseline.snapshot_sha256` непуст: сравнение идёт с
+  запинненной baseline-моделью на равном бюджете (AD-3).
+- **Заглушка — не доказательство.** `model.is_stub: true` делает манифест
+  невалидным как доказательство; `env/main.py` требует явные
+  `--model-snapshot`/`--model-base`, отладочная заглушка — только с
+  `--allow-stub`, и `dump_manifest` для неё падает (fail-closed).
+- **Legacy.** Манифест без `schema_version` или со схемой v1 валиден только при
+  явном `allow_legacy=True` (исторический аудит) и доказательством не является:
+  из него нельзя делать заявления о превосходстве.
+
+Прогон без полного пиннинга не считается доказательством (AD-4) и отклоняется
+загрузчиком манифестов (`env.manifest.full_validate` → `ManifestError`).
 
 ## 9. Лесенка сложности
 

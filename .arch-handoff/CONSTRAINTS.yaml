@@ -173,17 +173,17 @@ constraints:
     effort_hours: 0.5
 
   - id: C-013
-    name: "Ось победы объявлена в пакете решения (без оси нет предмета доказывания)"
-    type: must_contain
-    glob: "docs/DECISION-PACKAGE.json"
-    pattern: "\"victory_axis\""
+    name: "AD-1: ось победы объявлена одна и на объявленном пути (structural: путь choice.victory_axis, единственность, ссылки спайна и модели)"
+    type: command_succeeds
+    command: 'python3 tools/check_victory_axis.py --selftest'
+    timeout_secs: 60
     severity: critical
     scope: case
-    kind: documentary
-    evidence: "docs/DECISION-PACKAGE.json → поле victory_axis"
+    kind: structural
+    evidence: "tools/check_victory_axis.py: путь docs/DECISION-PACKAGE.json#/choice/victory_axis непуст, top-level victory_axis отсутствует, спайн AD-1 и model/AD-1 ссылаются на тот же путь; selftest с мутантами (удаление поля, перенос на top-level, подмена значения — красные). Прежний must_contain по подстроке снят (ADR-058)"
     owner: "архитектор"
     expiry: "2027-01-31"
-    effort_hours: 0.5
+    effort_hours: 1.0
 
   - id: C-014
     name: "Паспорт кейса существует (точка входа для исполнителя)"
@@ -749,3 +749,29 @@ constraints:
     owner: "архитектор"
     expiry: "2027-01-31"
     effort_hours: 0.5
+
+  - id: C-055
+    name: "AD-1/ADR-058: run manifest v2 несёт ось и baseline, заглушка доказательством не является (selftest мутантов)"
+    type: command_succeeds
+    command: 'python3 tools/check_manifest_v2.py --selftest'
+    timeout_secs: 120
+    severity: critical
+    scope: case
+    kind: structural
+    evidence: "env/schemas.py::PINNING_PATHS + tools/check_manifest_v2.py::selftest: мутанты «нет victory_axis» / «нет baseline.snapshot_sha256» / «model.is_stub=true» / «ось не совпала с пакетом» → красный, валидный manifest-v2 → зелёный"
+    owner: "архитектор"
+    expiry: "2027-01-31"
+    effort_hours: 3.0
+
+  - id: C-056
+    name: "AD-1/ADR-058: RL-precondition — калибровка не-заглушки в коридоре [10%,90%] с полным пиннингом и ссылкой (known-red до прогона K3 на GB10, ADR-056)"
+    type: command_succeeds
+    command: 'python3 tools/check_rl_precondition.py'
+    timeout_secs: 60
+    severity: critical
+    scope: case
+    kind: behavioural
+    evidence: "evidence/**/calibration-*.json: model != stub, pass_rate ∈ [0.10, 0.90], полный пиннинг (AD-4), ссылка на отчёт из RL-precondition-артефакта; отсутствие отчёта K3 — красный гейт, а не SKIP (ADR-058, долг с триггером «прогон K3 на GB10»)"
+    owner: "архитектор"
+    expiry: "2027-01-31"
+    effort_hours: 2.0

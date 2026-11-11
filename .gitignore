@@ -22,7 +22,11 @@ net/tests/.a4-*-out-*/
 # тяжёлые носители прогонов кампании MFU-55 (остаются на стенде)
 evidence/mfu-55/G0/run.log
 evidence/mfu-55/**/*.nsys-rep
+evidence/mfu-55/**/*.qdstrm
 evidence/mfu-55/**/*.sqlite
+
+# черновики solution-сессий Spine (подтверждённые артефакты живут в docs/ и model/)
+.arch/solution/
 
 # трейсы агента theseus (артефакты прогона, не код)
 .theseus/

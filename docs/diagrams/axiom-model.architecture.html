@@ -4957,9 +4957,10 @@
         <div class="pulse-dot"></div>
         <h1>Модель кейса AXIOM: данные → претрейн → пострейн → RL на собственном контуре</h1>
       </div>
+      <p class="subtitle">Источник: model/ (CMP-001…006, INT-001, CAP-001, REQ-001, AD-1…13, ADR-001…052)</p>
     </div>
 
-    <script id="archify-guided-views-data" type="application/json">[{"id":"pretrain-path","label":"Путь претрейна","focus":["corpus","cmp001","cmp002","gb10","rental","shared"],"note":"Корпус и токенизация → L3-скелет: обучение на стенде, масштабный класс — на аренде, чекпойнты — в общем хранилище."},{"id":"posttrain-rl","label":"Пост-трейн и RL","focus":["cmp002","cmp003","cmp005","cmp006","spine"],"note":"SFT → RL базы → MOPD; среды и верификаторы исполняет агентный харнесс контура arch-ml."},{"id":"victory-axis","label":"Ось победы","focus":["cmp004","k3","cmp005","cmp006"],"note":"Сравнение с K3 — на равном бюджете и пиннутых снапшотах, механическим вердиктом среды."}]</script>
+    <script id="archify-guided-views-data" type="application/json">[{"id":"pretrain-path","label":"Путь претрейна","focus":["cmp001","cmp002","shared","rental"],"note":"Данные и токенизация → L3-скелет на стенде GB10; масштабный класс — аренда GPU; чекпойнты — в gb10-shared."},{"id":"posttrain-rl","label":"Пост-трейн и RL","focus":["cmp002","cmp003","cmp005","cmp006"],"note":"SFT → RL по схеме базы → MOPD; среду и награду исполняет агентный харнесс, вердикт механический."},{"id":"inference","label":"Инференс на Spark","focus":["shared","cmp004"],"note":"Инференс берёт веса из gb10-shared артефактно (симлинк + хеш), зависит от претрейна не кодом."},{"id":"victory-axis","label":"Ось победы","focus":["cmp005","cmp006","k3"],"note":"Сравнение с K3 — на равном бюджете рассуждений и общем харнессе, вердикт механический."},{"id":"governance","label":"Контур контроля","focus":["cmp002","cmp005","cmp006","spine"],"note":"Spine Bank (arch-be) — внешний барьер: дрейф модель↔код, delta_guard, fitness и трассировка."}]</script>
 
     <script id="archify-i18n-data" type="application/json">{"locale":"en","messages":{"viewer.kind.frontend":"Frontend","viewer.kind.backend":"Backend","viewer.kind.database":"Database","viewer.kind.cloud":"Cloud","viewer.kind.security":"Security","viewer.kind.messagebus":"Message bus","viewer.kind.external":"External","viewer.kind.neutral":"Neutral","viewer.kind.node":"Node","viewer.kind.start":"Start","viewer.kind.active":"Active","viewer.kind.waiting":"Waiting","viewer.kind.decision":"Decision","viewer.kind.success":"Success","viewer.kind.failure":"Failure","viewer.toolbar.actions":"Diagram actions","viewer.theme.toggle.title":"Toggle theme (T)","viewer.theme.toggle":"Toggle color theme","viewer.theme.dark":"Dark","viewer.theme.light":"Light","viewer.preset.choose.title":"Choose visual style (S cycles)","viewer.preset.choose":"Choose visual style","viewer.preset.style":"Style","viewer.preset.menu":"Visual style","viewer.preset.identity":"Visual identity","viewer.preset.cycles":"S cycles","viewer.preset.classic":"Classic","viewer.preset.classic.short":"Classic","viewer.preset.classic.hint":"Stable technical default","viewer.preset.flow":"Signal Flow","viewer.preset.flow.short":"Flow","viewer.preset.flow.hint":"Motion-forward presentation","viewer.preset.blueprint":"Blueprint","viewer.preset.blueprint.hint":"Engineering review","viewer.preset.editorial":"Editorial","viewer.preset.editorial.hint":"Publication and launch notes","viewer.preset.badge.signalFlow":"SIGNAL FLOW","viewer.preset.badge.blueprint":"BLUEPRINT / REV 01","viewer.preset.badge.editorial":"EDITORIAL / FIELD NOTE","viewer.preset.badge.editorialPlate":"ARCHIFY / PLATE 04","viewer.preset.current":"Visual style: {style}. Choose visual style","viewer.motion.live":"Live","viewer.motion.still":"Still","viewer.motion.pause":"Pause motion","viewer.motion.resume":"Resume motion","viewer.motion.reduced":"Motion paused by reduced-motion preference","viewer.motion.hidden":"Motion paused while this page is hidden","viewer.motion.yielding":"Pause motion; currently yielding to {owner}","viewer.motion.yielding.title":"Live preview enabled · yielding to {owner}","viewer.owner.story":"the guided story","viewer.owner.chapter":"the active chapter","viewer.owner.chapterPreview":"the chapter delta preview","viewer.owner.handoff":"the chapter handoff","viewer.owner.route":"Route Probe","viewer.owner.lens":"Semantic Lens","viewer.owner.relationship":"Relationship Preview","viewer.owner.intent":"Intent Trace","viewer.owner.focus":"semantic focus","viewer.owner.legend":"legend preview","viewer.owner.reader":"reader interaction","viewer.present.enter":"Enter presentation stage","viewer.present.enter.title":"Presentation stage (F)","viewer.present.exit":"Exit presentation stage","viewer.present.exit.title":"Exit presentation stage (F or Escape)","viewer.present.present":"Present","viewer.present.exit.label":"Exit","viewer.export.button":"Export","viewer.export.button.title":"Export diagram (E)","viewer.export.diagram":"Export diagram","viewer.export.menu":"Export","viewer.export.subtitle":"Portable, clean outputs","viewer.export.share":"Share","viewer.export.shareCard":"Share Card","viewer.export.routeShareCard":"Route Share Card","viewer.export.reachShareCard":"Reach Share Card","viewer.export.copyShareCard":"Copy Share Card","viewer.export.copyDiagram":"Copy diagram","viewer.export.clipboardPng":"PNG to clipboard","viewer.export.raster":"Raster images","viewer.export.image":"Image","viewer.export.lossless":"Lossless image","viewer.export.compact":"Compact image","viewer.export.modern":"Modern image","viewer.export.vectorMotion":"Vector and motion","viewer.export.vectorMotion.heading":"Vector \u0026 motion","viewer.export.editable":"Editable vector","viewer.export.motion6s":"6s motion","viewer.export.unsupported":"Not supported by this browser","viewer.export.clipboardUnsupported":"Clipboard image write not supported by this browser","viewer.export.clipboardUnsupported.period":"Clipboard image write not supported by this browser.","viewer.export.clipboardUnsupported.short":"Clipboard image write not supported in this browser.","viewer.export.motionUnavailable":"Motion capture unavailable in this browser","viewer.export.webmUnavailable":"WebM unavailable in this browser","viewer.export.failed":"Export failed: {message}","viewer.export.unknownVariant":"Unknown Share Card variant: {variant}","viewer.export.routeRequired":"Trace a route before exporting a Route Share Card","viewer.export.reachRequired":"Trace authored reach before exporting a Reach Share Card","viewer.export.unknown":"unknown","viewer.export.routeFailed":"Route Share Card export failed: {message}","viewer.export.reachFailed":"Reach Share Card export failed: {message}","viewer.export.copyFailed":"Copy failed: {message}","viewer.export.copiedPng":"Copied PNG to clipboard","viewer.export.copiedShare":"Copied Share Card","viewer.export.downloadedShare":"Downloaded Share Card","viewer.export.downloadedRoute":"Downloaded Route Share Card","viewer.export.downloadedReach":"Downloaded Reach Share Card","viewer.export.downloadedWebm":"Downloaded WebM","viewer.export.recording":"Recording 6 seconds of motion…","viewer.export.card.routeSummary.one":"Route: {source} → {target} · {count} directed hop","viewer.export.card.routeSummary.other":"Route: {source} → {target} · {count} directed hops","viewer.export.card.reachSummary":"Authored {direction} from {origin} · {nodes} · {links} · max {hops}","viewer.export.card.node.one":"{count} node","viewer.export.card.node.other":"{count} nodes","viewer.export.card.link.one":"{count} link","viewer.export.card.link.other":"{count} links","viewer.export.card.hop.one":"{count} hop","viewer.export.card.hop.other":"{count} hops","viewer.export.card.routeBadge":"ARCHIFY · ROUTE · {hops}","viewer.export.card.reachBadge":"ARCHIFY · {direction} REACH","viewer.export.card.defaultBadge":"ARCHIFY · {preset} · {theme}","viewer.export.direction.upstream":"Upstream","viewer.export.direction.downstream":"Downstream","viewer.export.error.canvasUnavailable":"Canvas unavailable for {label}","viewer.export.error.contextUnavailable":"2D canvas context unavailable for {label}","viewer.export.error.toBlobUnavailable":"canvas.toBlob unavailable for {label}","viewer.export.error.toBlobNull":"canvas.toBlob returned no data for {label}","viewer.export.error.variantsCombined":"Share Card variants cannot be combined","viewer.export.error.viewerState":"Share Card export could not remove temporary viewer state","viewer.export.error.routeState":"Route Card export could not preserve the resolved route safely","viewer.export.error.reachState":"Reach Card export could not preserve authored reach safely","viewer.export.error.webmRequirements":"WebM motion export requires a trace animation and browser MediaRecorder support","viewer.export.error.mediaRecorder":"MediaRecorder failed","viewer.export.error.emptyWebm":"MediaRecorder produced an empty WebM","viewer.export.error.webmBackground":"SVG background could not be loaded for WebM export","viewer.guided.region":"Guided diagram views","viewer.guided.previous":"Previous guided view","viewer.guided.previous.title":"Previous guided view ([)","viewer.guided.next":"Next guided view","viewer.guided.next.title":"Next guided view (])","viewer.guided.views":"Guided views","viewer.guided.explore":"Explore this system","viewer.guided.intro":"Step through curated paths without changing the source diagram.","viewer.guided.trail":"Story trail","viewer.guided.beat":"Beat","viewer.guided.nextBeat":"Next","viewer.guided.play":"Play guided story","viewer.guided.play.title":"Play guided story (P)","viewer.guided.pause":"Pause guided story","viewer.guided.pause.title":"Pause guided story (P)","viewer.guided.replay":"Replay guided story","viewer.guided.replay.title":"Replay guided story (P)","viewer.guided.playStory":"Play story","viewer.guided.pauseStory":"Pause","viewer.guided.replayStory":"Replay story","viewer.guided.motionUnavailable":"Story playback unavailable while motion is Still","viewer.guided.enableMotion":"Switch motion to Live to play the guided story","viewer.guided.selectBeatLink":"Select a Story Beat to copy its exact link","viewer.guided.copyMoment":"Copy moment","viewer.guided.momentCopied":"Moment link copied","viewer.guided.momentCopyFailed":"Could not copy story moment link","viewer.guided.copied":"Copied","viewer.guided.copyFailed":"Copy failed","viewer.guided.showAll":"Show all","viewer.guided.showAll.aria":"Show entire diagram","viewer.guided.chapters":"Story chapters","viewer.guided.storyTrail":"Story trail for {label}: {count} beats","viewer.guided.chapter.open":"Open chapter {index} of {total}: {label}, {count} stops","viewer.guided.chapter.current":"Current chapter {index} of {total}: {label}, {count} stops","viewer.guided.chapter.selectedNodes":"{count} selected nodes","viewer.guided.chapter.stops":"{count} stops","viewer.guided.chapter.stop.one":"{count} stop","viewer.guided.chapter.stop.other":"{count} stops","viewer.guided.chapter.current.title":"{label} — current chapter, {count} stops","viewer.guided.chapter.delta.expanded":"{stay} stay, {enter} enter, {leave} leave","viewer.guided.chapter.delta.aria":"Open chapter {index} of {total}: {label}. Chapter focus delta: {delta}","viewer.guided.chapter.delta.title":"{label} — {delta} chapter focus","viewer.guided.handoff":"{from} → {to} · via {label}","viewer.guided.share.chapter":"Chapter {index} / {total}","viewer.guided.share.initial":"Chapter 01 / 01","viewer.guided.share.default":"Guided chapter","viewer.guided.state.ready":"Ready","viewer.guided.state.playing":"Playing","viewer.guided.state.settled":"Settled","viewer.guided.state.paused":"Paused","viewer.guided.state.pinned":"Pinned","viewer.guided.state.still":"Still","viewer.guided.share.step":"Step {index} / {total} · {label}","viewer.guided.share.staticMoment":"{step} · Static moment","viewer.guided.share.complete":"{count} steps complete · {note}","viewer.guided.share.settled":"Path settled for reading.","viewer.guided.share.staticPath":"{count} steps · Static path","viewer.guided.share.ready":"{count} steps · Ready","viewer.guided.share.aria":"{state} chapter {index} of {total}: {label}. {beat}. {route}","viewer.guided.beat.start":"Beat {index} / {total} · {label} · starting point","viewer.guided.beat.forward":"Beat {index} / {total} · {from} → {to}","viewer.guided.beat.reverse":"Beat {index} / {total} · {from} → {to} · reverse authored link","viewer.guided.beat.multiple":"Beat {index} / {total} · {from} ⇄ {to} · {count} authored links","viewer.guided.beat.group":"Beat {index} / {total} · {from} · {to} · grouped · no direct link","viewer.guided.beat.aria.prefix":"Story beat {index} of {total}: {label}. ","viewer.guided.beat.aria.start":"Starting point.","viewer.guided.beat.aria.forward":"From {from} through one authored forward relationship.","viewer.guided.beat.aria.reverse":"From {from}; the authored relationship points from {to} to {from}.","viewer.guided.beat.aria.multiple":"From {from} through {count} authored relationships; shown without arbitrary motion.","viewer.guided.beat.aria.group":"Grouped from {from} with no direct authored relationship.","viewer.guided.caption.start":"Starting point","viewer.guided.caption.grouped":"Grouped transition · no direct authored link","viewer.guided.caption.more":" +{count} more","viewer.guided.caption.reverse":"Reverse authored relationship","viewer.guided.caption.relationships":"{count} authored relationships","viewer.guided.caption.relationship":"Authored relationship","viewer.guided.caption.direction":"authored direction: {from} → {to}","viewer.guided.caption.starting":"Authored starting point","viewer.guided.beatLink":"Copy link to current story moment: Beat {index} of {total}: {label}","viewer.guided.noStory":"This diagram has no authored guided story.","viewer.guide.eyebrow":"Diagram guide","viewer.guide.close":"Close diagram guide","viewer.guide.inspecting":"Inspecting compiled semantics","viewer.guide.actions":"Diagram exploration actions","viewer.guide.find":"Find any node","viewer.guide.find.hint":"Search labels, responsibilities, kinds, and stable IDs.","viewer.guide.route":"Trace a route","viewer.guide.route.aria":"Trace a directed route","viewer.guide.route.hint":"Ask how two semantic nodes connect in authored direction.","viewer.guide.map":"See the whole system","viewer.guide.map.hint":"Open Semantic Radar with a live viewport and stable nodes.","viewer.guide.lens":"Compare semantic kinds","viewer.guide.lens.hint":"Count roles, reveal their traffic, and compare direct authored links.","viewer.guide.story":"Play the guided story","viewer.guide.story.hint":"Walk the authored chapters and real relationships.","viewer.guide.present":"Enter Presentation Stage","viewer.guide.present.hint":"Give the live diagram the viewport without changing export.","viewer.guide.shortcuts":"Additional keyboard shortcuts","viewer.guide.shortcut.export":"Export","viewer.guide.shortcut.theme":"Theme","viewer.guide.shortcut.style":"Style","viewer.guide.shortcut.reset":"Reset","viewer.guide.shortcut.zoomIn":"Zoom in","viewer.guide.shortcut.zoomOut":"Zoom out","viewer.guide.shortcut.close":"Close","viewer.guide.facts":"{nodes} · {relationships} · {views}","viewer.guide.fact.node.one":"{count} semantic node","viewer.guide.fact.node.other":"{count} semantic nodes","viewer.guide.fact.relationship.one":"{count} relationship","viewer.guide.fact.relationship.other":"{count} relationships","viewer.guide.fact.view.one":"{count} guided view","viewer.guide.fact.view.other":"{count} guided views","viewer.guide.story.available.one":"Walk {count} authored chapter and its real relationships.","viewer.guide.story.available.other":"Walk {count} authored chapters and their real relationships.","viewer.guide.story.unavailable":"No authored guided story in this diagram.","viewer.guide.open":"Open diagram guide","viewer.guide.noStory":"This diagram has no authored guided story.","viewer.finder.title":"Find a node","viewer.finder.close":"Close node finder","viewer.finder.placeholder":"Search labels or IDs","viewer.finder.search":"Search diagram nodes","viewer.finder.results":"Diagram nodes","viewer.finder.empty":"No matching nodes","viewer.finder.result.focus":"Focus {label}","viewer.finder.result.routeStart":"Choose {label} as route start","viewer.finder.result.routeTarget":"Choose {label} as route destination, {links}","viewer.finder.status.empty":"No matching nodes","viewer.finder.status.count.one":"{count} matching node","viewer.finder.status.count.other":"{count} matching nodes","viewer.finder.noun.nodes":"nodes","viewer.finder.link.one":"{count} link","viewer.finder.link.other":"{count} links","viewer.finder.result.focus.one":"Focus {label}, {count} related connection","viewer.finder.result.focus.other":"Focus {label}, {count} related connections","viewer.finder.status.filtered":"{visible} of {available} {noun}","viewer.finder.status.all":"{available} {noun}","viewer.passport.eyebrow":"Semantic passport","viewer.passport.metadata":"Node metadata","viewer.passport.evidence":"Verified source evidence","viewer.passport.verified":"Verified source","viewer.passport.reach":"Authored reach","viewer.passport.reach.trace":"Trace authored reachability","viewer.passport.upstream":"Upstream","viewer.passport.downstream":"Downstream","viewer.passport.upstream.trace":"Trace upstream authored reachability","viewer.passport.downstream.trace":"Trace downstream authored reachability","viewer.passport.close":"Close semantic passport","viewer.passport.copy":"Copy link","viewer.passport.copy.focus":"Copy link to focused node","viewer.passport.relations":"Relations","viewer.passport.relations.show":"Show connected relationships","viewer.passport.relations.hide":"Hide connected relationships","viewer.passport.relations.list":"Connected relationships","viewer.passport.copyRelation":"Copy relation","viewer.passport.copyNode":"Copy node","viewer.passport.copyPinned":"Copy link to pinned relationship","viewer.passport.copySource":"Copy link to source node","viewer.passport.copy.focused.success":"Focused node link copied","viewer.passport.copy.pinned.success":"Pinned relationship link copied","viewer.passport.copy.focused.failed":"Could not copy focused node link","viewer.passport.copy.pinned.failed":"Could not copy pinned relationship link","viewer.passport.relationship.none":"No connected relationships","viewer.passport.relationship.count.one":"{count} relation","viewer.passport.relationship.count.other":"{count} relations","viewer.passport.relationship.show.one":"Show {count} connected relationship","viewer.passport.relationship.show.other":"Show {count} connected relationships","viewer.passport.relationship.summary":"{out} outgoing · {in} incoming{loops}","viewer.passport.relationship.loops":" · {count} loop","viewer.passport.relationship.explorer":"Direct relationship explorer","viewer.passport.relationship.help":"Use arrow keys to explore relationships. Press Enter or Space to pin details; Escape clears.","viewer.passport.relationship.loopsBack":"loops back","viewer.passport.relationship.connectsTo":"connects to","viewer.passport.relationship.connectsFrom":"connects from","viewer.passport.relationship.pinned":"Pinned relationship · {from} → {to} · {label}","viewer.passport.relationship.inspect":"Inspect relationship {index} of {total}: {from} to {to}, {label}. Press Enter for details.","viewer.passport.relationship.group.out":"Outgoing","viewer.passport.relationship.group.in":"Incoming","viewer.passport.relationship.group.loop":"Self loops","viewer.passport.relationship.row":"{group}: {relationship}, {neighbor}","viewer.passport.relationship.direction.out":"OUT →","viewer.passport.relationship.direction.in":"← IN","viewer.passport.relationship.direction.loop":"LOOP","viewer.passport.sourceCount.one":"{count} verified source reference","viewer.passport.sourceCount.other":"{count} verified source references","viewer.passport.sourceMarker":"SRC","viewer.passport.beacon.one":"{count} verified source; focus this node to inspect","viewer.passport.beacon.other":"{count} verified sources; focus this node to inspect","viewer.passport.repository.open":"Open verified repository revision {revision}","viewer.passport.source.open":"Open verified source {path} at revision {revision}","viewer.passport.source.openLink":"Open ↗","viewer.passport.reach.upstream.one":"Trace {count} upstream authored node","viewer.passport.reach.upstream.other":"Trace {count} upstream authored nodes","viewer.passport.reach.downstream.one":"Trace {count} downstream authored node","viewer.passport.reach.downstream.other":"Trace {count} downstream authored nodes","viewer.passport.reach.noUpstream":"No upstream authored nodes","viewer.passport.reach.noDownstream":"No downstream authored nodes","viewer.passport.reach.status":"{direction} · {nodes} nodes · {links} links · max {hops} hops","viewer.route.eyebrow":"Route probe","viewer.route.start":"Choose a start node","viewer.route.start.find":"Find start","viewer.route.start.find.aria":"Find a route start","viewer.route.copy":"Copy link","viewer.route.copy.aria":"Copy link to traced route","viewer.route.clear":"Clear","viewer.route.clear.aria":"Clear route probe","viewer.route.traced":"Traced route","viewer.route.pickTwo":"Pick two semantic nodes on the diagram","viewer.route.pickOne":"Pick a semantic node on the diagram","viewer.route.controls":"Route journey controls","viewer.route.previous":"Previous route position","viewer.route.play":"Play route journey","viewer.route.pause":"Pause route journey","viewer.route.replay":"Replay route journey","viewer.route.next":"Next route position","viewer.route.journey":"Journey","viewer.route.pause.label":"Pause","viewer.route.replay.label":"Replay","viewer.route.overview":"Overview","viewer.route.overview.aria":"Show complete route overview","viewer.route.instructions":"Choose the source, then the destination. Direction matters.","viewer.route.destination":"Choose a destination from {label}","viewer.route.destination.find":"Find target","viewer.route.destination.find.aria":"Find a reachable route destination","viewer.route.differentDestination":"Choose a different destination","viewer.route.distinct":"A route needs two distinct semantic nodes.","viewer.route.unreachable":"No directed route to {label}","viewer.route.unreachable.detail":"{target} is not reachable from {source}. Pick a highlighted destination.","viewer.route.start.instructions":"Select the source. The next step will reveal only directed destinations.","viewer.route.copy.success":"Traced route link copied","viewer.route.copy.failed":"Could not copy traced route link","viewer.route.position":"Route position {index} of {total}: {label}","viewer.route.step":"Step {index} of {total} · {phase} · {label}","viewer.route.motionRequired":"Automatic journey requires Live motion","viewer.route.trigger.clear":"Clear traced route","viewer.route.overview.status":"{nodes} · {hops} · shortest authored route","viewer.route.overview.node.one":"{count} node","viewer.route.overview.node.other":"{count} nodes","viewer.route.overview.hop.one":"{count} directed hop","viewer.route.overview.hop.other":"{count} directed hops","viewer.route.phase.playing":"Playing","viewer.route.phase.complete":"Complete","viewer.route.phase.inspecting":"Inspecting","viewer.route.destination.count.one":"{count} directed destination available. Pick a highlighted node.","viewer.route.destination.count.other":"{count} directed destinations available. Pick a highlighted node.","viewer.route.noOutgoing":"No outgoing route starts here. Clear and choose another source.","viewer.route.result.title":"{source} to {target}","viewer.route.finder.source.title":"Choose route start","viewer.route.finder.source.placeholder":"Search route sources","viewer.route.finder.source.empty":"No matching route sources","viewer.route.finder.source.results":"Nodes that can start a route","viewer.route.finder.source.noun":"route sources","viewer.route.finder.source.badge":"start","viewer.route.finder.target.title":"Destination from {label}","viewer.route.finder.target.placeholder":"Search reachable destinations","viewer.route.finder.target.empty":"No matching reachable destinations","viewer.route.finder.target.results":"Reachable route destinations","viewer.route.finder.target.noun":"reachable destinations","viewer.route.hop.one":"{count} hop","viewer.route.hop.other":"{count} hops","viewer.lens.eyebrow":"Semantic lens","viewer.lens.title":"Compare system roles","viewer.lens.close":"Close semantic lens","viewer.lens.instruction":"Choose up to two semantic kinds. One reveals its real traffic; two compare only direct authored relationships.","viewer.lens.kinds":"Semantic kinds","viewer.lens.choose":"Choose a kind to inspect its nodes and touching relationships.","viewer.lens.copy":"Copy link to semantic lens","viewer.lens.clear":"Clear semantic lens","viewer.lens.open":"Open semantic lens","viewer.lens.openActive":"Open active semantic lens","viewer.lens.legend":"Semantic legend","viewer.lens.legend.inspect.one":"Inspect {label}, {count} node","viewer.lens.legend.inspect.other":"Inspect {label}, {count} nodes","viewer.lens.kind.count.one":"{label}, {count} node","viewer.lens.kind.count.other":"{label}, {count} nodes","viewer.lens.compare.one":"{first} → {second}: {forward} · {second} → {first}: {reverse} · {count} direct relationship","viewer.lens.compare.other":"{first} → {second}: {forward} · {second} → {first}: {reverse} · {count} direct relationships","viewer.lens.single":"{nodes} · {relationships} · connected peers remain visible","viewer.lens.node.one":"{count} {label} node","viewer.lens.node.other":"{count} {label} nodes","viewer.lens.relationship.one":"{count} touching relationship","viewer.lens.relationship.other":"{count} touching relationships","viewer.radar.title":"Semantic radar","viewer.radar.building":"Building overview","viewer.radar.openFull":"Open full semantic radar","viewer.radar.open":"Open radar","viewer.radar.close":"Close semantic radar","viewer.radar.surface":"Diagram overview. Click a node to focus it, or use arrow keys to pan.","viewer.radar.click":"Click node","viewer.radar.drag":"Drag to pan","viewer.radar.space":"Semantic radar needs more MAP space.","viewer.radar.nodes":"Semantic diagram radar nodes","viewer.radar.focus":"Focus {label} from Semantic Radar","viewer.radar.status":"{count} nodes · {viewport}","viewer.radar.fullMap":"{count} nodes · full map","viewer.radar.compacted":"Radar compacted to avoid covering the Semantic Passport or MAP controls.","viewer.radar.cancelWaiting":"Cancel semantic radar waiting for more MAP space","viewer.radar.needsSpace":"Semantic radar needs more visible MAP space","viewer.radar.viewport.full":"full map","viewer.radar.viewport.width":"{percent}% width","viewer.radar.viewport.scale":"{percent}% viewport","viewer.nav.controls":"Diagram view controls","viewer.nav.route":"Trace a directed route","viewer.nav.route.title":"Trace route (R)","viewer.nav.route.short":"PATH","viewer.nav.radar":"Open semantic radar","viewer.nav.radar.title":"Semantic radar (M)","viewer.nav.radar.short":"MAP","viewer.nav.lens":"Open semantic lens","viewer.nav.lens.title":"Semantic lens (L)","viewer.nav.lens.short":"LENS","viewer.nav.find":"Find a node","viewer.nav.find.title":"Find a node (/)","viewer.nav.guide":"Open diagram guide","viewer.nav.guide.title":"Diagram guide (?)","viewer.nav.zoomOut":"Zoom out","viewer.nav.zoomOut.title":"Zoom out (-)","viewer.nav.reset":"Reset diagram view","viewer.nav.reset.title":"Reset view (0)","viewer.nav.read":"READ","viewer.nav.zoomIn":"Zoom in","viewer.nav.zoomIn.title":"Zoom in (+)","viewer.nav.camera":"{hint}. Reset diagram view","viewer.nav.camera.title":"{semantic}{hint} · reset view (0)","viewer.nav.camera.semantic":"Semantic camera active · ","viewer.nav.level.map":"MAP","viewer.nav.level.read":"READ","viewer.nav.level.full":"FULL","viewer.nav.level.auto":"AUTO","viewer.nav.detail.map":"Zoom in to reveal relationship labels and node context","viewer.nav.detail.read":"Zoom in again to reveal tags and annotations","viewer.nav.detail.full":"Full diagram detail","viewer.intent.summary":"{label}. {out} outgoing, {in} incoming{loops}. {total} connections. Press Enter for details.","viewer.intent.loops":", {count} self loop","viewer.common.copied":"Copied","viewer.common.copyFailed":"Copy failed","viewer.common.copyLink":"Copy link","viewer.common.clear":"Clear","viewer.common.close":"Close"}}</script>
     <div class="guided-views no-print" id="guided-views" hidden aria-label="Guided diagram views">
@@ -5004,9 +5005,9 @@
     <!-- Main Diagram -->
     <div class="diagram-container" data-detail-level="read"
          data-preset-badge-editorial-plate="ARCHIFY / PLATE 04">
-      <svg viewBox="0 0 1140 700" role="img" lang="en" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="classic" data-quality-profile="showcase">
+      <svg viewBox="0 0 1380 800" role="img" lang="en" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="classic" data-quality-profile="showcase">
         <title id="archify-diagram-title">Модель кейса AXIOM: данные → претрейн → пострейн → RL на собственном контуре</title>
-        <desc id="archify-diagram-description">An architecture diagram generated by Archify.</desc>
+        <desc id="archify-diagram-description">Источник: model/ (CMP-001…006, INT-001, CAP-001, REQ-001, AD-1…13, ADR-001…052)</desc>
         <!-- Definitions -->
         <defs>
           <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
@@ -5030,251 +5031,230 @@
         <rect width="100%" height="100%" fill="url(#grid)" />
 
         <!-- Boundaries (behind everything) -->
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="region" data-composition-frame-id="0" data-composition-frame-label="Контур GB10 (DGX Spark, 128 ГБ unified): одна модельная нагрузка за раз" x="48" y="88" width="1054" height="476" rx="12" class="c-region" stroke-width="1"/>
 
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="security-group" data-composition-frame-id="1" data-composition-frame-label="Приватный корпус (AD-6)" x="58" y="106" width="194" height="338" rx="8" class="c-security-group" stroke-width="1"/>
 
         <!-- Connection paths (before components for correct z-order) -->
-        <path data-edge-from="corpus" data-edge-to="cmp001" data-edge-label="тексты" data-edge-key="0" data-edge-id="corpus-to-cmp001" data-composition-points="190,141;262,141" d="M 190 141 L 262 141" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="cmp001" data-edge-to="cmp002" data-edge-label="токены 20B" data-edge-key="1" data-edge-id="cmp001-to-cmp002" data-composition-points="412,141;484,141" d="M 412 141 L 484 141" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="cmp002" data-edge-to="cmp003" data-edge-label="чекпойнт L3" data-edge-key="2" data-edge-id="cmp002-to-cmp003" data-composition-points="634,134;706,134" d="M 634 134 L 706 134" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="cmp003" data-edge-to="cmp005" data-edge-label="RL-прогоны" data-edge-key="3" data-edge-id="cmp003-to-cmp005" data-composition-points="856,141;928,141" d="M 856 141 L 928 141" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="cmp002" data-edge-to="gb10" data-edge-label="обучение (AD-7)" data-edge-key="4" data-edge-id="cmp002-to-gb10" data-composition-points="634,148;670,148;670,361;706,361" d="M 634 148 L 662 148 Q 670 148 670 156 L 670 353 Q 670 361 678 361 L 706 361" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="gb10" data-edge-to="rental" data-edge-label="класс L1 (INT-001)" data-edge-key="5" data-edge-id="gb10-to-rental" data-composition-points="781,392;781,550" d="M 781 392 L 781 550" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
-        <path data-edge-from="cmp002" data-edge-to="shared" data-edge-label="чекпойнты Orbax" data-edge-key="6" data-edge-id="cmp002-to-shared" data-composition-points="559,172;559,196;214,196;214,361;190,361" d="M 559 172 L 559 188 Q 559 196 551 196 L 222 196 Q 214 196 214 204 L 214 353 Q 214 361 206 361 L 190 361" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
-        <path data-edge-from="shared" data-edge-to="cmp004" data-edge-label="веса L3 (симлинки)" data-edge-key="7" data-edge-id="shared-to-cmp004" data-composition-points="190,361;262,361" d="M 190 361 L 262 361" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
-        <path data-edge-from="cmp004" data-edge-to="k3" data-edge-label="сравнение (ось)" data-edge-key="8" data-edge-id="cmp004-to-k3" data-composition-points="412,361;484,361" d="M 412 361 L 484 361" class="a-security" stroke-width="1.5" marker-end="url(#arrowhead-security)"/>
-        <path data-edge-from="cmp006" data-edge-to="cmp005" data-edge-label="среда и награда" data-edge-key="9" data-edge-id="cmp006-to-cmp005" data-composition-points="1003,330;1003,172" d="M 1003 330 L 1003 172" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="cmp006" data-edge-to="spine" data-edge-label="верификаторы arch-ml" data-edge-key="10" data-edge-id="cmp006-to-spine" data-composition-points="1003,392;1003,550" d="M 1003 392 L 1003 550" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="cmp001" data-edge-to="cmp002" data-edge-label="токены корпуса" data-edge-key="0" data-edge-id="cmp001-to-cmp002" data-composition-points="240,162;350,162" d="M 240 162 L 350 162" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="cmp002" data-edge-to="cmp003" data-edge-label="чекпойнт L3" data-edge-key="1" data-edge-id="cmp002-to-cmp003" data-composition-points="520,162;630,162" d="M 520 162 L 630 162" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="cmp003" data-edge-to="cmp005" data-edge-label="прогоны RL" data-edge-key="2" data-edge-id="cmp003-to-cmp005" data-composition-points="800,162;910,162" d="M 800 162 L 910 162" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="cmp006" data-edge-to="cmp005" data-edge-label="среда и награда" data-edge-key="3" data-edge-id="cmp006-to-cmp005" data-composition-points="995,360;995,194" d="M 995 360 L 995 194" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="cmp001" data-edge-to="shared" data-edge-label="датасеты стадий" data-edge-key="4" data-edge-id="cmp001-to-shared" data-composition-points="155,194;155,360" d="M 155 194 L 155 360" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="cmp002" data-edge-to="shared" data-edge-label="чекпойнты Orbax" data-edge-key="5" data-edge-id="cmp002-to-shared" data-composition-points="350,162;330,162;330,392;240,392" d="M 350 162 L 338 162 Q 330 162 330 170 L 330 384 Q 330 392 322 392 L 240 392" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="shared" data-edge-to="cmp004" data-edge-label="веса L3" data-edge-key="6" data-edge-id="shared-to-cmp004" data-composition-points="155,424;155,480" d="M 155 424 L 155 480" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="cmp002" data-edge-to="rental" data-edge-label="submit_run · budget (AD-8)" data-edge-key="7" data-edge-id="cmp002-to-rental" data-composition-points="435,194;435,610;155,610;155,640" d="M 435 194 L 435 602 Q 435 610 427 610 L 163 610 Q 155 610 155 618 L 155 640" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="cmp005" data-edge-to="k3" data-edge-label="сравнение на оси (AD-1)" data-edge-key="8" data-edge-id="cmp005-to-k3" data-composition-points="1080,162;1180,162" d="M 1080 162 L 1180 162" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="cmp006" data-edge-to="spine" data-edge-label="гейт arch-be" data-edge-key="9" data-edge-id="cmp006-to-spine" data-composition-points="1080,392;1180,392" d="M 1080 392 L 1180 392" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
 
         <!-- Components -->
-        <g id="node-corpus" data-node-id="corpus" data-node-label="Пакованный корпус" tabindex="0" role="button" aria-label="Focus Пакованный корпус, tokens-v2, 8K, Architecture component" aria-pressed="false" data-node-kind="database" data-node-sublabel="tokens-v2, 8K" data-node-tag="20B токенов" data-node-context="Architecture component">
-          <title>Пакованный корпус · tokens-v2, 8K · Architecture component · 20B токенов</title>
-          <rect x="40" y="110" width="150" height="62" rx="6" class="c-mask"/>
-          <rect x="40" y="110" width="150" height="62" rx="6" class="c-database" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(46 116) scale(0.6875)">
-            <ellipse cx="8" cy="4" rx="5" ry="2"/>
-            <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
-          </g>
-          <text data-node-label="" data-detail-anchor="" x="115" y="139" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Пакованный корпус</text>
-        <text data-detail="context" x="115" y="155" class="t-muted" font-size="9" text-anchor="middle">tokens-v2, 8K</text>
-        <text data-detail="fine" x="115" y="164" class="t-database" font-size="7" text-anchor="middle">20B токенов</text>
-        </g>
-
-        <g id="node-cmp001" data-node-id="cmp001" data-node-label="Данные и токенизация" tabindex="0" role="button" aria-label="Focus Данные и токенизация, CMP-001, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="CMP-001" data-node-tag="BPE 160K" data-node-context="Architecture component">
-          <title>Данные и токенизация · CMP-001 · Architecture component · BPE 160K</title>
-          <rect x="262" y="110" width="150" height="62" rx="6" class="c-mask"/>
-          <rect x="262" y="110" width="150" height="62" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(268 116) scale(0.6875)">
+        <g id="node-cmp001" data-node-id="cmp001" data-node-label="Данные и токенизация" tabindex="0" role="button" aria-label="Focus Данные и токенизация, data/, tools/, Контур GB10 (DGX Spark, 128 ГБ unified): одна модельная нагрузка за раз › Приватный корпус (AD-6)" aria-pressed="false" data-node-kind="backend" data-node-sublabel="data/, tools/" data-node-tag="BPE 160K" data-node-context="Контур GB10 (DGX Spark, 128 ГБ unified): одна модельная нагрузка за раз › Приватный корпус (AD-6)">
+          <title>Данные и токенизация · data/, tools/ · Контур GB10 (DGX Spark, 128 ГБ unified): одна модельная нагрузка за раз › Приватный корпус (AD-6) · BPE 160K</title>
+          <rect x="70" y="130" width="170" height="64" rx="6" class="c-mask"/>
+          <rect x="70" y="130" width="170" height="64" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(76 136) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="337" y="139" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Данные и токенизация</text>
-        <text data-detail="context" x="337" y="155" class="t-muted" font-size="9" text-anchor="middle">CMP-001</text>
-        <text data-detail="fine" x="337" y="164" class="t-backend" font-size="7" text-anchor="middle">BPE 160K</text>
+          <text data-node-label="" data-detail-anchor="" x="155" y="160" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Данные и токенизация</text>
+        <text data-detail="context" x="155" y="176" class="t-muted" font-size="9" text-anchor="middle">data/, tools/</text>
+        <text data-detail="fine" x="155" y="186" class="t-backend" font-size="7" text-anchor="middle">BPE 160K</text>
         </g>
 
-        <g id="node-shared" data-node-id="shared" data-node-label="Хранилище gb10-shared" tabindex="0" role="button" aria-label="Focus Хранилище gb10-shared, веса, датасеты, чекпойнты, Architecture component" aria-pressed="false" data-node-kind="database" data-node-sublabel="веса, датасеты, чекпойнты" data-node-tag="C-032" data-node-context="Architecture component">
-          <title>Хранилище gb10-shared · веса, датасеты, чекпойнты · Architecture component · C-032</title>
-          <rect x="40" y="330" width="150" height="62" rx="6" class="c-mask"/>
-          <rect x="40" y="330" width="150" height="62" rx="6" class="c-database" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(46 336) scale(0.6875)">
-            <ellipse cx="8" cy="4" rx="5" ry="2"/>
-            <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
-          </g>
-          <text data-node-label="" data-detail-anchor="" x="115" y="359" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Хранилище gb10-shared</text>
-        <text data-detail="context" x="115" y="375" class="t-muted" font-size="9" text-anchor="middle">веса, датасеты, чекпойнты</text>
-        <text data-detail="fine" x="115" y="384" class="t-database" font-size="7" text-anchor="middle">C-032</text>
-        </g>
-
-        <g id="node-cmp002" data-node-id="cmp002" data-node-label="Претрейн-конвейер" tabindex="0" role="button" aria-label="Focus Претрейн-конвейер, CMP-002 · L3-скелет, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="CMP-002 · L3-скелет" data-node-tag="KDA/MLA/MoE" data-node-context="Architecture component">
-          <title>Претрейн-конвейер · CMP-002 · L3-скелет · Architecture component · KDA/MLA/MoE</title>
-          <rect x="484" y="110" width="150" height="62" rx="6" class="c-mask"/>
-          <rect x="484" y="110" width="150" height="62" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(490 116) scale(0.6875)">
+        <g id="node-cmp002" data-node-id="cmp002" data-node-label="Претрейн-конвейер" tabindex="0" role="button" aria-label="Focus Претрейн-конвейер, net/ · JAX+MaxText, Контур GB10 (DGX Spark, 128 ГБ unified): одна модельная нагрузка за раз" aria-pressed="false" data-node-kind="backend" data-node-sublabel="net/ · JAX+MaxText" data-node-tag="L3-скелет" data-node-context="Контур GB10 (DGX Spark, 128 ГБ unified): одна модельная нагрузка за раз">
+          <title>Претрейн-конвейер · net/ · JAX+MaxText · Контур GB10 (DGX Spark, 128 ГБ unified): одна модельная нагрузка за раз · L3-скелет</title>
+          <rect x="350" y="130" width="170" height="64" rx="6" class="c-mask"/>
+          <rect x="350" y="130" width="170" height="64" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(356 136) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="559" y="139" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Претрейн-конвейер</text>
-        <text data-detail="context" x="559" y="155" class="t-muted" font-size="9" text-anchor="middle">CMP-002 · L3-скелет</text>
-        <text data-detail="fine" x="559" y="164" class="t-backend" font-size="7" text-anchor="middle">KDA/MLA/MoE</text>
+          <text data-node-label="" data-detail-anchor="" x="435" y="160" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Претрейн-конвейер</text>
+        <text data-detail="context" x="435" y="176" class="t-muted" font-size="9" text-anchor="middle">net/ · JAX+MaxText</text>
+        <text data-detail="fine" x="435" y="186" class="t-backend" font-size="7" text-anchor="middle">L3-скелет</text>
         </g>
 
-        <g id="node-gb10" data-node-id="gb10" data-node-label="Стенд GB10" tabindex="0" role="button" aria-label="Focus Стенд GB10, DGX Spark · одна нагрузка, Architecture component" aria-pressed="false" data-node-kind="external" data-node-sublabel="DGX Spark · одна нагрузка" data-node-tag="AD-7" data-node-context="Architecture component">
-          <title>Стенд GB10 · DGX Spark · одна нагрузка · Architecture component · AD-7</title>
-          <rect x="706" y="330" width="150" height="62" rx="6" class="c-mask"/>
-          <rect x="706" y="330" width="150" height="62" rx="6" class="c-external" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(712 336) scale(0.6875)">
-            <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
-            <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
-          </g>
-          <text data-node-label="" data-detail-anchor="" x="781" y="359" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Стенд GB10</text>
-        <text data-detail="context" x="781" y="375" class="t-muted" font-size="9" text-anchor="middle">DGX Spark · одна нагрузка</text>
-        <text data-detail="fine" x="781" y="384" class="t-external" font-size="7" text-anchor="middle">AD-7</text>
-        </g>
-
-        <g id="node-rental" data-node-id="rental" data-node-label="Аренда GPU-кластера" tabindex="0" role="button" aria-label="Focus Аренда GPU-кластера, INT-001 · 8×GPU ≈ $200, Architecture component" aria-pressed="false" data-node-kind="external" data-node-sublabel="INT-001 · 8×GPU ≈ $200" data-node-tag="AD-8" data-node-context="Architecture component">
-          <title>Аренда GPU-кластера · INT-001 · 8×GPU ≈ $200 · Architecture component · AD-8</title>
-          <rect x="706" y="550" width="150" height="62" rx="6" class="c-mask"/>
-          <rect x="706" y="550" width="150" height="62" rx="6" class="c-external" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(712 556) scale(0.6875)">
-            <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
-            <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
-          </g>
-          <text data-node-label="" data-detail-anchor="" x="781" y="579" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Аренда GPU-кластера</text>
-        <text data-detail="context" x="781" y="595" class="t-muted" font-size="9" text-anchor="middle">INT-001 · 8×GPU ≈ $200</text>
-        <text data-detail="fine" x="781" y="604" class="t-external" font-size="7" text-anchor="middle">AD-8</text>
-        </g>
-
-        <g id="node-cmp003" data-node-id="cmp003" data-node-label="Пост-тренировка" tabindex="0" role="button" aria-label="Focus Пост-тренировка, CMP-003 · SFT → RL → MOPD, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="CMP-003 · SFT → RL → MOPD" data-node-tag="лагуна-практики" data-node-context="Architecture component">
-          <title>Пост-тренировка · CMP-003 · SFT → RL → MOPD · Architecture component · лагуна-практики</title>
-          <rect x="706" y="110" width="150" height="62" rx="6" class="c-mask"/>
-          <rect x="706" y="110" width="150" height="62" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(712 116) scale(0.6875)">
+        <g id="node-cmp003" data-node-id="cmp003" data-node-label="Пост-тренировка" tabindex="0" role="button" aria-label="Focus Пост-тренировка, SFT → RL → MOPD, Контур GB10 (DGX Spark, 128 ГБ unified): одна модельная нагрузка за раз" aria-pressed="false" data-node-kind="backend" data-node-sublabel="SFT → RL → MOPD" data-node-tag="QAT MXFP4" data-node-context="Контур GB10 (DGX Spark, 128 ГБ unified): одна модельная нагрузка за раз">
+          <title>Пост-тренировка · SFT → RL → MOPD · Контур GB10 (DGX Spark, 128 ГБ unified): одна модельная нагрузка за раз · QAT MXFP4</title>
+          <rect x="630" y="130" width="170" height="64" rx="6" class="c-mask"/>
+          <rect x="630" y="130" width="170" height="64" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(636 136) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="781" y="139" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Пост-тренировка</text>
-        <text data-detail="context" x="781" y="155" class="t-muted" font-size="9" text-anchor="middle">CMP-003 · SFT → RL → MOPD</text>
-        <text data-detail="fine" x="781" y="164" class="t-backend" font-size="7" text-anchor="middle">лагуна-практики</text>
+          <text data-node-label="" data-detail-anchor="" x="715" y="160" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Пост-тренировка</text>
+        <text data-detail="context" x="715" y="176" class="t-muted" font-size="9" text-anchor="middle">SFT → RL → MOPD</text>
+        <text data-detail="fine" x="715" y="186" class="t-backend" font-size="7" text-anchor="middle">QAT MXFP4</text>
         </g>
 
-        <g id="node-cmp004" data-node-id="cmp004" data-node-label="Инференс на Spark" tabindex="0" role="button" aria-label="Focus Инференс на Spark, CMP-004 · контекст 1M, Architecture component" aria-pressed="false" data-node-kind="cloud" data-node-sublabel="CMP-004 · контекст 1M" data-node-tag="NFR-004" data-node-context="Architecture component">
-          <title>Инференс на Spark · CMP-004 · контекст 1M · Architecture component · NFR-004</title>
-          <rect x="262" y="330" width="150" height="62" rx="6" class="c-mask"/>
-          <rect x="262" y="330" width="150" height="62" rx="6" class="c-cloud" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="cloud" class="semantic-sigil s-cloud" transform="translate(268 336) scale(0.6875)">
-            <path d="M4.3 12.5h7.3a2.4 2.4 0 0 0 .2-4.8 4 4 0 0 0-7.5-1.3A3.1 3.1 0 0 0 4.3 12.5Z"/>
-          </g>
-          <text data-node-label="" data-detail-anchor="" x="337" y="359" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Инференс на Spark</text>
-        <text data-detail="context" x="337" y="375" class="t-muted" font-size="9" text-anchor="middle">CMP-004 · контекст 1M</text>
-        <text data-detail="fine" x="337" y="384" class="t-cloud" font-size="7" text-anchor="middle">NFR-004</text>
-        </g>
-
-        <g id="node-cmp005" data-node-id="cmp005" data-node-label="RL-среда и верификаторы" tabindex="0" role="button" aria-label="Focus RL-среда и верификаторы, CMP-005 · env/, Architecture component" aria-pressed="false" data-node-kind="security" data-node-sublabel="CMP-005 · env/" data-node-tag="AD-2" data-node-context="Architecture component">
-          <title>RL-среда и верификаторы · CMP-005 · env/ · Architecture component · AD-2</title>
-          <rect x="928" y="110" width="150" height="62" rx="6" class="c-mask"/>
-          <rect x="928" y="110" width="150" height="62" rx="6" class="c-security" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(934 116) scale(0.6875)">
+        <g id="node-cmp005" data-node-id="cmp005" data-node-label="RL-среда и верификаторы" tabindex="0" role="button" aria-label="Focus RL-среда и верификаторы, env/ · верификаторы, Контур GB10 (DGX Spark, 128 ГБ unified): одна модельная нагрузка за раз" aria-pressed="false" data-node-kind="security" data-node-sublabel="env/ · верификаторы" data-node-tag="AD-2" data-node-context="Контур GB10 (DGX Spark, 128 ГБ unified): одна модельная нагрузка за раз">
+          <title>RL-среда и верификаторы · env/ · верификаторы · Контур GB10 (DGX Spark, 128 ГБ unified): одна модельная нагрузка за раз · AD-2</title>
+          <rect x="910" y="130" width="170" height="64" rx="6" class="c-mask"/>
+          <rect x="910" y="130" width="170" height="64" rx="6" class="c-security" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(916 136) scale(0.6875)">
             <path d="M8 2.2 13 4v3.5c0 3.1-1.8 5.4-5 6.5-3.2-1.1-5-3.4-5-6.5V4Z"/>
             <path d="m5.8 8 1.5 1.5 3-3"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="1003" y="139" class="t-primary" font-size="10.2" font-weight="600" text-anchor="middle">RL-среда и верификаторы</text>
-        <text data-detail="context" x="1003" y="155" class="t-muted" font-size="9" text-anchor="middle">CMP-005 · env/</text>
-        <text data-detail="fine" x="1003" y="164" class="t-security" font-size="7" text-anchor="middle">AD-2</text>
+          <text data-node-label="" data-detail-anchor="" x="995" y="160" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">RL-среда и верификаторы</text>
+        <text data-detail="context" x="995" y="176" class="t-muted" font-size="9" text-anchor="middle">env/ · верификаторы</text>
+        <text data-detail="fine" x="995" y="186" class="t-security" font-size="7" text-anchor="middle">AD-2</text>
         </g>
 
-        <g id="node-cmp006" data-node-id="cmp006" data-node-label="Агентный харнесс" tabindex="0" role="button" aria-label="Focus Агентный харнесс, CMP-006, Architecture component" aria-pressed="false" data-node-kind="frontend" data-node-sublabel="CMP-006" data-node-tag="общий для baseline" data-node-context="Architecture component">
-          <title>Агентный харнесс · CMP-006 · Architecture component · общий для baseline</title>
-          <rect x="928" y="330" width="150" height="62" rx="6" class="c-mask"/>
-          <rect x="928" y="330" width="150" height="62" rx="6" class="c-frontend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="frontend" class="semantic-sigil s-frontend" transform="translate(934 336) scale(0.6875)">
+        <g id="node-shared" data-node-id="shared" data-node-label="Хранилище gb10-shared" tabindex="0" role="button" aria-label="Focus Хранилище gb10-shared, веса + чекпойнты, Контур GB10 (DGX Spark, 128 ГБ unified): одна модельная нагрузка за раз › Приватный корпус (AD-6)" aria-pressed="false" data-node-kind="database" data-node-sublabel="веса + чекпойнты" data-node-tag="C-032" data-node-context="Контур GB10 (DGX Spark, 128 ГБ unified): одна модельная нагрузка за раз › Приватный корпус (AD-6)">
+          <title>Хранилище gb10-shared · веса + чекпойнты · Контур GB10 (DGX Spark, 128 ГБ unified): одна модельная нагрузка за раз › Приватный корпус (AD-6) · C-032</title>
+          <rect x="70" y="360" width="170" height="64" rx="6" class="c-mask"/>
+          <rect x="70" y="360" width="170" height="64" rx="6" class="c-database" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(76 366) scale(0.6875)">
+            <ellipse cx="8" cy="4" rx="5" ry="2"/>
+            <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="155" y="390" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Хранилище gb10-shared</text>
+        <text data-detail="context" x="155" y="406" class="t-muted" font-size="9" text-anchor="middle">веса + чекпойнты</text>
+        <text data-detail="fine" x="155" y="416" class="t-database" font-size="7" text-anchor="middle">C-032</text>
+        </g>
+
+        <g id="node-cmp006" data-node-id="cmp006" data-node-label="Агентный харнесс" tabindex="0" role="button" aria-label="Focus Агентный харнесс, tools/ · общий, Контур GB10 (DGX Spark, 128 ГБ unified): одна модельная нагрузка за раз" aria-pressed="false" data-node-kind="frontend" data-node-sublabel="tools/ · общий" data-node-tag="AD-3" data-node-context="Контур GB10 (DGX Spark, 128 ГБ unified): одна модельная нагрузка за раз">
+          <title>Агентный харнесс · tools/ · общий · Контур GB10 (DGX Spark, 128 ГБ unified): одна модельная нагрузка за раз · AD-3</title>
+          <rect x="910" y="360" width="170" height="64" rx="6" class="c-mask"/>
+          <rect x="910" y="360" width="170" height="64" rx="6" class="c-frontend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="frontend" class="semantic-sigil s-frontend" transform="translate(916 366) scale(0.6875)">
             <rect x="2" y="3" width="12" height="10" rx="2"/>
             <path d="M2 6.5h12"/>
             <circle cx="4.1" cy="4.8" r=".7" class="sigil-fill"/>
             <circle cx="6.3" cy="4.8" r=".7" class="sigil-fill"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="1003" y="359" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Агентный харнесс</text>
-        <text data-detail="context" x="1003" y="375" class="t-muted" font-size="9" text-anchor="middle">CMP-006</text>
-        <text data-detail="fine" x="1003" y="384" class="t-frontend" font-size="7" text-anchor="middle">общий для baseline</text>
+          <text data-node-label="" data-detail-anchor="" x="995" y="390" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Агентный харнесс</text>
+        <text data-detail="context" x="995" y="406" class="t-muted" font-size="9" text-anchor="middle">tools/ · общий</text>
+        <text data-detail="fine" x="995" y="416" class="t-frontend" font-size="7" text-anchor="middle">AD-3</text>
         </g>
 
-        <g id="node-spine" data-node-id="spine" data-node-label="Spine AI/ML (arch-ml)" tabindex="0" role="button" aria-label="Focus Spine AI/ML (arch-ml), среда и верификаторы RL, Architecture component" aria-pressed="false" data-node-kind="external" data-node-sublabel="среда и верификаторы RL" data-node-tag="ADR-022" data-node-context="Architecture component">
-          <title>Spine AI/ML (arch-ml) · среда и верификаторы RL · Architecture component · ADR-022</title>
-          <rect x="928" y="550" width="150" height="62" rx="6" class="c-mask"/>
-          <rect x="928" y="550" width="150" height="62" rx="6" class="c-external" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(934 556) scale(0.6875)">
+        <g id="node-cmp004" data-node-id="cmp004" data-node-label="Инференс Spark" tabindex="0" role="button" aria-label="Focus Инференс Spark, clients/ · 1M, Контур GB10 (DGX Spark, 128 ГБ unified): одна модельная нагрузка за раз" aria-pressed="false" data-node-kind="cloud" data-node-sublabel="clients/ · 1M" data-node-tag="AD-7" data-node-context="Контур GB10 (DGX Spark, 128 ГБ unified): одна модельная нагрузка за раз">
+          <title>Инференс Spark · clients/ · 1M · Контур GB10 (DGX Spark, 128 ГБ unified): одна модельная нагрузка за раз · AD-7</title>
+          <rect x="70" y="480" width="170" height="64" rx="6" class="c-mask"/>
+          <rect x="70" y="480" width="170" height="64" rx="6" class="c-cloud" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="cloud" class="semantic-sigil s-cloud" transform="translate(76 486) scale(0.6875)">
+            <path d="M4.3 12.5h7.3a2.4 2.4 0 0 0 .2-4.8 4 4 0 0 0-7.5-1.3A3.1 3.1 0 0 0 4.3 12.5Z"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="155" y="510" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Инференс Spark</text>
+        <text data-detail="context" x="155" y="526" class="t-muted" font-size="9" text-anchor="middle">clients/ · 1M</text>
+        <text data-detail="fine" x="155" y="536" class="t-cloud" font-size="7" text-anchor="middle">AD-7</text>
+        </g>
+
+        <g id="node-rental" data-node-id="rental" data-node-label="Аренда GPU-кластера" tabindex="0" role="button" aria-label="Focus Аренда GPU-кластера, INT-001 · planned, Architecture component" aria-pressed="false" data-node-kind="external" data-node-sublabel="INT-001 · planned" data-node-tag="AD-8" data-node-context="Architecture component">
+          <title>Аренда GPU-кластера · INT-001 · planned · Architecture component · AD-8</title>
+          <rect x="70" y="640" width="170" height="64" rx="6" class="c-mask"/>
+          <rect x="70" y="640" width="170" height="64" rx="6" class="c-external" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(76 646) scale(0.6875)">
             <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
             <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="1003" y="579" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Spine AI/ML (arch-ml)</text>
-        <text data-detail="context" x="1003" y="595" class="t-muted" font-size="9" text-anchor="middle">среда и верификаторы RL</text>
-        <text data-detail="fine" x="1003" y="604" class="t-external" font-size="7" text-anchor="middle">ADR-022</text>
+          <text data-node-label="" data-detail-anchor="" x="155" y="670" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Аренда GPU-кластера</text>
+        <text data-detail="context" x="155" y="686" class="t-muted" font-size="9" text-anchor="middle">INT-001 · planned</text>
+        <text data-detail="fine" x="155" y="696" class="t-external" font-size="7" text-anchor="middle">AD-8</text>
         </g>
 
-        <g id="node-k3" data-node-id="k3" data-node-label="Kimi K3 (baseline)" tabindex="0" role="button" aria-label="Focus Kimi K3 (baseline), ось победы, Architecture component" aria-pressed="false" data-node-kind="external" data-node-sublabel="ось победы" data-node-tag="AD-1" data-node-context="Architecture component">
-          <title>Kimi K3 (baseline) · ось победы · Architecture component · AD-1</title>
-          <rect x="484" y="330" width="150" height="62" rx="6" class="c-mask"/>
-          <rect x="484" y="330" width="150" height="62" rx="6" class="c-external" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(490 336) scale(0.6875)">
+        <g id="node-k3" data-node-id="k3" data-node-label="Kimi K3 (baseline)" tabindex="0" role="button" aria-label="Focus Kimi K3 (baseline), baseline, Architecture component" aria-pressed="false" data-node-kind="external" data-node-sublabel="baseline" data-node-tag="AD-1" data-node-context="Architecture component">
+          <title>Kimi K3 (baseline) · baseline · Architecture component · AD-1</title>
+          <rect x="1180" y="130" width="170" height="64" rx="6" class="c-mask"/>
+          <rect x="1180" y="130" width="170" height="64" rx="6" class="c-external" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(1186 136) scale(0.6875)">
             <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
             <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="559" y="359" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Kimi K3 (baseline)</text>
-        <text data-detail="context" x="559" y="375" class="t-muted" font-size="9" text-anchor="middle">ось победы</text>
-        <text data-detail="fine" x="559" y="384" class="t-external" font-size="7" text-anchor="middle">AD-1</text>
+          <text data-node-label="" data-detail-anchor="" x="1265" y="160" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Kimi K3 (baseline)</text>
+        <text data-detail="context" x="1265" y="176" class="t-muted" font-size="9" text-anchor="middle">baseline</text>
+        <text data-detail="fine" x="1265" y="186" class="t-external" font-size="7" text-anchor="middle">AD-1</text>
+        </g>
+
+        <g id="node-spine" data-node-id="spine" data-node-label="Spine Bank" tabindex="0" role="button" aria-label="Focus Spine Bank, arch-be, Architecture component" aria-pressed="false" data-node-kind="external" data-node-sublabel="arch-be" data-node-tag="ADR-051" data-node-context="Architecture component">
+          <title>Spine Bank · arch-be · Architecture component · ADR-051</title>
+          <rect x="1180" y="360" width="170" height="64" rx="6" class="c-mask"/>
+          <rect x="1180" y="360" width="170" height="64" rx="6" class="c-external" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(1186 366) scale(0.6875)">
+            <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
+            <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="1265" y="390" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Spine Bank</text>
+        <text data-detail="context" x="1265" y="406" class="t-muted" font-size="9" text-anchor="middle">arch-be</text>
+        <text data-detail="fine" x="1265" y="416" class="t-external" font-size="7" text-anchor="middle">ADR-051</text>
         </g>
 
         <!-- Connection labels -->
-        <g data-detail="context" data-edge-from="corpus" data-edge-to="cmp001" data-edge-label="тексты" data-edge-key="0" data-edge-id="corpus-to-cmp001">
-          <rect x="206.6" y="121" width="38.8" height="14" rx="3" class="c-mask"/>
-          <text x="226" y="131" class="t-backend" font-size="8" text-anchor="middle">тексты</text>
+        <g data-detail="context" data-edge-from="cmp001" data-edge-to="cmp002" data-edge-label="токены корпуса" data-edge-key="0" data-edge-id="cmp001-to-cmp002">
+          <rect x="256.4" y="142" width="77.2" height="14" rx="3" class="c-mask"/>
+          <text x="295" y="152" class="t-backend" font-size="8" text-anchor="middle">токены корпуса</text>
         </g>
-        <g data-detail="context" data-edge-from="cmp001" data-edge-to="cmp002" data-edge-label="токены 20B" data-edge-key="1" data-edge-id="cmp001-to-cmp002">
-          <rect x="419" y="121" width="58" height="14" rx="3" class="c-mask"/>
-          <text x="448" y="131" class="t-backend" font-size="8" text-anchor="middle">токены 20B</text>
+        <g data-detail="context" data-edge-from="cmp002" data-edge-to="cmp003" data-edge-label="чекпойнт L3" data-edge-key="1" data-edge-id="cmp002-to-cmp003">
+          <rect x="543.6" y="142" width="62.8" height="14" rx="3" class="c-mask"/>
+          <text x="575" y="152" class="t-backend" font-size="8" text-anchor="middle">чекпойнт L3</text>
         </g>
-        <g data-detail="context" data-edge-from="cmp002" data-edge-to="cmp003" data-edge-label="чекпойнт L3" data-edge-key="2" data-edge-id="cmp002-to-cmp003">
-          <rect x="638.6" y="114" width="62.8" height="14" rx="3" class="c-mask"/>
-          <text x="670" y="124" class="t-backend" font-size="8" text-anchor="middle">чекпойнт L3</text>
+        <g data-detail="context" data-edge-from="cmp003" data-edge-to="cmp005" data-edge-label="прогоны RL" data-edge-key="2" data-edge-id="cmp003-to-cmp005">
+          <rect x="826" y="142" width="58" height="14" rx="3" class="c-mask"/>
+          <text x="855" y="152" class="t-backend" font-size="8" text-anchor="middle">прогоны RL</text>
         </g>
-        <g data-detail="context" data-edge-from="cmp003" data-edge-to="cmp005" data-edge-label="RL-прогоны" data-edge-key="3" data-edge-id="cmp003-to-cmp005">
-          <rect x="863" y="121" width="58" height="14" rx="3" class="c-mask"/>
-          <text x="892" y="131" class="t-backend" font-size="8" text-anchor="middle">RL-прогоны</text>
+        <g data-detail="context" data-edge-from="cmp006" data-edge-to="cmp005" data-edge-label="среда и награда" data-edge-key="3" data-edge-id="cmp006-to-cmp005">
+          <rect x="954" y="340" width="82" height="14" rx="3" class="c-mask"/>
+          <text x="995" y="350" class="t-muted" font-size="8" text-anchor="middle">среда и награда</text>
         </g>
-        <g data-detail="context" data-edge-from="cmp002" data-edge-to="gb10" data-edge-label="обучение (AD-7)" data-edge-key="4" data-edge-id="cmp002-to-gb10">
-          <rect x="629" y="234.5" width="82" height="14" rx="3" class="c-mask"/>
-          <text x="670" y="244.5" class="t-muted" font-size="8" text-anchor="middle">обучение (AD-7)</text>
+        <g data-detail="context" data-edge-from="cmp001" data-edge-to="shared" data-edge-label="датасеты стадий" data-edge-key="4" data-edge-id="cmp001-to-shared">
+          <rect x="102" y="290" width="82" height="14" rx="3" class="c-mask"/>
+          <text x="143" y="300" class="t-messagebus" font-size="8" text-anchor="middle">датасеты стадий</text>
         </g>
-        <g data-detail="context" data-edge-from="gb10" data-edge-to="rental" data-edge-label="класс L1 (INT-001)" data-edge-key="5" data-edge-id="gb10-to-rental">
-          <rect x="732.8" y="396" width="96.39999999999999" height="14" rx="3" class="c-mask"/>
-          <text x="781" y="406" class="t-messagebus" font-size="8" text-anchor="middle">класс L1 (INT-001)</text>
+        <g data-detail="context" data-edge-from="cmp002" data-edge-to="shared" data-edge-label="чекпойнты Orbax" data-edge-key="5" data-edge-id="cmp002-to-shared">
+          <rect x="289" y="420" width="82" height="14" rx="3" class="c-mask"/>
+          <text x="330" y="430" class="t-messagebus" font-size="8" text-anchor="middle">чекпойнты Orbax</text>
         </g>
-        <g data-detail="context" data-edge-from="cmp002" data-edge-to="shared" data-edge-label="чекпойнты Orbax" data-edge-key="6" data-edge-id="cmp002-to-shared">
-          <rect x="345.5" y="176" width="82" height="14" rx="3" class="c-mask"/>
-          <text x="386.5" y="186" class="t-messagebus" font-size="8" text-anchor="middle">чекпойнты Orbax</text>
+        <g data-detail="context" data-edge-from="shared" data-edge-to="cmp004" data-edge-label="веса L3" data-edge-key="6" data-edge-id="shared-to-cmp004">
+          <rect x="130.2" y="442" width="43.6" height="14" rx="3" class="c-mask"/>
+          <text x="152" y="452" class="t-messagebus" font-size="8" text-anchor="middle">веса L3</text>
         </g>
-        <g data-detail="context" data-edge-from="shared" data-edge-to="cmp004" data-edge-label="веса L3 (симлинки)" data-edge-key="7" data-edge-id="shared-to-cmp004">
-          <rect x="177.8" y="396" width="96.39999999999999" height="14" rx="3" class="c-mask"/>
-          <text x="226" y="406" class="t-messagebus" font-size="8" text-anchor="middle">веса L3 (симлинки)</text>
+        <g data-detail="context" data-edge-from="cmp002" data-edge-to="rental" data-edge-label="submit_run · budget (AD-8)" data-edge-key="7" data-edge-id="cmp002-to-rental">
+          <rect x="352.6" y="248" width="134.8" height="14" rx="3" class="c-mask"/>
+          <text x="420" y="258" class="t-messagebus" font-size="8" text-anchor="middle">submit_run · budget (AD-8)</text>
         </g>
-        <g data-detail="context" data-edge-from="cmp004" data-edge-to="k3" data-edge-label="сравнение (ось)" data-edge-key="8" data-edge-id="cmp004-to-k3">
-          <rect x="407" y="396" width="82" height="14" rx="3" class="c-mask"/>
-          <text x="448" y="406" class="t-security" font-size="8" text-anchor="middle">сравнение (ось)</text>
+        <g data-detail="context" data-edge-from="cmp005" data-edge-to="k3" data-edge-label="сравнение на оси (AD-1)" data-edge-key="8" data-edge-id="cmp005-to-k3">
+          <rect x="1064.8" y="204" width="120.39999999999999" height="14" rx="3" class="c-mask"/>
+          <text x="1125" y="214" class="t-backend" font-size="8" text-anchor="middle">сравнение на оси (AD-1)</text>
         </g>
-        <g data-detail="context" data-edge-from="cmp006" data-edge-to="cmp005" data-edge-label="среда и награда" data-edge-key="9" data-edge-id="cmp006-to-cmp005">
-          <rect x="962" y="310" width="82" height="14" rx="3" class="c-mask"/>
-          <text x="1003" y="320" class="t-muted" font-size="8" text-anchor="middle">среда и награда</text>
-        </g>
-        <g data-detail="context" data-edge-from="cmp006" data-edge-to="spine" data-edge-label="верификаторы arch-ml" data-edge-key="10" data-edge-id="cmp006-to-spine">
-          <rect x="950" y="396" width="106" height="14" rx="3" class="c-mask"/>
-          <text x="1003" y="406" class="t-muted" font-size="8" text-anchor="middle">верификаторы arch-ml</text>
+        <g data-detail="context" data-edge-from="cmp006" data-edge-to="spine" data-edge-label="гейт arch-be" data-edge-key="9" data-edge-id="cmp006-to-spine">
+          <rect x="1091.2" y="434" width="67.6" height="14" rx="3" class="c-mask"/>
+          <text x="1125" y="444" class="t-messagebus" font-size="8" text-anchor="middle">гейт arch-be</text>
         </g>
 
         <!-- Boundary labels (foreground masks keep routes out of titles) -->
+        <g data-graph-role="structural-frame-label" data-composition-frame-id="0" data-composition-frame-kind="region" data-composition-frame-label="Контур GB10 (DGX Spark, 128 ГБ unified): одна модельная нагрузка за раз">
+          <rect data-graph-role="structural-frame-label-mask" x="52" y="92" width="393.4" height="16" rx="3" class="c-mask"/>
+          <text data-boundary-label="" x="56" y="105" class="t-cloud" font-size="9" font-weight="600">Контур GB10 (DGX Spark, 128 ГБ unified): одна модельная нагрузка за раз</text>
+        </g>
 
+        <g data-graph-role="structural-frame-label" data-composition-frame-id="1" data-composition-frame-kind="security-group" data-composition-frame-label="Приватный корпус (AD-6)">
+          <rect data-graph-role="structural-frame-label-mask" x="62" y="110" width="134.2" height="16" rx="3" class="c-mask"/>
+          <text data-boundary-label="" x="66" y="123" class="t-security" font-size="9" font-weight="600">Приватный корпус (AD-6)</text>
+        </g>
 
         <!-- Legend -->
         <g data-legend="" data-legend-bridge="">
-          <text x="40" y="664" class="t-primary" font-size="12" font-weight="650">Legend</text>
-          <g data-legend-semantic-kind="frontend" data-legend-kind="frontend" data-legend-label="Frontend" data-legend-x="40" data-legend-baseline="684" data-legend-width="83">
-            <rect x="40" y="675" width="16" height="10" rx="2.5" class="c-frontend" stroke-width="1"/>
-            <text x="62" y="684" class="t-muted" font-size="10" font-weight="500">Frontend</text>
+          <text x="40" y="764" class="t-primary" font-size="12" font-weight="650">Legend</text>
+          <g data-legend-semantic-kind="frontend" data-legend-kind="frontend" data-legend-label="Frontend" data-legend-x="40" data-legend-baseline="784" data-legend-width="83">
+            <rect x="40" y="775" width="16" height="10" rx="2.5" class="c-frontend" stroke-width="1"/>
+            <text x="62" y="784" class="t-muted" font-size="10" font-weight="500">Frontend</text>
           </g>
-          <g data-legend-semantic-kind="backend" data-legend-kind="backend" data-legend-label="Backend" data-legend-x="145" data-legend-baseline="684" data-legend-width="78">
-            <rect x="145" y="675" width="16" height="10" rx="2.5" class="c-backend" stroke-width="1"/>
-            <text x="167" y="684" class="t-muted" font-size="10" font-weight="500">Backend</text>
+          <g data-legend-semantic-kind="backend" data-legend-kind="backend" data-legend-label="Backend" data-legend-x="145" data-legend-baseline="784" data-legend-width="78">
+            <rect x="145" y="775" width="16" height="10" rx="2.5" class="c-backend" stroke-width="1"/>
+            <text x="167" y="784" class="t-muted" font-size="10" font-weight="500">Backend</text>
           </g>
-          <g data-legend-semantic-kind="database" data-legend-kind="database" data-legend-label="Database" data-legend-x="245" data-legend-baseline="684" data-legend-width="83">
-            <rect x="245" y="675" width="16" height="10" rx="2.5" class="c-database" stroke-width="1"/>
-            <text x="267" y="684" class="t-muted" font-size="10" font-weight="500">Database</text>
+          <g data-legend-semantic-kind="database" data-legend-kind="database" data-legend-label="Database" data-legend-x="245" data-legend-baseline="784" data-legend-width="83">
+            <rect x="245" y="775" width="16" height="10" rx="2.5" class="c-database" stroke-width="1"/>
+            <text x="267" y="784" class="t-muted" font-size="10" font-weight="500">Database</text>
           </g>
-          <g data-legend-semantic-kind="cloud" data-legend-kind="cloud" data-legend-label="Cloud" data-legend-x="350" data-legend-baseline="684" data-legend-width="68">
-            <rect x="350" y="675" width="16" height="10" rx="2.5" class="c-cloud" stroke-width="1"/>
-            <text x="372" y="684" class="t-muted" font-size="10" font-weight="500">Cloud</text>
+          <g data-legend-semantic-kind="cloud" data-legend-kind="cloud" data-legend-label="Cloud" data-legend-x="350" data-legend-baseline="784" data-legend-width="68">
+            <rect x="350" y="775" width="16" height="10" rx="2.5" class="c-cloud" stroke-width="1"/>
+            <text x="372" y="784" class="t-muted" font-size="10" font-weight="500">Cloud</text>
           </g>
-          <g data-legend-semantic-kind="security" data-legend-kind="security" data-legend-label="Security" data-legend-x="440" data-legend-baseline="684" data-legend-width="83">
-            <rect x="440" y="675" width="16" height="10" rx="2.5" class="c-security" stroke-width="1"/>
-            <text x="462" y="684" class="t-muted" font-size="10" font-weight="500">Security</text>
+          <g data-legend-semantic-kind="security" data-legend-kind="security" data-legend-label="Security" data-legend-x="440" data-legend-baseline="784" data-legend-width="83">
+            <rect x="440" y="775" width="16" height="10" rx="2.5" class="c-security" stroke-width="1"/>
+            <text x="462" y="784" class="t-muted" font-size="10" font-weight="500">Security</text>
           </g>
-          <g data-legend-semantic-kind="external" data-legend-kind="external" data-legend-label="External" data-legend-x="545" data-legend-baseline="684" data-legend-width="83">
-            <rect x="545" y="675" width="16" height="10" rx="2.5" class="c-external" stroke-width="1"/>
-            <text x="567" y="684" class="t-muted" font-size="10" font-weight="500">External</text>
+          <g data-legend-semantic-kind="external" data-legend-kind="external" data-legend-label="External" data-legend-x="545" data-legend-baseline="784" data-legend-width="83">
+            <rect x="545" y="775" width="16" height="10" rx="2.5" class="c-external" stroke-width="1"/>
+            <text x="567" y="784" class="t-muted" font-size="10" font-weight="500">External</text>
           </g>
         </g>
       </svg>
@@ -5466,60 +5446,60 @@
       <div class="card">
         <div class="card-header">
           <div class="card-dot cyan"></div>
-          <h3>Ось победы (AD-1 · C-013)</h3>
+          <h3>Ось победы и вердикт (AD-1 · AD-2 · C-013/C-039)</h3>
         </div>
         <ul>
-          <li>&bull; Сравнение с K3 — только на равном бюджете и пиннутых снапшотах</li>
-          <li>&bull; Заявления вне объявленной оси запрещены</li>
-          <li>&bull; Сравнительный стенд — отчётность, не стадия обучения</li>
+          <li>&bull; Сравнение с K3 — только на объявленной оси, равном бюджете и пиннутых снапшотах</li>
+          <li>&bull; Прохождение задачи и награда — детерминированные функции исполнения (fitness-гейты)</li>
+          <li>&bull; LLM-судья — вне контура награды RL</li>
         </ul>
       </div>
 
       <div class="card">
         <div class="card-header">
           <div class="card-dot emerald"></div>
-          <h3>Механический вердикт (AD-2 · C-039)</h3>
+          <h3>Пиннинг и воспроизводимость (AD-4 · NFR-002 · C-038)</h3>
         </div>
         <ul>
-          <li>&bull; Прохождение задачи и награда — детерминированные функции исполнения</li>
-          <li>&bull; LLM-судья — вне контура награды RL</li>
-          <li>&bull; Повторный прогон даёт тот же вердикт</li>
+          <li>&bull; Снапшоты, данные и веса пиннутся хешем по содержимому</li>
+          <li>&bull; Манифест прогона A4 несёт состав стадий; частичный прогон гейт не закрывает</li>
+          <li>&bull; Веса живут в gb10-shared, в рабочих каталогах — симлинки, копии запрещены (C-032)</li>
         </ul>
       </div>
 
       <div class="card">
         <div class="card-header">
           <div class="card-dot amber"></div>
-          <h3>Пиннинг (AD-4 · C-038)</h3>
+          <h3>Стоимость и железо (AD-7 · AD-8 · ADR-041)</h3>
         </div>
         <ul>
-          <li>&bull; Снапшоты, данные и веса — по содержимому</li>
-          <li>&bull; Манифест прогона A4 покрывает конвейер</li>
-          <li>&bull; Веса живут в gb10-shared, в рабочих каталогах — симлинки (C-032)</li>
+          <li>&bull; Одна модельная нагрузка за раз на GB10</li>
+          <li>&bull; XLA_PYTHON_CLIENT_MEM_FRACTION обязателен + префлайт-гейт (инцидент OOM)</li>
+          <li>&bull; Лимит стоимости — до запуска: L3 ≤ $200, L1 ≤ $44k, L1+ ≤ $117k (NFR-003)</li>
         </ul>
       </div>
 
       <div class="card">
         <div class="card-header">
           <div class="card-dot rose"></div>
-          <h3>Железо и дисциплина (AD-7/AD-8 · ADR-041)</h3>
+          <h3>Приватность и поставка (AD-6 · C-021 · ADR-030)</h3>
         </div>
         <ul>
-          <li>&bull; Одна модельная нагрузка за раз на GB10</li>
-          <li>&bull; XLA_PYTHON_CLIENT_MEM_FRACTION обязателен + префлайт-гейт</li>
-          <li>&bull; Лимит стоимости прогона — до запуска</li>
+          <li>&bull; Приватный корпус обрабатывается только локально; на аренду уходит обезличенный/публичный датасет</li>
+          <li>&bull; HF Hub — канал публикации весов (ADR-030), карточка датасета с лицензиями источников</li>
+          <li>&bull; Стек: JAX/MaxText (ADR-008), Rust — точечно через FFI и на инференсе (ADR-017)</li>
         </ul>
       </div>
 
       <div class="card">
         <div class="card-header">
           <div class="card-dot cyan"></div>
-          <h3>Публикация и лицензии (ADR-004/ADR-030)</h3>
+          <h3>Длинный контекст и точность (AD-5 · AD-9 · NFR-005)</h3>
         </div>
         <ul>
-          <li>&bull; HF Hub — канал публикации весов (ADR-030)</li>
-          <li>&bull; Претрейн-корпус публичен: карточка + sha256 шардов (ADR-004)</li>
-          <li>&bull; Приватный корпус в контур аренды не вывозится (AD-6, C-021)</li>
+          <li>&bull; KDA/MLA/MoE-скелет пиннут архитектурной базой, отклонения — только через ADR</li>
+          <li>&bull; Контекст 1M обрабатывается в пределах 128 ГБ; деградация измеряется и раскрывается</li>
+          <li>&bull; Вердикт приёмочных тестов не зависит от окружения: бэкенд и точность запиннены (AD-11)</li>
         </ul>
       </div>
     </div>

@@ -3,24 +3,23 @@
  "diagram_type": "architecture",
  "meta": {
   "title": "Модель кейса AXIOM: данные → претрейн → пострейн → RL на собственном контуре",
+  "subtitle": "Источник: model/ (CMP-001…006, INT-001, CAP-001, REQ-001, AD-1…13, ADR-001…052)",
   "quality_profile": "showcase",
   "viewBox": [
-   1140,
-   700
+   1380,
+   800
   ],
   "views": [
    {
     "id": "pretrain-path",
     "label": "Путь претрейна",
     "focus": [
-     "corpus",
      "cmp001",
      "cmp002",
-     "gb10",
-     "rental",
-     "shared"
+     "shared",
+     "rental"
     ],
-    "note": "Корпус и токенизация → L3-скелет: обучение на стенде, масштабный класс — на аренде, чекпойнты — в общем хранилище."
+    "note": "Данные и токенизация → L3-скелет на стенде GB10; масштабный класс — аренда GPU; чекпойнты — в gb10-shared."
    },
    {
     "id": "posttrain-rl",
@@ -29,219 +28,225 @@
      "cmp002",
      "cmp003",
      "cmp005",
-     "cmp006",
-     "spine"
+     "cmp006"
     ],
-    "note": "SFT → RL базы → MOPD; среды и верификаторы исполняет агентный харнесс контура arch-ml."
+    "note": "SFT → RL по схеме базы → MOPD; среду и награду исполняет агентный харнесс, вердикт механический."
+   },
+   {
+    "id": "inference",
+    "label": "Инференс на Spark",
+    "focus": [
+     "shared",
+     "cmp004"
+    ],
+    "note": "Инференс берёт веса из gb10-shared артефактно (симлинк + хеш), зависит от претрейна не кодом."
    },
    {
     "id": "victory-axis",
     "label": "Ось победы",
     "focus": [
-     "cmp004",
-     "k3",
      "cmp005",
-     "cmp006"
+     "cmp006",
+     "k3"
     ],
-    "note": "Сравнение с K3 — на равном бюджете и пиннутых снапшотах, механическим вердиктом среды."
+    "note": "Сравнение с K3 — на равном бюджете рассуждений и общем харнессе, вердикт механический."
+   },
+   {
+    "id": "governance",
+    "label": "Контур контроля",
+    "focus": [
+     "cmp002",
+     "cmp005",
+     "cmp006",
+     "spine"
+    ],
+    "note": "Spine Bank (arch-be) — внешний барьер: дрейф модель↔код, delta_guard, fitness и трассировка."
    }
   ]
  },
  "components": [
   {
-   "id": "corpus",
-   "type": "database",
-   "label": "Пакованный корпус",
-   "sublabel": "tokens-v2, 8K",
-   "pos": [
-    40,
-    110
-   ],
-   "size": [
-    150,
-    62
-   ],
-   "tag": "20B токенов"
-  },
-  {
    "id": "cmp001",
    "type": "backend",
    "label": "Данные и токенизация",
-   "sublabel": "CMP-001",
+   "sublabel": "data/, tools/",
+   "tag": "BPE 160K",
    "pos": [
-    262,
-    110
+    70,
+    130
    ],
    "size": [
-    150,
-    62
-   ],
-   "tag": "BPE 160K"
-  },
-  {
-   "id": "shared",
-   "type": "database",
-   "label": "Хранилище gb10-shared",
-   "sublabel": "веса, датасеты, чекпойнты",
-   "pos": [
-    40,
-    330
-   ],
-   "size": [
-    150,
-    62
-   ],
-   "tag": "C-032"
+    170,
+    64
+   ]
   },
   {
    "id": "cmp002",
    "type": "backend",
    "label": "Претрейн-конвейер",
-   "sublabel": "CMP-002 · L3-скелет",
+   "sublabel": "net/ · JAX+MaxText",
+   "tag": "L3-скелет",
    "pos": [
-    484,
-    110
+    350,
+    130
    ],
    "size": [
-    150,
-    62
-   ],
-   "tag": "KDA/MLA/MoE"
-  },
-  {
-   "id": "gb10",
-   "type": "external",
-   "label": "Стенд GB10",
-   "sublabel": "DGX Spark · одна нагрузка",
-   "pos": [
-    706,
-    330
-   ],
-   "size": [
-    150,
-    62
-   ],
-   "tag": "AD-7"
-  },
-  {
-   "id": "rental",
-   "type": "external",
-   "label": "Аренда GPU-кластера",
-   "sublabel": "INT-001 · 8×GPU ≈ $200",
-   "pos": [
-    706,
-    550
-   ],
-   "size": [
-    150,
-    62
-   ],
-   "tag": "AD-8"
+    170,
+    64
+   ]
   },
   {
    "id": "cmp003",
    "type": "backend",
    "label": "Пост-тренировка",
-   "sublabel": "CMP-003 · SFT → RL → MOPD",
+   "sublabel": "SFT → RL → MOPD",
+   "tag": "QAT MXFP4",
    "pos": [
-    706,
-    110
+    630,
+    130
    ],
    "size": [
-    150,
-    62
-   ],
-   "tag": "лагуна-практики"
-  },
-  {
-   "id": "cmp004",
-   "type": "cloud",
-   "label": "Инференс на Spark",
-   "sublabel": "CMP-004 · контекст 1M",
-   "pos": [
-    262,
-    330
-   ],
-   "size": [
-    150,
-    62
-   ],
-   "tag": "NFR-004"
+    170,
+    64
+   ]
   },
   {
    "id": "cmp005",
    "type": "security",
    "label": "RL-среда и верификаторы",
-   "sublabel": "CMP-005 · env/",
+   "sublabel": "env/ · верификаторы",
+   "tag": "AD-2",
    "pos": [
-    928,
-    110
+    910,
+    130
    ],
    "size": [
-    150,
-    62
+    170,
+    64
+   ]
+  },
+  {
+   "id": "shared",
+   "type": "database",
+   "label": "Хранилище gb10-shared",
+   "sublabel": "веса + чекпойнты",
+   "tag": "C-032",
+   "pos": [
+    70,
+    360
    ],
-   "tag": "AD-2"
+   "size": [
+    170,
+    64
+   ]
   },
   {
    "id": "cmp006",
    "type": "frontend",
    "label": "Агентный харнесс",
-   "sublabel": "CMP-006",
+   "sublabel": "tools/ · общий",
+   "tag": "AD-3",
    "pos": [
-    928,
-    330
+    910,
+    360
    ],
    "size": [
-    150,
-    62
-   ],
-   "tag": "общий для baseline"
+    170,
+    64
+   ]
   },
   {
-   "id": "spine",
-   "type": "external",
-   "label": "Spine AI/ML (arch-ml)",
-   "sublabel": "среда и верификаторы RL",
+   "id": "cmp004",
+   "type": "cloud",
+   "label": "Инференс Spark",
+   "sublabel": "clients/ · 1M",
+   "tag": "AD-7",
    "pos": [
-    928,
-    550
+    70,
+    480
    ],
    "size": [
-    150,
-    62
+    170,
+    64
+   ]
+  },
+  {
+   "id": "rental",
+   "type": "external",
+   "label": "Аренда GPU-кластера",
+   "sublabel": "INT-001 · planned",
+   "tag": "AD-8",
+   "pos": [
+    70,
+    640
    ],
-   "tag": "ADR-022"
+   "size": [
+    170,
+    64
+   ]
   },
   {
    "id": "k3",
    "type": "external",
    "label": "Kimi K3 (baseline)",
-   "sublabel": "ось победы",
+   "sublabel": "baseline",
+   "tag": "AD-1",
    "pos": [
-    484,
-    330
+    1180,
+    130
    ],
    "size": [
-    150,
-    62
+    170,
+    64
+   ]
+  },
+  {
+   "id": "spine",
+   "type": "external",
+   "label": "Spine Bank",
+   "sublabel": "arch-be",
+   "tag": "ADR-051",
+   "pos": [
+    1180,
+    360
    ],
-   "tag": "AD-1"
+   "size": [
+    170,
+    64
+   ]
+  }
+ ],
+ "boundaries": [
+  {
+   "kind": "region",
+   "label": "Контур GB10 (DGX Spark, 128 ГБ unified): одна модельная нагрузка за раз",
+   "wraps": [
+    "cmp001",
+    "cmp002",
+    "cmp003",
+    "cmp005",
+    "cmp006",
+    "shared",
+    "cmp004"
+   ],
+   "pad": 22
+  },
+  {
+   "kind": "security-group",
+   "label": "Приватный корпус (AD-6)",
+   "wraps": [
+    "cmp001",
+    "shared"
+   ],
+   "pad": 12
   }
  ],
  "connections": [
   {
-   "id": "corpus-to-cmp001",
-   "from": "corpus",
-   "to": "cmp001",
-   "label": "тексты",
-   "variant": "emphasis"
-  },
-  {
    "id": "cmp001-to-cmp002",
    "from": "cmp001",
    "to": "cmp002",
-   "label": "токены 20B",
+   "label": "токены корпуса",
    "variant": "emphasis"
   },
   {
@@ -255,25 +260,29 @@
    "id": "cmp003-to-cmp005",
    "from": "cmp003",
    "to": "cmp005",
-   "label": "RL-прогоны",
+   "label": "прогоны RL",
    "variant": "emphasis"
   },
   {
-   "id": "cmp002-to-gb10",
-   "from": "cmp002",
-   "to": "gb10",
-   "label": "обучение (AD-7)",
-   "variant": "default"
+   "id": "cmp006-to-cmp005",
+   "from": "cmp006",
+   "to": "cmp005",
+   "label": "среда и награда",
+   "variant": "default",
+   "fromSide": "top",
+   "toSide": "bottom"
   },
   {
-   "id": "gb10-to-rental",
-   "from": "gb10",
-   "to": "rental",
-   "label": "класс L1 (INT-001)",
+   "id": "cmp001-to-shared",
+   "from": "cmp001",
+   "to": "shared",
+   "label": "датасеты стадий",
    "variant": "dashed",
+   "fromSide": "bottom",
+   "toSide": "top",
    "labelAt": [
-    781,
-    406
+    143,
+    300
    ]
   },
   {
@@ -282,94 +291,126 @@
    "to": "shared",
    "label": "чекпойнты Orbax",
    "variant": "dashed",
-   "fromSide": "bottom",
-   "toSide": "right"
+   "fromSide": "left",
+   "toSide": "right",
+   "via": [
+    [
+     330,
+     162
+    ],
+    [
+     330,
+     392
+    ]
+   ],
+   "labelAt": [
+    330,
+    430
+   ]
   },
   {
    "id": "shared-to-cmp004",
    "from": "shared",
    "to": "cmp004",
-   "label": "веса L3 (симлинки)",
+   "label": "веса L3",
    "variant": "dashed",
+   "fromSide": "bottom",
+   "toSide": "top",
    "labelAt": [
-    226,
-    406
+    152,
+    452
    ]
   },
   {
-   "id": "cmp004-to-k3",
-   "from": "cmp004",
+   "id": "cmp002-to-rental",
+   "from": "cmp002",
+   "to": "rental",
+   "label": "submit_run · budget (AD-8)",
+   "variant": "dashed",
+   "fromSide": "bottom",
+   "toSide": "top",
+   "via": [
+    [
+     435,
+     610
+    ],
+    [
+     155,
+     610
+    ]
+   ],
+   "labelAt": [
+    420,
+    258
+   ]
+  },
+  {
+   "id": "cmp005-to-k3",
+   "from": "cmp005",
    "to": "k3",
-   "label": "сравнение (ось)",
-   "variant": "security",
+   "label": "сравнение на оси (AD-1)",
+   "variant": "emphasis",
    "labelAt": [
-    448,
-    406
+    1125,
+    214
    ]
-  },
-  {
-   "id": "cmp006-to-cmp005",
-   "from": "cmp006",
-   "to": "cmp005",
-   "label": "среда и награда",
-   "variant": "default"
   },
   {
    "id": "cmp006-to-spine",
    "from": "cmp006",
    "to": "spine",
-   "label": "верификаторы arch-ml",
-   "variant": "default",
+   "label": "гейт arch-be",
+   "variant": "dashed",
    "labelAt": [
-    1003,
-    406
+    1125,
+    444
    ]
   }
  ],
  "cards": [
   {
    "dot": "cyan",
-   "title": "Ось победы (AD-1 · C-013)",
+   "title": "Ось победы и вердикт (AD-1 · AD-2 · C-013/C-039)",
    "items": [
-    "Сравнение с K3 — только на равном бюджете и пиннутых снапшотах",
-    "Заявления вне объявленной оси запрещены",
-    "Сравнительный стенд — отчётность, не стадия обучения"
+    "Сравнение с K3 — только на объявленной оси, равном бюджете и пиннутых снапшотах",
+    "Прохождение задачи и награда — детерминированные функции исполнения (fitness-гейты)",
+    "LLM-судья — вне контура награды RL"
    ]
   },
   {
    "dot": "emerald",
-   "title": "Механический вердикт (AD-2 · C-039)",
+   "title": "Пиннинг и воспроизводимость (AD-4 · NFR-002 · C-038)",
    "items": [
-    "Прохождение задачи и награда — детерминированные функции исполнения",
-    "LLM-судья — вне контура награды RL",
-    "Повторный прогон даёт тот же вердикт"
+    "Снапшоты, данные и веса пиннутся хешем по содержимому",
+    "Манифест прогона A4 несёт состав стадий; частичный прогон гейт не закрывает",
+    "Веса живут в gb10-shared, в рабочих каталогах — симлинки, копии запрещены (C-032)"
    ]
   },
   {
    "dot": "amber",
-   "title": "Пиннинг (AD-4 · C-038)",
+   "title": "Стоимость и железо (AD-7 · AD-8 · ADR-041)",
    "items": [
-    "Снапшоты, данные и веса — по содержимому",
-    "Манифест прогона A4 покрывает конвейер",
-    "Веса живут в gb10-shared, в рабочих каталогах — симлинки (C-032)"
+    "Одна модельная нагрузка за раз на GB10",
+    "XLA_PYTHON_CLIENT_MEM_FRACTION обязателен + префлайт-гейт (инцидент OOM)",
+    "Лимит стоимости — до запуска: L3 ≤ $200, L1 ≤ $44k, L1+ ≤ $117k (NFR-003)"
    ]
   },
   {
    "dot": "rose",
-   "title": "Железо и дисциплина (AD-7/AD-8 · ADR-041)",
+   "title": "Приватность и поставка (AD-6 · C-021 · ADR-030)",
    "items": [
-    "Одна модельная нагрузка за раз на GB10",
-    "XLA_PYTHON_CLIENT_MEM_FRACTION обязателен + префлайт-гейт",
-    "Лимит стоимости прогона — до запуска"
+    "Приватный корпус обрабатывается только локально; на аренду уходит обезличенный/публичный датасет",
+    "HF Hub — канал публикации весов (ADR-030), карточка датасета с лицензиями источников",
+    "Стек: JAX/MaxText (ADR-008), Rust — точечно через FFI и на инференсе (ADR-017)"
    ]
   },
   {
    "dot": "cyan",
-   "title": "Публикация и лицензии (ADR-004/ADR-030)",
+   "title": "Длинный контекст и точность (AD-5 · AD-9 · NFR-005)",
    "items": [
-    "HF Hub — канал публикации весов (ADR-030)",
-    "Претрейн-корпус публичен: карточка + sha256 шардов (ADR-004)",
-    "Приватный корпус в контур аренды не вывозится (AD-6, C-021)"
+    "KDA/MLA/MoE-скелет пиннут архитектурной базой, отклонения — только через ADR",
+    "Контекст 1M обрабатывается в пределах 128 ГБ; деградация измеряется и раскрывается",
+    "Вердикт приёмочных тестов не зависит от окружения: бэкенд и точность запиннены (AD-11)"
    ]
   }
  ]

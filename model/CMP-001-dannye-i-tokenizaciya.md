@@ -4,7 +4,7 @@ type: cmp
 title: "Данные и токенизация"
 status: "designed"
 depends_on: []
-code_roots: [data, tools]
+code_roots: [data, net/data.py, net/tokenizer.py, tools/bpe_train.py, tools/bpe_train_ru.py, tools/pretokenize.py]
 implements: [AD-6, NFR-003]
 ---
 

@@ -4,7 +4,7 @@ type: cmp
 title: "Агентный харнесс (общий для baseline и своей модели)"
 status: "designed"
 depends_on: [CMP-005]
-code_roots: [tools]
+code_roots: [tools/rollout_harness.py]
 implements: [AD-1, AD-3, AD-7]
 ---
 

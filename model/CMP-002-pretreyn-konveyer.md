@@ -4,7 +4,7 @@ type: cmp
 title: "Претрейн-конвейер и аренда GPU"
 status: "designed"
 depends_on: [CMP-001, INT-001]
-code_roots: [net]
+code_roots: [net/model.py, net/train_loop.py, net/optimizer.py, net/checkpoint.py, net/config.py, net/kda.py, net/mla.py, net/moe.py, net/mlp.py, net/mtp.py, net/attn_sparse.py, net/attnres.py, net/shortconv.py, net/norm.py, net/quant.py, net/remat.py, net/compute_dtype.py, net/master_dtype.py, net/model_ladder.py, net/curriculum.py, net/vit.py, net/infer.py, net/provenance.py, net/topk_exact.py, net/gpu_smoke.py, net/kernels, tools/pretrain_run.py, tools/run_a4_pipeline.py]
 implements: [AD-4, AD-8, NFR-003]
 ---
 

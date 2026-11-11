@@ -21,6 +21,7 @@ harness-лупа ``tools/rollout_harness.py`` (§13) на CPU.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -123,18 +124,30 @@ def test_stub_branch_matches_frozen_baseline(generated, arch_ml, tmp_path):
     """model_factory=None → отчёт (ячейки/агрегат/пиннинг) как до дельты."""
     import inspect
 
-    assert STUB_BASELINE.is_file(), (
-        f"нет замороженного baseline: {STUB_BASELINE} "
-        "(сгенерирован из до-дельтового calibrate)"
-    )
-    expected = json.loads(STUB_BASELINE.read_text(encoding="utf-8"))
-    expected.pop("workspace_total_bytes", None)  # см. _stable: входная сборка
+    update = os.environ.get("AXIOM_UPDATE_STUB_BASELINE") == "1"
+    if not update:
+        assert STUB_BASELINE.is_file(), (
+            f"нет замороженного baseline: {STUB_BASELINE} "
+            "(сгенерирован из до-дельтового calibrate)"
+        )
     report = calibrate_mod.calibrate(
         generated["out"], generated["case"], tmp_path / "e",
         model_name="stub", model_seed=7, bin=arch_ml, model_factory=None,
     )
     assert report["workspace_total_bytes"] > 0
-    assert _stable(report) == expected
+    stable = _stable(report)
+
+    if update:  # перегенерация замороженного baseline тем же путём, что и сравнение
+        STUB_BASELINE.parent.mkdir(parents=True, exist_ok=True)
+        STUB_BASELINE.write_text(
+            json.dumps(stable, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        pytest.skip("baseline обновлён")
+
+    expected = json.loads(STUB_BASELINE.read_text(encoding="utf-8"))
+    expected.pop("workspace_total_bytes", None)  # см. _stable: входная сборка
+    assert stable == expected
 
     # Умолчание совпадает с явным None: stub-путь не задет (дефолт параметра).
     assert inspect.signature(calibrate_mod.calibrate).parameters["model_factory"].default is None

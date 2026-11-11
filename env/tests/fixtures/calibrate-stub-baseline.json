@@ -2,9 +2,9 @@
   "aggregate": {
     "group_size": 1,
     "mean_attempts_used": 1.0,
-    "mean_reward": 0.75625,
+    "mean_reward": 0.75,
     "pass_rate": 0.45,
-    "reward_stdev": 0.6840538630108012
+    "reward_stdev": 0.689202437604511
   },
   "calibration_id": "calib-stub-7",
   "env_version": "environment-v1",
@@ -95,8 +95,8 @@
         "new_violations": 0,
         "pass": false,
         "pass_component": 0.0,
-        "reward": 0.25,
-        "soft": 0.25,
+        "reward": 0.125,
+        "soft": 0.125,
         "source": "corruption",
         "spent_tokens": 658,
         "task_id": "corruption-l1-01"
@@ -275,8 +275,8 @@
   "model": "stub",
   "model_seed": 7,
   "pinning": {
-    "arch_ml_build": "4a29304742c38237e5bdc251896d7f11588cf3d73f130c24ab76b09cb1d801a8",
-    "constraints_sha256": "f901b746a2368e6e75f67b1363b571a79311a3b9a6e130c5286bb29f067928c5",
+    "arch_ml_build": "afbf9791b0d4e21a5a0bf09eed8799680737892a0eebed3ad05660ae789e9e45",
+    "constraints_sha256": "87c2f8850064ff496219e5a3c277acfd14fa24da14aceee28eb2dadac76fa9b9",
     "excluded_infra_rules": [
       "C-032",
       "C-033",
@@ -292,7 +292,14 @@
       "C-043",
       "C-044",
       "C-045",
-      "C-046"
+      "C-046",
+      "C-047",
+      "C-048",
+      "C-050",
+      "C-051",
+      "C-052",
+      "C-055",
+      "C-056"
     ],
     "excluded_infra_rules_registry": [
       "C-032",
@@ -309,7 +316,14 @@
       "C-043",
       "C-044",
       "C-045",
-      "C-046"
+      "C-046",
+      "C-047",
+      "C-048",
+      "C-050",
+      "C-051",
+      "C-052",
+      "C-055",
+      "C-056"
     ],
     "hidden_constraints_sha256": "fa7a348278d67bfd6b4a77f113a043800346c10f7cbc286b8359d3192ea2d488"
   },
@@ -319,6 +333,5 @@
       0.9
     ],
     "ready": true
-  },
-  "workspace_total_bytes": 68026452
+  }
 }

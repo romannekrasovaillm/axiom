@@ -166,8 +166,14 @@ spark-44c3» (`docs/OPEN-QUESTIONS.md:7`).
   (pass_rate 0.45 — штатное поведение заглушки с `restore_probability=0.5`,
   это НЕ регрессия вердикта; `evidence/calibration-stub.json` с pass_rate 0.0 —
   другой артефакт, отчёт заглушки на пуле `env/data`).
-- C-056: `python3 tools/check_rl_precondition.py` → exit 1, «K3-калибровка не
-  найдена» — единственное намеренно красное правило (P-7).
+- C-056 (`--part env`): exit 1, «Среда не откалибрована: нужен отчёт
+  не-заглушки с pass_rate ∈ [10%, 90%] на GB10» — достижимый долг P-7a,
+  блокирует RL-расход.
+- C-057 (`--part k3`): exit 1, «K3-baseline отсутствует: known-red P-7b. На GB10
+  невозможен (2.8T ≈ 1,4 ТБ FP4 против 128 ГБ); путь: C-048 → смета AD-8 →
+  аренда INT-001 или API» — блокирует заявление о превосходстве, не обучение.
+- Selftest: 11 сценариев (env 7 + k3 4), `tools/tests -k rl_precondition` —
+  15 passed, 1 skipped. Старое сообщение «до прогона на GB10» удалено из кода.
 
 ## Reversibility
 

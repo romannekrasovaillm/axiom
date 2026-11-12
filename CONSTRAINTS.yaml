@@ -767,15 +767,29 @@ constraints:
     effort_hours: 3.0
 
   - id: C-056
-    name: "AD-1/ADR-058: RL-precondition — калибровка не-заглушки в коридоре [10%,90%] с полным пиннингом и ссылкой (known-red до прогона K3 на GB10, ADR-056)"
+    name: "AD-1/ADR-058 (амендмент B): RL-precondition «среда откалибрована» — отчёт не-заглушки в коридоре [10%,90%] с полным пиннингом и ссылкой; достижимо на GB10"
     type: command_succeeds
-    command: 'python3 tools/check_rl_precondition.py'
+    command: 'python3 tools/check_rl_precondition.py --part env'
     timeout_secs: 60
     severity: critical
     scope: case
     kind: behavioural
     adr: ADR-058
-    evidence: "evidence/**/calibration-*.json: model != stub, pass_rate ∈ [0.10, 0.90], полный пиннинг (AD-4), ссылка на отчёт из RL-precondition-артефакта; отсутствие отчёта K3 — красный гейт, а не SKIP (ADR-058, долг с триггером «прогон K3 на GB10»)"
+    evidence: "evidence/**/calibration-*.json: model != stub, pass_rate ∈ [0.10, 0.90], полный пиннинг (AD-4), ссылка из evidence/rl-precondition.json; прогон jaxlm-адаптера на GB10 (стенд spark-44c3). Блокирует RL-расход; отсутствие отчёта — красный гейт, а не SKIP"
+    owner: "архитектор"
+    expiry: "2027-01-31"
+    effort_hours: 2.0
+
+  - id: C-057
+    name: "AD-1/ADR-058 (амендмент B): K3-baseline существует и сверен (known-red P-7b; на GB10 невозможен — путь C-048 → смета AD-8 → аренда INT-001/API)"
+    type: command_succeeds
+    command: 'python3 tools/check_rl_precondition.py --part k3'
+    timeout_secs: 60
+    severity: high
+    scope: case
+    kind: behavioural
+    adr: ADR-058
+    evidence: "evidence/**/calibration-k3*.json: model = k3, pass_rate ∈ [0.10, 0.90], полный пиннинг (AD-4), ссылка из evidence/k3-baseline.json. Блокирует заявление о превосходстве (AD-1), но не обучение. Путь: C-048 (KPI 800 ток/с) → смета AD-8 → аренда INT-001 (мультиузловой кластер ≥1,4 ТБ FP4) или API для публичного/обезличенного набора; на GB10 (128 ГБ) K3 не помещается"
     owner: "архитектор"
     expiry: "2027-01-31"
     effort_hours: 2.0

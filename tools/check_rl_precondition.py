@@ -1,29 +1,34 @@
 #!/usr/bin/env python3
-"""C-056 — предусловие RL-прогона: калибровка K3 с полным пиннингом (ADR-058).
+"""C-056/C-057 — два предусловия RL-прогона (ADR-058, амендмент B).
 
-RL-прогон «против K3» имеет смысл только после калибровки среды на baseline
-K3.  Калибровочный отчёт ``calibration-*.json`` годится, если:
+Precondition §10 ``ENVIRONMENT-V1`` разделён на два обязательства с разной
+ценой ошибки:
 
-* модель — не заглушка (``model``/``model_name`` задано и не ``stub``);
-* ``pass_rate`` (из ``aggregate.pass_rate`` или верхнего уровня) лежит в
-  ``[0.10, 0.90]`` — среда не слишком лёгкая и не слишком тяжёлая для
-  сравнения;
-* ``ready`` не ``false`` (readiness отчёта);
-* пиннинг непуст — отчёт несёт пины версий (AD-4).
+* ``--part env`` (C-056, «среда откалибрована»).  Годен отчёт
+  ``calibration-*.json`` **своей** модели — не заглушки (``stub``) и не K3
+  (``k3``/``kimi*``), — у которого ``pass_rate`` (``aggregate.pass_rate`` или
+  верхний уровень) ∈ ``[0.10, 0.90]``, ``ready`` не ``false``, полный пиннинг
+  (AD-4) и есть ссылка ``calibration_report`` из
+  ``evidence/rl-precondition.json``.  Достижимо на GB10; блокирует RL-расход.
 
-Годный отчёт обязан быть **связан** из precondition-файла
-(``calibration_report`` — путь отчёта): сканирование каталога без явной
-ссылки предусловием не считается.  Пока K3-калибровки нет, страж обязан
-быть красным — это known-red, а не повод ослабить проверку::
+* ``--part k3`` (C-057, «K3-baseline»).  Годен отчёт ``calibration-*.json``
+  модели K3 (``k3``/``kimi*``) с тем же коридором, ``ready``, пиннингом и
+  ссылкой из ``evidence/k3-baseline.json``.  На GB10 невозможен (2.8T ≈
+  1,4 ТБ FP4 против 128 ГБ unified); блокирует заявление о превосходстве,
+  не обучение.
 
-    K3-калибровка не найдена: known-red до прогона на GB10 (ADR-058)
+Сканирование каталога без явной ссылки предусловием не считается: отчёт обязан
+быть связан из precondition-файла.  Отсутствие годного отчёта —
+классифицированный known-red (:data:`KNOWN_RED_ENV` / :data:`KNOWN_RED_K3`),
+а не повод ослабить проверку.
 
-Код 0 — предусловие выполнено, 1 — нет (known-red).  ``--selftest`` —
-фикстуры во временном каталоге; сеть и jax не нужны.
+Код 0 — предусловие выполнено, 1 — нет (known-red).  ``--selftest`` прогоняет
+фикстуры обеих частей во временном каталоге; сеть и jax не нужны.
 
 Запуск (из каталога кейса)::
 
-    python3 tools/check_rl_precondition.py
+    python3 tools/check_rl_precondition.py --part env
+    python3 tools/check_rl_precondition.py --part k3
     python3 tools/check_rl_precondition.py --selftest
 """
 
@@ -31,8 +36,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
@@ -41,16 +48,61 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 DEFAULT_EVIDENCE_DIR = "evidence"
-DEFAULT_PRECONDITION = "evidence/rl-precondition.json"
 
-#: Классифицированный known-red (ADR-058): отсутствие K3-калибровки.
-KNOWN_RED = "K3-калибровка не найдена: known-red до прогона на GB10 (ADR-058)"
+PART_ENV = "env"
+PART_K3 = "k3"
+
+#: Классифицированные known-red (ADR-058, амендмент B): два разных долга.
+KNOWN_RED_ENV = (
+    "Среда не откалибрована: нужен отчёт не-заглушки с pass_rate ∈ [10%, 90%] "
+    "на GB10 (ADR-058, C-056)"
+)
+KNOWN_RED_K3 = (
+    "K3-baseline отсутствует: known-red P-7b. На GB10 невозможен "
+    "(2.8T ≈ 1,4 ТБ FP4 против 128 ГБ); путь: C-048 (KPI 800 ток/с) → "
+    "смета AD-8 → аренда INT-001 или API для публичного набора (ADR-058, C-057)"
+)
 
 #: Допустимый pass_rate среды для сравнения с K3 (ADR-058).
 PASS_RATE_RANGE = (0.10, 0.90)
 
+#: K3-модель по имени: ``k3`` или ``kimi*`` (без учёта регистра).
+_K3_MODEL_RE = re.compile(r"k3|kimi", re.IGNORECASE)
+
 EXIT_PASS = 0
 EXIT_FAIL = 1
+
+
+@dataclass(frozen=True)
+class Part:
+    """Описание обязательства: правило, precondition-файл, вердикты."""
+
+    name: str
+    constraint: str
+    precondition: str
+    label: str
+    pass_message: str
+    known_red: str
+
+
+PARTS: dict[str, Part] = {
+    PART_ENV: Part(
+        name=PART_ENV,
+        constraint="C-056",
+        precondition="evidence/rl-precondition.json",
+        label="калибровка среды",
+        pass_message="среда откалибрована — RL-расход разрешён (C-056)",
+        known_red=KNOWN_RED_ENV,
+    ),
+    PART_K3: Part(
+        name=PART_K3,
+        constraint="C-057",
+        precondition="evidence/k3-baseline.json",
+        label="K3-baseline",
+        pass_message="K3-baseline сверен — заявление о превосходстве допустимо (C-057)",
+        known_red=KNOWN_RED_K3,
+    ),
+}
 
 
 def _is_number(value: Any) -> bool:
@@ -83,15 +135,41 @@ def pinning_complete(report: dict) -> bool:
     return all(v not in (None, "", [], {}) for v in pinning.values())
 
 
-def report_problem(report: Any) -> Optional[str]:
-    """Причина непригодности отчёта (None — годен)."""
+def declared_model(report: dict) -> Optional[str]:
+    """Непустое имя модели из ``model`` или ``model_name``."""
+    for key in ("model", "model_name"):
+        value = report.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def is_stub_model(model: str) -> bool:
+    """Заглушка — ровно ``stub`` (без учёта регистра)."""
+    return model.strip().lower() == "stub"
+
+
+def is_k3_model(model: str) -> bool:
+    """K3 по имени модели: ``k3`` или ``kimi*`` (без учёта регистра)."""
+    return _K3_MODEL_RE.search(model) is not None
+
+
+def report_problem(report: Any, part: str = PART_ENV) -> Optional[str]:
+    """Причина непригодности отчёта для части (None — годен)."""
+    if part not in PARTS:
+        raise ValueError(f"неизвестная часть: {part!r}")
     if not isinstance(report, dict):
         return "не JSON-объект"
-    model = report.get("model", report.get("model_name"))
-    if not isinstance(model, str) or not model.strip():
+    model = declared_model(report)
+    if model is None:
         return "не указана модель"
-    if model.strip().lower() == "stub":
-        return "модель-заглушка (stub)"
+    if part == PART_ENV:
+        if is_stub_model(model):
+            return "модель-заглушка (stub)"
+        if is_k3_model(model):
+            return f"K3-отчёт не калибрует среду: модель {model!r} (нужна своя, не k3/kimi)"
+    elif not is_k3_model(model):
+        return f"модель не K3 (k3|kimi): {model!r}"
     rate = pass_rate(report)
     if rate is None:
         return "нет pass_rate (aggregate.pass_rate)"
@@ -117,11 +195,16 @@ def _resolve_ref(ref: str, precondition: Path, evidence_dir: Path) -> Optional[P
     return None
 
 
-def evaluate(evidence_dir: Path, precondition: Path) -> tuple[bool, list[str]]:
-    """Проверка предусловия: (выполнено?, диагностические строки)."""
+def evaluate(
+    evidence_dir: Path, precondition: Path, part: str = PART_ENV
+) -> tuple[bool, list[str]]:
+    """Проверка предусловия части: (выполнено?, диагностические строки)."""
+    if part not in PARTS:
+        raise ValueError(f"неизвестная часть: {part!r}")
+    spec = PARTS[part]
     notes: list[str] = []
     reports = sorted(evidence_dir.rglob("calibration-*.json")) if evidence_dir.is_dir() else []
-    notes.append(f"calibration-*.json в {evidence_dir}: найдено {len(reports)}")
+    notes.append(f"калибровочные отчёты calibration-*.json в {evidence_dir}: {len(reports)}")
 
     if not precondition.is_file():
         notes.append(f"precondition-файл не найден: {precondition}")
@@ -131,11 +214,15 @@ def evaluate(evidence_dir: Path, precondition: Path) -> tuple[bool, list[str]]:
     except (OSError, json.JSONDecodeError) as exc:
         notes.append(f"precondition не читается как JSON: {exc}")
         return False, notes
-    ref = precondition_doc.get("calibration_report") if isinstance(precondition_doc, dict) else None
+    ref = (
+        precondition_doc.get("calibration_report")
+        if isinstance(precondition_doc, dict)
+        else None
+    )
     if not isinstance(ref, str) or not ref.strip():
         notes.append(
-            "precondition не ссылается на отчёт (поле calibration_report): "
-            "сканирование без ссылки предусловием не является"
+            f"precondition не ссылается на отчёт (поле calibration_report): "
+            f"сканирование без ссылки предусловием не является ({spec.constraint})"
         )
         return False, notes
 
@@ -149,13 +236,13 @@ def evaluate(evidence_dir: Path, precondition: Path) -> tuple[bool, list[str]]:
         notes.append(f"отчёт не читается как JSON: {target}: {exc}")
         return False, notes
 
-    problem = report_problem(report)
+    problem = report_problem(report, part)
     if problem:
         notes.append(f"отчёт {target}: {problem}")
         return False, notes
     notes.append(
-        f"K3-калибровка: {target} (pass_rate={pass_rate(report):.3f}) — "
-        "предусловие выполнено"
+        f"{spec.label}: {target} (model={declared_model(report)}, "
+        f"pass_rate={pass_rate(report):.3f}) — предусловие {spec.constraint} выполнено"
     )
     return True, notes
 
@@ -168,12 +255,17 @@ def evaluate(evidence_dir: Path, precondition: Path) -> tuple[bool, list[str]]:
 def _write_case(
     root: Path,
     *,
-    model: str = "kimi-k3",
+    part: str = PART_ENV,
+    model: Optional[str] = None,
     rate: float = 0.5,
     is_ready: bool = True,
     pinning: bool = True,
     link: bool = True,
 ) -> tuple[Path, Path]:
+    if part not in PARTS:
+        raise ValueError(f"неизвестная часть: {part!r}")
+    if model is None:
+        model = "kimi-k3" if part == PART_K3 else "own-checkpoint-7b"
     evidence = root / "evidence"
     evidence.mkdir(parents=True)
     report = {
@@ -192,13 +284,14 @@ def _write_case(
         "aggregate": {"pass_rate": rate},
         "readiness": {"ready": is_ready},
     }
-    (evidence / "calibration-k3.json").write_text(
+    report_name = f"calibration-{part}.json"
+    (evidence / report_name).write_text(
         json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
-    precondition = evidence / "rl-precondition.json"
+    precondition = evidence / Path(PARTS[part].precondition).name
     precondition.write_text(
         json.dumps(
-            {"calibration_report": "calibration-k3.json"} if link else {},
+            {"calibration_report": report_name} if link else {},
             ensure_ascii=False,
         ) + "\n",
         encoding="utf-8",
@@ -206,42 +299,82 @@ def _write_case(
     return evidence, precondition
 
 
-def run_selftest() -> int:
+def _selftest_env(base: Path) -> list[tuple[str, bool]]:
     checks: list[tuple[str, bool]] = []
+
+    ev, pre = _write_case(base / "good")
+    checks.append((
+        "env: валидный отчёт своей модели со ссылкой — PASS",
+        evaluate(ev, pre, PART_ENV)[0],
+    ))
+
+    ev, pre = _write_case(base / "stub", model="stub")
+    checks.append(("env: модель-заглушка — FAIL", not evaluate(ev, pre, PART_ENV)[0]))
+
+    ev, pre = _write_case(base / "k3-report", model="kimi-k3")
+    checks.append(("env: K3-отчёт не калибрует среду — FAIL", not evaluate(ev, pre, PART_ENV)[0]))
+
+    ev, pre = _write_case(base / "unlinked", link=False)
+    checks.append(("env: нет ссылки из rl-precondition.json — FAIL", not evaluate(ev, pre, PART_ENV)[0]))
+
+    ev, pre = _write_case(base / "easy", rate=0.95)
+    checks.append(("env: pass_rate 0.95 вне коридора — FAIL", not evaluate(ev, pre, PART_ENV)[0]))
+
+    ev, pre = _write_case(base / "unready", is_ready=False)
+    checks.append(("env: ready=false — FAIL", not evaluate(ev, pre, PART_ENV)[0]))
+
+    ev, pre = _write_case(base / "unpinned", pinning=False)
+    checks.append(("env: пиннинг пуст — FAIL", not evaluate(ev, pre, PART_ENV)[0]))
+
+    return checks
+
+
+def _selftest_k3(base: Path) -> list[tuple[str, bool]]:
+    checks: list[tuple[str, bool]] = []
+
+    ev, pre = _write_case(base / "good", part=PART_K3)
+    checks.append((
+        "k3: валидный K3-baseline со ссылкой — PASS",
+        evaluate(ev, pre, PART_K3)[0],
+    ))
+
+    ev, pre = _write_case(base / "not-k3", part=PART_K3, model="own-checkpoint-7b")
+    checks.append(("k3: отчёт без K3 — FAIL", not evaluate(ev, pre, PART_K3)[0]))
+
+    ev, pre = _write_case(base / "outside", part=PART_K3, rate=0.05)
+    checks.append(("k3: pass_rate 0.05 вне коридора — FAIL", not evaluate(ev, pre, PART_K3)[0]))
+
+    ev, pre = _write_case(base / "unlinked", part=PART_K3, link=False)
+    checks.append(("k3: нет ссылки из k3-baseline.json — FAIL", not evaluate(ev, pre, PART_K3)[0]))
+
+    return checks
+
+
+def run_selftest() -> int:
+    """Фикстуры обеих частей (env + k3); код 0 только если все ожидания совпали."""
     with tempfile.TemporaryDirectory(prefix="rl-precondition-selftest-") as tmp:
         base = Path(tmp)
-
-        good_ev, good_pre = _write_case(base / "good")
-        checks.append(("годная K3-калибровка со ссылкой — PASS", evaluate(good_ev, good_pre)[0]))
-
-        stub_ev, stub_pre = _write_case(base / "stub", model="stub")
-        checks.append(("модель-заглушка — FAIL", not evaluate(stub_ev, stub_pre)[0]))
-
-        easy_ev, easy_pre = _write_case(base / "easy", rate=0.95)
-        checks.append(("pass_rate 0.95 вне окна — FAIL", not evaluate(easy_ev, easy_pre)[0]))
-
-        unready_ev, unready_pre = _write_case(base / "unready", is_ready=False)
-        checks.append(("ready=false — FAIL", not evaluate(unready_ev, unready_pre)[0]))
-
-        unpinned_ev, unpinned_pre = _write_case(base / "unpinned", pinning=False)
-        checks.append(("пиннинг пуст — FAIL", not evaluate(unpinned_ev, unpinned_pre)[0]))
-
-        unlinked_ev, unlinked_pre = _write_case(base / "unlinked", link=False)
-        checks.append(("нет ссылки из precondition — FAIL", not evaluate(unlinked_ev, unlinked_pre)[0]))
-
+        checks = _selftest_env(base / "env") + _selftest_k3(base / "k3")
     failed = [name for name, ok in checks if not ok]
     for name, ok in checks:
         print(f"[rl-precondition:selftest] {'OK' if ok else 'FAIL'}: {name}")
     if failed:
         print(f"rl-precondition:selftest: {len(failed)} из {len(checks)} сценариев не совпали")
         return EXIT_FAIL
-    print(f"rl-precondition:selftest: OK ({len(checks)} сценариев)")
+    print(f"rl-precondition:selftest: OK ({len(checks)} сценариев, части env + k3)")
     return EXIT_PASS
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="C-056: предусловие RL-прогона — K3-калибровка с пиннингом (ADR-058)",
+        description=(
+            "C-056/C-057: предусловия RL-прогона — калибровка среды (env) "
+            "и K3-baseline (k3), ADR-058"
+        ),
+    )
+    parser.add_argument(
+        "--part", choices=tuple(PARTS), default=PART_ENV,
+        help="env — C-056 «среда откалибрована» (по умолчанию); k3 — C-057 «K3-baseline»",
     )
     parser.add_argument(
         "--evidence-dir", type=Path, default=None,
@@ -249,30 +382,36 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--precondition", type=Path, default=None,
-        help=f"precondition-файл с ссылкой calibration_report (по умолчанию {DEFAULT_PRECONDITION})",
+        help=(
+            "precondition-файл с ссылкой calibration_report "
+            f"(по умолчанию {PARTS[PART_ENV].precondition} для env, "
+            f"{PARTS[PART_K3].precondition} для k3)"
+        ),
     )
     parser.add_argument(
         "--selftest", action="store_true",
-        help="прогнать фикстуры во временном каталоге",
+        help="прогнать фикстуры обеих частей во временном каталоге",
     )
     args = parser.parse_args(argv)
 
     if args.selftest:
         return run_selftest()
 
+    spec = PARTS[args.part]
+
     def anchor(path: Path) -> Path:
         return path if path.is_absolute() else (_REPO_ROOT / path)
 
     evidence_dir = anchor(args.evidence_dir or Path(DEFAULT_EVIDENCE_DIR))
-    precondition = anchor(args.precondition or Path(DEFAULT_PRECONDITION))
+    precondition = anchor(args.precondition or Path(spec.precondition))
 
-    ok, notes = evaluate(evidence_dir, precondition)
+    ok, notes = evaluate(evidence_dir, precondition, args.part)
     for line in notes:
-        print(f"[rl-precondition] {line}")
+        print(f"[rl-precondition:{args.part}] {line}")
     if ok:
-        print("rl-precondition: PASS — предусловие RL-прогона выполнено")
+        print(f"rl-precondition: PASS — {spec.pass_message}")
         return EXIT_PASS
-    print(KNOWN_RED)
+    print(spec.known_red)
     return EXIT_FAIL
 
 

@@ -1225,6 +1225,340 @@ def test_l12_resume_in_decay_requires_decay_stream(corpus_with_q: Path):
 
 
 # ---------------------------------------------------------------------------
+# L-15 — переходная фаза данных перед Q-кулдауном (ADR-059)
+# ---------------------------------------------------------------------------
+
+
+def write_packed_transition_set(
+    tokens_root: Path, name: str, *, base: int, records: int, seq_len: int = 8
+) -> Path:
+    """Packed-набор с различимыми записями потока (ADR-059: фазы и resume).
+
+    Записи разных потоков не пересекаются по id (``base``), поэтому подмена
+    источника или сдвиг курсора видны при побайтовом сравнении батчей.
+    """
+    out_dir = tokens_root / name
+    out_dir.mkdir(parents=True, exist_ok=True)
+    rows = np.empty((records, seq_len), dtype=np.uint32)
+    rows[:, 0] = tl.BOS_ID
+    offsets = np.arange(seq_len - 1, dtype=np.uint32)
+    for index in range(records):
+        rows[index, 1:] = base + index * (seq_len - 1) + offsets
+    path = out_dir / f"{name}-00000.bin"
+    path.write_bytes(rows.tobytes(order="C"))
+    tokenizer_hash = "a" * 64
+    manifest = {
+        "version": tl.PACKED_MANIFEST_SCHEMA,
+        "shard": name,
+        "seq_len": seq_len,
+        "dtype": "uint32",
+        "record_layout": tl.PACKED_RECORD_LAYOUT,
+        "bos_id": tl.BOS_ID,
+        "eos_id": tl.EOS_ID,
+        "pad_id": tl.PAD_ID,
+        "tokenizer_hash": tokenizer_hash,
+        "tokenizer": {
+            "file": "tokenizer.model",
+            "vocab_size": 160000,
+            "tokenizer_hash": tokenizer_hash,
+        },
+        "shards": [
+            {
+                "file": path.name,
+                "source": f"{name}-00000.jsonl.zst",
+                "source_sha256": "0" * 64,
+                "records": records,
+                "tokens": records * seq_len,
+                "stream_tokens": records * (seq_len - 1),
+                "pad_tokens": 0,
+                "bytes": path.stat().st_size,
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            }
+        ],
+    }
+    (out_dir / f"manifest-{name.lower()}.json").write_text(
+        json.dumps(manifest, ensure_ascii=False), encoding="utf-8"
+    )
+    return tokens_root
+
+
+def make_transition_packed_loader(
+    tokens_root: Path, *, decay_start: int, transition_steps: int, **overrides
+):
+    """Packed-загрузчик с объявленным переходом (ADR-059)."""
+    params = dict(
+        tokens_root=tokens_root,
+        streams=("W", "C"),
+        seq_len=8,
+        batch_size=1,
+        mix={"W": 0.85, "C": 0.15},
+        decay_stream="Q",
+        decay_start=decay_start,
+        transition_steps=transition_steps,
+    )
+    params.update(overrides)
+    return tl.PackedTokenLoader(**params)
+
+
+def test_l15_transition_phase_boundaries(tmp_path: Path, corpus_with_q: Path):
+    """Границы: stable на transition_start-1, transition на transition_start, decay на decay_start."""
+    decay_start = tl.decay_start_step(1000, warmup_ratio=0.01, decay_ratio=0.05)
+    assert decay_start == 950
+    transition_start = tl.transition_start_step(decay_start, 20)
+    assert transition_start == 930
+    assert tl.PHASES == (tl.PHASE_STABLE, tl.PHASE_TRANSITION, tl.PHASE_DECAY)
+
+    tokens_root = tmp_path / "ds"
+    for name, base in (("W", 1000), ("C", 3000), ("Q", 5000)):
+        write_packed_transition_set(tokens_root, name, base=base, records=40)
+
+    loaders = {
+        "packed": make_transition_packed_loader(
+            tokens_root, decay_start=decay_start, transition_steps=20
+        ),
+        "raw": make_q_loader(
+            corpus_with_q, decay_start=decay_start, transition_steps=20
+        ),
+    }
+    for kind, loader in loaders.items():
+        # _phase_for_batch принимает 1-based step, i = step - 1.
+        assert loader._phase_for_batch(transition_start) == tl.PHASE_STABLE, kind
+        assert (
+            loader._phase_for_batch(transition_start + 1) == tl.PHASE_TRANSITION
+        ), kind
+        assert loader._phase_for_batch(decay_start) == tl.PHASE_TRANSITION, kind
+        assert loader._phase_for_batch(decay_start + 1) == tl.PHASE_DECAY, kind
+        stats = loader.stats()
+        assert stats["transition_steps"] == 20
+        assert stats["transition_start"] == transition_start
+        assert stats["q_share_target"] == 0.0, "до первого батча цель доли Q — 0"
+
+
+def test_l15_transition_q_share_grows_to_one(tmp_path: Path):
+    """Доля Q растёт (t+1)/N, на последнем шаге перехода — 1.0, за окно ≈N/2 батчей."""
+    decay_start = 950
+    steps = 20
+    transition_start = 930
+    tokens_root = tmp_path / "ds"
+    for name, base, records in (("W", 1000, 1500), ("C", 3000, 1500), ("Q", 5000, 300)):
+        write_packed_transition_set(tokens_root, name, base=base, records=records)
+    loader = make_transition_packed_loader(
+        tokens_root, decay_start=decay_start, transition_steps=steps
+    )
+
+    shares: list[float] = []
+    q_batches: list[int] = []
+    for step in range(1, decay_start + 1):
+        emitted_before = dict(loader._emitted)
+        next(loader)
+        in_transition = transition_start < step <= decay_start
+        if not in_transition:
+            continue
+        t = (step - 1) - transition_start
+        assert loader.phase == tl.PHASE_TRANSITION
+        assert loader.stats()["q_share_target"] == pytest.approx((t + 1) / steps)
+        shares.append(loader.stats()["q_share_target"])
+        if loader._emitted["Q"] != emitted_before["Q"]:
+            q_batches.append(t)
+
+    # Монотонный рост и 100 % Q на последнем шаге окна.
+    assert shares == sorted(shares), "целевая доля Q не монотонна"
+    assert shares[-1] == pytest.approx(1.0)
+    # Телескопическая сумма правила: floor((t+1)(t+2)/(2N)) Q-батчей к шагу t.
+    assert q_batches == [
+        t for t in range(steps)
+        if ((t + 1) * (t + 2)) // (2 * steps) > (t * (t + 1)) // (2 * steps)
+    ]
+    assert len(q_batches) == (steps * (steps + 1)) // (2 * steps), "≈N/2 батчей Q"
+    # На последнем шаге перехода Q уже 100 % — на decay_start остаётся только LR.
+    assert q_batches[-1] == steps - 1
+
+
+def test_l15_resume_mid_transition_matches_continuous_packed(tmp_path: Path):
+    """Resume в середине перехода даёт тот же packed-поток (ADR-059, L-6)."""
+    tokens_root = tmp_path / "ds"
+    for name, base in (("W", 1000), ("C", 3000), ("Q", 5000)):
+        write_packed_transition_set(tokens_root, name, base=base, records=200)
+    decay_start, transition_steps = 12, 6
+
+    continuous = [
+        np.asarray(batch)
+        for batch in make_transition_packed_loader(
+            tokens_root, decay_start=decay_start, transition_steps=transition_steps
+        )
+    ]
+    assert len(continuous) > transition_steps
+
+    leg = make_transition_packed_loader(
+        tokens_root, decay_start=decay_start, transition_steps=transition_steps
+    )
+    cut = 9  # i = 8: внутри [transition_start=6, decay_start=12)
+    for _ in range(cut):
+        next(leg)
+    cursor = leg.cursor(step=cut)
+    assert cursor.phase == tl.PHASE_TRANSITION
+    assert cursor.transition_steps == transition_steps
+
+    resumed = make_transition_packed_loader(
+        tokens_root,
+        decay_start=decay_start,
+        transition_steps=transition_steps,
+        cursor=cursor,
+    )
+    tail = [np.asarray(batch) for batch in resumed]
+    assert len(tail) == len(continuous) - cut
+    for index, batch in enumerate(tail):
+        assert np.array_equal(batch, continuous[cut + index]), f"расхождение на {index}"
+
+
+def test_l15_resume_mid_transition_matches_continuous_raw(corpus_with_q: Path):
+    """Resume в середине перехода восстанавливает pending-хвост перехода (raw-путь)."""
+    decay_start, transition_steps = 12, 6
+
+    continuous = [
+        np.asarray(batch)
+        for batch in make_q_loader(
+            corpus_with_q, decay_start=decay_start, transition_steps=transition_steps
+        )
+    ]
+
+    leg = make_q_loader(
+        corpus_with_q, decay_start=decay_start, transition_steps=transition_steps
+    )
+    cut = 9  # i = 8: внутри перехода
+    for _ in range(cut):
+        next(leg)
+    cursor = leg.cursor(step=cut)
+    assert cursor.phase == tl.PHASE_TRANSITION
+    assert cursor.transition_steps == transition_steps
+    assert cursor.pending_tokens, "хвост перехода обязан лежать в курсоре"
+
+    resumed = make_q_loader(
+        corpus_with_q,
+        decay_start=decay_start,
+        transition_steps=transition_steps,
+        cursor=cursor,
+    )
+    tail = [np.asarray(batch) for batch in resumed]
+    assert len(tail) == len(continuous) - cut
+    for index, batch in enumerate(tail):
+        assert np.array_equal(batch, continuous[cut + index]), f"расхождение на {index}"
+
+
+def test_l15_zero_transition_matches_two_phase_behaviour(corpus_with_q: Path):
+    """transition_steps=0 побитово равен прежнему двухфазному потоку (регрессия)."""
+    baseline = make_q_loader(corpus_with_q, decay_start=6)
+    explicit = make_q_loader(corpus_with_q, decay_start=6, transition_steps=0)
+
+    baseline_batches = [np.asarray(batch) for batch in baseline]
+    explicit_batches = [np.asarray(batch) for batch in explicit]
+    assert len(baseline_batches) == len(explicit_batches)
+    for index, (left, right) in enumerate(zip(baseline_batches, explicit_batches)):
+        assert np.array_equal(left, right), f"поток разошёлся на батче {index}"
+
+    stats = explicit.stats()
+    assert stats["transition_steps"] == 0
+    assert stats["q_share_target"] == 1.0, "последняя фаза — decay"
+    assert explicit.phase == tl.PHASE_DECAY
+
+    walk = make_q_loader(corpus_with_q, decay_start=6, transition_steps=0)
+    phases = []
+    for _ in walk:
+        phases.append(walk.phase)
+    assert phases[:6] == [tl.PHASE_STABLE] * 6
+    assert all(phase == tl.PHASE_DECAY for phase in phases[6:])
+
+
+def test_l15_transition_validation_rejects_inconsistent_config(
+    tmp_path: Path, corpus_with_q: Path
+):
+    """Переход без Q, длиннее decay-окна или отрицательный — отказ, а не тихий микс."""
+    with pytest.raises(ValueError):
+        make_q_loader(corpus_with_q, decay_start=6, transition_steps=-1)
+    with pytest.raises(tl.PretrainDataError):
+        make_loader(corpus_with_q, transition_steps=4)  # decay не объявлен
+    with pytest.raises(tl.PretrainDataError):
+        make_q_loader(corpus_with_q, decay_start=6, transition_steps=6)
+    with pytest.raises(tl.PretrainDataError):
+        make_q_loader(corpus_with_q, decay_start=6, transition_steps=100)
+
+    tokens_root = tmp_path / "ds"
+    for name, base in (("W", 1000), ("C", 3000), ("Q", 5000)):
+        write_packed_transition_set(tokens_root, name, base=base, records=8)
+    with pytest.raises(ValueError):
+        make_transition_packed_loader(
+            tokens_root, decay_start=6, transition_steps=-1
+        )
+    with pytest.raises(tl.PretrainDataError):
+        tl.PackedTokenLoader(
+            tokens_root=tokens_root,
+            streams=("W", "C"),
+            seq_len=8,
+            transition_steps=4,
+        )  # decay не объявлен
+    with pytest.raises(tl.PretrainDataError):
+        make_transition_packed_loader(
+            tokens_root, decay_start=6, transition_steps=6
+        )
+
+
+def test_l15_cursor_accepts_transition_and_defaults_transition_steps():
+    """Курсор: phase=transition валиден, старое поле отсутствует — читается как 0."""
+    payload = {
+        "schema": tl.CURSOR_SCHEMA,
+        "step": 3,
+        "tokens_total": 0,
+        "streams": [],
+        "pending_tokens": [],
+        "phase": tl.PHASE_TRANSITION,
+    }
+    cursor = tl.MixCursor.from_json(payload)
+    assert cursor.phase == tl.PHASE_TRANSITION
+    assert cursor.transition_steps == 0, "старый курсор без поля совместим"
+
+    payload["transition_steps"] = 20
+    restored = tl.MixCursor.from_json(json.loads(json.dumps(payload)))
+    assert restored.transition_steps == 20
+    assert restored == tl.MixCursor.from_json(payload)
+
+
+def test_l15_metrics_record_transition_phase(tmp_path: Path):
+    """jsonl метрик называет переход: stable → transition → decay (ADR-059)."""
+    cfg, pool = parity_setup(steps=5)
+
+    class StubLoader:
+        decay_start = 4
+        transition_steps = 2
+        transition_start = 2
+
+    metrics = tmp_path / "metrics.jsonl"
+    tl.train(
+        cfg,
+        batched(pool),
+        train_config=tl.TrainConfig(steps=5, lr=1e-2, seed=7, metrics_path=metrics),
+        budget=free_budget(),
+        loader=StubLoader(),
+    )
+    rows = tl.MetricsWriter.read(metrics)
+    assert [row["phase"] for row in rows] == [
+        tl.PHASE_STABLE,      # i=0
+        tl.PHASE_STABLE,      # i=1
+        tl.PHASE_TRANSITION,  # i=2 = transition_start
+        tl.PHASE_TRANSITION,  # i=3
+        tl.PHASE_DECAY,       # i=4 = decay_start
+    ]
+
+
+def test_l15_cli_transition_steps_flag():
+    """CLI: --transition-steps по умолчанию 0 и доезжает до args (ADR-059)."""
+    cli = pretrain_cli()
+    assert cli.parse_args([]).transition_steps == 0
+    args = cli.parse_args(["--decay-stream", "Q", "--transition-steps", "1000"])
+    assert args.transition_steps == 1000
+    assert args.decay_stream == "Q"
+
+
+# ---------------------------------------------------------------------------
 # L-13 — KPI ток/с: первый (компилирующий) шаг ноги вне медианы (ADR-048 Amt.)
 # ---------------------------------------------------------------------------
 

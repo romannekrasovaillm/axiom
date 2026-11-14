@@ -635,6 +635,23 @@ def run_shard(
     Остановка прогона: достигнут ``target_tokens`` (по записанным записям),
     ``max_records`` или ``max_output_bytes``; отдельный исход — источник
     кончился раньше цели (``source_exhausted=true`` в отчёте).
+
+    **Счётчики и resume.**  ``counters`` живут в пределах одного запуска, а
+    ``manifest.source_records`` и ``manifest.totals`` — через все запуски.
+    Накапливать ``counters`` между ногами нельзя: на достройке шарда вторая нога
+    читает только свой хвост, и в манифесте остались бы числа последней ноги
+    (пример дефекта: ``counters.records_read`` меньше ``source_records``).
+    Поэтому перед финальной записью счётчики приводятся к авторитетным
+    значениям: ``records_read`` — пройдено записей источника (``source_records``),
+    ``records_kept``/``approx_tokens`` — из ``totals`` (посчитаны по шардам на
+    диске), а расхождение уходит в ``dropped_total``/``dropped_unaccounted``.
+
+    Известное ограничение: окно дедупа (``BoundedHashSet``) пересоздаётся на
+    каждый запуск, поэтому хеши хвоста прошлой ноги в нём отсутствуют;
+    ``dropped_by_rule`` нормализатора тоже относится только к текущей ноге.
+    Точная разбивка отбраковки по причинам за несколько ног поэтому
+    невосстановима — она честно попадает в ``dropped_unaccounted``, а не
+    выдаётся за посчитанную.  Это ограничение здесь осознанно не исправляется.
     """
     started = time.time()
     rss_at_start = max_rss_mb()
@@ -762,6 +779,38 @@ def run_shard(
         final = writer.close()
         if final is not None:
             manifest.add_shard(final, source_records)
+        # Авторитетные счётчики манифеста (достройка шарда).  ``counters``
+        # обнуляются на каждый запуск, поэтому после resume без сверки в
+        # манифесте остались бы числа только последней ноги.  Истина: сколько
+        # записей источника пройдено (``source_records``) и что реально лежит в
+        # шардах (``totals``).  Разница — отбраковка; её точную разбивку по
+        # причинам за прошлые ноги не восстановить (окно дедупа пересоздаётся),
+        # поэтому она называется ``dropped_unaccounted``, а не выдаётся за
+        # посчитанную.  ``dropped_dedup`` — устаревшее имя, сохранено для
+        # совместимости потребителей и равно ``dropped_unaccounted``.
+        totals = manifest.totals
+        dropped_by_rule = dict(getattr(normalize, "stats", None) or {})
+        # В stats нормализатора рядом с отбраковкой живут счётчики, не означающие
+        # потерю записи (``truncated_oversized`` — запись усечена, но оставлена).
+        # Вычитать их из dropped_total значило бы объявить дедуп-потери
+        # объяснёнными; поэтому учитываются только ключи ``dropped_*``.
+        dropped_by_rule_total = sum(
+            int(value) for key, value in dropped_by_rule.items() if key.startswith("dropped_")
+        )
+        # Темп этой ноги считается по прочитанному в ней, а не по кумулятивному
+        # source_records: иначе на resume «записей/с» раздувается числом прошлых
+        # ног.  Авторитетное значение ниже идёт в манифест, это — в отчёт.
+        records_read_run = counters["records_read"]
+        counters["records_read"] = source_records
+        counters["records_kept"] = totals["records"]
+        counters["approx_tokens"] = totals["approx_tokens"]
+        dropped_total = max(0, source_records - totals["records"])
+        counters["dropped_total"] = dropped_total
+        counters["dropped_unaccounted"] = max(
+            0, dropped_total - dropped_by_rule_total
+        )
+        counters["dropped_dedup"] = counters["dropped_unaccounted"]
+        counters["counters_reconciled"] = True
         manifest.set_cursor(source_records, counters)
         manifest.data["stop_reason"] = stop_reason
         manifest.data["counters"] = counters_snapshot()
@@ -791,7 +840,7 @@ def run_shard(
         "totals": totals,
         "seconds": round(seconds, 3),
         "output_mb_per_s": rate_per_second(totals["bytes"] / (1024 * 1024), seconds),
-        "records_per_s": rate_per_second(counters["records_read"], seconds),
+        "records_per_s": rate_per_second(records_read_run, seconds),
         "tokens_per_s": rate_per_second(totals["approx_tokens"], seconds),
         "source_text_mb": round(text_chars / (1024 * 1024), 3),
         "source_text_mb_per_s": rate_per_second(text_chars / (1024 * 1024), seconds),

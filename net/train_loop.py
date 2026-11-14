@@ -10,7 +10,8 @@
   память не поднимается: живое окно — ``shuffle_window`` документов плюс
   недобранные токены одной последовательности.  На последних ``decay_ratio``
   шагах (граница — :func:`decay_start_step`) микс замещается decay-шардом Q тем
-  же читателем;
+  же читателем; перед границей — переходная фаза со ступенчато растущей долей Q
+  (ADR-059, :func:`transition_takes_q`);
 * **курсор** — :class:`MixCursor`: манифест-курсор (шаг, документы, токены,
   остаток токенов).  Resume из него даёт **тот же** поток, что продолжил бы
   непрерывный прогон: без потерь и дублей (проверяется тестом L-6);
@@ -54,10 +55,12 @@ SHARD_NAMES = ("W", "C")
 #: Шард decay-фазы (ADR-021): сужёный высококачественный микс ~1B токенов.
 DECAY_SHARD = "Q"
 
-#: Фазы данных прогона: ``stable`` (микс W/C ~85/15) и ``decay`` (шард Q).
+#: Фазы данных прогона: ``stable`` (микс W/C ~85/15), ``transition`` (смесь
+#: W/C и Q с растущей долей Q, ADR-059) и ``decay`` (шард Q).
 PHASE_STABLE = "stable"
+PHASE_TRANSITION = "transition"
 PHASE_DECAY = "decay"
-PHASES = (PHASE_STABLE, PHASE_DECAY)
+PHASES = (PHASE_STABLE, PHASE_TRANSITION, PHASE_DECAY)
 
 #: Версия контракта курсора (манифест resume).
 CURSOR_SCHEMA = "pretrain-cursor/v1"
@@ -216,6 +219,57 @@ def decay_start_step(
     warmup_steps = max(1, int(round(total_steps * warmup_ratio)))
     decay_steps = max(0, int(round(total_steps * decay_ratio)))
     return max(warmup_steps, total_steps - decay_steps)
+
+
+def transition_start_step(
+    decay_start: int | None, transition_steps: int
+) -> int | None:
+    """Первый 0-based шаг переходной фазы (ADR-059).
+
+    Окно перехода — последние ``transition_steps`` шагов перед ``decay_start``:
+    ``max(0, decay_start - transition_steps)``.  ``None`` — decay-фазы нет,
+    значит нет и перехода.
+    """
+    if decay_start is None:
+        return None
+    return max(0, int(decay_start) - int(transition_steps))
+
+
+def transition_takes_q(
+    step: int, *, transition_start: int, transition_steps: int
+) -> bool:
+    """Берётся ли батч из Q на шаге перехода — функция **только** номера шага.
+
+    ``step`` — абсолютный 1-based номер батча; ``t = step - 1 - transition_start``
+    (0-based внутри окна), ``N = transition_steps``.  Шаг берёт Q, когда растёт
+    кумулятивное число Q-батчей ``floor((t+1)(t+2)/(2N))``, то есть когда
+    ``floor((t+1)(t+2)/(2N)) > floor(t(t+1)/(2N))``.  Телескопическая сумма даёт
+    ровно ``floor((t+1)(t+2)/(2N))`` Q-батчей к шагу ``t`` и ≈``N/2`` за окно.
+
+    Правило не читает накопленных счётчиков: resume из курсора на любом шаге
+    продолжает **тот же** поток, что и непрерывный прогон (L-6, ADR-059).
+    """
+    if transition_steps <= 0:
+        return False
+    t = int(step) - 1 - int(transition_start)
+    n = int(transition_steps)
+    if t < 0 or t >= n:
+        return False
+    q_target_cum = ((t + 1) * (t + 2)) // (2 * n)
+    prev = (t * (t + 1)) // (2 * n)
+    return q_target_cum > prev
+
+
+def transition_q_share(
+    step: int, *, transition_start: int, transition_steps: int
+) -> float:
+    """Целевая кумулятивная доля Q на шаге перехода: ``(t+1)/N`` (ADR-059)."""
+    if transition_steps <= 0:
+        return 0.0
+    n = int(transition_steps)
+    t = int(step) - 1 - int(transition_start)
+    t = min(max(t, 0), n - 1)
+    return (t + 1) / float(n)
 
 
 @dataclass(frozen=True)
@@ -575,10 +629,14 @@ class MixCursor:
     streams: tuple[StreamCursor, ...]
     pending_tokens: tuple[int, ...]
     schema: str = CURSOR_SCHEMA
-    #: Фаза, которой принадлежат ``pending_tokens`` (владелец хвоста): stable|decay.
-    #: Нужна для корректного resume на границе фаз — хвост стабильной фазы не
-    #: должен попасть в Q-поток, а позиция Q должна восстановиться со своего места.
+    #: Фаза, которой принадлежат ``pending_tokens`` (владелец хвоста):
+    #: stable|transition|decay.  Нужна для корректного resume на границе фаз —
+    #: хвост стабильной фазы не должен попасть в Q-поток, а позиция Q должна
+    #: восстановиться со своего места.
     phase: str = PHASE_STABLE
+    #: Длина переходного окна, снятого в курсоре (ADR-059).  Старый курсор без
+    #: поля читается как 0: чекпоинты до появления перехода совместимы.
+    transition_steps: int = 0
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -588,6 +646,7 @@ class MixCursor:
             "streams": [item.to_json() for item in self.streams],
             "pending_tokens": list(self.pending_tokens),
             "phase": self.phase,
+            "transition_steps": self.transition_steps,
         }
 
     @classmethod
@@ -606,6 +665,7 @@ class MixCursor:
             streams=tuple(StreamCursor.from_json(item) for item in data.get("streams", [])),
             pending_tokens=tuple(int(token) for token in data.get("pending_tokens", [])),
             phase=phase,
+            transition_steps=int(data.get("transition_steps", 0)),
         )
 
 
@@ -724,11 +784,13 @@ class PretrainMixLoader:
     на поток плюс ``pending``-токены одной недобранной последовательности.
 
     **Decay-фаза (ADR-021).**  Если объявлен ``decay_stream`` (Q), даталоадер
-    двухфазный: до шага ``decay_start`` идёт микс ``streams`` (stable), с шага
-    ``decay_start`` — только ``decay_stream`` (decay).  ``decay_stream`` читается
-    **тем же** читателем шардов, что W/C (тот же ``_StreamIterator``), со своим
-    сидом шаффла; дедуп не нужен — Q фильтрован при сборке шарда.  Границу фаз
-    считает :func:`decay_start_step`, чтобы данные и WSD-LR шли в ногу.
+    трёхфазный: до шага ``transition_start`` идёт микс ``streams`` (stable), на
+    последних ``transition_steps`` шагах перед ``decay_start`` — смесь W/C и Q с
+    растущей долей Q (transition, ADR-059), с шага ``decay_start`` — только
+    ``decay_stream`` (decay).  ``decay_stream`` читается **тем же** читателем
+    шардов, что W/C (тот же ``_StreamIterator``), со своим сидом шаффла; дедуп не
+    нужен — Q фильтрован при сборке шарда.  Границу фаз считает
+    :func:`decay_start_step`, чтобы данные и WSD-LR шли в ногу.
     """
 
     def __init__(
@@ -752,6 +814,7 @@ class PretrainMixLoader:
         decay_start: int | None = None,
         decay_shard_root: str | Path | None = None,
         decay_seed: int | None = None,
+        transition_steps: int = 0,
     ):
         if not streams:
             raise PretrainDataError("не объявлено ни одного потока шардов")
@@ -761,6 +824,9 @@ class PretrainMixLoader:
             raise ValueError("batch_size должен быть >= 1")
         if shuffle_window < 1:
             raise ValueError("shuffle_window должен быть >= 1")
+        transition_steps = int(transition_steps)
+        if transition_steps < 0:
+            raise ValueError("transition_steps должен быть >= 0")
         decay_enabled = decay_stream is not None
         if decay_enabled and decay_start is None:
             raise PretrainDataError(
@@ -776,10 +842,33 @@ class PretrainMixLoader:
                 f"decay-шард {decay_stream!r} не может входить в стабильный микс "
                 f"{tuple(streams)}: иначе он подмешивался бы всё время (ADR-021)"
             )
+        if transition_steps > 0 and not decay_enabled:
+            raise PretrainDataError(
+                f"transition_steps={transition_steps} объявлен без decay_stream: "
+                "переход ведёт в Q-фазу, которой нет (ADR-059)"
+            )
+        if (
+            transition_steps > 0
+            and decay_start is not None
+            and transition_steps >= int(decay_start)
+        ):
+            raise PretrainDataError(
+                f"transition_steps={transition_steps} >= decay_start={decay_start}: "
+                "переход не помещается перед decay-фазой (ADR-059)"
+            )
         if cursor is not None and cursor.phase == PHASE_DECAY and not decay_enabled:
             raise PretrainDataError(
                 "курсор снят в decay-фазе, а decay-шард не объявлен: resume без него "
                 "потерял бы Q-поток — объявите decay_stream/decay_start"
+            )
+        if (
+            cursor is not None
+            and cursor.phase == PHASE_TRANSITION
+            and transition_steps <= 0
+        ):
+            raise PretrainDataError(
+                "курсор снят в transition-фазе, а переход не объявлен: resume без него "
+                "потерял бы смесь W/C и Q — объявите transition_steps"
             )
 
         self.shard_root = Path(shard_root)
@@ -798,6 +887,10 @@ class PretrainMixLoader:
         )
         #: Первый 0-based шаг decay-фазы; ``None`` — фаза выключена (микс всё время).
         self.decay_start = int(decay_start) if decay_start is not None else None
+        #: Длина переходного окна перед decay-фазой (ADR-059); 0 — перехода нет.
+        self.transition_steps = transition_steps
+        #: Первый 0-based шаг перехода; ``None`` — decay-фазы (и перехода) нет.
+        self.transition_start = transition_start_step(self.decay_start, transition_steps)
         #: Сид шаффла decay-шарда: свой порядок, отдельный от стабильного микса.
         self.decay_seed = int(decay_seed) if decay_seed is not None else self.seed
 
@@ -836,10 +929,12 @@ class PretrainMixLoader:
             )
 
         # pending разделён по фазам: хвост стабильной фазы не должен утечь в Q и
-        # наоборот.  Восстанавливается в фазу-владельца, названную курсором.
+        # наоборот; у перехода своя очередь (ADR-059).  Восстанавливается в
+        # фазу-владельца, названную курсором.
         owner = cursor.phase if cursor else PHASE_STABLE
         self._pending: dict[str, deque[int]] = {
             PHASE_STABLE: deque(),
+            PHASE_TRANSITION: deque(),
             PHASE_DECAY: deque(),
         }
         if cursor and cursor.pending_tokens:
@@ -857,27 +952,76 @@ class PretrainMixLoader:
         return self
 
     def _phase_for_batch(self, step: int) -> str:
-        """Фаза батча с абсолютным номером ``step`` (1-based)."""
+        """Фаза батча с абсолютным номером ``step`` (1-based).
+
+        ``i = step - 1`` — 0-based индекс шага: ``i >= decay_start`` — decay;
+        ``i >= transition_start`` при объявленном переходе — transition; иначе
+        stable (ADR-059).
+        """
+        i = int(step) - 1
         if self.decay_start is None:
             return PHASE_STABLE
-        return PHASE_DECAY if (step - 1) >= self.decay_start else PHASE_STABLE
+        if i >= self.decay_start:
+            return PHASE_DECAY
+        if (
+            self.transition_steps > 0
+            and self.transition_start is not None
+            and i >= self.transition_start
+        ):
+            return PHASE_TRANSITION
+        return PHASE_STABLE
 
     @property
     def phase(self) -> str:
         """Фаза последнего выданного батча (stable до первого — ``stable``)."""
         return self._last_phase
 
+    def _q_share_target(self) -> float:
+        """Целевая доля Q для последнего выданного шага (ADR-059).
+
+        0.0 в stable, ``(t+1)/N`` в transition, 1.0 в decay.  Число считается от
+        номера шага, поэтому в журнал попадает то же значение, что дало бы
+        непрерывное продолжение, а не накопленный счётчик.
+        """
+        if self._last_phase == PHASE_DECAY:
+            return 1.0
+        if (
+            self._last_phase == PHASE_TRANSITION
+            and self.transition_steps > 0
+            and self.transition_start is not None
+        ):
+            return transition_q_share(
+                self.step,
+                transition_start=self.transition_start,
+                transition_steps=self.transition_steps,
+            )
+        return 0.0
+
     def __next__(self) -> np.ndarray:
         if self._exhausted:
             raise StopIteration
         phase = self._phase_for_batch(self.step + 1)
         pending = self._pending[phase]
+        # Источник перехода решается на батч и только по номеру шага (ADR-059):
+        # при срабатывании правила весь батч добирается из Q, иначе — из
+        # стабильного микса.  Состояния, кроме номера шага, решение не читает.
+        q_source = phase == PHASE_DECAY
+        if (
+            phase == PHASE_TRANSITION
+            and self.transition_start is not None
+            and transition_takes_q(
+                self.step + 1,
+                transition_start=self.transition_start,
+                transition_steps=self.transition_steps,
+            )
+        ):
+            q_source = True
         # Запись = [BOS] + (T-1) токенов потока (H3): T-1, а не T, потому что BOS
         # занимает слот записи и не является токеном потока.  Так запись совпадает
         # с раскладкой претокенизированного ``.bin`` (``PACKED_RECORD_LAYOUT``).
         needed = (self.seq_len - 1) * self.batch_size
         while len(pending) < needed:
-            if not self._fill_pending(phase):
+            if not self._fill_pending(phase, q_source=q_source):
                 self._exhausted = True
                 raise StopIteration
         chunk = [pending.popleft() for _ in range(needed)]
@@ -885,8 +1029,13 @@ class PretrainMixLoader:
         self._last_phase = phase
         return pack_batch(chunk, self.seq_len, self.bos_id, self.eos_id, self.pad_id)
 
-    def _fill_pending(self, phase: str) -> bool:
+    def _fill_pending(self, phase: str, *, q_source: bool = False) -> bool:
         """Добрать pending текущей фазы; False — фаза исчерпана.
+
+        ``q_source`` — решение перехода (ADR-059) или decay-фаза: документы
+        берутся из ``_q_stream``.  Документы попадают в очередь фазы ``phase``;
+        хвост, недобранный в батч, переезжает в следующий батч той же фазы — так
+        же, как он переезжал между батчами stable/decay.
 
         Эпоха заканчивается на **первом** исчерпании активной фазы: микс W/C
         объявлен как один проход по 17B/3B (ADR-021), и когда один шард кончился,
@@ -894,15 +1043,15 @@ class PretrainMixLoader:
         по другой пропорции, чем запиннена в карточке.  То же и для decay: Q —
         один проход ~1B, кончился — эпоха кончилась.
         """
-        if phase == PHASE_DECAY:
+        if q_source:
             stream = self._q_stream
             if stream is None or stream.exhausted:
                 return False
-            return self._absorb_document(stream, PHASE_DECAY)
+            return self._absorb_document(stream, phase)
         name = self._pick_stream()
         if name is None:
             return False
-        return self._absorb_document(self._streams[name], PHASE_STABLE)
+        return self._absorb_document(self._streams[name], phase)
 
     def _absorb_document(self, stream: _StreamIterator, phase: str) -> bool:
         try:
@@ -990,6 +1139,7 @@ class PretrainMixLoader:
             streams=streams,
             pending_tokens=tuple(self._pending[self._last_phase]),
             phase=self._last_phase,
+            transition_steps=self.transition_steps,
         )
 
     def stats(self) -> dict[str, Any]:
@@ -1007,6 +1157,9 @@ class PretrainMixLoader:
             "token_share": share,
             "pending_tokens": len(self._pending[self._last_phase]),
             "phase": self._last_phase,
+            "transition_steps": self.transition_steps,
+            "transition_start": self.transition_start,
+            "q_share_target": self._q_share_target(),
             "decay_stream": self.decay_stream,
             "decay_start": self.decay_start,
             "streams": {
@@ -1312,7 +1465,9 @@ class PackedTokenLoader:
     обратно — позиция потока (шард + смещение записей в нём) восстанавливается без
     потерь и дублей, поэтому аренда interruptible переживает преемпшн.  Decay-фаза
     (ADR-021) поддержана тем же способом: с шага ``decay_start`` батчи берутся
-    только из шарда Q.
+    только из шарда Q.  Переходная фаза (ADR-059) — последние ``transition_steps``
+    шагов перед ``decay_start``: батч берётся из Q по детерминированному правилу
+    от номера шага, иначе — по обычному дефициту микса.
     """
 
     def __init__(
@@ -1327,6 +1482,7 @@ class PackedTokenLoader:
         decay_stream: str | None = None,
         decay_start: int | None = None,
         decay_shard_root: str | Path | None = None,
+        transition_steps: int = 0,
     ):
         if not streams:
             raise PretrainDataError("не объявлено ни одного потока шардов")
@@ -1334,6 +1490,9 @@ class PackedTokenLoader:
             raise ValueError("seq_len должен быть >= 3")
         if batch_size < 1:
             raise ValueError("batch_size должен быть >= 1")
+        transition_steps = int(transition_steps)
+        if transition_steps < 0:
+            raise ValueError("transition_steps должен быть >= 0")
         decay_enabled = decay_stream is not None
         if decay_enabled and decay_start is None:
             raise PretrainDataError(
@@ -1345,9 +1504,32 @@ class PackedTokenLoader:
             raise PretrainDataError(
                 f"decay-шард {decay_stream!r} не может входить в стабильный микс {tuple(streams)}"
             )
+        if transition_steps > 0 and not decay_enabled:
+            raise PretrainDataError(
+                f"transition_steps={transition_steps} объявлен без decay_stream: "
+                "переход ведёт в Q-фазу, которой нет (ADR-059)"
+            )
+        if (
+            transition_steps > 0
+            and decay_start is not None
+            and transition_steps >= int(decay_start)
+        ):
+            raise PretrainDataError(
+                f"transition_steps={transition_steps} >= decay_start={decay_start}: "
+                "переход не помещается перед decay-фазой (ADR-059)"
+            )
         if cursor is not None and cursor.phase == PHASE_DECAY and not decay_enabled:
             raise PretrainDataError(
                 "курсор снят в decay-фазе, а decay-шард не объявлен: resume потерял бы Q-поток"
+            )
+        if (
+            cursor is not None
+            and cursor.phase == PHASE_TRANSITION
+            and transition_steps <= 0
+        ):
+            raise PretrainDataError(
+                "курсор снят в transition-фазе, а переход не объявлен: resume потерял бы "
+                "смесь W/C и Q — объявите transition_steps"
             )
 
         self.tokens_root = Path(tokens_root)
@@ -1367,6 +1549,10 @@ class PackedTokenLoader:
         self.weights = {name: float(weights[name]) for name in streams}
         self.decay_stream = decay_stream
         self.decay_start = int(decay_start) if decay_start is not None else None
+        #: Длина переходного окна перед decay-фазой (ADR-059); 0 — перехода нет.
+        self.transition_steps = transition_steps
+        #: Первый 0-based шаг перехода; ``None`` — decay-фазы (и перехода) нет.
+        self.transition_start = transition_start_step(self.decay_start, transition_steps)
 
         cursor_streams = {item.name: item for item in (cursor.streams if cursor else ())}
         self._sets: dict[str, PackedShardSet] = {}
@@ -1437,15 +1623,48 @@ class PackedTokenLoader:
         return self
 
     def _phase_for_batch(self, step: int) -> str:
-        """Фаза батча с абсолютным номером ``step`` (1-based)."""
+        """Фаза батча с абсолютным номером ``step`` (1-based).
+
+        ``i = step - 1``: ``i >= decay_start`` — decay; ``i >= transition_start``
+        при объявленном переходе — transition; иначе stable (ADR-059).
+        """
+        i = int(step) - 1
         if self.decay_start is None:
             return PHASE_STABLE
-        return PHASE_DECAY if (step - 1) >= self.decay_start else PHASE_STABLE
+        if i >= self.decay_start:
+            return PHASE_DECAY
+        if (
+            self.transition_steps > 0
+            and self.transition_start is not None
+            and i >= self.transition_start
+        ):
+            return PHASE_TRANSITION
+        return PHASE_STABLE
 
     @property
     def phase(self) -> str:
         """Фаза последнего выданного батча (stable до первого)."""
         return self._last_phase
+
+    def _q_share_target(self) -> float:
+        """Целевая доля Q для последнего выданного батча (ADR-059).
+
+        0.0 в stable, ``(t+1)/N`` в transition, 1.0 в decay — функция номера
+        шага, а не накопленного счётчика.
+        """
+        if self._last_phase == PHASE_DECAY:
+            return 1.0
+        if (
+            self._last_phase == PHASE_TRANSITION
+            and self.transition_steps > 0
+            and self.transition_start is not None
+        ):
+            return transition_q_share(
+                self.step,
+                transition_start=self.transition_start,
+                transition_steps=self.transition_steps,
+            )
+        return 0.0
 
     def __next__(self) -> np.ndarray:
         """Следующий батч ``(B, T)``.
@@ -1455,9 +1674,24 @@ class PackedTokenLoader:
         эпохи, а не батч другого размера.  Добор идёт **сквозь** границу шарда,
         так что на стыке ``.bin`` теряются не записи, а только хвост потока
         (``≤ B-1`` записей за эпоху, счётчик — в ``stats()``).
+
+        Источник переходной фазы решается правилом от номера шага (ADR-059):
+        Q — если правило сработало, иначе поток стабильного микса.  Выбор не
+        читает состояния, поэтому resume в середине перехода не сдвигает поток.
         """
         phase = self._phase_for_batch(self.step + 1)
-        name = self._q_stream if phase == PHASE_DECAY else self._pick_stream()
+        take_q = phase == PHASE_DECAY
+        if (
+            phase == PHASE_TRANSITION
+            and self.transition_start is not None
+            and transition_takes_q(
+                self.step + 1,
+                transition_start=self.transition_start,
+                transition_steps=self.transition_steps,
+            )
+        ):
+            take_q = True
+        name = self._q_stream if take_q else self._pick_stream()
         if name is None:
             raise StopIteration
         rows: list[np.ndarray] = []
@@ -1541,6 +1775,7 @@ class PackedTokenLoader:
             streams=tuple(streams),
             pending_tokens=(),
             phase=self._last_phase,
+            transition_steps=self.transition_steps,
         )
 
     def stats(self) -> dict[str, Any]:
@@ -1556,6 +1791,9 @@ class PackedTokenLoader:
             },
             "dropped_tail_records": dict(self._dropped_tail),
             "phase": self._last_phase,
+            "transition_steps": self.transition_steps,
+            "transition_start": self.transition_start,
+            "q_share_target": self._q_share_target(),
             "decay_stream": self.decay_stream,
             "decay_start": self.decay_start,
             "records_total": sum(self._records.values()),
@@ -3583,6 +3821,15 @@ def train(
     # метрика ``phase`` обязана называть ту же фазу, которой питался шаг, иначе
     # журнал разошёлся бы с данными.  Без даталоадера (тесты проводки) — stable.
     data_decay_start = getattr(loader, "decay_start", None) if loader is not None else None
+    # Переходная фаза (ADR-059): те же поля читаются у загрузчика, чтобы метрика
+    # ``phase`` называла ту фазу, которой питался шаг.  Без них (тесты проводки) —
+    # прежнее двухфазное поведение.
+    data_transition_steps = (
+        int(getattr(loader, "transition_steps", 0) or 0) if loader is not None else 0
+    )
+    data_transition_start = (
+        getattr(loader, "transition_start", None) if loader is not None else None
+    )
     first_tick = 0.0
     started = time.time()
     stop_path = Path(train_config.stop_file) if train_config.stop_file is not None else None
@@ -3899,11 +4146,16 @@ def train(
         if usd_rate is not None:
             usd_spent = gpu_hours * float(usd_rate)
 
-        phase = (
-            PHASE_DECAY
-            if data_decay_start is not None and (absolute - 1) >= data_decay_start
-            else PHASE_STABLE
-        )
+        if data_decay_start is not None and (absolute - 1) >= data_decay_start:
+            phase = PHASE_DECAY
+        elif (
+            data_transition_steps > 0
+            and data_transition_start is not None
+            and (absolute - 1) >= data_transition_start
+        ):
+            phase = PHASE_TRANSITION
+        else:
+            phase = PHASE_STABLE
         if metrics is not None:
             record: dict[str, Any] = {
                 "step": absolute,
@@ -4382,6 +4634,7 @@ __all__ = [
     "PHASES",
     "PHASE_DECAY",
     "PHASE_STABLE",
+    "PHASE_TRANSITION",
     "PretrainBackendError",
     "PretrainBudgetError",
     "PretrainDataError",
@@ -4415,6 +4668,9 @@ __all__ = [
     "step_flops",
     "tflops_achieved",
     "train",
+    "transition_q_share",
+    "transition_start_step",
+    "transition_takes_q",
     "tree_l2_norm",
     "window_permutation",
     "wsd_schedule",

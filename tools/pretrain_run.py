@@ -135,6 +135,10 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
                         help="каталог decay-шарда (по умолчанию --shard-root)")
     parser.add_argument("--decay-seed", type=int, default=None,
                         help="сид шаффла decay-шарда (по умолчанию --seed)")
+    parser.add_argument("--transition-steps", type=int, default=0,
+                        help="длина переходной фазы перед decay_start (ADR-059): "
+                             "последние N шагов перед Q батчи берутся из W/C и Q "
+                             "с растущей долей Q; 0 — перехода нет")
     parser.add_argument("--model-preset", choices=sft_stage.SMOKE_PRESETS + (sft_stage.L3_FULL_PRESET,),
                         default="small")
     parser.add_argument("--config-path", type=Path, default=None,
@@ -664,6 +668,11 @@ def data_consumed_block(stats: dict, data_kind: str) -> dict[str, Any]:
         "token_share": stats.get("token_share"),
         "phase": stats.get("phase"),
         "decay_start": stats.get("decay_start"),
+        # ADR-059: фактическая фаза шага и цель доли Q — по ним журнал
+        # показывает, что переход шёл, а не только что он был объявлен.
+        "transition_steps": stats.get("transition_steps"),
+        "transition_start": stats.get("transition_start"),
+        "q_share_target": stats.get("q_share_target"),
         "peak_rss_mb": peak_rss_mb(),
         "streams": stats.get("streams"),
     }
@@ -1202,6 +1211,16 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
             flush=True,
         )
         return journal, False
+    if int(args.transition_steps) < 0:
+        # Конструктор загрузчика отвергает отрицательное окно ValueError-ом;
+        # CLI-путь обязан отказать так же явно, а не падать трассировкой.
+        print(
+            f"[pretrain] ОТКАЗ: --transition-steps должен быть >= 0, "
+            f"получено {args.transition_steps}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return journal, False
     loader_batch = int(args.micro_batch) if args.micro_batch else int(args.batch_size)
     planned_batch = int(args.batch_size)
     if int(args.accum_tokens) > 0:
@@ -1299,6 +1318,15 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
         if args.decay_stream
         else None
     )
+    # Переходная фаза (ADR-059): окно последних N шагов перед decay_start.
+    # transition_start считается от той же границы, что LR и данные, — иначе
+    # смесь и спад разъехались бы.
+    transition_steps = int(args.transition_steps)
+    transition_start = (
+        tl.transition_start_step(decay_start, transition_steps)
+        if decay_start is not None
+        else None
+    )
 
     # --- К5: файл-стоп килл-свитча (argv → env STOP_FILE → курсор) ---------
     stop_file = resolve_stop_file(args, cursor_run)
@@ -1315,6 +1343,7 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
                 decay_stream=args.decay_stream,
                 decay_start=decay_start,
                 decay_shard_root=paths["tokens_root"] if args.decay_stream else None,
+                transition_steps=transition_steps,
             )
         else:
             loader = tl.PretrainMixLoader(
@@ -1332,6 +1361,7 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
                 decay_start=decay_start,
                 decay_shard_root=paths["decay_shard_root"] if args.decay_stream else None,
                 decay_seed=args.decay_seed,
+                transition_steps=transition_steps,
             )
     except tl.PretrainDataError as exc:
         journal["refusal"] = f"данные: {exc}"
@@ -1353,6 +1383,11 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
         "micro_batch": args.micro_batch,
         "accum_tokens": args.accum_tokens,
         "planned_batch": planned_batch,
+        # Переходная фаза (ADR-059): окно и его граница пишутся в журнал
+        # сегмента тем же блоком, что и состояние данных, — по ним канарейка
+        # сверяет phase: transition с фактическим шагом.
+        "transition_steps": transition_steps,
+        "transition_start": transition_start,
         "decay": (
             {
                 "stream": args.decay_stream,
@@ -1425,6 +1460,10 @@ def execute(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
         "decay_ratio_explicit": decay_ratio_explicit,
         "decay_stream": args.decay_stream,
         "decay_start": decay_start,
+        # ADR-059: переход — часть расписания данных, его параметры обязаны быть
+        # рядом с decay_start, иначе сегмент неотличим от двухфазного.
+        "transition_steps": transition_steps,
+        "transition_start": transition_start,
         "grad_checkpointing": bool(grad_checkpointing),
         "grad_checkpointing_policy": args.grad_checkpointing_policy,
         "grad_ckpt_policy": getattr(cfg, "grad_ckpt_policy", None),

@@ -161,7 +161,10 @@ def reference_bwd(q, k, v, alpha, beta32, S, do, dS, *, tile=16):
         la = jnp.log(alpha_h)
         G = tril @ la
         gamma = jnp.exp(G)
-        E = jnp.exp(G[:, None, :] - G[None, :, :])          # (C, C, dk)
+        # Clamp the exponent at 0: the upper triangle (i < j) is masked out
+        # later by tril/strict, but inf * 0 == nan inside the einsums.
+        # The reference (net.kda._cc_scores) uses the same exp(min(diff, 0)).
+        E = jnp.exp(jnp.minimum(G[:, None, :] - G[None, :, :], 0.0))  # (C, C, dk)
 
         aqk = tril * jnp.einsum("cid,cd,id->ci", E, qh, kh)
         L = strict * jnp.einsum("cid,cd,id->ci", E, kh * beta, kh)

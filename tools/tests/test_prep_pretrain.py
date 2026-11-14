@@ -290,6 +290,61 @@ def test_t_p2_resume_continues_after_crash(tmp_path: Path, source_spec: dict) ->
     assert again["stop_reason"] == "source_exhausted"
 
 
+def test_t_p2_resume_reconciles_manifest_counters(
+    tmp_path: Path, source_spec: dict
+) -> None:
+    """Достройка шарда: counters манифеста — авторитетные, а не только последней ноги.
+
+    ``counters`` обнуляются на каждый запуск, ``source_records``/``totals`` живут
+    через все ноги.  Без сверки в манифесте после resume остались бы числа
+    последней ноги (дефект W: counters.records_read=10 236 308 при
+    source_records=14 632 308).
+    """
+    out = tmp_path / "W"
+    common_kwargs = dict(
+        shard="W",
+        out_dir=out,
+        target_tokens=0,
+        source_spec=source_spec,
+        manifest_path=out / "manifest-w.json",
+        report_path=out / "report-w.json",
+        shard_bytes=4 * 1024,
+        flush_every=1024,
+        level=1,
+    )
+    common.run_shard(
+        normalize=fineweb.FinewebDocuments(), max_records=50, **common_kwargs
+    )
+    first = json.loads((out / "manifest-w.json").read_text(encoding="utf-8"))
+    assert first["counters"]["records_read"] == first["source_records"] == 50
+    assert first["counters"]["records_kept"] == first["totals"]["records"] == 50
+
+    report = common.run_shard(normalize=fineweb.FinewebDocuments(), **common_kwargs)
+    final = json.loads((out / "manifest-w.json").read_text(encoding="utf-8"))
+    counters = final["counters"]
+
+    assert counters["records_read"] == final["source_records"] == 120
+    assert counters["records_kept"] == final["totals"]["records"] == 120
+    assert counters["approx_tokens"] == final["totals"]["approx_tokens"]
+    assert counters["dropped_total"] >= 0
+    assert counters["dropped_total"] == max(
+        0, final["source_records"] - final["totals"]["records"]
+    )
+    explained = sum(
+        value
+        for rule, value in counters["dropped_by_rule"].items()
+        if rule.startswith("dropped_")
+    )
+    assert counters["dropped_unaccounted"] == max(
+        0, counters["dropped_total"] - explained
+    )
+    # Устаревшее имя сохраняется и равно честно необъяснённому остатку.
+    assert counters["dropped_dedup"] == counters["dropped_unaccounted"]
+    assert counters["counters_reconciled"] is True
+    # Отчёт — тот же снимок, что в манифесте: журнал и манифест не расходятся.
+    assert report["counters"] == counters
+
+
 def test_t_p2_restart_starts_over(tmp_path: Path, source_spec: dict) -> None:
     out = tmp_path / "W"
     kwargs = dict(

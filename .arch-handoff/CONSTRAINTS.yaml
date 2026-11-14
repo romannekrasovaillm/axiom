@@ -793,3 +793,32 @@ constraints:
     owner: "архитектор"
     expiry: "2027-01-31"
     effort_hours: 2.0
+
+  - id: C-058
+    name: "ADR-060: детектор changepoint ловит устойчивую ступень loss и не ловит шум/тренд (selftest мутантов)"
+    type: command_succeeds
+    command: 'python3 tools/check_loss_changepoint.py --selftest'
+    timeout_secs: 180
+    severity: critical
+    scope: case
+    kind: structural
+    adr: ADR-060
+    evidence: "tools/check_loss_changepoint.py --selftest → двухоконный робастный тест на блочных медианах: стационарный шум → 0 событий, линейный тренд → 0 событий, ступень +Δ/−Δ → обнаружена в допуске ±150 шагов, тяжёлые хвосты t3 → 0 событий, NaN → exit 2, дубли шагов → схлопнуты, подавление реестром → exit 0. Пороги (B=25, N=6, M=12, G=2, min_abs=0,10, z=3,5, persist=3) откалиброваны на живом прогоне long-jax2-ab14050: 3 события / 0 ложных на 1166 блоках"
+    owner: "архитектор"
+    expiry: "2027-01-31"
+    effort_hours: 3.0
+
+  - id: C-059
+    name: "ADR-060: на живом прогоне нет неподавленных сдвигов уровня loss (тихая ступень не проходит молча)"
+    type: command_succeeds
+    command: 'python3 tools/check_loss_changepoint.py --metrics ~/gb10-shared/runs/axiom-long-pretrain-20261023/long-jax2-ab14050/pretrain --ledger evidence/monitoring/changepoints.yaml --quiet'
+    timeout_secs: 300
+    requires: [stand]
+    severity: high
+    scope: case
+    kind: behavioural
+    adr: ADR-060
+    evidence: "каталог metrics-seg-*.jsonl живого прогона → события детектора; подавление только по реестру evidence/monitoring/changepoints.yaml (запись без owner/reason/ref/review_by недействительна). Неподавленное событие — exit 1 (красный гейт с точкой, направлением и величиной), отсутствие метрик — neutral (exit 0). Дополняет относительный дрейф +3%: тот ловит резкую деградацию, этот — устойчивую ступень, которую rolling-медиана впитывает"
+    owner: "архитектор"
+    expiry: "2027-01-31"
+    effort_hours: 2.0
